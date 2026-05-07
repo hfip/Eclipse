@@ -728,12 +728,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             mpv.setSubtitleTrack(id: id)
         }
     }
-
-    private func rendererSetSubtitlesEnabledByDefault(_ enabled: Bool) {
-        guard let vlc = vlcRenderer else { return }
-        logVLCUI("rendererSetSubtitlesEnabledByDefault enabled=\(enabled)", type: "Player")
-        vlc.setSubtitlesEnabledByDefault(enabled)
-    }
     
     private func rendererGetCurrentSubtitleTrackId() -> Int {
         if let vlc = vlcRenderer {
@@ -849,7 +843,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var openSubtitlesLoadedURLs: Set<String> = []
 
     private var isVLCCustomSubtitleOverlayEnabled: Bool {
-        return isVLCPlayer && UserDefaults.standard.bool(forKey: "vlcCustomSubtitleOverlayEnabled")
+        return isVLCPlayer && Settings.shared.enableVLCSubtitleEditMenu
     }
 
     private var isVLCOpenSubtitlesEnabled: Bool {
@@ -1315,18 +1309,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         userSelectedAudioTrack = false
         userSelectedSubtitleTrack = false
-        if isVLCPlayer {
-            let subtitlesEnabledByDefault = Settings.shared.enableSubtitlesByDefault
-            if subtitlesEnabledByDefault {
-                rendererSetSubtitlesEnabledByDefault(true)
-            }
-            if !subtitlesEnabledByDefault {
-                subtitleModel.isVisible = false
-                vlcSubtitleSelection = .none
-                subtitleEntries.removeAll()
-                updateVLCSubtitleOverlay(for: cachedPosition)
-            }
-        }
         if url.host != "127.0.0.1" {
             vlcProxyFallbackTried = false
         }
@@ -2343,14 +2325,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             isVisible: subtitleModel.isVisible
         ))
 
-        if isVLCPlayer && !isVLCCustomSubtitleOverlayEnabled {
-            subtitleEntries.removeAll()
-            updateVLCSubtitleOverlay(for: cachedPosition)
-            rendererRefreshSubtitleOverlay()
-            updateSubtitleTracksMenu()
-            return
-        }
-
         if isVLCCustomSubtitleOverlayEnabled {
             updateVLCSubtitleOverlay(for: cachedPosition)
         }
@@ -3087,10 +3061,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
         let useCustomExternalOverlay = isVLCCustomSubtitleOverlayEnabled
-        let externalTracks: [(Int, String)] = subtitleURLs.enumerated().map { (index, _) in
-            let name = index < subtitleNames.count ? subtitleNames[index] : "Subtitle \(index + 1)"
-            return (index, name)
-        }
+        let externalTracks: [(Int, String)] = useCustomExternalOverlay
+            ? subtitleURLs.enumerated().map { (index, _) in
+                let name = index < subtitleNames.count ? subtitleNames[index] : "Subtitle \(index + 1)"
+                return (index, name)
+            }
+            : []
         let embeddedTracks = rendererGetSubtitleTracks().filter { $0.0 >= 0 && !isDisabledTrackName($0.1) }
 
         Logger.shared.log("PlayerViewController: subtitle tracks external=\(externalTracks.count) embedded=\(embeddedTracks.count) userSelected=\(userSelectedSubtitleTrack) renderer=\(vlcRenderer != nil ? "VLC" : "MPV")", type: "Player")
@@ -3116,15 +3092,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     Logger.shared.log("[PlayerVC.Subtitles] default selected embedded track id=\(selectedEmbeddedTrack.0) name=\(selectedEmbeddedTrack.1)", type: "Player")
                 } else if let selectedExternalTrack = preferredDefaultSubtitleTrack(from: externalTracks, preferredLang: preferredLang) {
                     currentSubtitleIndex = selectedExternalTrack.0
-                    if useCustomExternalOverlay {
-                        loadCurrentSubtitle()
-                        rendererDisableSubtitles()
-                        updateVLCSubtitleOverlay(for: cachedPosition)
-                    } else {
-                        subtitleEntries.removeAll()
-                        rendererLoadExternalSubtitles(urls: [subtitleURLs[selectedExternalTrack.0]], enforce: true)
-                        updateVLCSubtitleOverlay(for: cachedPosition)
-                    }
+                    loadCurrentSubtitle()
+                    rendererDisableSubtitles()
+                    updateVLCSubtitleOverlay(for: cachedPosition)
                     userSelectedSubtitleTrack = true
                     subtitleModel.isVisible = true
                     vlcSubtitleSelection = .external(index: selectedExternalTrack.0)
@@ -3133,26 +3103,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     Logger.shared.log("[PlayerVC.Subtitles] OpenSubtitles fallback requested for preferredLang=\(preferredLang)", type: "Player")
                 } else if let fallbackExternalTrack = fallbackDefaultSubtitleTrack(from: externalTracks) {
                     currentSubtitleIndex = fallbackExternalTrack.0
-                    if useCustomExternalOverlay {
-                        loadCurrentSubtitle()
-                        rendererDisableSubtitles()
-                        updateVLCSubtitleOverlay(for: cachedPosition)
-                    } else {
-                        subtitleEntries.removeAll()
-                        rendererLoadExternalSubtitles(urls: [subtitleURLs[fallbackExternalTrack.0]], enforce: true)
-                        updateVLCSubtitleOverlay(for: cachedPosition)
-                    }
+                    loadCurrentSubtitle()
+                    rendererDisableSubtitles()
+                    updateVLCSubtitleOverlay(for: cachedPosition)
                     userSelectedSubtitleTrack = true
                     subtitleModel.isVisible = true
                     vlcSubtitleSelection = .external(index: fallbackExternalTrack.0)
                     Logger.shared.log("[PlayerVC.Subtitles] default selected fallback external track index=\(fallbackExternalTrack.0)", type: "Player")
                 }
             } else {
+                rendererDisableSubtitles()
                 subtitleEntries.removeAll()
                 updateVLCSubtitleOverlay(for: cachedPosition)
                 subtitleModel.isVisible = false
                 vlcSubtitleSelection = .none
-                Logger.shared.log("[PlayerVC.Subtitles] defaults disabled; skipping VLC subtitle mutation during startup", type: "Player")
+                Logger.shared.log("[PlayerVC.Subtitles] defaults disabled; subtitles forced off", type: "Player")
             }
             updateSubtitleButtonAppearance()
         }
@@ -3198,17 +3163,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     self.currentSubtitleIndex = id
                     self.vlcSubtitleSelection = .external(index: id)
                     Logger.shared.log("[PlayerVC.Subtitles] user selected external subtitle index=\(id) name=\(name)", type: "Player")
-                    if useCustomExternalOverlay {
-                        self.loadCurrentSubtitle()
-                        self.rendererDisableSubtitles()
-                        self.updateVLCSubtitleOverlay(for: self.cachedPosition)
-                    } else {
-                        self.subtitleEntries.removeAll()
-                        if id < self.subtitleURLs.count {
-                            self.rendererLoadExternalSubtitles(urls: [self.subtitleURLs[id]], enforce: true)
-                        }
-                        self.updateVLCSubtitleOverlay(for: self.cachedPosition)
-                    }
+                    self.loadCurrentSubtitle()
+                    self.rendererDisableSubtitles()
+                    self.updateVLCSubtitleOverlay(for: self.cachedPosition)
                     self.updateSubtitleButtonAppearance()
                     // Debounce menu update to avoid lag - only update after 0.3s of no selection changes
                     self.subtitleMenuDebounceTimer?.invalidate()
@@ -3653,7 +3610,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         vlcSubtitleSelection = .none
         vlcExternalSubtitlesLoadedNatively = false
         vlcExternalSubtitlePriorityDeadline = nil
-        subtitleEntries.removeAll()
         
         if !urls.isEmpty {
             Logger.shared.log("PlayerViewController: loadSubtitles count=\(urls.count) renderer=\(vlcRenderer != nil ? "VLC" : "MPV")", type: "Stream")
@@ -3666,36 +3622,27 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if vlcRenderer != nil {
                 if isVLCCustomSubtitleOverlayEnabled {
                     Logger.shared.log("[PlayerVC.Subtitles] loadSubtitles path=VLC customOverlay", type: "Stream")
-                    if enableByDefault {
-                        rendererDisableSubtitles()
-                    } else {
-                        Logger.shared.log("[PlayerVC.Subtitles] VLC defaults disabled; skipping custom-overlay native subtitle disable during startup", type: "Stream")
-                    }
+                    rendererDisableSubtitles()
                     updateSubtitleTracksMenu()
                     updateVLCSubtitleOverlay(for: cachedPosition)
                 } else {
                     Logger.shared.log("[PlayerVC.Subtitles] loadSubtitles path=VLC native", type: "Stream")
-                    if enableByDefault {
-                        rendererLoadExternalSubtitles(urls: urls)
-                        vlcExternalSubtitlesLoadedNatively = true
-                        vlcExternalSubtitlePriorityDeadline = Date().addingTimeInterval(1.2)
-                        // Update subtitle menu after VLC loads the external subs
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                            self?.updateSubtitleTracksMenu()
+                    rendererLoadExternalSubtitles(urls: urls)
+                    vlcExternalSubtitlesLoadedNatively = true
+                    vlcExternalSubtitlePriorityDeadline = Date().addingTimeInterval(1.2)
+                    // Update subtitle menu after VLC loads the external subs
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                        self?.updateSubtitleTracksMenu()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        let tracks = self.rendererGetSubtitleTracks()
+                        if tracks.isEmpty {
+                            Logger.shared.log("PlayerViewController: VLC external subtitles not detected after load", type: "Stream")
+                        } else {
+                            Logger.shared.log("PlayerViewController: VLC subtitle tracks available count=\(tracks.count)", type: "Stream")
+                            self.updateSubtitleTracksMenuWhenReady()
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                            guard let self else { return }
-                            let tracks = self.rendererGetSubtitleTracks()
-                            if tracks.isEmpty {
-                                Logger.shared.log("PlayerViewController: VLC external subtitles not detected after load", type: "Stream")
-                            } else {
-                                Logger.shared.log("PlayerViewController: VLC subtitle tracks available count=\(tracks.count)", type: "Stream")
-                                self.updateSubtitleTracksMenuWhenReady()
-                            }
-                        }
-                    } else {
-                        Logger.shared.log("[PlayerVC.Subtitles] VLC defaults disabled; keeping external subtitle URLs available without preloading them into VLC", type: "Stream")
-                        updateSubtitleTracksMenu()
                     }
                 }
             } else {
@@ -4773,7 +4720,6 @@ extension PlayerViewController: VLCRendererDelegate {
     
     func renderer(_ renderer: VLCRenderer, didBecomeReadyToSeek: Bool) {
         if isClosing { return }
-        logVLCUI("delegate didBecomeReadyToSeek=\(didBecomeReadyToSeek) pendingSeek=\(secondsText(pendingSeekTime)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) audioTracks=\(rendererGetAudioTracks().count) subtitleTracks=\(rendererGetSubtitleTracks().count)", type: "Stream")
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -4813,14 +4759,13 @@ extension PlayerViewController: VLCRendererDelegate {
         if isClosing { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.logVLCUI("delegate rendererDidChangeTracks audioCount=\(self.rendererGetAudioTracks().count) subtitleCount=\(self.rendererGetSubtitleTracks().count) currentAudio=\(self.rendererGetCurrentAudioTrackId()) currentSubtitle=\(self.rendererGetCurrentSubtitleTrackId())", type: "Player")
             self.updateAudioTracksMenu()
             self.updateSubtitleTracksMenu()
         }
     }
     
     func renderer(_ renderer: VLCRenderer, getSubtitleForTime time: Double) -> NSAttributedString? {
-        guard isVLCCustomSubtitleOverlayEnabled, subtitleModel.isVisible, !subtitleEntries.isEmpty else {
+        guard subtitleModel.isVisible, !subtitleEntries.isEmpty else {
             return nil
         }
         
@@ -4844,19 +4789,6 @@ extension PlayerViewController: VLCRendererDelegate {
         if isClosing { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.logVLCUI("delegate subtitleTrackDidChange trackId=\(trackId) previousSelection=\(self.vlcSubtitleSelection) userSelected=\(self.userSelectedSubtitleTrack)", type: "Player")
-            if trackId < 0 {
-                self.subtitleModel.isVisible = false
-                self.vlcSubtitleSelection = .none
-                self.subtitleEntries.removeAll()
-                self.updateVLCSubtitleOverlay(for: self.cachedPosition)
-                self.updateSubtitleButtonAppearance()
-                if self.userSelectedSubtitleTrack {
-                    self.updateSubtitleTracksMenu()
-                }
-                return
-            }
-
             self.subtitleModel.isVisible = true
             if trackId >= 0 {
                 self.vlcSubtitleSelection = .embedded(trackId: trackId)
