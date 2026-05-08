@@ -15,6 +15,13 @@ final class VLCHeaderProxy {
     private struct Session {
         let headers: [String: String]
         let createdAt: Date
+        let lastAccessed: Date
+    }
+
+    private enum UpstreamBodyMode {
+        case stream
+        case playlist
+        case probe
     }
 
     private let queue = DispatchQueue(label: "vlc.header.proxy")
@@ -25,8 +32,21 @@ final class VLCHeaderProxy {
     private let sessionLock = NSLock()
 
     private let maxSessions = 200
-    private let sessionTTL: TimeInterval = 20 * 60
+    private let sessionTTL: TimeInterval = 6 * 60 * 60
     private let maxHeaderBytes = 64 * 1024
+    private let maxPlaylistBytes = 5 * 1024 * 1024
+    private let playlistProbeBytes = 4 * 1024
+    private let hopByHopRequestHeaders: Set<String> = [
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade"
+    ]
 
     private init() {}
 
@@ -53,8 +73,13 @@ final class VLCHeaderProxy {
         }
     }
 
-    private func session(for id: String) -> Session? {
-        withSessionsLock { sessions[id] }
+    private func touchSession(for id: String) -> Session? {
+        withSessionsLock {
+            guard let session = sessions[id] else { return nil }
+            let updated = Session(headers: session.headers, createdAt: session.createdAt, lastAccessed: Date())
+            sessions[id] = updated
+            return updated
+        }
     }
 
     func makeProxyURL(for targetURL: URL, headers: [String: String]) -> URL? {
@@ -79,7 +104,8 @@ final class VLCHeaderProxy {
         }
 
         let sessionId = UUID().uuidString
-        setSession(Session(headers: headers, createdAt: Date()), for: sessionId)
+        let now = Date()
+        setSession(Session(headers: headers, createdAt: now, lastAccessed: now), for: sessionId)
         Logger.shared.log("VLCHeaderProxy: created session=\(String(sessionId.prefix(8))) target=\(logURLSummary(targetURL)) headerKeys=[\(headers.keys.sorted().joined(separator: ","))] activeSessions=\(sessionCount())", type: "Stream")
 
         return buildProxyURL(port: activePort, sessionId: sessionId, targetURL: targetURL)
@@ -107,6 +133,12 @@ final class VLCHeaderProxy {
                     }
                 case .failed(let error):
                     Logger.shared.log("VLCHeaderProxy: listener failed: \(error)", type: "Error")
+                    self.listener = nil
+                    self.port = nil
+                case .cancelled:
+                    Logger.shared.log("VLCHeaderProxy: listener cancelled", type: "Stream")
+                    self.listener = nil
+                    self.port = nil
                 default:
                     break
                 }
@@ -226,7 +258,7 @@ final class VLCHeaderProxy {
             return
         }
 
-        let session = session(for: sessionId)
+        let session = touchSession(for: sessionId)
 
         guard let session = session else {
             sendSimpleResponse(connection, statusCode: 404, body: "Session not found")
@@ -238,7 +270,8 @@ final class VLCHeaderProxy {
             return
         }
 
-        guard targetURL.scheme == "http" || targetURL.scheme == "https" else {
+        guard let targetScheme = targetURL.scheme?.lowercased(),
+              targetScheme == "http" || targetScheme == "https" else {
             sendSimpleResponse(connection, statusCode: 400, body: "Unsupported scheme")
             return
         }
@@ -252,7 +285,7 @@ final class VLCHeaderProxy {
 
         for (key, value) in headers {
             let lower = key.lowercased()
-            if lower == "host" || lower == "connection" || lower == "proxy-connection" {
+            if lower == "host" || hopByHopRequestHeaders.contains(lower) {
                 continue
             }
             request.setValue(value, forHTTPHeaderField: key)
@@ -262,88 +295,186 @@ final class VLCHeaderProxy {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        do {
-            let upstreamRange = request.value(forHTTPHeaderField: "Range") ?? "nil"
-            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: "Stream")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream response was not HTTP target=\(logURLSummary(targetURL))", type: "Error")
-                sendSimpleResponse(connection, statusCode: 502, body: "Bad gateway")
-                return
-            }
-
-            let isHead = method == "HEAD"
-            let (responseData, responseHeaders) = rewriteIfNeeded(http: http, data: data, targetURL: targetURL, sessionId: sessionId)
-            let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "nil"
-            let contentLength = http.value(forHTTPHeaderField: "Content-Length") ?? "nil"
-            let contentRange = http.value(forHTTPHeaderField: "Content-Range") ?? "nil"
-            let rewritten = responseData.count != data.count || responseHeaders["Content-Type"] == "application/vnd.apple.mpegurl"
-            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream done status=\(http.statusCode) bytes=\(data.count) responseBytes=\(responseData.count) rewritten=\(rewritten) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: "Stream")
-
-            sendResponse(
-                connection,
-                statusCode: http.statusCode,
-                headers: responseHeaders,
-                body: isHead ? Data() : responseData
-            )
-        } catch {
-            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream error target=\(logURLSummary(targetURL)) error=\(error)", type: "Error")
-            sendSimpleResponse(connection, statusCode: 502, body: "Upstream error")
-        }
+        let upstreamRange = request.value(forHTTPHeaderField: "Range") ?? "nil"
+        Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: "Stream")
+        let bridge = UpstreamBridge(
+            proxy: self,
+            request: request,
+            requestId: requestId,
+            method: method,
+            targetURL: targetURL,
+            sessionId: sessionId,
+            connection: connection
+        )
+        await bridge.start()
     }
 
-    private func rewriteIfNeeded(
+    private func upstreamBodyMode(for http: HTTPURLResponse, targetURL: URL) -> UpstreamBodyMode {
+        if isPlaylistMetadata(http: http, targetURL: targetURL) {
+            return .playlist
+        }
+
+        let expected = http.expectedContentLength
+        if expected >= 0 && expected <= Int64(maxPlaylistBytes) {
+            return .probe
+        }
+
+        return .stream
+    }
+
+    private func isPlaylistMetadata(http: HTTPURLResponse, targetURL: URL) -> Bool {
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+        let lowerContentType = contentType.lowercased()
+        if lowerContentType.contains("application/vnd.apple.mpegurl")
+            || lowerContentType.contains("application/x-mpegurl")
+            || lowerContentType.contains("audio/mpegurl")
+            || lowerContentType.contains("vnd.apple.mpegurl") {
+            return true
+        }
+
+        let ext = targetURL.pathExtension.lowercased()
+        return ext == "m3u8" || ext == "m3u"
+    }
+
+    private func isPlaylistData(_ data: Data) -> Bool {
+        guard let text = String(data: data, encoding: .utf8) else { return false }
+        return trimmedPlaylistProbeText(text).hasPrefix("#EXTM3U")
+    }
+
+    private func shouldStopPlaylistProbe(_ data: Data) -> Bool {
+        if data.count >= playlistProbeBytes {
+            return true
+        }
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            return data.count >= 16
+        }
+
+        let trimmed = trimmedPlaylistProbeText(text)
+        if trimmed.isEmpty {
+            return false
+        }
+
+        if "#EXTM3U".hasPrefix(trimmed) {
+            return false
+        }
+
+        return !trimmed.hasPrefix("#EXTM3U")
+    }
+
+    private func trimmedPlaylistProbeText(_ text: String) -> String {
+        let characters = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{feff}"))
+        return text.trimmingCharacters(in: characters)
+    }
+
+    private func rewrittenPlaylistResponse(
         http: HTTPURLResponse,
         data: Data,
         targetURL: URL,
         sessionId: String
-    ) -> (Data, [String: String]) {
-        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? ""
-        let isPlaylist = contentType.lowercased().contains("application/vnd.apple.mpegurl")
-            || contentType.lowercased().contains("application/x-mpegurl")
-            || (String(data: data, encoding: .utf8)?.hasPrefix("#EXTM3U") ?? false)
-
+    ) -> (Data, [String: String], Bool) {
         var headers: [String: String] = filteredResponseHeaders(from: http)
 
-        if isPlaylist, let text = String(data: data, encoding: .utf8) {
+        if let text = String(data: data, encoding: .utf8), isPlaylistData(data) || isPlaylistMetadata(http: http, targetURL: targetURL) {
             let rewritten = rewritePlaylist(text: text, baseURL: targetURL, sessionId: sessionId)
             let outData = Data(rewritten.utf8)
-            headers["Content-Type"] = "application/vnd.apple.mpegurl"
-            headers["Content-Length"] = String(outData.count)
-            headers.removeValue(forKey: "Content-Encoding")
-            return (outData, headers)
+            setHeader("Content-Type", value: "application/vnd.apple.mpegurl", in: &headers)
+            setHeader("Content-Length", value: String(outData.count), in: &headers)
+            removeHeader("Content-Encoding", from: &headers)
+            return (outData, headers, true)
         }
 
-        headers["Content-Length"] = String(data.count)
-        headers.removeValue(forKey: "Content-Encoding")
-        return (data, headers)
+        setHeader("Content-Length", value: String(data.count), in: &headers)
+        removeHeader("Content-Encoding", from: &headers)
+        return (data, headers, false)
     }
 
     private func rewritePlaylist(text: String, baseURL: URL, sessionId: String) -> String {
         let lines = text.components(separatedBy: "\n")
         let base = baseURL.deletingLastPathComponent()
-        var rewrittenCount = 0
+        var mediaLineRewriteCount = 0
+        var attributeRewriteCount = 0
 
         let rewritten = lines.map { line -> String in
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+            if trimmed.isEmpty {
                 return line
             }
 
-            guard let resolved = URL(string: trimmed, relativeTo: base)?.absoluteURL else {
-                return line
+            if trimmed.hasPrefix("#") {
+                return rewritePlaylistTagLine(line, baseURL: base, sessionId: sessionId, rewrittenCount: &attributeRewriteCount)
             }
 
-            if let proxied = buildProxyURL(port: port, sessionId: sessionId, targetURL: resolved) {
-                rewrittenCount += 1
+            if let proxied = proxiedPlaylistURLString(for: trimmed, baseURL: base, sessionId: sessionId) {
+                mediaLineRewriteCount += 1
                 return proxied.absoluteString
             }
 
             return line
         }
 
-        Logger.shared.log("VLCHeaderProxy: playlist rewrite target=\(logURLSummary(baseURL)) lines=\(lines.count) rewritten=\(rewrittenCount) session=\(String(sessionId.prefix(8)))", type: "Stream")
+        Logger.shared.log("VLCHeaderProxy: playlist rewrite target=\(logURLSummary(baseURL)) lines=\(lines.count) mediaLines=\(mediaLineRewriteCount) attributes=\(attributeRewriteCount) session=\(String(sessionId.prefix(8)))", type: "Stream")
         return rewritten.joined(separator: "\n")
+    }
+
+    private func rewritePlaylistTagLine(_ line: String, baseURL: URL, sessionId: String, rewrittenCount: inout Int) -> String {
+        var output = line
+        rewriteQuotedURIAttributes(in: &output, baseURL: baseURL, sessionId: sessionId, rewrittenCount: &rewrittenCount)
+        rewriteUnquotedURIAttributes(in: &output, baseURL: baseURL, sessionId: sessionId, rewrittenCount: &rewrittenCount)
+        return output
+    }
+
+    private func rewriteQuotedURIAttributes(in line: inout String, baseURL: URL, sessionId: String, rewrittenCount: inout Int) {
+        var searchStart = line.startIndex
+        while let keyRange = line.range(of: "URI=\"", options: [.caseInsensitive], range: searchStart..<line.endIndex) {
+            let valueStart = keyRange.upperBound
+            guard let valueEnd = line[valueStart...].firstIndex(of: "\"") else {
+                break
+            }
+
+            let original = String(line[valueStart..<valueEnd])
+            guard let proxied = proxiedPlaylistURLString(for: original, baseURL: baseURL, sessionId: sessionId) else {
+                searchStart = valueEnd
+                continue
+            }
+
+            line.replaceSubrange(valueStart..<valueEnd, with: proxied.absoluteString)
+            rewrittenCount += 1
+            searchStart = line.index(valueStart, offsetBy: proxied.absoluteString.count)
+        }
+    }
+
+    private func rewriteUnquotedURIAttributes(in line: inout String, baseURL: URL, sessionId: String, rewrittenCount: inout Int) {
+        var searchStart = line.startIndex
+        while let keyRange = line.range(of: "URI=", options: [.caseInsensitive], range: searchStart..<line.endIndex) {
+            let valueStart = keyRange.upperBound
+            if valueStart < line.endIndex, line[valueStart] == "\"" {
+                searchStart = line.index(after: valueStart)
+                continue
+            }
+
+            let valueEnd = line[valueStart...].firstIndex(of: ",") ?? line.endIndex
+            let original = String(line[valueStart..<valueEnd]).trimmingCharacters(in: .whitespaces)
+            guard !original.isEmpty,
+                  let proxied = proxiedPlaylistURLString(for: original, baseURL: baseURL, sessionId: sessionId) else {
+                searchStart = valueEnd
+                continue
+            }
+
+            line.replaceSubrange(valueStart..<valueEnd, with: proxied.absoluteString)
+            rewrittenCount += 1
+            searchStart = line.index(valueStart, offsetBy: proxied.absoluteString.count)
+        }
+    }
+
+    private func proxiedPlaylistURLString(for reference: String, baseURL: URL, sessionId: String) -> URL? {
+        guard let resolved = URL(string: reference, relativeTo: baseURL)?.absoluteURL,
+              let scheme = resolved.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return buildProxyURL(port: port, sessionId: sessionId, targetURL: resolved)
     }
 
     private func filteredResponseHeaders(from http: HTTPURLResponse) -> [String: String] {
@@ -359,6 +490,18 @@ final class VLCHeaderProxy {
         return headers
     }
 
+    private func removeHeader(_ name: String, from headers: inout [String: String]) {
+        guard let key = headers.keys.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
+            return
+        }
+        headers.removeValue(forKey: key)
+    }
+
+    private func setHeader(_ name: String, value: String, in headers: inout [String: String]) {
+        removeHeader(name, from: &headers)
+        headers[name] = value
+    }
+
     private func sendSimpleResponse(_ connection: NWConnection, statusCode: Int, body: String) {
         let data = Data(body.utf8)
         let headers = [
@@ -369,6 +512,27 @@ final class VLCHeaderProxy {
     }
 
     private func sendResponse(_ connection: NWConnection, statusCode: Int, headers: [String: String], body: Data) {
+        let headerData = responseHeaderData(statusCode: statusCode, headers: headers)
+        let responseData = headerData + body
+
+        connection.send(content: responseData, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    private func sendResponseHeaders(_ connection: NWConnection, statusCode: Int, headers: [String: String], completion: @escaping (NWError?) -> Void) {
+        sendData(responseHeaderData(statusCode: statusCode, headers: headers), on: connection, completion: completion)
+    }
+
+    private func sendData(_ data: Data, on connection: NWConnection, completion: @escaping (NWError?) -> Void) {
+        guard !data.isEmpty else {
+            completion(nil)
+            return
+        }
+        connection.send(content: data, completion: .contentProcessed(completion))
+    }
+
+    private func responseHeaderData(statusCode: Int, headers: [String: String]) -> Data {
         var lines: [String] = []
         let statusText = httpStatusText(statusCode)
         lines.append("HTTP/1.1 \(statusCode) \(statusText)")
@@ -378,13 +542,9 @@ final class VLCHeaderProxy {
             lines.append("\(key): \(value)")
         }
 
-        lines.append("\r\n")
-        let headerData = Data(lines.joined(separator: "\r\n").utf8)
-        let responseData = headerData + body
-
-        connection.send(content: responseData, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
+        lines.append("")
+        lines.append("")
+        return Data(lines.joined(separator: "\r\n").utf8)
     }
 
     private func httpStatusText(_ code: Int) -> String {
@@ -397,9 +557,11 @@ final class VLCHeaderProxy {
         case 403: return "Forbidden"
         case 404: return "Not Found"
         case 405: return "Method Not Allowed"
+        case 416: return "Range Not Satisfiable"
         case 431: return "Request Header Fields Too Large"
         case 500: return "Internal Server Error"
         case 502: return "Bad Gateway"
+        case 503: return "Service Unavailable"
         default: return "OK"
         }
     }
@@ -458,13 +620,13 @@ final class VLCHeaderProxy {
     private func cleanupExpiredSessions() {
         let now = Date()
         _ = withSessionsLock {
-            sessions = sessions.filter { now.timeIntervalSince($0.value.createdAt) < sessionTTL }
+            sessions = sessions.filter { now.timeIntervalSince($0.value.lastAccessed) < sessionTTL }
         }
     }
 
     private func cleanupOldestSessions() {
         _ = withSessionsLock {
-            let sorted = sessions.sorted { $0.value.createdAt < $1.value.createdAt }
+            let sorted = sessions.sorted { $0.value.lastAccessed < $1.value.lastAccessed }
             let removeCount = max(0, sessions.count - maxSessions + 1)
             if removeCount == 0 {
                 return
@@ -473,6 +635,267 @@ final class VLCHeaderProxy {
             for idx in 0..<removeCount {
                 sessions.removeValue(forKey: sorted[idx].key)
             }
+        }
+    }
+
+    private final class UpstreamBridge: NSObject, URLSessionDataDelegate {
+        private weak var proxy: VLCHeaderProxy?
+        private let request: URLRequest
+        private let requestId: String
+        private let method: String
+        private let targetURL: URL
+        private let sessionId: String
+        private let connection: NWConnection
+        private let callbackQueue: OperationQueue
+
+        private var urlSession: URLSession?
+        private var task: URLSessionDataTask?
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var httpResponse: HTTPURLResponse?
+        private var mode: UpstreamBodyMode = .stream
+        private var bufferedData = Data()
+        private var responseHeadersSent = false
+        private var finished = false
+
+        init(
+            proxy: VLCHeaderProxy,
+            request: URLRequest,
+            requestId: String,
+            method: String,
+            targetURL: URL,
+            sessionId: String,
+            connection: NWConnection
+        ) {
+            self.proxy = proxy
+            self.request = request
+            self.requestId = requestId
+            self.method = method
+            self.targetURL = targetURL
+            self.sessionId = sessionId
+            self.connection = connection
+            let callbackQueue = OperationQueue()
+            callbackQueue.maxConcurrentOperationCount = 1
+            callbackQueue.qualityOfService = .userInitiated
+            self.callbackQueue = callbackQueue
+            super.init()
+        }
+
+        func start() async {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.httpShouldSetCookies = false
+                configuration.httpCookieAcceptPolicy = .never
+                configuration.httpCookieStorage = nil
+                configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+                configuration.timeoutIntervalForRequest = 30
+                configuration.timeoutIntervalForResource = 6 * 60 * 60
+
+                let urlSession = URLSession(configuration: configuration, delegate: self, delegateQueue: callbackQueue)
+                self.urlSession = urlSession
+                let task = urlSession.dataTask(with: request)
+                self.task = task
+                task.resume()
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            dataTask: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            guard let proxy else {
+                completionHandler(.cancel)
+                finish()
+                return
+            }
+
+            guard let http = response as? HTTPURLResponse else {
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream response was not HTTP target=\(proxy.logURLSummary(targetURL))", type: "Error")
+                proxy.sendSimpleResponse(connection, statusCode: 502, body: "Bad gateway")
+                completionHandler(.cancel)
+                finish()
+                return
+            }
+
+            httpResponse = http
+            let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "nil"
+            let contentLength = http.value(forHTTPHeaderField: "Content-Length") ?? "nil"
+            let contentRange = http.value(forHTTPHeaderField: "Content-Range") ?? "nil"
+            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream response status=\(http.statusCode) target=\(proxy.logURLSummary(targetURL)) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: "Stream")
+
+            let responseHeaders = proxy.filteredResponseHeaders(from: http)
+            if method == "HEAD" {
+                proxy.sendResponse(connection, statusCode: http.statusCode, headers: responseHeaders, body: Data())
+                completionHandler(.cancel)
+                finish()
+                return
+            }
+
+            mode = proxy.upstreamBodyMode(for: http, targetURL: targetURL)
+            switch mode {
+            case .playlist, .probe:
+                completionHandler(.allow)
+            case .stream:
+                proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
+                    guard let self else { return }
+                    if let error {
+                        Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                        completionHandler(.cancel)
+                        self.finish()
+                        return
+                    }
+
+                    self.responseHeadersSent = true
+                    completionHandler(.allow)
+                }
+            }
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            guard let proxy, !finished else { return }
+            guard method != "HEAD" else { return }
+
+            switch mode {
+            case .playlist:
+                bufferedData.append(data)
+                if bufferedData.count > proxy.maxPlaylistBytes {
+                    Logger.shared.log("VLCHeaderProxy[\(requestId)]: playlist exceeded rewrite limit; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: "Error")
+                    startStreamingBufferedData(dataTask: dataTask)
+                }
+            case .probe:
+                bufferedData.append(data)
+                if proxy.isPlaylistData(bufferedData) {
+                    mode = .playlist
+                    if bufferedData.count > proxy.maxPlaylistBytes {
+                        Logger.shared.log("VLCHeaderProxy[\(requestId)]: playlist exceeded rewrite limit during probe; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: "Error")
+                        startStreamingBufferedData(dataTask: dataTask)
+                    }
+                } else if proxy.shouldStopPlaylistProbe(bufferedData) {
+                    startStreamingBufferedData(dataTask: dataTask)
+                }
+            case .stream:
+                streamChunk(data, dataTask: dataTask)
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            var redirected = request
+            redirected.httpMethod = self.request.httpMethod
+            for (key, value) in self.request.allHTTPHeaderFields ?? [:] {
+                redirected.setValue(value, forHTTPHeaderField: key)
+            }
+            let redirectTarget = redirected.url.flatMap { proxy?.logURLSummary($0) } ?? "nil"
+            Logger.shared.log("VLCHeaderProxy[\(requestId)]: following redirect status=\(response.statusCode) target=\(redirectTarget)", type: "Stream")
+            completionHandler(redirected)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            guard let proxy, !finished else { return }
+
+            if let error {
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream error target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: "Error")
+                if responseHeadersSent {
+                    connection.cancel()
+                } else {
+                    proxy.sendSimpleResponse(connection, statusCode: 502, body: "Upstream error")
+                }
+                finish()
+                return
+            }
+
+            guard let http = httpResponse else {
+                proxy.sendSimpleResponse(connection, statusCode: 502, body: "Bad gateway")
+                finish()
+                return
+            }
+
+            switch mode {
+            case .playlist, .probe:
+                let (body, headers, rewritten) = proxy.rewrittenPlaylistResponse(
+                    http: http,
+                    data: bufferedData,
+                    targetURL: targetURL,
+                    sessionId: sessionId
+                )
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream done status=\(http.statusCode) bytes=\(bufferedData.count) responseBytes=\(body.count) rewritten=\(rewritten) target=\(proxy.logURLSummary(targetURL))", type: "Stream")
+                proxy.sendResponse(connection, statusCode: http.statusCode, headers: headers, body: body)
+            case .stream:
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream stream complete target=\(proxy.logURLSummary(targetURL))", type: "Stream")
+                connection.cancel()
+            }
+
+            finish()
+        }
+
+        private func startStreamingBufferedData(dataTask: URLSessionDataTask) {
+            guard let proxy, let http = httpResponse else {
+                dataTask.cancel()
+                finish()
+                return
+            }
+
+            let initialData = bufferedData
+            bufferedData.removeAll(keepingCapacity: false)
+            mode = .stream
+            dataTask.suspend()
+
+            let responseHeaders = proxy.filteredResponseHeaders(from: http)
+            proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
+                guard let self else { return }
+                if let error {
+                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                    dataTask.cancel()
+                    self.finish()
+                    return
+                }
+
+                self.responseHeadersSent = true
+                self.streamChunk(initialData, dataTask: dataTask, suspendBeforeSend: false)
+            }
+        }
+
+        private func streamChunk(_ data: Data, dataTask: URLSessionDataTask, suspendBeforeSend: Bool = true) {
+            guard let proxy else {
+                dataTask.cancel()
+                finish()
+                return
+            }
+
+            guard !data.isEmpty else {
+                dataTask.resume()
+                return
+            }
+
+            if suspendBeforeSend {
+                dataTask.suspend()
+            }
+            proxy.sendData(data, on: connection) { [weak self] error in
+                guard let self else { return }
+                if let error {
+                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: downstream send failed: \(error)", type: "Error")
+                    dataTask.cancel()
+                    self.finish()
+                    return
+                }
+                dataTask.resume()
+            }
+        }
+
+        private func finish() {
+            guard !finished else { return }
+            finished = true
+            urlSession?.invalidateAndCancel()
+            continuation?.resume()
+            continuation = nil
         }
     }
 }
