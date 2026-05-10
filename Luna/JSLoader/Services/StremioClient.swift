@@ -189,7 +189,31 @@ final class StremioClient {
     ///   - addon: The addon to build the ID for (checks idPrefixes)
     /// - Returns: The single best content ID to use for this addon
     func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, addon: StremioAddon) -> String? {
-        return buildContentId(
+        return buildContentIds(
+            tmdbId: tmdbId,
+            imdbId: imdbId,
+            type: type,
+            season: season,
+            episode: episode,
+            idPrefixes: addon.manifest.idPrefixes,
+            addonName: addon.manifest.name
+        ).first
+    }
+
+    func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, idPrefixes: [String]?, addonName: String) -> String? {
+        buildContentIds(
+            tmdbId: tmdbId,
+            imdbId: imdbId,
+            type: type,
+            season: season,
+            episode: episode,
+            idPrefixes: idPrefixes,
+            addonName: addonName
+        ).first
+    }
+
+    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, addon: StremioAddon) -> [String] {
+        buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
             type: type,
@@ -200,14 +224,16 @@ final class StremioClient {
         )
     }
 
-    func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, idPrefixes: [String]?, addonName: String) -> String? {
+    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, idPrefixes: [String]?, addonName: String) -> [String] {
         let prefixes = idPrefixes ?? []
-        let supportsTMDB = prefixes.isEmpty || prefixes.contains("tmdb") || prefixes.contains("tmdb:")
-        let supportsIMDB = prefixes.isEmpty || prefixes.contains("tt")
+        let normalizedPrefixes = prefixes.map { $0.lowercased() }
+        let supportsTMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tmdb" || $0.hasPrefix("tmdb:") }
+        let supportsIMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tt" || $0.hasPrefix("tt") || $0 == "imdb" }
 
         Logger.shared.log("Stremio: buildContentId addon=\(addonName) prefixes=\(prefixes) imdbId=\(imdbId ?? "nil") tmdbId=\(tmdbId) type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
+        var candidates: [String] = []
 
-        // Prefer IMDB — it is the universal Stremio standard and avoids extra requests
+        // Prefer IMDB because it is the universal Stremio standard, then try TMDB too.
         if supportsIMDB, let imdb = imdbId, !imdb.isEmpty {
             let ttId = imdb.hasPrefix("tt") ? imdb : "tt\(imdb)"
             var result: String
@@ -216,11 +242,9 @@ final class StremioClient {
             } else {
                 result = ttId
             }
-            Logger.shared.log("Stremio: Using IMDB content ID: \(result)", type: "Stremio")
-            return result
+            candidates.append(result)
         }
 
-        // Fall back to tmdb: only when no IMDB ID is available
         if supportsTMDB {
             var result: String
             if type == "series", let s = season, let e = episode {
@@ -228,12 +252,17 @@ final class StremioClient {
             } else {
                 result = "tmdb:\(tmdbId)"
             }
-            Logger.shared.log("Stremio: No IMDB ID, falling back to TMDB content ID: \(result)", type: "Stremio")
-            return result
+            candidates.append(result)
         }
 
-        Logger.shared.log("Stremio: No supported prefix for addon \(addonName)", type: "Stremio")
-        return nil
+        var seen = Set<String>()
+        let unique = candidates.filter { seen.insert($0).inserted }
+        if unique.isEmpty {
+            Logger.shared.log("Stremio: No supported prefix for addon \(addonName)", type: "Stremio")
+        } else {
+            Logger.shared.log("Stremio: Content ID candidates for \(addonName): \(unique.joined(separator: ", "))", type: "Stremio")
+        }
+        return unique
     }
 
     // MARK: - Helpers

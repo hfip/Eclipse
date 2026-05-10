@@ -7,6 +7,50 @@
 
 import SwiftUI
 
+enum AtmosphereStyle: String, CaseIterable, Identifiable {
+    case gradient
+    case solid
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .gradient: return "Gradient"
+        case .solid: return "Solid Color"
+        }
+    }
+}
+
+enum AtmosphereSolidColorSource: String, CaseIterable, Identifiable {
+    case dominant
+    case custom
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .dominant: return "Poster Dominant"
+        case .custom: return "Custom Color"
+        }
+    }
+}
+
+enum HeroBannerBehavior: String, CaseIterable, Identifiable {
+    case `static`
+    case carousel
+    case launch
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .static: return "Static"
+        case .carousel: return "Carousel"
+        case .launch: return "Change on App Launch"
+        }
+    }
+}
+
 class LunaTheme: ObservableObject {
     static let shared = LunaTheme()
     
@@ -14,6 +58,18 @@ class LunaTheme: ObservableObject {
     
     @Published var settingsGradientColor: Color {
         didSet { saveColor(settingsGradientColor, key: "lunaThemeGradientColor") }
+    }
+
+    @Published var atmosphereStyle: AtmosphereStyle {
+        didSet { UserDefaults.standard.set(atmosphereStyle.rawValue, forKey: "atmosphereStyle") }
+    }
+
+    @Published var atmosphereSolidColorSource: AtmosphereSolidColorSource {
+        didSet { UserDefaults.standard.set(atmosphereSolidColorSource.rawValue, forKey: "atmosphereSolidColorSource") }
+    }
+
+    @Published var atmosphereSolidColor: Color {
+        didSet { saveColor(atmosphereSolidColor, key: "atmosphereSolidColor") }
     }
     
     // MARK: - Constants
@@ -39,6 +95,15 @@ class LunaTheme: ObservableObject {
     private init() {
         self.settingsGradientColor = Self.gradientPresets[0].color
         self.settingsGradientColor = loadColor(key: "lunaThemeGradientColor") ?? Self.gradientPresets[0].color
+        let styleRaw = UserDefaults.standard.string(forKey: "atmosphereStyle") ?? AtmosphereStyle.gradient.rawValue
+        self.atmosphereStyle = AtmosphereStyle(rawValue: styleRaw) ?? .gradient
+        let sourceRaw = UserDefaults.standard.string(forKey: "atmosphereSolidColorSource") ?? AtmosphereSolidColorSource.dominant.rawValue
+        self.atmosphereSolidColorSource = AtmosphereSolidColorSource(rawValue: sourceRaw) ?? .dominant
+        self.atmosphereSolidColor = loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
+    }
+
+    func atmosphereColor(dominant: Color) -> Color {
+        atmosphereSolidColorSource == .custom ? atmosphereSolidColor : dominant
     }
     
     // MARK: - Persistence

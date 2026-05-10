@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Kingfisher
+import AVKit
 
 // MARK: - View-Level Detail Cache
 // Stores the fully-loaded state for a media detail screen so back-navigation is instant.
@@ -23,6 +24,7 @@ private final class MediaDetailCacheStore {
         let isAnimeShow: Bool
         let anilistEpisodes: [AniListEpisode]?
         let animeSeasonTitles: [Int: String]?
+        let animeSeasonAniListIds: [Int: Int]
         let animeSpecialEntries: [AniListSpecialSearchEntry]
         let castMembers: [TMDBCastMember]
         let timestamp: Date
@@ -67,6 +69,7 @@ private final class MediaDetailCacheStore {
             isAnimeShow: existing.isAnimeShow,
             anilistEpisodes: existing.anilistEpisodes,
             animeSeasonTitles: existing.animeSeasonTitles,
+            animeSeasonAniListIds: existing.animeSeasonAniListIds,
             animeSpecialEntries: entries,
             castMembers: existing.castMembers,
             timestamp: Date()
@@ -97,6 +100,7 @@ struct MediaDetailView: View {
     @State private var isAnimeShow = false
     @State private var anilistEpisodes: [AniListEpisode]? = nil
     @State private var animeSeasonTitles: [Int: String]? = nil
+    @State private var animeSeasonAniListIds: [Int: Int] = [:]
     @State private var animeSpecialEntries: [AniListSpecialSearchEntry] = []
     @State private var isLoadingAnimeSpecials = false
     @State private var selectedSpecialEpisodeContext: SpecialEpisodeListContext?
@@ -113,16 +117,41 @@ struct MediaDetailView: View {
     
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
+    @ObservedObject private var downloadManager = DownloadManager.shared
     @ObservedObject private var libraryManager = LibraryManager.shared
+    @ObservedObject private var theme = LunaTheme.shared
     
     @Environment(\.presentationMode) var presentationMode
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("tmdbLanguage") private var selectedLanguage = "en-US"
+    @AppStorage("showCastSection") private var showCastSection = true
     private let nextEpisodeSheetPresentationDelay: TimeInterval = 1.2
+
+    private var atmosphereColor: Color {
+        theme.atmosphereColor(dominant: ambientColor)
+    }
 
     private var hasActiveSources: Bool {
         !serviceManager.activeServices.isEmpty || !stremioManager.activeAddons.isEmpty
+    }
+
+    private var preferDownloadedMedia: Bool {
+        UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
+    }
+
+    private var hasPlayableDownloadForMainButton: Bool {
+        guard preferDownloadedMedia else { return false }
+        if searchResult.isMovie {
+            return downloadManager.completedDownloadItem(tmdbId: searchResult.id, isMovie: true) != nil
+        }
+        return downloadManager.completedDownloads.contains {
+            !$0.isMovie && $0.tmdbId == searchResult.id && downloadManager.localFileURL(for: $0) != nil
+        }
+    }
+
+    private var canUseMainPlayButton: Bool {
+        hasActiveSources || hasPlayableDownloadForMainButton
     }
 
     private var headerHeight: CGFloat {
@@ -161,7 +190,7 @@ struct MediaDetailView: View {
                 .ignoresSafeArea(.all)
             
             Group {
-                ambientColor
+                theme.atmosphereStyle == .solid ? atmosphereColor : ambientColor
             }
             .ignoresSafeArea(.all)
             
@@ -181,14 +210,7 @@ struct MediaDetailView: View {
         }
         .navigationBarHidden(true)
 #if !os(tvOS)
-        .gesture(
-            DragGesture()
-                .onEnded { value in
-                    if value.translation.width > 100 && abs(value.translation.height) < 50 {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                }
-        )
+        .highPriorityGesture(edgeBackSwipeGesture)
 #else
         .onExitCommand {
             presentationMode.wrappedValue.dismiss()
@@ -445,6 +467,20 @@ struct MediaDetailView: View {
             Spacer()
         }
     }
+
+#if !os(tvOS)
+    private var edgeBackSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 18, coordinateSpace: .global)
+            .onEnded { value in
+                guard value.startLocation.x <= 32,
+                      value.translation.width > 70,
+                      abs(value.translation.height) < 70 else {
+                    return
+                }
+                presentationMode.wrappedValue.dismiss()
+            }
+    }
+#endif
     
     @ViewBuilder
     private var mainScrollView: some View {
@@ -511,7 +547,7 @@ struct MediaDetailView: View {
                 if searchResult.isMovie {
                     MovieDetailsSection(movie: movieDetail)
                     
-                    if !castMembers.isEmpty {
+                    if showCastSection && !castMembers.isEmpty {
                         castSection
                     }
                     
@@ -524,11 +560,15 @@ struct MediaDetailView: View {
             }
             .background(
                 ZStack {
-                    LinearGradient(
-                        colors: [ambientColor, LunaTheme.shared.backgroundBase],
-                        startPoint: .top,
-                        endPoint: UnitPoint(x: 0.5, y: 0.35)
-                    )
+                    if theme.atmosphereStyle == .solid {
+                        atmosphereColor
+                    } else {
+                        LinearGradient(
+                            colors: [ambientColor, LunaTheme.shared.backgroundBase],
+                            startPoint: .top,
+                            endPoint: UnitPoint(x: 0.5, y: 0.35)
+                        )
+                    }
                 }
             )
         }
@@ -538,10 +578,10 @@ struct MediaDetailView: View {
     private var gradientOverlay: some View {
         LinearGradient(
             gradient: Gradient(stops: [
-                .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: ambientColor.opacity(0.4), location: 0.2),
-                .init(color: ambientColor.opacity(0.6), location: 0.5),
-                .init(color: ambientColor.opacity(1), location: 1.0)
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.0 : 0.0), location: 0.0),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.5 : 0.4), location: 0.2),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.8 : 0.6), location: 0.5),
+                .init(color: atmosphereColor.opacity(1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
@@ -622,9 +662,9 @@ struct MediaDetailView: View {
                 searchInServices()
             }) {
                 HStack {
-                    Image(systemName: hasActiveSources ? "play.fill" : "exclamationmark.triangle")
+                    Image(systemName: canUseMainPlayButton ? "play.fill" : "exclamationmark.triangle")
                     
-                    Text(hasActiveSources ? playButtonText : "No Services")
+                    Text(canUseMainPlayButton ? playButtonText : "No Services")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -632,14 +672,14 @@ struct MediaDetailView: View {
                 .padding(.horizontal, 25)
                 .applyLiquidGlassBackground(
                     cornerRadius: 12,
-                    fallbackFill: hasActiveSources ? Color.black.opacity(0.2) : Color.gray.opacity(0.3),
-                    fallbackMaterial: hasActiveSources ? .ultraThinMaterial : .thinMaterial,
-                    glassTint: hasActiveSources ? nil : Color.gray.opacity(0.3)
+                    fallbackFill: canUseMainPlayButton ? Color.black.opacity(0.2) : Color.gray.opacity(0.3),
+                    fallbackMaterial: canUseMainPlayButton ? .ultraThinMaterial : .thinMaterial,
+                    glassTint: canUseMainPlayButton ? nil : Color.gray.opacity(0.3)
                 )
-                .foregroundColor(hasActiveSources ? .white : .secondary)
+                .foregroundColor(canUseMainPlayButton ? .white : .secondary)
                 .cornerRadius(8)
             }
-            .disabled(!hasActiveSources)
+            .disabled(!canUseMainPlayButton)
             
             Button(action: {
                 toggleBookmark()
@@ -699,7 +739,7 @@ struct MediaDetailView: View {
                 animeSeasonTitles: animeSeasonTitles,
                 tmdbService: tmdbService
             ) {
-                if !castMembers.isEmpty {
+                if showCastSection && !castMembers.isEmpty {
                     castSection
                 }
                 
@@ -874,7 +914,7 @@ struct MediaDetailView: View {
             )
     }
 
-    private func startAnimeSpecialsLoad(tmdbShowId: Int, fallbackPosterURL: String?) {
+    private func startAnimeSpecialsLoad(tmdbShowId: Int, fallbackPosterURL: String?, baseAniListIds: [Int] = []) {
         guard isAnimeShow, !searchResult.isMovie else {
             animeSpecialEntries = []
             isLoadingAnimeSpecials = false
@@ -894,6 +934,7 @@ struct MediaDetailView: View {
             let entries = await AniListService.shared.fetchSpecialSearchEntries(
                 tmdbShowId: tmdbShowId,
                 fallbackPosterURL: fallbackPosterURL,
+                baseAniListIds: baseAniListIds,
                 tmdbService: tmdbService
             )
 
@@ -969,36 +1010,267 @@ struct MediaDetailView: View {
     
     private func searchInServices() {
         Logger.shared.log("MediaDetailView searchInServices begin: id=\(searchResult.id) isMovie=\(searchResult.isMovie) hasActiveSources=\(hasActiveSources) selectedEpisodeBefore=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") seasonDetailEpisodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
-        // This function will only be called when services are available
-        // since the button is disabled when no services are active
-        
-        if !searchResult.isMovie {
-            if let specialContext = selectedSpecialEpisodeContext {
-                let episode = selectedEpisodeForSearch.flatMap { selected in
-                    specialContext.episodes.first(where: { $0.id == selected.id })
-                } ?? specialContext.episodes.first
-                selectedEpisodeForSearch = episode
-                beginSpecialSearch(context: specialContext, episode: episode)
+        if searchResult.isMovie {
+            selectedEpisodeForSearch = nil
+            Logger.shared.log("MediaDetailView searchInServices movie selected: id=\(searchResult.id)", type: "CrashProbe")
+            if preferDownloadedMedia,
+               let item = downloadManager.completedDownloadItem(tmdbId: searchResult.id, isMovie: true) {
+                playDownloadedItem(item)
                 return
             }
 
-            if selectedEpisodeForSearch != nil {
-                Logger.shared.log("MediaDetailView searchInServices keeping selected episode: id=\(searchResult.id) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
-            } else if let seasonDetail = seasonDetail, !seasonDetail.episodes.isEmpty {
-                selectedEpisodeForSearch = seasonDetail.episodes.first
-                Logger.shared.log("MediaDetailView searchInServices defaulted first episode: id=\(searchResult.id) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
-            } else {
-                selectedEpisodeForSearch = nil
-                Logger.shared.log("MediaDetailView searchInServices no episode available: id=\(searchResult.id)", type: "CrashProbe")
-            }
-        } else {
-            selectedEpisodeForSearch = nil
-            Logger.shared.log("MediaDetailView searchInServices movie selected: id=\(searchResult.id)", type: "CrashProbe")
+            guard hasActiveSources else { return }
+            Logger.shared.log("MediaDetailView searchInServices presenting: id=\(searchResult.id) selectedEpisode=nil", type: "CrashProbe")
+            playSheetRequestId = UUID()
+            showingSearchResults = true
+            return
         }
-        
+
+        Task { @MainActor in
+            await prepareMainEpisodeAndPresent()
+        }
+    }
+
+    @MainActor
+    private func prepareMainEpisodeAndPresent() async {
+        if let specialContext = selectedSpecialEpisodeContext {
+            let episode = selectedEpisodeForSearch.flatMap { selected in
+                specialContext.episodes.first(where: { $0.id == selected.id })
+            } ?? specialContext.episodes.first
+            selectedEpisodeForSearch = episode
+            if preferDownloadedMedia,
+               let episode,
+               let item = downloadedItem(for: episode) {
+                playDownloadedItem(item)
+                return
+            }
+            guard hasActiveSources else { return }
+            beginSpecialSearch(context: specialContext, episode: episode)
+            return
+        }
+
+        let episode = await resolveContinueEpisodeForMainPlay()
+        selectedEpisodeForSearch = episode
+
+        if preferDownloadedMedia,
+           let episode,
+           let item = downloadedItem(for: episode) {
+            playDownloadedItem(item)
+            return
+        }
+        if preferDownloadedMedia,
+           !hasActiveSources,
+           let item = latestDownloadedItemForShow() {
+            playDownloadedItem(item)
+            return
+        }
+
+        guard hasActiveSources else { return }
         Logger.shared.log("MediaDetailView searchInServices presenting: id=\(searchResult.id) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
         playSheetRequestId = UUID()
         showingSearchResults = true
+    }
+
+    @MainActor
+    private func resolveContinueEpisodeForMainPlay() async -> TMDBEpisode? {
+        if let latest = ProgressManager.shared.getLatestEpisodeProgress(showId: searchResult.id),
+           let episode = await episodeForPlayback(seasonNumber: latest.seasonNumber, episodeNumber: latest.episodeNumber) {
+            Logger.shared.log("MediaDetailView main play using latest progress: id=\(searchResult.id) S\(latest.seasonNumber)E\(latest.episodeNumber)", type: "Progress")
+            return episode
+        }
+
+        if let first = await firstPlayableEpisode() {
+            Logger.shared.log("MediaDetailView main play defaulted first episode: id=\(searchResult.id) S\(first.seasonNumber)E\(first.episodeNumber)", type: "Progress")
+            return first
+        }
+
+        Logger.shared.log("MediaDetailView main play found no episode: id=\(searchResult.id)", type: "Progress")
+        return nil
+    }
+
+    @MainActor
+    private func firstPlayableEpisode() async -> TMDBEpisode? {
+        if let first = seasonDetail?.episodes.first {
+            return first
+        }
+
+        if isAnimeShow, let first = anilistEpisodes?.sorted(by: episodeSort).first {
+            return tmdbEpisode(from: first)
+        }
+
+        guard let tvShowDetail,
+              let firstSeason = tvShowDetail.seasons.filter({ $0.seasonNumber > 0 }).sorted(by: { $0.seasonNumber < $1.seasonNumber }).first else {
+            return nil
+        }
+
+        return await episodeForPlayback(seasonNumber: firstSeason.seasonNumber, episodeNumber: 1)
+    }
+
+    @MainActor
+    private func episodeForPlayback(seasonNumber: Int, episodeNumber: Int) async -> TMDBEpisode? {
+        if let loaded = seasonDetail,
+           loaded.seasonNumber == seasonNumber,
+           let episode = loaded.episodes.first(where: { $0.episodeNumber == episodeNumber }) {
+            return episode
+        }
+
+        if isAnimeShow,
+           let aniEpisode = anilistEpisodes?.first(where: { $0.seasonNumber == seasonNumber && $0.number == episodeNumber }) {
+            return tmdbEpisode(from: aniEpisode)
+        }
+
+        if let show = tvShowDetail,
+           let season = show.seasons.first(where: { $0.seasonNumber == seasonNumber }) {
+            do {
+                let detail = try await tmdbService.getSeasonDetails(tvShowId: searchResult.id, seasonNumber: seasonNumber)
+                selectedSeason = season
+                seasonDetail = detail
+                return detail.episodes.first(where: { $0.episodeNumber == episodeNumber }) ?? detail.episodes.first
+            } catch {
+                Logger.shared.log("MediaDetailView failed loading last watched season S\(seasonNumber): \(error.localizedDescription)", type: "Progress")
+            }
+        }
+
+        return seasonDetail?.episodes.first
+    }
+
+    private func tmdbEpisode(from aniEpisode: AniListEpisode) -> TMDBEpisode {
+        TMDBEpisode(
+            id: searchResult.id * 1000 + aniEpisode.seasonNumber * 100 + aniEpisode.number,
+            name: aniEpisode.title,
+            overview: aniEpisode.description,
+            stillPath: aniEpisode.stillPath,
+            episodeNumber: aniEpisode.number,
+            seasonNumber: aniEpisode.seasonNumber,
+            airDate: aniEpisode.airDate,
+            runtime: aniEpisode.runtime,
+            voteAverage: 0,
+            voteCount: 0
+        )
+    }
+
+    private func episodeSort(_ lhs: AniListEpisode, _ rhs: AniListEpisode) -> Bool {
+        if lhs.seasonNumber == rhs.seasonNumber {
+            return lhs.number < rhs.number
+        }
+        return lhs.seasonNumber < rhs.seasonNumber
+    }
+
+    private func downloadedItem(for episode: TMDBEpisode) -> DownloadItem? {
+        downloadManager.completedDownloadItem(
+            tmdbId: searchResult.id,
+            isMovie: false,
+            seasonNumber: episode.seasonNumber,
+            episodeNumber: episode.episodeNumber
+        )
+    }
+
+    private func latestDownloadedItemForShow() -> DownloadItem? {
+        downloadManager.completedDownloads
+            .filter { !$0.isMovie && $0.tmdbId == searchResult.id && downloadManager.localFileURL(for: $0) != nil }
+            .sorted {
+                let lhsDate = $0.dateCompleted ?? $0.dateAdded
+                let rhsDate = $1.dateCompleted ?? $1.dateAdded
+                return lhsDate > rhsDate
+            }
+            .first
+    }
+
+    private func playDownloadedItem(_ item: DownloadItem) {
+        guard let fileURL = downloadManager.localFileURL(for: item) else {
+            Logger.shared.log("Downloaded file not found for: \(item.id)", type: "Download")
+            return
+        }
+
+        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "VLC"
+        let subtitleArray: [String]? = downloadManager.localSubtitleURL(for: item).map { [$0.absoluteString] }
+
+        if inAppRaw == "mpv" || inAppRaw == "VLC" {
+            let preset = PlayerPreset.presets.first
+            let pvc = PlayerViewController(
+                url: fileURL,
+                preset: preset ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: []),
+                headers: [:],
+                subtitles: subtitleArray,
+                mediaInfo: item.mediaInfo
+            )
+            pvc.isAnimeHint = item.isAnime
+            pvc.episodePlaybackContext = item.episodePlaybackContext
+            pvc.originalTMDBSeasonNumber = item.episodePlaybackContext?.resolvedTMDBSeasonNumber
+            pvc.originalTMDBEpisodeNumber = item.episodePlaybackContext?.resolvedTMDBEpisodeNumber
+            pvc.modalPresentationStyle = .fullScreen
+
+            if !item.isMovie {
+                pvc.onRequestNextEpisode = { seasonNumber, episodeNumber in
+                    guard let nextItem = nextDownloadedEpisode(
+                        for: item.tmdbId,
+                        requestedSeasonNumber: seasonNumber,
+                        requestedEpisodeNumber: episodeNumber,
+                        currentItemId: item.id
+                    ) else {
+                        Logger.shared.log("NextEpisode: No downloaded next episode found for tmdbId=\(item.tmdbId) after \(item.id)", type: "Player")
+                        return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    playDownloadedItem(nextItem)
+                }
+            }
+        }
+
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController,
+               let topmostVC = rootVC.topmostViewController() as UIViewController? {
+                topmostVC.present(pvc, animated: true, completion: nil)
+            }
+        } else {
+            let playerVC = NormalPlayer()
+            let item2 = AVPlayerItem(url: fileURL)
+            playerVC.player = AVPlayer(playerItem: item2)
+            playerVC.mediaInfo = item.mediaInfo
+            playerVC.episodePlaybackContext = item.episodePlaybackContext
+            playerVC.modalPresentationStyle = .fullScreen
+
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController,
+               let topmostVC = rootVC.topmostViewController() as UIViewController? {
+                topmostVC.present(playerVC, animated: true) {
+                    playerVC.playAtDefaultSpeed()
+                }
+            }
+        }
+    }
+
+    private func nextDownloadedEpisode(
+        for tmdbId: Int,
+        requestedSeasonNumber: Int,
+        requestedEpisodeNumber: Int,
+        currentItemId: String
+    ) -> DownloadItem? {
+        let episodes = downloadManager.completedDownloads
+            .filter {
+                !$0.isMovie &&
+                $0.tmdbId == tmdbId &&
+                $0.seasonNumber != nil &&
+                $0.episodeNumber != nil &&
+                downloadManager.localFileURL(for: $0) != nil
+            }
+            .sorted {
+                if $0.seasonNumber == $1.seasonNumber {
+                    return ($0.episodeNumber ?? 0) < ($1.episodeNumber ?? 0)
+                }
+                return ($0.seasonNumber ?? 0) < ($1.seasonNumber ?? 0)
+            }
+
+        if let requested = episodes.first(where: {
+            $0.seasonNumber == requestedSeasonNumber && $0.episodeNumber == requestedEpisodeNumber
+        }) {
+            return requested
+        }
+
+        guard let currentIndex = episodes.firstIndex(where: { $0.id == currentItemId }) else { return nil }
+        let nextIndex = episodes.index(after: currentIndex)
+        guard nextIndex < episodes.endIndex else { return nil }
+        return episodes[nextIndex]
     }
     
     private func downloadInServices() {
@@ -1099,6 +1371,7 @@ struct MediaDetailView: View {
                 self.isAnimeShow = cached.isAnimeShow
                 self.anilistEpisodes = cached.anilistEpisodes
                 self.animeSeasonTitles = cached.animeSeasonTitles
+                self.animeSeasonAniListIds = cached.animeSeasonAniListIds
                 self.animeSpecialEntries = cached.animeSpecialEntries
                 self.selectedEpisodeForSearch = nil
                 self.castMembers = cached.castMembers
@@ -1109,7 +1382,8 @@ struct MediaDetailView: View {
                 if cached.isAnimeShow, !self.searchResult.isMovie, cached.animeSpecialEntries.isEmpty {
                     self.startAnimeSpecialsLoad(
                         tmdbShowId: self.searchResult.id,
-                        fallbackPosterURL: cached.tvShowDetail?.fullPosterURL
+                        fallbackPosterURL: cached.tvShowDetail?.fullPosterURL,
+                        baseAniListIds: Array(cached.animeSeasonAniListIds.values)
                     )
                 } else {
                     self.isLoadingAnimeSpecials = false
@@ -1123,6 +1397,7 @@ struct MediaDetailView: View {
         errorMessage = nil
         seasonDetail = nil
         selectedEpisodeForSearch = nil
+        animeSeasonAniListIds = [:]
         animeSpecialEntries = []
         isLoadingAnimeSpecials = false
         selectedSpecialEpisodeContext = nil
@@ -1186,6 +1461,7 @@ struct MediaDetailView: View {
                             isAnimeShow: false,
                             anilistEpisodes: nil,
                             animeSeasonTitles: nil,
+                            animeSeasonAniListIds: [:],
                             animeSpecialEntries: [],
                             castMembers: self.castMembers,
                             timestamp: Date()
@@ -1333,15 +1609,18 @@ struct MediaDetailView: View {
                             Logger.shared.log("MediaDetailView: assigned detailWithAniSeasons tmdbId=\(detail.id) seasons=\(detailWithAniSeasons.seasons.count) totalEpisodes=\(detailWithAniSeasons.numberOfEpisodes ?? 0)", type: "CrashProbe")
                             
                             var seasonTitles: [Int: String] = [:]
+                            var seasonAniListIds: [Int: Int] = [:]
                             var allEpisodes: [AniListEpisode] = []
                             for season in animeData.seasons {
                                 Logger.shared.log("MediaDetailView: flatten AniList season tmdbId=\(detail.id) season=\(season.seasonNumber) title=\(season.title) episodes=\(season.episodes.count)", type: "CrashProbe")
                                 seasonTitles[season.seasonNumber] = season.title
+                                seasonAniListIds[season.seasonNumber] = season.anilistId
                                 allEpisodes.append(contentsOf: season.episodes)
                             }
                             Logger.shared.log("MediaDetailView: AniList season conversion complete tmdbId=\(detail.id) aniSeasons=\(aniSeasons.count) summary=\(aniSeasons.prefix(8).map { "s\($0.seasonNumber):id\($0.id):eps\($0.episodeCount)" }.joined(separator: "|"))", type: "CrashProbe")
                             Logger.shared.log("MediaDetailView: anime state preassign tmdbId=\(detail.id) aniSeasons=\(aniSeasons.count) allEpisodes=\(allEpisodes.count) seasonTitles=\(seasonTitles.count)", type: "CrashProbe")
                             self.animeSeasonTitles = seasonTitles
+                            self.animeSeasonAniListIds = seasonAniListIds
                             self.anilistEpisodes = allEpisodes
                             
                             if let firstSeason = aniSeasons.first {
@@ -1357,6 +1636,7 @@ struct MediaDetailView: View {
                             self.tvShowDetail = detail
                             self.anilistEpisodes = nil
                             self.animeSeasonTitles = nil
+                            self.animeSeasonAniListIds = [:]
                             if let firstSeason = detail.seasons.first(where: { $0.seasonNumber > 0 }) {
                                 self.selectedSeason = firstSeason
                                 Logger.shared.log("MediaDetailView: selected first TMDB season tmdbId=\(detail.id) season=\(firstSeason.seasonNumber) episodeCount=\(firstSeason.episodeCount)", type: "CrashProbe")
@@ -1388,13 +1668,18 @@ struct MediaDetailView: View {
                             isAnimeShow: self.isAnimeShow,
                             anilistEpisodes: self.anilistEpisodes,
                             animeSeasonTitles: self.animeSeasonTitles,
+                            animeSeasonAniListIds: self.animeSeasonAniListIds,
                             animeSpecialEntries: self.animeSpecialEntries,
                             castMembers: self.castMembers,
                             timestamp: Date()
                         ))
                         Logger.shared.log("MediaDetailView: cache stored key=\(detailCacheKey) selectedSeason=\(self.selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
                         if detectedAsAnime {
-                            self.startAnimeSpecialsLoad(tmdbShowId: detail.id, fallbackPosterURL: detail.fullPosterURL)
+                            self.startAnimeSpecialsLoad(
+                                tmdbShowId: detail.id,
+                                fallbackPosterURL: detail.fullPosterURL,
+                                baseAniListIds: Array(self.animeSeasonAniListIds.values)
+                            )
                         } else {
                             self.animeSpecialEntries = []
                             self.isLoadingAnimeSpecials = false

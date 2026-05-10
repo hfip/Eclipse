@@ -19,6 +19,11 @@ struct HomeView: View {
     @StateObject private var catalogManager = CatalogManager.shared
     @StateObject private var tmdbService = TMDBService.shared
     @StateObject private var contentFilter = TMDBContentFilter.shared
+    @ObservedObject private var theme = LunaTheme.shared
+    @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
+    @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
+
+    private let heroCarouselTimer = Timer.publish(every: 12, on: .main, in: .common).autoconnect()
     
     private var enabledCatalogs: [Catalog] {
         return catalogManager.getEnabledCatalogs()
@@ -33,6 +38,7 @@ struct HomeView: View {
     }
 
     private var ambientColor: Color { homeViewModel.ambientColor }
+    private var atmosphereColor: Color { theme.atmosphereColor(dominant: ambientColor) }
     
     var body: some View {
         if #available(iOS 16.0, *) {
@@ -53,7 +59,7 @@ struct HomeView: View {
                 .ignoresSafeArea(.all)
             
             Group {
-                homeViewModel.ambientColor
+                theme.atmosphereStyle == .solid ? atmosphereColor : homeViewModel.ambientColor
             }
             .ignoresSafeArea(.all)
             
@@ -79,6 +85,15 @@ struct HomeView: View {
             if homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
             }
+        }
+        .onChangeComp(of: heroBannerCatalogId) { _, _ in
+            homeViewModel.refreshHeroContentForSettingsChange()
+        }
+        .onChangeComp(of: heroBannerBehavior) { _, _ in
+            homeViewModel.refreshHeroContentForSettingsChange()
+        }
+        .onReceive(heroCarouselTimer) { _ in
+            homeViewModel.advanceHeroCarouselIfNeeded()
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
@@ -182,9 +197,9 @@ struct HomeView: View {
         LinearGradient(
             gradient: Gradient(stops: [
                 .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: ambientColor.opacity(0.4), location: 0.2),
-                .init(color: ambientColor.opacity(0.7), location: 0.6),
-                .init(color: ambientColor.opacity(1), location: 1.0)
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.5 : 0.4), location: 0.2),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.8 : 0.7), location: 0.6),
+                .init(color: atmosphereColor.opacity(1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
@@ -415,11 +430,17 @@ struct HomeView: View {
             Spacer(minLength: 50)
         }
         .background(
-            LinearGradient(
-                colors: [ambientColor, Color.clear, LunaTheme.shared.backgroundBase],
-                startPoint: .top,
-                endPoint: UnitPoint(x: 0.5, y: 0.3)
-            )
+            Group {
+                if theme.atmosphereStyle == .solid {
+                    atmosphereColor
+                } else {
+                    LinearGradient(
+                        colors: [ambientColor, Color.clear, LunaTheme.shared.backgroundBase],
+                        startPoint: .top,
+                        endPoint: UnitPoint(x: 0.5, y: 0.3)
+                    )
+                }
+            }
         )
     }
     

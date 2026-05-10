@@ -240,32 +240,44 @@ class StremioAddonManager: ObservableObject {
     ) async -> (StremioAddon, [StremioStream])? {
         Logger.shared.log("Stremio: Starting fetch for addon '\(addon.manifest.name)' baseURL=\(addon.configuredURL)", type: "Stremio")
 
-        guard let contentId = client.buildContentId(
+        let contentIds = client.buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
             type: type,
             season: season,
             episode: episode,
             addon: addon
-        ) else {
-            Logger.shared.log("Stremio: No valid content ID for \(addon.manifest.name) — skipping", type: "Stremio")
+        )
+
+        guard !contentIds.isEmpty else {
+            Logger.shared.log("Stremio: No valid content ID for \(addon.manifest.name) - skipping", type: "Stremio")
             return (addon, [])
         }
 
-        Logger.shared.log("Stremio: \(addon.manifest.name) requesting streams with contentId='\(contentId)'", type: "Stremio")
+        var lastError: Error?
+        for contentId in contentIds {
+            Logger.shared.log("Stremio: \(addon.manifest.name) requesting streams with contentId='\(contentId)'", type: "Stremio")
 
-        do {
-            let streams = try await client.fetchStreams(
-                baseURL: addon.configuredURL,
-                type: type,
-                id: contentId
-            )
-            Logger.shared.log("Stremio: \(addon.manifest.name) returned \(streams.count) stream(s) for '\(contentId)'", type: "Stremio")
-            return (addon, streams)
-        } catch {
-            Logger.shared.log("Stremio: \(addon.manifest.name) FAILED with id '\(contentId)': \(error.localizedDescription)", type: "Stremio")
-            return (addon, [])
+            do {
+                let streams = try await client.fetchStreams(
+                    baseURL: addon.configuredURL,
+                    type: type,
+                    id: contentId
+                )
+                Logger.shared.log("Stremio: \(addon.manifest.name) returned \(streams.count) stream(s) for '\(contentId)'", type: "Stremio")
+                if !streams.isEmpty {
+                    return (addon, streams)
+                }
+            } catch {
+                lastError = error
+                Logger.shared.log("Stremio: \(addon.manifest.name) FAILED with id '\(contentId)': \(error.localizedDescription)", type: "Stremio")
+            }
         }
+
+        if let lastError {
+            Logger.shared.log("Stremio: \(addon.manifest.name) exhausted content IDs: \(lastError.localizedDescription)", type: "Stremio")
+        }
+        return (addon, [])
     }
 
     private func generateAddonUUID(manifest: StremioManifest) -> UUID {

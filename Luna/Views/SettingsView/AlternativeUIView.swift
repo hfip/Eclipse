@@ -11,8 +11,12 @@ struct AlternativeUIView: View {
     @AppStorage("seasonMenu") private var useSeasonMenu = false
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList = false
     @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
+    @AppStorage("showCastSection") private var showCastSection = true
+    @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
+    @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
     
     @StateObject private var accentColorManager = AccentColorManager.shared
+    @StateObject private var catalogManager = CatalogManager.shared
     @ObservedObject private var theme = LunaTheme.shared
     
     var body: some View {
@@ -89,6 +93,24 @@ struct AlternativeUIView: View {
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
+                        Text("Show Cast Section")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("Show cast rows on media detail pages.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $showCastSection)
+                        .tint(accentColorManager.currentAccentColor)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Alternative Season Menu")
                             .font(.subheadline)
                             .fontWeight(.medium)
@@ -144,6 +166,104 @@ struct AlternativeUIView: View {
                 Text("DISPLAY OPTIONS")
             } footer: {
                 Text("Classic schedule keeps the old all-days list. The alternative season menu uses a dropdown instead of a horizontal scroll for selecting seasons.")
+            }
+
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hero Banner Catalogue")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("Choose the home catalogue used for the large banner.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Picker("", selection: $heroBannerCatalogId) {
+                        ForEach(catalogManager.catalogs.sorted { $0.order < $1.order }) { catalog in
+                            Text(catalog.name).tag(catalog.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hero Banner Behavior")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("Control when the banner changes.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Picker("", selection: $heroBannerBehavior) {
+                        ForEach(HeroBannerBehavior.allCases) { behavior in
+                            Text(behavior.displayName).tag(behavior.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            } header: {
+                Text("Hero Banner")
+            }
+
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Atmosphere Style")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("Choose the app background atmosphere.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Picker("", selection: $theme.atmosphereStyle) {
+                        ForEach(AtmosphereStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                if theme.atmosphereStyle == .solid {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Solid Color Source")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            Text("Use poster color where available, or a custom color everywhere.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+
+                        Picker("", selection: $theme.atmosphereSolidColorSource) {
+                            ForEach(AtmosphereSolidColorSource.allCases) { source in
+                                Text(source.displayName).tag(source)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+
+#if !os(tvOS)
+                    if theme.atmosphereSolidColorSource == .custom {
+                        ColorPicker("Custom Atmosphere Color", selection: $theme.atmosphereSolidColor)
+                    }
+#endif
+                }
+            } header: {
+                Text("Atmosphere")
+            } footer: {
+                Text("Gradient keeps the current default look. Solid Color replaces the gradient atmosphere with the poster's dominant color or your chosen color.")
             }
         }
         .navigationTitle("Appearance")

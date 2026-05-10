@@ -82,6 +82,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(inAppPlayer.rawValue, forKey: "inAppPlayer") }
     }
 
+    @Published var preferDownloadedMedia: Bool {
+        didSet { UserDefaults.standard.set(preferDownloadedMedia, forKey: "preferDownloadedMedia") }
+    }
+
     @Published var aniSkipAutoSkip: Bool {
         didSet { UserDefaults.standard.set(aniSkipAutoSkip, forKey: "aniSkipAutoSkip") }
     }
@@ -156,6 +160,8 @@ final class PlayerSettingsStore: ObservableObject {
         
         let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.vlc.rawValue
         self.inAppPlayer = InAppPlayer(rawValue: inAppRaw) ?? .vlc
+
+        self.preferDownloadedMedia = UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
 
         self.aniSkipAutoSkip = UserDefaults.standard.bool(forKey: "aniSkipAutoSkip")
 
@@ -339,6 +345,24 @@ struct PlayerSettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Prefer Downloaded Episodes")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("When a matching download exists, play it from detail pages instead of streaming.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $store.preferDownloadedMedia)
+                        .tint(accentColorManager.currentAccentColor)
                 }
             }
             

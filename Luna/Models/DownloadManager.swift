@@ -485,6 +485,20 @@ final class DownloadManager: NSObject, ObservableObject {
         }
         return downloads.first(where: { $0.id == id })
     }
+
+    func completedDownloadItem(tmdbId: Int, isMovie: Bool, seasonNumber: Int? = nil, episodeNumber: Int? = nil) -> DownloadItem? {
+        guard let item = downloadItem(
+            tmdbId: tmdbId,
+            isMovie: isMovie,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber
+        ),
+              item.status == .completed,
+              localFileURL(for: item) != nil else {
+            return nil
+        }
+        return item
+    }
     
     /// Total storage used by downloads
     func calculateStorageUsed() -> Int64 {

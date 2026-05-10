@@ -747,11 +747,12 @@ struct ModulesSearchResultsSheet: View {
     
     private func filterResults(for results: [SearchItem]) -> (highQuality: [SearchItem], lowQuality: [SearchItem]) {
         let sortedResults = results.enumerated().map { index, result -> (index: Int, result: SearchItem, similarity: Double) in
-            let primarySimilarity = algorithmManager.calculateSimilarity(original: mediaTitle, result: result.title)
-            let originalSimilarity = originalTitle.map { algorithmManager.calculateSimilarity(original: $0, result: result.title) } ?? 0.0
-            return (index: index, result: result, similarity: max(primarySimilarity, originalSimilarity))
+            return (index: index, result: result, similarity: resultSimilarity(result))
         }.sorted {
             if $0.similarity != $1.similarity { return $0.similarity > $1.similarity }
+            let lhsTie = resultTieBreakScore($0.result)
+            let rhsTie = resultTieBreakScore($1.result)
+            if lhsTie != rhsTie { return lhsTie > rhsTie }
             return $0.index < $1.index
         }
         
@@ -790,16 +791,52 @@ struct ModulesSearchResultsSheet: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var sheetTitleBaseForMatching: String {
+        stripEpisodeSuffix(from: displayTitle)
+    }
+
+    private func stripEpisodeSuffix(from title: String) -> String {
+        let patterns = [
+            #"(?i)\s*-\s*S\d{1,3}E\d{1,4}$"#,
+            #"(?i)\s*S\d{1,3}E\d{1,4}$"#,
+            #"(?i)\s*-\s*E\d{1,4}$"#,
+            #"(?i)\s*E\d{1,4}$"#,
+            #"(?i)\s*episode\s+\d{1,4}$"#
+        ]
+
+        var stripped = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        for pattern in patterns {
+            if let range = stripped.range(of: pattern, options: .regularExpression) {
+                stripped.removeSubrange(range)
+                break
+            }
+        }
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func titleMatchCandidates() -> [String] {
+        var seen = Set<String>()
+        return [
+            sheetTitleBaseForMatching,
+            effectiveTitle,
+            mediaTitle,
+            strippedAnimeFallbackTitle,
+            originalTitle
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .filter { seen.insert(normalizeTitle($0)).inserted }
+    }
+
     private func resultSimilarity(_ result: SearchItem) -> Double {
-        let primarySimilarity = algorithmManager.calculateSimilarity(original: mediaTitle, result: result.title)
-        let originalSimilarity = originalTitle.map { algorithmManager.calculateSimilarity(original: $0, result: result.title) } ?? 0.0
-        return max(primarySimilarity, originalSimilarity)
+        titleMatchCandidates()
+            .map { algorithmManager.calculateSimilarity(original: $0, result: result.title) }
+            .max() ?? 0.0
     }
 
     private func resultTieBreakScore(_ result: SearchItem) -> Int {
         let normalizedResult = normalizeTitle(result.title)
-        let expectedTitles = [displayTitle, effectiveTitle, mediaTitle, originalTitle]
-            .compactMap { $0 }
+        let expectedTitles = titleMatchCandidates()
             .map(normalizeTitle)
             .filter { !$0.isEmpty }
 
@@ -820,6 +857,11 @@ struct ModulesSearchResultsSheet: View {
             }
         }
 
+        if !sheetTitleBaseForMatching.isEmpty {
+            let sheetScore = algorithmManager.calculateSimilarity(original: sheetTitleBaseForMatching, result: result.title)
+            score += Int(sheetScore * 10)
+        }
+
         return score
     }
 
@@ -834,6 +876,9 @@ struct ModulesSearchResultsSheet: View {
         .filter { $0.similarity >= threshold }
         .sorted { lhs, rhs in
             if lhs.similarity != rhs.similarity { return lhs.similarity > rhs.similarity }
+            let lhsTie = resultTieBreakScore(lhs.result)
+            let rhsTie = resultTieBreakScore(rhs.result)
+            if lhsTie != rhsTie { return lhsTie > rhsTie }
             return lhs.index < rhs.index
         }
 
@@ -1178,30 +1223,39 @@ struct ModulesSearchResultsSheet: View {
         let season = streamLookupSeasonNumber
         let episode = streamLookupEpisodeNumber
 
-        guard let contentId = client.buildContentId(
+        let contentIds = client.buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
             type: type,
             season: season,
             episode: episode,
             addon: addon
-        ) else {
+        )
+
+        guard !contentIds.isEmpty else {
             viewModel.stremioResults[addon.id] = []
             viewModel.stremioSearchedAddons.insert(addon.id)
             return nil
         }
 
-        do {
-            let streams = try await client.fetchStreams(baseURL: addon.configuredURL, type: type, id: contentId)
-            viewModel.stremioResults[addon.id] = streams
-            viewModel.stremioSearchedAddons.insert(addon.id)
-            return bestStremioStream(from: streams)
-        } catch {
-            viewModel.stremioResults[addon.id] = []
-            viewModel.stremioSearchedAddons.insert(addon.id)
-            Logger.shared.log("Auto Mode Stremio failed for \(addon.manifest.name): \(error.localizedDescription)", type: "Stremio")
-            return nil
+        var collected: [StremioStream] = []
+        for contentId in contentIds {
+            do {
+                let streams = try await client.fetchStreams(baseURL: addon.configuredURL, type: type, id: contentId)
+                collected.append(contentsOf: streams)
+                if let best = bestStremioStream(from: streams) {
+                    viewModel.stremioResults[addon.id] = streams
+                    viewModel.stremioSearchedAddons.insert(addon.id)
+                    return best
+                }
+            } catch {
+                Logger.shared.log("Auto Mode Stremio failed for \(addon.manifest.name) id=\(contentId): \(error.localizedDescription)", type: "Stremio")
+            }
         }
+
+        viewModel.stremioResults[addon.id] = collected
+        viewModel.stremioSearchedAddons.insert(addon.id)
+        return nil
     }
 
     @MainActor

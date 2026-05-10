@@ -29,18 +29,23 @@ struct SettingsGradientBackground: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height * 2.5
-            LinearGradient(
-                stops: [
-                    .init(color: theme.backgroundBase, location: 0.0),
-                    .init(color: theme.settingsGradientColor.opacity(0.6), location: 0.15),
-                    .init(color: theme.settingsGradientColor.opacity(0.3), location: 0.35),
-                    .init(color: theme.backgroundBase, location: 0.6)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: h)
-            .offset(y: gradientOffset)
+            if theme.atmosphereStyle == .solid {
+                theme.atmosphereColor(dominant: theme.settingsGradientColor)
+                    .frame(height: h)
+            } else {
+                LinearGradient(
+                    stops: [
+                        .init(color: theme.backgroundBase, location: 0.0),
+                        .init(color: theme.settingsGradientColor.opacity(0.6), location: 0.15),
+                        .init(color: theme.settingsGradientColor.opacity(0.3), location: 0.35),
+                        .init(color: theme.backgroundBase, location: 0.6)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: h)
+                .offset(y: gradientOffset)
+            }
         }
         .clipped()
     }
@@ -76,20 +81,25 @@ struct GlobalGradientBackground: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height * 5.0
-            LinearGradient(
-                stops: [
-                    .init(color: theme.backgroundBase, location: 0.0),
-                    .init(color: gradientColor.opacity(0.7), location: 0.06),
-                    .init(color: gradientColor.opacity(0.4), location: 0.15),
-                    .init(color: gradientColor.opacity(0.15), location: 0.3),
-                    .init(color: gradientColor.opacity(0.05), location: 0.5),
-                    .init(color: theme.backgroundBase, location: 0.7)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: h)
-            .offset(y: gradientOffset)
+            if theme.atmosphereStyle == .solid {
+                theme.atmosphereColor(dominant: gradientColor)
+                    .frame(height: h)
+            } else {
+                LinearGradient(
+                    stops: [
+                        .init(color: theme.backgroundBase, location: 0.0),
+                        .init(color: gradientColor.opacity(0.7), location: 0.06),
+                        .init(color: gradientColor.opacity(0.4), location: 0.15),
+                        .init(color: gradientColor.opacity(0.15), location: 0.3),
+                        .init(color: gradientColor.opacity(0.05), location: 0.5),
+                        .init(color: theme.backgroundBase, location: 0.7)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: h)
+                .offset(y: gradientOffset)
+            }
         }
         .clipped()
     }

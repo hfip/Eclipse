@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Kingfisher
+import AVKit
 
 struct TVShowSeasonsSection<InsertedContent: View>: View {
     let tvShow: TMDBTVShowWithSeasons?
@@ -40,7 +41,9 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
+    @ObservedObject private var downloadManager = DownloadManager.shared
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList: Bool = false
+    @AppStorage("preferDownloadedMedia") private var preferDownloadedMedia: Bool = false
     private var isGroupedBySeasons: Bool {
         return tvShow?.seasons.filter { $0.seasonNumber > 0 }.count ?? 0 > 1
     }
@@ -560,7 +563,117 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         Logger.shared.log("TVShowSeasonsSection episode tapped: showId=\(tvShow?.id ?? 0) episode=S\(episode.seasonNumber)E\(episode.episodeNumber) id=\(episode.id)", type: "CrashProbe")
         selectedEpisodeForSearch = episode
         selectedEpisodePlaybackContext = playbackContext
+        if preferDownloadedMedia,
+           let item = downloadedItem(for: episode) {
+            playDownloadedItem(item)
+            return
+        }
         searchInServicesForEpisode(episode: episode, playbackContext: playbackContext)
+    }
+
+    private func downloadedItem(for episode: TMDBEpisode) -> DownloadItem? {
+        guard let tvShow else { return nil }
+        return downloadManager.completedDownloadItem(
+            tmdbId: tvShow.id,
+            isMovie: false,
+            seasonNumber: episode.seasonNumber,
+            episodeNumber: episode.episodeNumber
+        )
+    }
+
+    private func playDownloadedItem(_ item: DownloadItem) {
+        guard let fileURL = downloadManager.localFileURL(for: item) else {
+            Logger.shared.log("Downloaded file not found for: \(item.id)", type: "Download")
+            return
+        }
+
+        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "VLC"
+        let subtitleArray: [String]? = downloadManager.localSubtitleURL(for: item).map { [$0.absoluteString] }
+
+        if inAppRaw == "mpv" || inAppRaw == "VLC" {
+            let preset = PlayerPreset.presets.first
+            let pvc = PlayerViewController(
+                url: fileURL,
+                preset: preset ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: []),
+                headers: [:],
+                subtitles: subtitleArray,
+                mediaInfo: item.mediaInfo
+            )
+            pvc.isAnimeHint = item.isAnime
+            pvc.episodePlaybackContext = item.episodePlaybackContext
+            pvc.originalTMDBSeasonNumber = item.episodePlaybackContext?.resolvedTMDBSeasonNumber
+            pvc.originalTMDBEpisodeNumber = item.episodePlaybackContext?.resolvedTMDBEpisodeNumber
+            pvc.modalPresentationStyle = .fullScreen
+
+            pvc.onRequestNextEpisode = { seasonNumber, episodeNumber in
+                guard let nextItem = nextDownloadedEpisode(
+                    for: item.tmdbId,
+                    requestedSeasonNumber: seasonNumber,
+                    requestedEpisodeNumber: episodeNumber,
+                    currentItemId: item.id
+                ) else {
+                    Logger.shared.log("NextEpisode: No downloaded next episode found for tmdbId=\(item.tmdbId) after \(item.id)", type: "Player")
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    playDownloadedItem(nextItem)
+                }
+            }
+
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController,
+               let topmostVC = rootVC.topmostViewController() as UIViewController? {
+                topmostVC.present(pvc, animated: true, completion: nil)
+            }
+        } else {
+            let playerVC = NormalPlayer()
+            let item2 = AVPlayerItem(url: fileURL)
+            playerVC.player = AVPlayer(playerItem: item2)
+            playerVC.mediaInfo = item.mediaInfo
+            playerVC.episodePlaybackContext = item.episodePlaybackContext
+            playerVC.modalPresentationStyle = .fullScreen
+
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController,
+               let topmostVC = rootVC.topmostViewController() as UIViewController? {
+                topmostVC.present(playerVC, animated: true) {
+                    playerVC.playAtDefaultSpeed()
+                }
+            }
+        }
+    }
+
+    private func nextDownloadedEpisode(
+        for tmdbId: Int,
+        requestedSeasonNumber: Int,
+        requestedEpisodeNumber: Int,
+        currentItemId: String
+    ) -> DownloadItem? {
+        let episodes = downloadManager.completedDownloads
+            .filter {
+                !$0.isMovie &&
+                $0.tmdbId == tmdbId &&
+                $0.seasonNumber != nil &&
+                $0.episodeNumber != nil &&
+                downloadManager.localFileURL(for: $0) != nil
+            }
+            .sorted {
+                if $0.seasonNumber == $1.seasonNumber {
+                    return ($0.episodeNumber ?? 0) < ($1.episodeNumber ?? 0)
+                }
+                return ($0.seasonNumber ?? 0) < ($1.seasonNumber ?? 0)
+            }
+
+        if let requested = episodes.first(where: {
+            $0.seasonNumber == requestedSeasonNumber && $0.episodeNumber == requestedEpisodeNumber
+        }) {
+            return requested
+        }
+
+        guard let currentIndex = episodes.firstIndex(where: { $0.id == currentItemId }) else { return nil }
+        let nextIndex = episodes.index(after: currentIndex)
+        guard nextIndex < episodes.endIndex else { return nil }
+        return episodes[nextIndex]
     }
     
     /// Look up the original TMDB season/episode numbers for the currently selected episode.

@@ -450,6 +450,19 @@ final class ProgressManager: ObservableObject {
         return result
     }
 
+    func getLatestEpisodeProgress(showId: Int) -> EpisodeProgressEntry? {
+        var result: EpisodeProgressEntry?
+        accessQueue.sync {
+            result = self.progressData.episodeProgress
+                .filter {
+                    $0.showId == showId &&
+                    ($0.currentTime > 0 || $0.totalDuration > 0 || $0.isWatched || $0.lastHref != nil)
+                }
+                .max { $0.lastUpdated < $1.lastUpdated }
+        }
+        return result
+    }
+
     func isEpisodeWatched(showId: Int, seasonNumber: Int, episodeNumber: Int) -> Bool {
         var result: Bool = false
         accessQueue.sync {

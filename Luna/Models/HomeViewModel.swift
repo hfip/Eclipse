@@ -17,6 +17,9 @@ final class HomeViewModel: ObservableObject {
     @Published var hasLoadedContent = false
     @Published var widgetData: [String: [TMDBSearchResult]] = [:]
     @Published var becauseYouWatchedTitle: String = ""
+    private var heroCarouselItems: [TMDBSearchResult] = []
+    private var heroCarouselIndex = 0
+    private var heroLaunchSelectionCatalogId: String?
     
     init() {
         // Init body can be simplified if needed
@@ -205,10 +208,7 @@ final class HomeViewModel: ObservableObject {
                         "upcomingAnime": upcomingAnime
                     ]
                     
-                    // Set hero content from trending
-                    if let hero = tmdbResults.0.first {
-                        self.heroContent = hero
-                    }
+                    self.applyHeroBannerSelection()
                     
                     self.isLoading = false
                     self.hasLoadedContent = true
@@ -223,6 +223,7 @@ final class HomeViewModel: ObservableObject {
                 if !forYou.isEmpty {
                     await MainActor.run {
                         self.catalogResults["forYou"] = forYou
+                        self.applyHeroBannerSelection()
                     }
                 }
                 
@@ -234,6 +235,7 @@ final class HomeViewModel: ObservableObject {
                     await MainActor.run {
                         self.catalogResults["becauseYouWatched"] = bywResults
                         self.becauseYouWatchedTitle = bywTitle
+                        self.applyHeroBannerSelection()
                     }
                 }
                 
@@ -268,6 +270,7 @@ final class HomeViewModel: ObservableObject {
                    let items = currentResults[mapping.sourceKey], !items.isEmpty {
                     await MainActor.run {
                         self.widgetData[mapping.catalogId] = items
+                        self.applyHeroBannerSelection()
                     }
                 }
             }
@@ -285,6 +288,7 @@ final class HomeViewModel: ObservableObject {
                         if !results.isEmpty {
                             await MainActor.run {
                                 self.widgetData["network_\(networkId)"] = results
+                                self.applyHeroBannerSelection()
                             }
                         }
                     }
@@ -304,6 +308,7 @@ final class HomeViewModel: ObservableObject {
                         if !results.isEmpty {
                             await MainActor.run {
                                 self.widgetData["genre_\(genreId)"] = results
+                                self.applyHeroBannerSelection()
                             }
                         }
                     }
@@ -323,6 +328,7 @@ final class HomeViewModel: ObservableObject {
                         if !results.isEmpty {
                             await MainActor.run {
                                 self.widgetData["company_\(companyId)"] = results
+                                self.applyHeroBannerSelection()
                             }
                         }
                     }
@@ -337,6 +343,7 @@ final class HomeViewModel: ObservableObject {
                     await MainActor.run {
                         self.widgetData["featured"] = results
                         self.widgetData["featured_genreName"] = [] // Store genre name via key convention
+                        self.applyHeroBannerSelection()
                     }
                     // Store the genre name for display
                     await MainActor.run {
@@ -348,6 +355,82 @@ final class HomeViewModel: ObservableObject {
     }
     
     @Published var featuredGenreName: String = ""
+
+    func refreshHeroContentForSettingsChange() {
+        applyHeroBannerSelection()
+    }
+
+    func advanceHeroCarouselIfNeeded() {
+        let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.static.rawValue
+        guard HeroBannerBehavior(rawValue: behaviorRaw) == .carousel else { return }
+        guard heroCarouselItems.count > 1 else { return }
+        heroCarouselIndex = (heroCarouselIndex + 1) % heroCarouselItems.count
+        heroContent = heroCarouselItems[heroCarouselIndex]
+    }
+
+    private func applyHeroBannerSelection() {
+        let catalogId = UserDefaults.standard.string(forKey: "heroBannerCatalogId") ?? "trending"
+        let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.static.rawValue
+        let behavior = HeroBannerBehavior(rawValue: behaviorRaw) ?? .static
+        let candidates = heroCandidates(for: catalogId)
+
+        guard !candidates.isEmpty else { return }
+
+        heroCarouselItems = candidates
+        switch behavior {
+        case .static:
+            heroLaunchSelectionCatalogId = nil
+            heroCarouselIndex = 0
+            heroContent = candidates.first
+        case .carousel:
+            heroLaunchSelectionCatalogId = nil
+            if let current = heroContent,
+               let currentIndex = candidates.firstIndex(where: { $0.stableIdentity == current.stableIdentity }) {
+                heroCarouselIndex = currentIndex
+            } else {
+                heroCarouselIndex = 0
+                heroContent = candidates.first
+            }
+        case .launch:
+            if heroLaunchSelectionCatalogId == catalogId,
+               let current = heroContent,
+               let currentIndex = candidates.firstIndex(where: { $0.stableIdentity == current.stableIdentity }) {
+                heroCarouselIndex = currentIndex
+                return
+            }
+            let selectedIndex = candidates.indices.randomElement() ?? candidates.startIndex
+            heroLaunchSelectionCatalogId = catalogId
+            heroCarouselIndex = selectedIndex
+            heroContent = candidates[selectedIndex]
+        }
+    }
+
+    private func heroCandidates(for catalogId: String) -> [TMDBSearchResult] {
+        if let items = catalogResults[catalogId], !items.isEmpty {
+            return items
+        }
+
+        if let items = widgetData[catalogId], !items.isEmpty {
+            return items
+        }
+
+        if catalogId == "networks" {
+            let items = WidgetNetwork.curated.flatMap { widgetData["network_\($0.id)"] ?? [] }
+            if !items.isEmpty { return items }
+        }
+
+        if catalogId == "genres" {
+            let items = WidgetGenre.curated.flatMap { widgetData["genre_\($0.id)"] ?? [] }
+            if !items.isEmpty { return items }
+        }
+
+        if catalogId == "companies" {
+            let items = WidgetCompany.curated.flatMap { widgetData["company_\($0.id)"] ?? [] }
+            if !items.isEmpty { return items }
+        }
+
+        return catalogResults["trending"] ?? []
+    }
     
     func resetContent() {
         catalogResults = [:]
@@ -355,6 +438,7 @@ final class HomeViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         heroContent = nil
+        heroLaunchSelectionCatalogId = nil
         hasLoadedContent = false
         featuredGenreName = ""
         becauseYouWatchedTitle = ""
