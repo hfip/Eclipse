@@ -93,13 +93,13 @@ class LunaTheme: ObservableObject {
     // MARK: - Init
     
     private init() {
-        self.settingsGradientColor = Self.gradientPresets[0].color
-        self.settingsGradientColor = loadColor(key: "lunaThemeGradientColor") ?? Self.gradientPresets[0].color
         let styleRaw = UserDefaults.standard.string(forKey: "atmosphereStyle") ?? AtmosphereStyle.gradient.rawValue
-        self.atmosphereStyle = AtmosphereStyle(rawValue: styleRaw) ?? .gradient
         let sourceRaw = UserDefaults.standard.string(forKey: "atmosphereSolidColorSource") ?? AtmosphereSolidColorSource.dominant.rawValue
+
+        self.settingsGradientColor = Self.loadColor(key: "lunaThemeGradientColor") ?? Self.gradientPresets[0].color
+        self.atmosphereStyle = AtmosphereStyle(rawValue: styleRaw) ?? .gradient
         self.atmosphereSolidColorSource = AtmosphereSolidColorSource(rawValue: sourceRaw) ?? .dominant
-        self.atmosphereSolidColor = loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
+        self.atmosphereSolidColor = Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
     }
 
     func atmosphereColor(dominant: Color) -> Color {
@@ -117,7 +117,7 @@ class LunaTheme: ObservableObject {
         }
     }
     
-    private func loadColor(key: String) -> Color? {
+    private static func loadColor(key: String) -> Color? {
         guard let data = UserDefaults.standard.data(forKey: key),
               !data.isEmpty else { return nil }
         do {
