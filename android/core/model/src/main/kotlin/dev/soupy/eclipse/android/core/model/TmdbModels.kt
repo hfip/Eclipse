@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 
 private const val TmdbImageBaseUrl = "https://image.tmdb.org/t/p/w780"
 private const val TmdbBackdropBaseUrl = "https://image.tmdb.org/t/p/w1280"
+private const val TmdbOriginalImageBaseUrl = "https://image.tmdb.org/t/p/original"
 
 @Serializable
 data class TMDBSearchResponse(
@@ -35,10 +36,10 @@ val TMDBSearchResult.displayDate: String?
     get() = releaseDate ?: firstAirDate
 
 val TMDBSearchResult.isMovie: Boolean
-    get() = mediaType == "movie" || title != null
+    get() = mediaType == "movie" || (mediaType == null && title != null && name == null)
 
 val TMDBSearchResult.isTVShow: Boolean
-    get() = mediaType == "tv" || name != null
+    get() = mediaType == "tv" || (mediaType == null && name != null && title == null)
 
 val TMDBSearchResult.fullPosterUrl: String?
     get() = posterPath?.let { "$TmdbImageBaseUrl$it" }
@@ -190,9 +191,9 @@ data class TMDBContentRating(
 )
 
 val TMDBContentRatingsResponse.usRating: String?
-    get() = results.firstOrNull { it.countryCode.equals("US", ignoreCase = true) }
+    get() = results.firstOrNull { it.countryCode.equals("US", ignoreCase = true) && it.rating.isNotBlank() }
         ?.rating
-        ?.takeIf { it.isNotBlank() }
+        ?: results.firstOrNull { it.rating.isNotBlank() }?.rating
 
 @Serializable
 data class TMDBReleaseDatesResponse(
@@ -212,10 +213,53 @@ data class TMDBReleaseDateEntry(
 )
 
 val TMDBReleaseDatesResponse.usCertification: String?
-    get() = results.firstOrNull { it.countryCode.equals("US", ignoreCase = true) }
-        ?.releaseDates
-        ?.firstOrNull { it.certification.isNotBlank() }
-        ?.certification
+    get() {
+        val usCertification = results
+            .firstOrNull { it.countryCode.equals("US", ignoreCase = true) }
+            ?.releaseDates
+            ?.firstOrNull { it.certification.isNotBlank() }
+            ?.certification
+        return usCertification
+            ?: results
+                .flatMap { it.releaseDates }
+                .firstOrNull { it.certification.isNotBlank() }
+                ?.certification
+    }
+
+@Serializable
+data class TMDBImagesResponse(
+    val id: Int = 0,
+    val backdrops: List<TMDBImage>? = null,
+    val logos: List<TMDBImage>? = null,
+    val posters: List<TMDBImage>? = null,
+)
+
+@Serializable
+data class TMDBImage(
+    @SerialName("aspect_ratio") val aspectRatio: Double = 0.0,
+    val height: Int = 0,
+    val width: Int = 0,
+    @SerialName("file_path") val filePath: String = "",
+    @SerialName("iso_639_1") val languageCode: String? = null,
+    @SerialName("vote_average") val voteAverage: Double? = null,
+    @SerialName("vote_count") val voteCount: Int? = null,
+)
+
+val TMDBImage.fullOriginalUrl: String?
+    get() = filePath.takeIf { it.isNotBlank() }?.let { "$TmdbOriginalImageBaseUrl$it" }
+
+fun TMDBImagesResponse.bestLogoUrl(preferredLanguage: String?): String? {
+    val availableLogos = logos.orEmpty()
+    if (availableLogos.isEmpty()) return null
+    val languagePrefix = preferredLanguage
+        ?.substringBefore('-')
+        ?.takeIf { it.isNotBlank() }
+        ?: "en"
+    return availableLogos.firstOrNull { it.languageCode == languagePrefix }?.fullOriginalUrl
+        ?: availableLogos.firstOrNull { it.languageCode == "en" }?.fullOriginalUrl
+        ?: availableLogos.firstOrNull { it.languageCode == null }?.fullOriginalUrl
+        ?: availableLogos.firstOrNull()?.fullOriginalUrl
+}
 
 @Serializable
 data class TMDBTVShowWithSeasons(

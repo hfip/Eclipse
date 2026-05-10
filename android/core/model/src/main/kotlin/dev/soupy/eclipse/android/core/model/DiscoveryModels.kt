@@ -34,8 +34,10 @@ data class ExploreMediaCard(
     val overview: String? = null,
     val imageUrl: String? = null,
     val backdropUrl: String? = null,
+    val logoUrl: String? = null,
     val badge: String? = null,
     val detailTarget: DetailTarget,
+    val children: List<ExploreMediaCard> = emptyList(),
 )
 
 data class MediaCarouselSection(

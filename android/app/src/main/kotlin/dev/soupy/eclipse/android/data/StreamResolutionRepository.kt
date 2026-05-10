@@ -90,8 +90,9 @@ class StreamResolutionRepository(
                 sourceWarning = healthSnapshot.warningTextFor("service:${target.serviceId}"),
             )
         }
-        val request = buildRequest(target, episode)
         val settings = settingsStore.settings.first()
+        tmdbService.setLanguage(settings.tmdbLanguage)
+        val request = buildRequest(target, episode)
         val addons = stremioAddonDao.observeAll().first()
             .filter(StremioAddonEntity::enabled)
             .let { enabled ->

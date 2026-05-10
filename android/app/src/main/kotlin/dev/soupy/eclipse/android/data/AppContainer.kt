@@ -170,6 +170,7 @@ class EclipseAppContainer(
         aniListService = aniListService,
         animeTmdbMapper = animeTmdbMapper,
         servicesRepository = servicesRepository,
+        settingsStore = settingsStore,
     )
     val streamResolutionRepository: StreamResolutionRepository = StreamResolutionRepository(
         tmdbService = tmdbService,

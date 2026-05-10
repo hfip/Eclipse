@@ -615,8 +615,23 @@ private data class HlsVariant(
 )
 
 private data class HlsSegment(
-    val url: URL,
+    val resource: HlsResource,
     val sequenceNumber: Long,
+)
+
+private data class HlsResource(
+    val url: URL,
+    val byteRange: HlsByteRange? = null,
+)
+
+private data class HlsByteRange(
+    val offset: Long,
+    val length: Long,
+)
+
+private data class HlsByteRangeSpec(
+    val length: Long,
+    val offset: Long?,
 )
 
 private data class HlsEncryptionKey(
@@ -632,7 +647,7 @@ private data class HlsDecryptionKey(
 
 private data class HlsMediaPlaylist(
     val segments: List<HlsSegment>,
-    val initSegmentUrl: URL?,
+    val initSegment: HlsResource?,
     val encryptionKey: HlsEncryptionKey?,
 )
 
@@ -673,16 +688,16 @@ private class HlsPlaylistDownloader(
 
         var downloadedBytes = 0L
         outputFile.outputStream().use { output ->
-            parsed.initSegmentUrl?.let { initUrl ->
+            parsed.initSegment?.let { initSegment ->
                 coroutineContext.ensureActive()
-                val initBytes = fetchBytes(initUrl)
+                val initBytes = fetchBytes(initSegment.url, initSegment.byteRange)
                 output.write(initBytes)
                 downloadedBytes += initBytes.size
             }
 
             parsed.segments.forEach { segment ->
                 coroutineContext.ensureActive()
-                val rawBytes = fetchBytes(segment.url)
+                val rawBytes = fetchBytes(segment.resource.url, segment.resource.byteRange)
                 val segmentBytes = if (decryptionKey != null) {
                     decryptAes128(
                         data = rawBytes,
@@ -729,8 +744,10 @@ private class HlsPlaylistDownloader(
         val segments = mutableListOf<HlsSegment>()
         var mediaSequence = 0L
         var nextSequence = 0L
-        var initSegmentUrl: URL? = null
+        var initSegment: HlsResource? = null
         var encryptionKey: HlsEncryptionKey? = null
+        var pendingByteRange: HlsByteRangeSpec? = null
+        val nextByteRangeOffsets = mutableMapOf<String, Long>()
 
         lines.forEach { line ->
             when {
@@ -740,10 +757,17 @@ private class HlsPlaylistDownloader(
                 }
                 line.startsWith("#EXT-X-MAP:") -> {
                     val attrs = line.substringAfter(':')
-                    if (attrs.parseAttribute("BYTERANGE") != null) {
-                        error("HLS init segments with BYTERANGE are not supported yet.")
+                    val uri = attrs.parseAttribute("URI")
+                    if (uri != null) {
+                        val url = URL(baseUrl, uri)
+                        val byteRange = attrs.parseAttribute("BYTERANGE")
+                            ?.parseHlsByteRangeSpec()
+                            ?.toByteRange(
+                                resourceKey = url.toExternalForm(),
+                                nextOffsets = nextByteRangeOffsets,
+                            )
+                        initSegment = HlsResource(url = url, byteRange = byteRange)
                     }
-                    initSegmentUrl = attrs.parseAttribute("URI")?.let { uri -> URL(baseUrl, uri) }
                 }
                 line.startsWith("#EXT-X-KEY:") -> {
                     val attrs = line.substringAfter(':')
@@ -761,13 +785,21 @@ private class HlsPlaylistDownloader(
                     }
                 }
                 line.startsWith("#EXT-X-BYTERANGE:") -> {
-                    error("HLS segments with BYTERANGE are not supported yet.")
+                    pendingByteRange = line.substringAfter(':').parseHlsByteRangeSpec()
                 }
                 line.isNotEmpty() && !line.startsWith("#") -> {
+                    val url = URL(baseUrl, line)
                     segments += HlsSegment(
-                        url = URL(baseUrl, line),
+                        resource = HlsResource(
+                            url = url,
+                            byteRange = pendingByteRange?.toByteRange(
+                                resourceKey = url.toExternalForm(),
+                                nextOffsets = nextByteRangeOffsets,
+                            ),
+                        ),
                         sequenceNumber = nextSequence,
                     )
+                    pendingByteRange = null
                     nextSequence += 1
                 }
             }
@@ -775,18 +807,21 @@ private class HlsPlaylistDownloader(
 
         return HlsMediaPlaylist(
             segments = segments,
-            initSegmentUrl = initSegmentUrl,
+            initSegment = initSegment,
             encryptionKey = encryptionKey,
         )
     }
 
     private fun fetchText(url: URL): String = fetchBytes(url).toString(Charsets.UTF_8)
 
-    private fun fetchBytes(url: URL): ByteArray {
+    private fun fetchBytes(url: URL, byteRange: HlsByteRange? = null): ByteArray {
         val connection = url.openConnection() as HttpURLConnection
         try {
             connection.instanceFollowRedirects = true
             headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+            byteRange?.let { range ->
+                connection.setRequestProperty("Range", "bytes=${range.offset}-${range.endInclusive}")
+            }
             connection.connectTimeout = 20_000
             connection.readTimeout = 30_000
             connection.connect()
@@ -794,7 +829,12 @@ private class HlsPlaylistDownloader(
             if (status !in 200..299) {
                 error("HTTP $status while fetching HLS resource ${url.toExternalForm()}")
             }
-            return connection.inputStream.use { input -> input.readBytes() }
+            val bytes = connection.inputStream.use { input -> input.readBytes() }
+            return if (byteRange != null && status == HttpURLConnection.HTTP_OK) {
+                bytes.slice(byteRange)
+            } else {
+                bytes
+            }
         } finally {
             connection.disconnect()
         }
@@ -932,6 +972,35 @@ private fun String.parseAttribute(key: String): String? {
         index = nextComma + 1
     }
     return null
+}
+
+private val HlsByteRange.endInclusive: Long
+    get() = offset + length - 1
+
+private fun String.parseHlsByteRangeSpec(): HlsByteRangeSpec? {
+    val parts = trim().split('@', limit = 2)
+    val length = parts.firstOrNull()?.toLongOrNull()?.takeIf { it > 0 } ?: return null
+    val offset = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it >= 0 }
+    return HlsByteRangeSpec(length = length, offset = offset)
+}
+
+private fun HlsByteRangeSpec.toByteRange(
+    resourceKey: String,
+    nextOffsets: MutableMap<String, Long>,
+): HlsByteRange {
+    val resolvedOffset = offset ?: nextOffsets[resourceKey] ?: 0L
+    nextOffsets[resourceKey] = resolvedOffset + length
+    return HlsByteRange(offset = resolvedOffset, length = length)
+}
+
+private fun ByteArray.slice(byteRange: HlsByteRange): ByteArray {
+    if (isEmpty() || byteRange.offset >= size) return ByteArray(0)
+    val start = byteRange.offset.coerceAtLeast(0).coerceAtMost(size.toLong()).toInt()
+    val endExclusive = (byteRange.offset + byteRange.length)
+        .coerceAtLeast(start.toLong())
+        .coerceAtMost(size.toLong())
+        .toInt()
+    return copyOfRange(start, endExclusive)
 }
 
 private fun String.hexToBytes(): ByteArray {

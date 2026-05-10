@@ -3,6 +3,7 @@ package dev.soupy.eclipse.android.core.network
 import java.net.URLEncoder
 import dev.soupy.eclipse.android.core.model.TMDBContentRatingsResponse
 import dev.soupy.eclipse.android.core.model.TMDBCreditsResponse
+import dev.soupy.eclipse.android.core.model.TMDBImagesResponse
 import dev.soupy.eclipse.android.core.model.TMDBMovieDetail
 import dev.soupy.eclipse.android.core.model.TMDBReleaseDatesResponse
 import dev.soupy.eclipse.android.core.model.TMDBSearchResponse
@@ -15,16 +16,23 @@ import kotlinx.serialization.decodeFromString
 class TmdbService(
     private val apiKey: String,
     private val baseUrl: String = "https://api.themoviedb.org/3",
-    private val language: String = "en-US",
+    defaultLanguage: String = "en-US",
     private val httpClient: EclipseHttpClient = EclipseHttpClient(),
 ) {
+    @Volatile
+    private var language: String = defaultLanguage.normalizedTmdbLanguage()
+
+    fun setLanguage(value: String) {
+        language = value.normalizedTmdbLanguage()
+    }
+
     suspend fun searchMulti(
         query: String,
         page: Int = 1,
         includeAdult: Boolean = false,
     ): NetworkResult<TMDBSearchResponse> = decode {
         httpClient.get(
-            "$baseUrl/search/multi?api_key=$apiKey&query=${query.urlEncode()}&page=$page&include_adult=$includeAdult",
+            "$baseUrl/search/multi?api_key=$apiKey&query=${query.urlEncode()}&language=$language&page=$page&include_adult=$includeAdult",
         )
     }
 
@@ -43,12 +51,20 @@ class TmdbService(
         httpClient.get("$baseUrl/movie/$movieId?api_key=$apiKey&language=$language&append_to_response=external_ids")
     }
 
+    suspend fun movieImages(movieId: Int): NetworkResult<TMDBImagesResponse> = decode {
+        httpClient.get("$baseUrl/movie/$movieId/images?api_key=$apiKey&include_image_language=${language.imageLanguageList()}")
+    }
+
     suspend fun movieCredits(movieId: Int): NetworkResult<TMDBCreditsResponse> = decode {
         httpClient.get("$baseUrl/movie/$movieId/credits?api_key=$apiKey&language=$language")
     }
 
     suspend fun tvCredits(showId: Int): NetworkResult<TMDBCreditsResponse> = decode {
         httpClient.get("$baseUrl/tv/$showId/credits?api_key=$apiKey&language=$language")
+    }
+
+    suspend fun tvImages(showId: Int): NetworkResult<TMDBImagesResponse> = decode {
+        httpClient.get("$baseUrl/tv/$showId/images?api_key=$apiKey&include_image_language=${language.imageLanguageList()}")
     }
 
     suspend fun movieRecommendations(movieId: Int, page: Int = 1): NetworkResult<List<TMDBSearchResult>> =
@@ -92,6 +108,26 @@ class TmdbService(
     suspend fun onTheAirTv(page: Int = 1): NetworkResult<List<TMDBSearchResult>> =
         decodeResults("$baseUrl/tv/on_the_air?api_key=$apiKey&language=$language&page=$page&include_adult=false")
 
+    suspend fun discoverByGenre(
+        genreId: Int,
+        mediaType: String = "movie",
+        page: Int = 1,
+    ): NetworkResult<List<TMDBSearchResult>> =
+        decodeResults("$baseUrl/discover/$mediaType?api_key=$apiKey&language=$language&page=$page&with_genres=$genreId&include_adult=false")
+
+    suspend fun discoverByNetwork(
+        networkId: Int,
+        page: Int = 1,
+    ): NetworkResult<List<TMDBSearchResult>> =
+        decodeResults("$baseUrl/discover/tv?api_key=$apiKey&language=$language&page=$page&with_networks=$networkId&include_adult=false")
+
+    suspend fun discoverByCompany(
+        companyId: Int,
+        mediaType: String = "movie",
+        page: Int = 1,
+    ): NetworkResult<List<TMDBSearchResult>> =
+        decodeResults("$baseUrl/discover/$mediaType?api_key=$apiKey&language=$language&page=$page&with_companies=$companyId&include_adult=false")
+
     private suspend fun decodeResults(url: String): NetworkResult<List<TMDBSearchResult>> =
         when (val result = httpClient.get(url)) {
             is NetworkResult.Success -> try {
@@ -116,4 +152,12 @@ class TmdbService(
 }
 
 private fun String.urlEncode(): String = URLEncoder.encode(this, Charsets.UTF_8)
+
+private fun String.normalizedTmdbLanguage(): String =
+    trim().takeIf { it.isNotBlank() } ?: "en-US"
+
+private fun String.imageLanguageList(): String {
+    val prefix = substringBefore('-').takeIf { it.isNotBlank() } ?: "en"
+    return "$prefix,en,null"
+}
 

@@ -1213,8 +1213,15 @@ private fun NextEpisodeThresholdCard(
             )
             Slider(
                 value = value.toFloat(),
-                onValueChange = { onValueChange(it.toInt()) },
-                valueRange = 70f..98f,
+                onValueChange = { rawValue ->
+                    val steppedValue = if (rawValue >= 97f) {
+                        99
+                    } else {
+                        ((rawValue + 2.5f) / 5f).toInt() * 5
+                    }
+                    onValueChange(steppedValue.coerceIn(50, 99))
+                },
+                valueRange = 50f..99f,
             )
             Text(
                 text = "Eclipse uses this threshold to surface next-episode actions during playback.",
@@ -1325,16 +1332,16 @@ private fun PlayerPreferencesCard(
             ReaderValueSlider(
                 title = "Default Playback Speed",
                 valueLabel = "%.2fx".format(state.defaultPlaybackSpeed),
-                value = state.defaultPlaybackSpeed.toFloat(),
-                valueRange = 0.25f..3.0f,
-                onValueChange = { onDefaultPlaybackSpeedChanged(it.toDouble()) },
+                value = state.defaultPlaybackSpeed.coerceIn(0.25, 2.0).toFloat(),
+                valueRange = 0.25f..2.0f,
+                onValueChange = { onDefaultPlaybackSpeedChanged(roundedToQuarterStep(it).toDouble()) },
             )
             ReaderValueSlider(
                 title = "Hold Speed",
                 valueLabel = "%.2fx".format(state.holdSpeedPlayer),
-                value = state.holdSpeedPlayer.toFloat(),
-                valueRange = 1.25f..3.0f,
-                onValueChange = { onHoldSpeedChanged(it.toDouble()) },
+                value = state.holdSpeedPlayer.coerceIn(0.1, 3.0).toFloat(),
+                valueRange = 0.1f..3.0f,
+                onValueChange = { onHoldSpeedChanged(roundedToTenthStep(it).toDouble()) },
             )
             SettingInlineToggle(
                 title = "Always Landscape",
@@ -1369,9 +1376,9 @@ private fun PlayerPreferencesCard(
             ReaderValueSlider(
                 title = "Double-Tap Seek Seconds",
                 valueLabel = "%.0fs".format(state.vlcDoubleTapSeekSeconds),
-                value = state.vlcDoubleTapSeekSeconds.toFloat(),
+                value = state.vlcDoubleTapSeekSeconds.coerceIn(5.0, 60.0).toFloat(),
                 valueRange = 5f..60f,
-                onValueChange = { onVlcDoubleTapSeekSecondsChanged(it.toDouble()) },
+                onValueChange = { onVlcDoubleTapSeekSecondsChanged(roundedToFiveStep(it).toDouble()) },
             )
             SettingInlineToggle(
                 title = "Picture in Picture",
@@ -1425,27 +1432,42 @@ private fun SubtitleSettingsCard(
             ReaderValueSlider(
                 title = "Font Size",
                 valueLabel = "${state.subtitleFontSize.toInt()} sp",
-                value = state.subtitleFontSize.toFloat(),
-                valueRange = 16f..54f,
-                onValueChange = { onSubtitleFontSizeChanged(it.toDouble()) },
+                value = state.subtitleFontSize.coerceIn(20.0, 46.0).toFloat(),
+                valueRange = 20f..46f,
+                onValueChange = { onSubtitleFontSizeChanged(closestSubtitleFontSize(it).toDouble()) },
             )
             ReaderValueSlider(
                 title = "Outline Width",
                 valueLabel = "%.1f".format(state.subtitleStrokeWidth),
-                value = state.subtitleStrokeWidth.toFloat(),
-                valueRange = 0f..8f,
-                onValueChange = { onSubtitleStrokeWidthChanged(it.toDouble()) },
+                value = state.subtitleStrokeWidth.coerceIn(0.0, 2.0).toFloat(),
+                valueRange = 0f..2f,
+                onValueChange = { onSubtitleStrokeWidthChanged(roundedToHalfStep(it).toDouble()) },
             )
             ReaderValueSlider(
                 title = "Vertical Offset",
                 valueLabel = "%.0f".format(state.subtitleVerticalOffset),
-                value = state.subtitleVerticalOffset.toFloat(),
-                valueRange = -20f..20f,
-                onValueChange = { onSubtitleVerticalOffsetChanged(it.toDouble()) },
+                value = state.subtitleVerticalOffset.coerceIn(-24.0, 24.0).toFloat(),
+                valueRange = -24f..24f,
+                onValueChange = { onSubtitleVerticalOffsetChanged(it.toInt().toDouble()) },
             )
         }
     }
 }
+
+private fun roundedToQuarterStep(value: Float): Float =
+    ((value + 0.125f) / 0.25f).toInt() * 0.25f
+
+private fun roundedToTenthStep(value: Float): Float =
+    ((value + 0.05f) / 0.1f).toInt() * 0.1f
+
+private fun roundedToHalfStep(value: Float): Float =
+    ((value + 0.25f) / 0.5f).toInt() * 0.5f
+
+private fun roundedToFiveStep(value: Float): Float =
+    ((value + 2.5f) / 5f).toInt() * 5f
+
+private fun closestSubtitleFontSize(value: Float): Float =
+    listOf(20f, 24f, 30f, 34f, 38f, 42f, 46f).minBy { kotlin.math.abs(it - value) }
 
 @Composable
 private fun ReaderSettingsCard(

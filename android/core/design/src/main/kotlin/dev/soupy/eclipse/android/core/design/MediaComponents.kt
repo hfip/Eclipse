@@ -256,6 +256,7 @@ fun HeroBackdrop(
     title: String,
     subtitle: String?,
     imageUrl: String?,
+    logoUrl: String? = null,
     modifier: Modifier = Modifier,
     supportingText: String? = null,
     height: Dp = 360.dp,
@@ -315,14 +316,24 @@ fun HeroBackdrop(
                     textAlign = TextAlign.Center,
                 )
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.displayMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (logoUrl.isNullOrBlank()) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.displayMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                ContentImage(
+                    imageUrl = logoUrl,
+                    contentDescription = title,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(96.dp),
+                )
+            }
             supportingText?.takeIf { it.isNotBlank() }?.let {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(

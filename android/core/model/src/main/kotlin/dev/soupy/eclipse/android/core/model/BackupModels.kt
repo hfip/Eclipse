@@ -238,8 +238,11 @@ data class BackupData(
     val holdSpeedPlayer: Double = 2.0,
     val externalPlayer: String = "none",
     val alwaysLandscape: Boolean = false,
+    val aniSkipEnabled: Boolean = true,
+    val introDBEnabled: Boolean = true,
     val aniSkipAutoSkip: Boolean = false,
     val skip85sEnabled: Boolean = false,
+    val skip85sAlwaysVisible: Boolean = false,
     val showNextEpisodeButton: Boolean = true,
     val nextEpisodeThreshold: Double = 0.90,
     val vlcHeaderProxyEnabled: Boolean = true,
@@ -260,6 +263,9 @@ data class BackupData(
     val kanzenAutoMode: Boolean = false,
     val kanzenAutoUpdateModules: Boolean = true,
     val autoUpdateServicesEnabled: Boolean = true,
+    @SerialName("servicesAutoModeEnabled") val autoModeEnabled: Boolean = true,
+    @SerialName("servicesAutoModeSourceIds") val autoModeSourceIds: List<String> = emptyList(),
+    @SerialName("servicesAutoModeSourceOrderIds") val autoModeSourceOrderIds: List<String> = emptyList(),
     val githubReleaseAutoCheckEnabled: Boolean = true,
     val githubReleaseUpdateAvailable: Boolean = false,
     val githubReleaseLatestVersion: String = "",
@@ -307,7 +313,7 @@ data class BackupData(
         } else {
             nextEpisodeThreshold
         }
-        return percent.roundToInt().coerceIn(70, 98)
+        return percent.roundToInt().coerceIn(50, 99)
     }
 }
 

@@ -374,7 +374,7 @@ class AndroidSettingsViewModel(
             settingsStore.updatePlayback(
                 inAppPlayer = current.inAppPlayer,
                 showNextEpisodeButton = current.showNextEpisodeButton,
-                nextEpisodeThreshold = threshold.coerceIn(70, 98),
+                nextEpisodeThreshold = threshold.coerceIn(50, 99),
             )
         }
     }

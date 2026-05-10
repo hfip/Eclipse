@@ -807,6 +807,7 @@ private fun DetailContent.toUiState(
     overview = overview,
     posterUrl = posterUrl,
     backdropUrl = backdropUrl,
+    logoUrl = logoUrl,
     metadataChips = metadataChips,
     detailFacts = detailFacts.map {
         DetailFactRow(

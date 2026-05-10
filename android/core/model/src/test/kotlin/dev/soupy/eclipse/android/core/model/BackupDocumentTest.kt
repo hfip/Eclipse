@@ -52,6 +52,9 @@ class BackupDocumentTest {
               "holdSpeedPlayer": 2.0,
               "externalPlayer": "org.videolan.vlc",
               "alwaysLandscape": true,
+              "aniSkipEnabled": false,
+              "introDBEnabled": false,
+              "skip85sAlwaysVisible": true,
               "vlcHeaderProxyEnabled": false,
               "playerTwoFingerTapPlayPauseEnabled": false,
               "vlcDoubleTapSeekEnabled": true,
@@ -66,6 +69,9 @@ class BackupDocumentTest {
               "subtitleFontSize": 34.0,
               "subtitleVerticalOffset": -8.0,
               "showKanzen": true,
+              "servicesAutoModeEnabled": false,
+              "servicesAutoModeSourceIds": ["service:first", "stremio:https://addon.example"],
+              "servicesAutoModeSourceOrderIds": ["stremio:https://addon.example", "service:first"],
               "readerFontFamily": "Georgia",
               "collections": [
                 {
@@ -177,6 +183,9 @@ class BackupDocumentTest {
         assertEquals(true, document.payload.enableSubtitlesByDefault)
         assertEquals("org.videolan.vlc", document.payload.externalPlayer)
         assertEquals(true, document.payload.alwaysLandscape)
+        assertEquals(false, document.payload.aniSkipEnabled)
+        assertEquals(false, document.payload.introDBEnabled)
+        assertEquals(true, document.payload.skip85sAlwaysVisible)
         assertEquals(false, document.payload.vlcHeaderProxyEnabled)
         assertEquals(false, document.payload.playerTwoFingerTapPlayPauseEnabled)
         assertEquals(true, document.payload.vlcDoubleTapSeekEnabled)
@@ -189,6 +198,9 @@ class BackupDocumentTest {
         assertEquals(2.5, document.payload.subtitleStrokeWidth)
         assertEquals(34.0, document.payload.subtitleFontSize)
         assertEquals(-8.0, document.payload.subtitleVerticalOffset)
+        assertEquals(false, document.payload.autoModeEnabled)
+        assertEquals(listOf("service:first", "stremio:https://addon.example"), document.payload.autoModeSourceIds)
+        assertEquals(listOf("stremio:https://addon.example", "service:first"), document.payload.autoModeSourceOrderIds)
         assertEquals("Georgia", document.payload.readerFontFamily)
         assertEquals(1, document.payload.collections.single().items.size)
         assertTrue(document.payload.progressData.jsonObject.containsKey("movieProgress"))
@@ -204,6 +216,12 @@ class BackupDocumentTest {
         assertTrue(encoded.contains("futureIosOnlySection"))
         assertTrue(encoded.contains("manifestJSON"))
         assertTrue(encoded.contains("userRatingNotes"))
+    }
+
+    @Test
+    fun nextEpisodeThresholdMatchesIosRange() {
+        assertEquals(50, BackupData(nextEpisodeThreshold = 0.50).nextEpisodeThresholdPercent())
+        assertEquals(99, BackupData(nextEpisodeThreshold = 0.99).nextEpisodeThresholdPercent())
     }
 }
 

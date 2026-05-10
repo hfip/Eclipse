@@ -18,9 +18,12 @@ import dev.soupy.eclipse.android.core.model.TMDBSeasonDetail
 import dev.soupy.eclipse.android.core.model.usCertification
 import dev.soupy.eclipse.android.core.model.usRating
 import dev.soupy.eclipse.android.core.model.TMDBTVShowDetail
+import dev.soupy.eclipse.android.core.model.bestLogoUrl
 import dev.soupy.eclipse.android.core.network.AniListService.AniMapSpecialMapping
 import dev.soupy.eclipse.android.core.network.AniListService
 import dev.soupy.eclipse.android.core.network.TmdbService
+import dev.soupy.eclipse.android.core.storage.SettingsStore
+import kotlinx.coroutines.flow.first
 import kotlin.math.abs
 
 data class DetailEpisodeEntry(
@@ -58,6 +61,7 @@ data class DetailContent(
     val overview: String? = null,
     val posterUrl: String? = null,
     val backdropUrl: String? = null,
+    val logoUrl: String? = null,
     val metadataChips: List<String> = emptyList(),
     val detailFacts: List<DetailFactEntry> = emptyList(),
     val contentRating: String? = null,
@@ -75,12 +79,15 @@ class DetailRepository(
     private val aniListService: AniListService,
     private val animeTmdbMapper: AnimeTmdbMapper,
     private val servicesRepository: ServicesRepository,
+    private val settingsStore: SettingsStore,
 ) {
     suspend fun load(target: DetailTarget): Result<DetailContent> = runCatching {
+        val settings = settingsStore.settings.first()
+        tmdbService.setLanguage(settings.tmdbLanguage)
         when (target) {
-            is DetailTarget.TmdbMovie -> loadMovieContent(target.id)
+            is DetailTarget.TmdbMovie -> loadMovieContent(target.id, settings.tmdbLanguage)
 
-            is DetailTarget.TmdbShow -> loadShowContent(target.id)
+            is DetailTarget.TmdbShow -> loadShowContent(target.id, settings.tmdbLanguage)
 
             is DetailTarget.AniListMediaTarget -> {
                 val media = aniListService.mediaById(target.id).orThrow()
@@ -89,12 +96,14 @@ class DetailRepository(
                 if (tmdbShowTarget != null) {
                     loadShowContent(
                         showId = tmdbShowTarget.id,
+                        preferredLanguage = settings.tmdbLanguage,
                         sourceAnime = media,
                     )
                 } else {
                     media.toDetailContent(
                         tmdbMatch = tmdbMatch,
                         tmdbService = tmdbService,
+                        preferredLanguage = settings.tmdbLanguage,
                     )
                 }
             }
@@ -110,10 +119,14 @@ class DetailRepository(
         }
     }
 
-    private suspend fun loadMovieContent(movieId: Int): DetailContent = coroutineScope {
+    private suspend fun loadMovieContent(
+        movieId: Int,
+        preferredLanguage: String,
+    ): DetailContent = coroutineScope {
         val movieDeferred = async { tmdbService.movieDetail(movieId).orThrow() }
         val creditsDeferred = async { tmdbService.movieCredits(movieId).orNull() }
         val releaseDatesDeferred = async { tmdbService.movieReleaseDates(movieId).orNull() }
+        val imagesDeferred = async { tmdbService.movieImages(movieId).orNull() }
 
         val movie = movieDeferred.await()
         val certification = releaseDatesDeferred.await()?.usCertification
@@ -123,6 +136,7 @@ class DetailRepository(
             overview = movie.overview,
             posterUrl = movie.fullPosterUrl,
             backdropUrl = movie.fullBackdropUrl,
+            logoUrl = imagesDeferred.await()?.bestLogoUrl(preferredLanguage),
             metadataChips = buildList {
                 add("Movie")
                 movie.releaseDate?.take(4)?.let(::add)
@@ -147,11 +161,13 @@ class DetailRepository(
 
     private suspend fun loadShowContent(
         showId: Int,
+        preferredLanguage: String,
         sourceAnime: AniListMedia? = null,
     ): DetailContent = coroutineScope {
         val showDeferred = async { tmdbService.tvShowDetail(showId).orThrow() }
         val creditsDeferred = async { tmdbService.tvCredits(showId).orNull() }
         val ratingsDeferred = async { tmdbService.tvContentRatings(showId).orNull() }
+        val imagesDeferred = async { tmdbService.tvImages(showId).orNull() }
 
         val show = showDeferred.await()
         val contentRating = ratingsDeferred.await()?.usRating
@@ -185,6 +201,7 @@ class DetailRepository(
             overview = show.overview,
             posterUrl = show.fullPosterUrl,
             backdropUrl = show.fullBackdropUrl,
+            logoUrl = imagesDeferred.await()?.bestLogoUrl(preferredLanguage),
             metadataChips = buildList {
                 add(if (animeBundle != null) "Anime" else "Series")
                 show.firstAirDate?.take(4)?.let(::add)
@@ -522,6 +539,7 @@ private fun TMDBTVShowDetail.isIosAnimeCandidate(): Boolean {
 private suspend fun AniListMedia.toDetailContent(
     tmdbMatch: AnimeTmdbMatch?,
     tmdbService: TmdbService,
+    preferredLanguage: String,
 ): DetailContent {
     val tmdbShowMatch = tmdbMatch?.takeIf { it.target is DetailTarget.TmdbShow }
     val tmdbShowMetadata = tmdbShowMatch?.let { match ->
@@ -552,6 +570,7 @@ private suspend fun AniListMedia.toDetailContent(
                         seasonDetail.episodes.map { it.toDetailEpisodeEntry() }
                     },
                     cast = creditsDeferred.await().toDetailCastEntries(),
+                    logoUrl = tmdbService.tvImages(target.id).orNull()?.bestLogoUrl(preferredLanguage),
                     contentRating = ratingsDeferred.await()?.usRating,
                 )
             }
@@ -569,6 +588,7 @@ private suspend fun AniListMedia.toDetailContent(
         overview = description?.stripHtmlTags(),
         posterUrl = posterUrl,
         backdropUrl = bannerImage ?: posterUrl,
+        logoUrl = tmdbShowMetadata?.logoUrl,
         metadataChips = buildList {
             add("Anime")
             format?.replace('_', ' ')?.let(::add)
@@ -602,6 +622,7 @@ private data class HydratedTmdbShowMetadata(
     val episodesTitle: String?,
     val episodes: List<DetailEpisodeEntry>,
     val cast: List<DetailCastEntry>,
+    val logoUrl: String?,
     val contentRating: String?,
 )
 

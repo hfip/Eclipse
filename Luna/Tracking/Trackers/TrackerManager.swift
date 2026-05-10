@@ -1039,8 +1039,8 @@ final class TrackerManager: NSObject, ObservableObject {
         return max(0.5, min(10, halfStepValue))
     }
 
-    private static func aniListScoreRaw(from rating: Double) -> Int {
-        Int((normalizedRatingOutOf10(rating) * 10).rounded())
+    private static func aniListScore(from rating: Double) -> Double {
+        normalizedRatingOutOf10(rating)
     }
 
     private static func myAnimeListScore(from rating: Double) -> Int {
@@ -1214,15 +1214,15 @@ final class TrackerManager: NSObject, ObservableObject {
         includeCurrentStatus: Bool
     ) async throws -> AniListRatingSyncResponse {
         let variableDeclaration = note == nil
-            ? "($mediaId: Int, $scoreRaw: Int)"
-            : "($mediaId: Int, $scoreRaw: Int, $notes: String)"
+            ? "($mediaId: Int, $score: Float)"
+            : "($mediaId: Int, $score: Float, $notes: String)"
         let statusArgument = includeCurrentStatus ? ",\n                status: CURRENT" : ""
         let notesArgument = note == nil ? "" : ",\n                notes: $notes"
         let mutation = """
         mutation \(variableDeclaration) {
             SaveMediaListEntry(
                 mediaId: $mediaId\(statusArgument),
-                scoreRaw: $scoreRaw\(notesArgument)
+                score: $score\(notesArgument)
             ) {
                 id
                 score
@@ -1232,7 +1232,7 @@ final class TrackerManager: NSObject, ObservableObject {
         """
         var variables: [String: Any] = [
             "mediaId": anilistId,
-            "scoreRaw": Self.aniListScoreRaw(from: rating)
+            "score": Self.aniListScore(from: rating)
         ]
         if let note {
             variables["notes"] = note

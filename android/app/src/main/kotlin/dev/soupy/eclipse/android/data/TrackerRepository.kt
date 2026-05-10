@@ -1334,7 +1334,7 @@ private fun aniListRatingMutation(
         mutation {
             SaveMediaListEntry(
                 mediaId: $anilistMediaId$statusArgument,
-                scoreRaw: ${ratingOutOf10.toAniListScoreRaw()}$notesArgument
+                score: ${ratingOutOf10.toAniListScore()}$notesArgument
             ) {
                 id
                 score
@@ -1344,8 +1344,8 @@ private fun aniListRatingMutation(
     """.trimIndent()
 }
 
-private fun Double.toAniListScoreRaw(): Int =
-    (normalizedUserRatingOutOf10(this) * 10.0).roundToInt().coerceIn(5, 100)
+private fun Double.toAniListScore(): Double =
+    normalizedUserRatingOutOf10(this).coerceIn(0.5, 10.0)
 
 private fun Double.toMyAnimeListScore(): Int =
     normalizedUserRatingOutOf10(this).roundToInt().coerceIn(1, 10)

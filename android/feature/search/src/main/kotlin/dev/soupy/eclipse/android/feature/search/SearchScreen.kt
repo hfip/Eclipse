@@ -206,7 +206,7 @@ fun SearchRoute(
                     message = if (isTmdbSearch) {
                         "Looking across movies and TV shows."
                     } else {
-                        "Asking ${selectedSource?.label ?: "the selected service"}."
+                        "Asking ${selectedSource.label}."
                     },
                 )
             }
@@ -249,7 +249,7 @@ fun SearchRoute(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeading(
-                        title = if (isTmdbSearch) "Search Results" else "${selectedSource?.label ?: "Service"} Results",
+                        title = if (isTmdbSearch) "Search Results" else "${selectedSource.label} Results",
                         subtitle = if (isTmdbSearch) {
                             "${filteredResults.size} ${selectedFilter.label.lowercase()} result${if (filteredResults.size == 1) "" else "s"}"
                         } else {

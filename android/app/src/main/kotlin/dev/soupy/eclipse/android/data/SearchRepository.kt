@@ -118,6 +118,7 @@ class SearchRepository(
         }
 
         val settings = settingsStore.settings.first()
+        tmdbService.setLanguage(settings.tmdbLanguage)
         val firstTmdbPage = if (tmdbEnabled) {
             tmdbService.searchMulti(query = query, page = 1).orThrow()
         } else {

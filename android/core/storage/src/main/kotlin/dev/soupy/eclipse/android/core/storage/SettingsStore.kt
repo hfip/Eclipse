@@ -120,7 +120,7 @@ class SettingsStore(
         context.dataStore.edit { prefs ->
             prefs[Keys.inAppPlayer] = inAppPlayer.name
             prefs[Keys.showNextEpisodeButton] = showNextEpisodeButton
-            prefs[Keys.nextEpisodeThreshold] = nextEpisodeThreshold.coerceIn(70, 98)
+            prefs[Keys.nextEpisodeThreshold] = nextEpisodeThreshold.coerceIn(50, 99)
         }
     }
 
@@ -156,8 +156,8 @@ class SettingsStore(
             prefs[Keys.enableVLCSubtitleEditMenu] = enableVLCSubtitleEditMenu
             prefs[Keys.defaultSubtitleLanguage] = defaultSubtitleLanguage.normalizedLanguageCode("eng")
             prefs[Keys.preferredAnimeAudioLanguage] = preferredAnimeAudioLanguage.normalizedLanguageCode("jpn")
-            prefs[Keys.defaultPlaybackSpeed] = defaultPlaybackSpeed.coerceIn(0.25, 3.0)
-            prefs[Keys.holdSpeedPlayer] = holdSpeedPlayer.coerceIn(1.25, 3.0)
+            prefs[Keys.defaultPlaybackSpeed] = defaultPlaybackSpeed.coerceIn(0.25, 2.0)
+            prefs[Keys.holdSpeedPlayer] = holdSpeedPlayer.coerceIn(0.1, 3.0)
             prefs[Keys.externalPlayer] = externalPlayer.trim().ifBlank { "none" }
             prefs[Keys.alwaysLandscape] = alwaysLandscape
             prefs[Keys.vlcHeaderProxyEnabled] = vlcHeaderProxyEnabled
@@ -200,9 +200,9 @@ class SettingsStore(
             strokeColor.normalizedOptionalColor()?.let { value ->
                 prefs[Keys.subtitleStrokeColor] = value
             } ?: prefs.remove(Keys.subtitleStrokeColor)
-            prefs[Keys.subtitleStrokeWidth] = strokeWidth.coerceIn(0.0, 8.0)
-            prefs[Keys.subtitleFontSize] = fontSize.coerceIn(16.0, 54.0)
-            prefs[Keys.subtitleVerticalOffset] = verticalOffset.coerceIn(-20.0, 20.0)
+            prefs[Keys.subtitleStrokeWidth] = strokeWidth.coerceIn(0.0, 2.0)
+            prefs[Keys.subtitleFontSize] = fontSize.coerceIn(20.0, 46.0)
+            prefs[Keys.subtitleVerticalOffset] = verticalOffset.coerceIn(-24.0, 24.0)
         }
     }
 
@@ -436,11 +436,11 @@ class SettingsStore(
             prefs[Keys.holdSpeedPlayer] = payload.holdSpeedPlayer
             prefs[Keys.externalPlayer] = payload.externalPlayer
             prefs[Keys.alwaysLandscape] = payload.alwaysLandscape
-            prefs[Keys.aniSkipEnabled] = true
-            prefs[Keys.introDbEnabled] = true
+            prefs[Keys.aniSkipEnabled] = payload.aniSkipEnabled
+            prefs[Keys.introDbEnabled] = payload.introDBEnabled
             prefs[Keys.aniSkipAutoSkip] = payload.aniSkipAutoSkip
             prefs[Keys.skip85sEnabled] = payload.skip85sEnabled
-            prefs[Keys.skip85sAlwaysVisible] = false
+            prefs[Keys.skip85sAlwaysVisible] = payload.skip85sAlwaysVisible
             prefs[Keys.showNextEpisodeButton] = payload.showNextEpisodeButton
             prefs[Keys.nextEpisodeThreshold] = payload.nextEpisodeThresholdPercent()
             prefs[Keys.vlcHeaderProxyEnabled] = payload.vlcHeaderProxyEnabled
@@ -471,6 +471,9 @@ class SettingsStore(
             prefs[Keys.kanzenAutoMode] = payload.kanzenAutoMode
             prefs[Keys.kanzenAutoUpdateModules] = payload.kanzenAutoUpdateModules
             prefs[Keys.autoUpdateServicesEnabled] = payload.autoUpdateServicesEnabled
+            prefs[Keys.autoModeEnabled] = payload.autoModeEnabled
+            prefs[Keys.autoModeSourceIds] = payload.autoModeSourceIds.toSet()
+            prefs[Keys.autoModeSourceOrderIds] = payload.autoModeSourceOrderIds.toStoredString()
             prefs[Keys.githubReleaseAutoCheckEnabled] = payload.githubReleaseAutoCheckEnabled
             prefs[Keys.githubReleaseUpdateAvailable] = payload.githubReleaseUpdateAvailable
             prefs[Keys.githubReleaseLatestVersion] = payload.githubReleaseLatestVersion

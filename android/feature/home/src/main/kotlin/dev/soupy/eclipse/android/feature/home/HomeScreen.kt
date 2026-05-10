@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,12 +55,18 @@ fun HomeRoute(
     onSelect: (DetailTarget) -> Unit,
 ) {
     var selectedSectionId by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectedSection = selectedSectionId?.let { id -> state.sections.firstOrNull { it.id == id } }
+    var selectedChildSection by remember { mutableStateOf<MediaCarouselSection?>(null) }
+    val selectedSection = selectedChildSection
+        ?: selectedSectionId?.let { id -> state.sections.firstOrNull { it.id == id } }
     if (selectedSection != null) {
         HomeDiscoverSection(
             section = selectedSection,
-            onBack = { selectedSectionId = null },
+            onBack = {
+                selectedChildSection = null
+                selectedSectionId = null
+            },
             onSelect = onSelect,
+            onOpenChildSection = { section -> selectedChildSection = section },
         )
         return
     }
@@ -77,6 +84,7 @@ fun HomeRoute(
                     title = hero.title,
                     subtitle = hero.badge ?: hero.subtitle,
                     imageUrl = hero.backdropUrl ?: hero.imageUrl,
+                    logoUrl = hero.logoUrl,
                     supportingText = hero.overview,
                     height = 440.dp,
                     primaryActionLabel = "Watch Now",
@@ -113,6 +121,7 @@ fun HomeRoute(
                 section = section,
                 onSelect = onSelect,
                 onOpenSection = { selectedSectionId = section.id },
+                onOpenChildSection = { child -> selectedChildSection = child },
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
@@ -136,6 +145,7 @@ private fun HomeSection(
     section: MediaCarouselSection,
     onSelect: (DetailTarget) -> Unit,
     onOpenSection: () -> Unit,
+    onOpenChildSection: (MediaCarouselSection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val lowerTitle = section.title.lowercase()
@@ -162,15 +172,42 @@ private fun HomeSection(
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(if (useLandscapeCards) 14.dp else 16.dp)) {
             items(section.items, key = { it.id }) { item ->
+                val openItem = {
+                    if (item.children.isNotEmpty()) {
+                        onOpenChildSection(
+                            MediaCarouselSection(
+                                id = item.id,
+                                title = item.title,
+                                subtitle = item.subtitle,
+                                items = item.children,
+                            ),
+                        )
+                    } else {
+                        onSelect(item.detailTarget)
+                    }
+                }
                 if (useLandscapeCards) {
                     HomeLandscapeCard(
                         item = item,
-                        onClick = { onSelect(item.detailTarget) },
+                        onClick = openItem,
                     )
                 } else {
                     MediaPosterCard(
                         item = item,
-                        onClick = { onSelect(it.detailTarget) },
+                        onClick = { selected ->
+                            if (selected.children.isNotEmpty()) {
+                                onOpenChildSection(
+                                    MediaCarouselSection(
+                                        id = selected.id,
+                                        title = selected.title,
+                                        subtitle = selected.subtitle,
+                                        items = selected.children,
+                                    ),
+                                )
+                            } else {
+                                onSelect(selected.detailTarget)
+                            }
+                        },
                         modifier = Modifier.width(108.dp),
                     )
                 }
@@ -184,6 +221,7 @@ private fun HomeDiscoverSection(
     section: MediaCarouselSection,
     onBack: () -> Unit,
     onSelect: (DetailTarget) -> Unit,
+    onOpenChildSection: (MediaCarouselSection) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -203,6 +241,7 @@ private fun HomeDiscoverSection(
                     title = hero.title,
                     subtitle = hero.badge ?: hero.subtitle,
                     imageUrl = hero.backdropUrl ?: hero.imageUrl,
+                    logoUrl = hero.logoUrl,
                     supportingText = hero.overview,
                     height = 260.dp,
                     primaryActionLabel = "Open",
@@ -236,7 +275,20 @@ private fun HomeDiscoverSection(
                     rowItems.forEach { item ->
                         MediaPosterCard(
                             item = item,
-                            onClick = { onSelect(it.detailTarget) },
+                            onClick = { selected ->
+                                if (selected.children.isNotEmpty()) {
+                                    onOpenChildSection(
+                                        MediaCarouselSection(
+                                            id = selected.id,
+                                            title = selected.title,
+                                            subtitle = selected.subtitle,
+                                            items = selected.children,
+                                        ),
+                                    )
+                                } else {
+                                    onSelect(selected.detailTarget)
+                                }
+                            },
                             modifier = Modifier.weight(1f),
                         )
                     }

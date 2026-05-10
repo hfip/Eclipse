@@ -123,6 +123,62 @@ class ParityModelsTest {
     }
 
     @Test
+    fun tmdbRatingsFallBackLikeIosWhenUsIsMissing() {
+        val releaseDates = TMDBReleaseDatesResponse(
+            results = listOf(
+                TMDBReleaseDateCountry(
+                    countryCode = "CA",
+                    releaseDates = listOf(TMDBReleaseDateEntry(certification = "14A")),
+                ),
+                TMDBReleaseDateCountry(
+                    countryCode = "US",
+                    releaseDates = listOf(TMDBReleaseDateEntry(certification = "")),
+                ),
+            ),
+        )
+        val contentRatings = TMDBContentRatingsResponse(
+            results = listOf(
+                TMDBContentRating(countryCode = "US", rating = ""),
+                TMDBContentRating(countryCode = "GB", rating = "15"),
+            ),
+        )
+
+        assertEquals("14A", releaseDates.usCertification)
+        assertEquals("15", contentRatings.usRating)
+    }
+
+    @Test
+    fun tmdbMultiSearchOnlyTreatsMovieAndTvMediaTypesAsOpenable() {
+        val movie = TMDBSearchResult(id = 1, mediaType = "movie", title = "Movie")
+        val show = TMDBSearchResult(id = 2, mediaType = "tv", name = "Show")
+        val person = TMDBSearchResult(id = 3, mediaType = "person", name = "Actor")
+        val discoverMovie = TMDBSearchResult(id = 4, title = "Discover Movie")
+        val discoverShow = TMDBSearchResult(id = 5, name = "Discover Show")
+
+        assertTrue(movie.isMovie)
+        assertTrue(show.isTVShow)
+        assertFalse(person.isMovie)
+        assertFalse(person.isTVShow)
+        assertTrue(discoverMovie.isMovie)
+        assertTrue(discoverShow.isTVShow)
+    }
+
+    @Test
+    fun tmdbLogoSelectionMatchesIosLanguagePreference() {
+        val images = TMDBImagesResponse(
+            logos = listOf(
+                TMDBImage(filePath = "/fallback.png", languageCode = null),
+                TMDBImage(filePath = "/english.png", languageCode = "en"),
+                TMDBImage(filePath = "/spanish.png", languageCode = "es"),
+            ),
+        )
+
+        assertEquals("https://image.tmdb.org/t/p/original/spanish.png", images.bestLogoUrl("es-MX"))
+        assertEquals("https://image.tmdb.org/t/p/original/english.png", images.bestLogoUrl("fr-FR"))
+        assertEquals(null, TMDBImagesResponse(logos = null).bestLogoUrl("en-US"))
+    }
+
+    @Test
     fun searchHistoryMovesRepeatedQueriesToFront() {
         val history = SearchHistorySnapshot(listOf("Dune", "Alien"))
             .remember("alien")

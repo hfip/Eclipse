@@ -29,6 +29,9 @@ import androidx.compose.material.icons.automirrored.rounded.StarHalf
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
@@ -60,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import dev.soupy.eclipse.android.core.design.ErrorPanel
 import dev.soupy.eclipse.android.core.design.GlassPanel
 import dev.soupy.eclipse.android.core.design.LoadingPanel
+import dev.soupy.eclipse.android.core.design.ContentImage
 import dev.soupy.eclipse.android.core.design.PosterImage
 import dev.soupy.eclipse.android.core.design.SectionHeading
 import dev.soupy.eclipse.android.core.model.InAppPlayer
@@ -131,6 +135,7 @@ data class DetailScreenState(
     val overview: String? = null,
     val posterUrl: String? = null,
     val backdropUrl: String? = null,
+    val logoUrl: String? = null,
     val metadataChips: List<String> = emptyList(),
     val detailFacts: List<DetailFactRow> = emptyList(),
     val contentRating: String? = null,
@@ -274,6 +279,16 @@ fun DetailRoute(
                     title = state.title,
                     subtitle = state.subtitle,
                     imageUrl = state.backdropUrl ?: state.posterUrl,
+                    logoUrl = state.logoUrl,
+                )
+            }
+        }
+
+        if (state.metadataChips.isNotEmpty()) {
+            item {
+                MetadataStrip(
+                    values = state.metadataChips,
+                    modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
         }
@@ -297,6 +312,9 @@ fun DetailRoute(
                     onSaveToLibrary = onSaveToLibrary,
                     onQueueDownload = onQueueDownload,
                     onAddToCollection = onAddToCollection,
+                    onQueueResume = onQueueResume,
+                    onMarkWatched = onMarkWatched,
+                    onMarkUnwatched = onMarkUnwatched,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
@@ -501,6 +519,7 @@ private fun DetailHero(
     title: String,
     subtitle: String?,
     imageUrl: String?,
+    logoUrl: String?,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -543,15 +562,25 @@ private fun DetailHero(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (logoUrl.isNullOrBlank()) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                ContentImage(
+                    imageUrl = logoUrl,
+                    contentDescription = title,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(100.dp),
+                )
+            }
         }
     }
 }
@@ -611,9 +640,13 @@ private fun DetailActions(
     onSaveToLibrary: () -> Unit,
     onQueueDownload: () -> Unit,
     onAddToCollection: (String) -> Unit,
+    onQueueResume: () -> Unit,
+    onMarkWatched: () -> Unit,
+    onMarkUnwatched: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var collectionsExpanded by remember(collections) { mutableStateOf(false) }
+    var moreExpanded by remember { mutableStateOf(false) }
 
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -691,6 +724,39 @@ private fun DetailActions(
                 }
             }
         }
+        Box {
+            DetailIconButton(
+                icon = Icons.Rounded.MoreVert,
+                contentDescription = "More actions",
+                onClick = { moreExpanded = true },
+            )
+            DropdownMenu(
+                expanded = moreExpanded,
+                onDismissRequest = { moreExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Add to Continue Watching") },
+                    onClick = {
+                        moreExpanded = false
+                        onQueueResume()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Mark Watched") },
+                    onClick = {
+                        moreExpanded = false
+                        onMarkWatched()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Mark Unwatched") },
+                    onClick = {
+                        moreExpanded = false
+                        onMarkUnwatched()
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -728,23 +794,70 @@ private fun StarRatingSection(
     onSyncMyAnimeList: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    val hasRating = rating != null
+    val hasNote = note.isNotBlank()
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = "Your Rating",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White.copy(alpha = 0.7f),
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            (1..10).chunked(5).forEach { rowValues ->
+        Button(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Black.copy(alpha = 0.18f),
+                contentColor = Color.White,
+            ),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Icon(
+                imageVector = if (hasRating) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                contentDescription = null,
+                tint = if (hasRating) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.65f),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = "Rating & Notes",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            if (hasRating) {
+                Text(
+                    text = "${formattedUserRatingOutOf10(rating)}/10",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.62f),
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+            if (hasNote) {
+                Text(
+                    text = "Note",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.55f),
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.62f),
+            )
+        }
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.14f))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    rowValues.forEach { value ->
+                    (1..10).forEach { value ->
                         val selectedRating = rating ?: 0.0
                         val starValue = value.toDouble()
                         val targetRating = if (selectedRating >= starValue) {
@@ -761,7 +874,7 @@ private fun StarRatingSection(
                             contentDescription = "Rate ${formattedUserRatingOutOf10(targetRating)}",
                             tint = if (selectedRating >= starValue - 0.5) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.32f),
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(width = 20.dp, height = 22.dp)
                                 .pointerInput(rating, value) {
                                     detectTapGestures { offset ->
                                         val newRating = if (offset.x < size.width / 2f) starValue - 0.5 else starValue
@@ -774,46 +887,46 @@ private fun StarRatingSection(
                                 },
                         )
                     }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = rating?.let { "${formattedUserRatingOutOf10(it)}/10" } ?: "No rating",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.55f),
+                        maxLines = 1,
+                    )
                 }
-            }
-            rating?.let {
-                Text(
-                    text = "${formattedUserRatingOutOf10(it)}/10",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(start = 4.dp),
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = onSetNote,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Private Note") },
+                    minLines = 2,
+                    maxLines = 4,
                 )
-            }
-        }
-        OutlinedTextField(
-            value = note,
-            onValueChange = onSetNote,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Private Note") },
-            minLines = 2,
-            maxLines = 4,
-        )
-        if (canSyncAniList || canSyncMyAnimeList) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (canSyncAniList) {
-                    OutlinedButton(
-                        onClick = onSyncAniList,
-                        enabled = rating != null,
-                        modifier = Modifier.weight(1f),
+                if (canSyncAniList || canSyncMyAnimeList) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("AniList")
-                    }
-                }
-                if (canSyncMyAnimeList) {
-                    OutlinedButton(
-                        onClick = onSyncMyAnimeList,
-                        enabled = rating != null,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("MAL")
+                        if (canSyncAniList) {
+                            OutlinedButton(
+                                onClick = onSyncAniList,
+                                enabled = rating != null,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("AniList")
+                            }
+                        }
+                        if (canSyncMyAnimeList) {
+                            OutlinedButton(
+                                onClick = onSyncMyAnimeList,
+                                enabled = rating != null,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("MAL")
+                            }
+                        }
                     }
                 }
             }

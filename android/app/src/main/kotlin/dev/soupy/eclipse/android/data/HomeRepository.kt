@@ -9,6 +9,7 @@ import dev.soupy.eclipse.android.core.model.DetailTarget
 import dev.soupy.eclipse.android.core.model.ExploreMediaCard
 import dev.soupy.eclipse.android.core.model.MediaCarouselSection
 import dev.soupy.eclipse.android.core.model.TMDBSearchResult
+import dev.soupy.eclipse.android.core.model.bestLogoUrl
 import dev.soupy.eclipse.android.core.model.displayTitle
 import dev.soupy.eclipse.android.core.model.fullBackdropUrl
 import dev.soupy.eclipse.android.core.model.fullPosterUrl
@@ -38,7 +39,8 @@ class HomeRepository(
 ) {
     suspend fun loadHome(): Result<HomeContent> = runCatching {
         coroutineScope {
-            val settingsDeferred = async { settingsStore.settings.first() }
+            val settings = settingsStore.settings.first()
+            tmdbService.setLanguage(settings.tmdbLanguage)
             val enabledCatalogsDeferred = async { catalogRepository.enabledCatalogs() }
             val continueWatchingDeferred = async { progressRepository.continueWatching(limit = 12) }
             val trendingDeferred = async {
@@ -79,7 +81,6 @@ class HomeRepository(
             }
             val animeCatalogsDeferred = async { aniListService.fetchHomeCatalogs() }
 
-            val settings = settingsDeferred.await()
             val enabledCatalogs = enabledCatalogsDeferred.await()
             val sections = run {
                 val trending = trendingDeferred.await().orEmptyList()
@@ -129,6 +130,27 @@ class HomeRepository(
                     .distinctBy { it.id }
                 val justForYou = recommendationRepository.justForYou(tmdbPool)
                 val becauseYouWatched = recommendationRepository.becauseYouWatched(tmdbPool)
+                val enabledCatalogIds = enabledCatalogs.map(BackupCatalog::id).toSet()
+                val networkGroups = if (tmdbEnabled && "networks" in enabledCatalogIds) {
+                    discoverNetworkGroups(settings.filterHorrorContent)
+                } else {
+                    emptyList()
+                }
+                val genreGroups = if (tmdbEnabled && "genres" in enabledCatalogIds) {
+                    discoverGenreGroups(settings.filterHorrorContent)
+                } else {
+                    emptyList()
+                }
+                val companyGroups = if (tmdbEnabled && "companies" in enabledCatalogIds) {
+                    discoverCompanyGroups(settings.filterHorrorContent)
+                } else {
+                    emptyList()
+                }
+                val featuredGroup = if (tmdbEnabled && "featured" in enabledCatalogIds) {
+                    discoverFeaturedGroup(settings.filterHorrorContent)
+                } else {
+                    null
+                }
                 val continueWatching = continueWatchingDeferred.await().map { record ->
                     ExploreMediaCard(
                         id = record.id,
@@ -147,19 +169,19 @@ class HomeRepository(
                     put("becauseYouWatched", MediaCarouselSection("local-because-you-watched", "Because You Watched", "More picks shaped by your watched and resume history", becauseYouWatched))
                     put("trending", MediaCarouselSection("tmdb-trending", "Trending This Week", "Popular right now", trending))
                     put("popularMovies", MediaCarouselSection("tmdb-movies", "Popular Movies", "What people are queueing right now", popularMovies))
-                    put("networks", MediaCarouselSection("tmdb-networks", "Network", "Series from familiar networks", popularTv.map { it.copy(badge = "Network") }))
+                    put("networks", MediaCarouselSection("tmdb-networks", "Network", "Series from familiar networks", networkGroups))
                     put("nowPlayingMovies", MediaCarouselSection("tmdb-now-playing", "Now Playing Movies", "Fresh theatrical and streaming movie picks", nowPlayingMovies))
                     put("upcomingMovies", MediaCarouselSection("tmdb-upcoming-movies", "Upcoming Movies", "Movies arriving soon", upcomingMovies))
                     put("popularTVShows", MediaCarouselSection("tmdb-tv", "Popular TV Shows", "Popular series people are watching", popularTv))
-                    put("genres", MediaCarouselSection("tmdb-genres", "Category", "Browse by mood and category", tmdbPool.map { it.copy(badge = "Category") }.take(12)))
+                    put("genres", MediaCarouselSection("tmdb-genres", "Category", "Browse by mood and category", genreGroups))
                     put("onTheAirTV", MediaCarouselSection("tmdb-on-the-air", "On The Air TV Shows", "Series airing now", onTheAir))
                     put("airingTodayTV", MediaCarouselSection("tmdb-airing", "Airing Today TV Shows", "Shows with fresh TV episodes today", airingToday))
                     put("topRatedTVShows", MediaCarouselSection("tmdb-top-tv", "Top Rated TV Shows", "Highly rated series", topRatedTv))
                     put("topRatedMovies", MediaCarouselSection("tmdb-top-movies", "Top Rated Movies", "Highly rated movies", topRatedMovies))
-                    put("companies", MediaCarouselSection("tmdb-companies", "Company", "Studio and company picks", popularMovies.map { it.copy(badge = "Company") }))
+                    put("companies", MediaCarouselSection("tmdb-companies", "Company", "Studio and company picks", companyGroups))
                     put("trendingAnime", MediaCarouselSection("anime-trending", "Trending Anime", "Anime people are watching now", animeTrending))
                     put("popularAnime", MediaCarouselSection("anime-popular", "Popular Anime", "Frequently watched anime picks", animePopular))
-                    put("featured", MediaCarouselSection("tmdb-featured", "Featured", "A broader featured mix", tmdbPool.take(12).map { it.copy(badge = "Featured") }))
+                    put("featured", MediaCarouselSection("tmdb-featured", "Featured", "A broader featured mix", listOfNotNull(featuredGroup)))
                     put("topRatedAnime", MediaCarouselSection("anime-top", "Top Rated Anime", "Highly rated anime", animeTop))
                     put("airingAnime", MediaCarouselSection("anime-airing", "Currently Airing Anime", "What's actively rolling out now", animeAiring))
                     put("upcomingAnime", MediaCarouselSection("anime-upcoming", "Upcoming Anime", "Not-yet-released anime with strong interest", animeUpcoming))
@@ -179,10 +201,19 @@ class HomeRepository(
             }
 
             HomeContent(
-                hero = sections.firstNotNullOfOrNull { it.items.firstOrNull() },
+                hero = sections.firstNotNullOfOrNull { it.items.firstOrNull() }?.withLogo(settings.tmdbLanguage),
                 sections = sections,
             )
         }
+    }
+
+    private suspend fun ExploreMediaCard.withLogo(preferredLanguage: String): ExploreMediaCard {
+        val logoUrl = when (val target = detailTarget) {
+            is DetailTarget.TmdbMovie -> tmdbService.movieImages(target.id).orNull()?.bestLogoUrl(preferredLanguage)
+            is DetailTarget.TmdbShow -> tmdbService.tvImages(target.id).orNull()?.bestLogoUrl(preferredLanguage)
+            else -> null
+        }
+        return logoUrl?.let { copy(logoUrl = it) } ?: this
     }
 
     private suspend fun List<AniListMedia>.toMappedAnimeCards(
@@ -235,6 +266,85 @@ class HomeRepository(
             else -> toExploreMediaCard(badge)
         }
     }
+
+    private suspend fun discoverNetworkGroups(filterHorrorContent: Boolean): List<ExploreMediaCard> =
+        discoverGroups(
+            groups = CuratedNetworks,
+            badge = "Network",
+            maxGroups = CuratedNetworks.size,
+            filterHorrorContent = filterHorrorContent,
+        ) { group ->
+            tmdbService.discoverByNetwork(group.id).orEmptyList()
+        }
+
+    private suspend fun discoverGenreGroups(filterHorrorContent: Boolean): List<ExploreMediaCard> =
+        discoverGroups(
+            groups = CuratedGenres.filterNot { filterHorrorContent && it.id == HorrorGenreId },
+            badge = "Category",
+            maxGroups = 6,
+            filterHorrorContent = filterHorrorContent,
+        ) { group ->
+            tmdbService.discoverByGenre(group.id).orEmptyList()
+        }
+
+    private suspend fun discoverCompanyGroups(filterHorrorContent: Boolean): List<ExploreMediaCard> =
+        discoverGroups(
+            groups = CuratedCompanies,
+            badge = "Company",
+            maxGroups = 4,
+            filterHorrorContent = filterHorrorContent,
+        ) { group ->
+            tmdbService.discoverByCompany(group.id).orEmptyList()
+        }
+
+    private suspend fun discoverFeaturedGroup(filterHorrorContent: Boolean): ExploreMediaCard? {
+        val genre = CuratedGenres
+            .filterNot { filterHorrorContent && it.id == HorrorGenreId }
+            .randomOrNull()
+            ?: return null
+        val children = tmdbService.discoverByGenre(genre.id, mediaType = "tv")
+            .orEmptyList()
+            .toDiscoverChildren(
+                badge = "Featured",
+                filterHorrorContent = filterHorrorContent,
+            )
+        return genre.toDiscoverGroupCard(
+            badge = "Featured",
+            children = children,
+            title = "Popular ${genre.name}",
+        )
+    }
+
+    private suspend fun discoverGroups(
+        groups: List<CuratedDiscoveryGroup>,
+        badge: String,
+        maxGroups: Int,
+        filterHorrorContent: Boolean,
+        load: suspend (CuratedDiscoveryGroup) -> List<TMDBSearchResult>,
+    ): List<ExploreMediaCard> = coroutineScope {
+        groups
+            .map { group ->
+                async {
+                    val children = load(group).toDiscoverChildren(
+                        badge = badge,
+                        filterHorrorContent = filterHorrorContent,
+                    )
+                    group.toDiscoverGroupCard(badge = badge, children = children)
+                }
+            }
+            .awaitAll()
+            .filterNotNull()
+            .take(maxGroups)
+    }
+
+    private fun List<TMDBSearchResult>.toDiscoverChildren(
+        badge: String,
+        filterHorrorContent: Boolean,
+    ): List<ExploreMediaCard> =
+        withoutFilteredHorror(filterHorrorContent)
+            .filter { it.isMovie || it.isTVShow }
+            .take(12)
+            .map { it.toExploreMediaCard(badge) }
 }
 
 private fun MediaCarouselSection.forCatalog(catalog: BackupCatalog): MediaCarouselSection = copy(
@@ -256,4 +366,63 @@ private fun List<TMDBSearchResult>.withoutFilteredHorror(enabled: Boolean): List
     } else {
         this
     }
+
+private data class CuratedDiscoveryGroup(
+    val id: Int,
+    val name: String,
+)
+
+private fun CuratedDiscoveryGroup.toDiscoverGroupCard(
+    badge: String,
+    children: List<ExploreMediaCard>,
+    title: String = name,
+): ExploreMediaCard? {
+    val first = children.firstOrNull() ?: return null
+    return ExploreMediaCard(
+        id = "${badge.lowercase()}-$id",
+        title = title,
+        subtitle = "${children.size} ${badge.lowercase()} pick${if (children.size == 1) "" else "s"}",
+        overview = first.overview,
+        imageUrl = first.imageUrl,
+        backdropUrl = first.backdropUrl ?: first.imageUrl,
+        badge = badge,
+        detailTarget = first.detailTarget,
+        children = children,
+    )
+}
+
+private val CuratedNetworks = listOf(
+    CuratedDiscoveryGroup(213, "Netflix"),
+    CuratedDiscoveryGroup(2739, "Disney+"),
+    CuratedDiscoveryGroup(49, "HBO"),
+    CuratedDiscoveryGroup(1024, "Amazon"),
+    CuratedDiscoveryGroup(2552, "Apple TV+"),
+    CuratedDiscoveryGroup(453, "Hulu"),
+    CuratedDiscoveryGroup(4330, "Paramount+"),
+    CuratedDiscoveryGroup(1112, "Crunchyroll"),
+)
+
+private val CuratedCompanies = listOf(
+    CuratedDiscoveryGroup(33, "Universal"),
+    CuratedDiscoveryGroup(4, "Paramount"),
+    CuratedDiscoveryGroup(174, "Warner Bros."),
+    CuratedDiscoveryGroup(25, "20th Century"),
+    CuratedDiscoveryGroup(2, "Walt Disney"),
+    CuratedDiscoveryGroup(41077, "A24"),
+    CuratedDiscoveryGroup(1632, "Lionsgate"),
+    CuratedDiscoveryGroup(5, "Columbia"),
+)
+
+private val CuratedGenres = listOf(
+    CuratedDiscoveryGroup(28, "Action"),
+    CuratedDiscoveryGroup(35, "Comedy"),
+    CuratedDiscoveryGroup(18, "Drama"),
+    CuratedDiscoveryGroup(878, "Sci-Fi"),
+    CuratedDiscoveryGroup(10749, "Romance"),
+    CuratedDiscoveryGroup(16, "Animation"),
+    CuratedDiscoveryGroup(10751, "Family"),
+    CuratedDiscoveryGroup(53, "Thriller"),
+    CuratedDiscoveryGroup(27, "Horror"),
+    CuratedDiscoveryGroup(99, "Documentary"),
+)
 
