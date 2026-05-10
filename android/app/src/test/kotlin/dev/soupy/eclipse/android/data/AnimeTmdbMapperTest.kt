@@ -109,4 +109,34 @@ class AnimeTmdbMapperTest {
         assertTrue(mappings.any { it.anilistMediaId == 2 && it.tmdbSeasonNumber == 2 })
         assertTrue(mappings.any { it.anilistMediaId == 3 && it.tmdbSeasonNumber == 0 && it.isSpecial })
     }
+
+    @Test
+    fun reconstructionPreservesEpisodeOffsetsForMappedSpecials() {
+        val special = AniListMedia(
+            id = 30,
+            title = AniListTitle(english = "Example Anime OVA"),
+            episodes = 2,
+            format = "OVA",
+        )
+        val show = TMDBTVShowDetail(
+            id = 10,
+            name = "Example Anime",
+            seasons = listOf(
+                TMDBSeason(seasonNumber = 0, episodeCount = 20, airDate = "2021-01-10"),
+            ),
+        )
+
+        val mappings = special.reconstructTmdbEpisodeMappings(
+            show = show,
+            anchorSeasonMatch = AnimeTmdbSeasonMatch(
+                seasonNumber = 0,
+                episodeOffset = 12,
+                confidence = 0.2,
+            ),
+        )
+
+        assertEquals(12, mappings.first().tmdbEpisodeOffset)
+        assertEquals(13, mappings.first().tmdbEpisodeNumber)
+        assertEquals(14, mappings.last().tmdbEpisodeNumber)
+    }
 }

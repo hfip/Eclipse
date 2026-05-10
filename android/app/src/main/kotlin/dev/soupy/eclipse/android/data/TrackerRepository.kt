@@ -1322,7 +1322,7 @@ private const val AniListViewerQuery = """
 private val MangaTrackerServices = setOf("anilist", "myanimelist", "mal")
 private val RatingTrackerServices = setOf("anilist", "myanimelist", "mal")
 
-private fun aniListRatingMutation(
+internal fun aniListRatingMutation(
     anilistMediaId: Int,
     ratingOutOf10: Double,
     note: String? = null,

@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 
 class EpisodePlaybackContextTest {
     @Test
-    fun resolvedTmdbEpisodeUsesOffset() {
+    fun resolvedTmdbEpisodePrefersExplicitEpisodeBeforeOffset() {
         val context = EpisodePlaybackContext(
             localSeasonNumber = 1,
             localEpisodeNumber = 4,
@@ -15,7 +15,19 @@ class EpisodePlaybackContextTest {
         )
 
         assertEquals(2, context.resolvedTMDBSeasonNumber)
-        assertEquals(8, context.resolvedTMDBEpisodeNumber)
+        assertEquals(7, context.resolvedTMDBEpisodeNumber)
+    }
+
+    @Test
+    fun resolvedTmdbEpisodeUsesOffsetWhenExplicitEpisodeIsMissing() {
+        val context = EpisodePlaybackContext(
+            localSeasonNumber = 0,
+            localEpisodeNumber = 4,
+            tmdbSeasonNumber = 0,
+            tmdbEpisodeOffset = 10,
+        )
+
+        assertEquals(14, context.resolvedTMDBEpisodeNumber)
     }
 
     @Test

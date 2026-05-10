@@ -90,6 +90,7 @@ data class ServiceEpisodeLink(
 data class ServiceStreamResult(
     val streams: List<String> = emptyList(),
     val subtitles: List<String> = emptyList(),
+    val subtitleTracks: List<JsonObject> = emptyList(),
     val sources: List<JsonObject> = emptyList(),
     val headers: Map<String, String> = emptyMap(),
     val defaultSubtitle: String? = null,

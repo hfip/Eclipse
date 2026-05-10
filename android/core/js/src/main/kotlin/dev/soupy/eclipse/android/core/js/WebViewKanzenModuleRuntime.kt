@@ -14,7 +14,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -109,6 +113,7 @@ private class KanzenWebViewSession(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pendingCalls = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val fetchExecutor = Executors.newCachedThreadPool()
+    private var fetchBridge: FetchBridge? = null
     private var webView: WebView? = null
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -119,14 +124,14 @@ private class KanzenWebViewSession(
             view.settings.javaScriptEnabled = true
             view.settings.domStorageEnabled = true
             view.addJavascriptInterface(ResultBridge(pendingCalls), "__AndroidKanzenResult")
-            view.addJavascriptInterface(
-                FetchBridge(
-                    webViewProvider = { webView },
-                    mainHandler = mainHandler,
-                    executor = fetchExecutor,
-                ),
-                "__AndroidKanzenFetch",
+            val bridge = FetchBridge(
+                context = context,
+                webViewProvider = { webView },
+                mainHandler = mainHandler,
+                executor = fetchExecutor,
             )
+            fetchBridge = bridge
+            view.addJavascriptInterface(bridge, "__AndroidKanzenFetch")
             view.awaitBlankPage()
             view.evaluateRaw(fetchBootstrap(isNovel = isNovel))
             view.evaluateRaw(script)
@@ -184,6 +189,8 @@ private class KanzenWebViewSession(
             pending.cancel()
         }
         pendingCalls.clear()
+        fetchBridge?.close()
+        fetchBridge = null
         fetchExecutor.shutdownNow()
         mainHandler.post {
             webView?.destroy()
@@ -202,10 +209,13 @@ private class ResultBridge(
 }
 
 private class FetchBridge(
+    private val context: Context,
     private val webViewProvider: () -> WebView?,
     private val mainHandler: Handler,
     private val executor: java.util.concurrent.ExecutorService,
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     @JavascriptInterface
     fun request(
         id: String,
@@ -236,6 +246,49 @@ private class FetchBridge(
                 )
             }
         }
+    }
+
+    @JavascriptInterface
+    fun networkFetch(
+        id: String,
+        url: String,
+        optionsJson: String?,
+        simple: Boolean,
+    ) {
+        scope.launch {
+            val payload = runCatching {
+                AndroidNetworkFetchMonitor.perform(
+                    context = context,
+                    url = url,
+                    optionsJson = optionsJson,
+                    simple = simple,
+                )
+            }.getOrElse { error ->
+                buildJsonObject {
+                    put("ok", JsonPrimitive(false))
+                    put("error", JsonPrimitive(error.message ?: error::class.java.simpleName))
+                }.toString()
+            }
+            val escapedPayload = if (payload.trim().startsWith("{")) {
+                payload
+            } else {
+                buildJsonObject {
+                    put("ok", JsonPrimitive(false))
+                    put("error", JsonPrimitive(payload))
+                }.toString()
+            }
+            mainHandler.post {
+                val view = webViewProvider() ?: return@post
+                view.evaluateJavascript(
+                    "window.__androidKanzenResolveNetworkFetch(${id.jsQuote()}, $escapedPayload);",
+                    null,
+                )
+            }
+        }
+    }
+
+    fun close() {
+        scope.cancel()
     }
 
     private fun executeRequest(
@@ -317,6 +370,8 @@ private fun fetchBootstrap(isNovel: Boolean): String = """
     (function() {
       const __androidKanzenIsNovel = ${if (isNovel) "true" else "false"};
       window.__androidKanzenFetchCallbacks = {};
+      window.__androidKanzenNetworkFetchCallbacks = {};
+      ${browserCompatibilityScript()}
       window.__androidKanzenResolveFetch = function(id, payload) {
         const callback = window.__androidKanzenFetchCallbacks[id];
         if (!callback) return;
@@ -358,6 +413,16 @@ private fun fetchBootstrap(isNovel: Boolean): String = """
           __AndroidKanzenFetch.request(id, url, method, JSON.stringify(normalizedHeaders), body);
         });
       };
+      window.__androidKanzenResolveNetworkFetch = function(id, payload) {
+        const callback = window.__androidKanzenNetworkFetchCallbacks[id];
+        if (!callback) return;
+        delete window.__androidKanzenNetworkFetchCallbacks[id];
+        if (!payload || payload.ok === false) {
+          callback.reject(new Error((payload && payload.error) || "networkFetch failed."));
+          return;
+        }
+        callback.resolve(payload);
+      };
       if (__androidKanzenIsNovel) {
         window.fetch = function(url, headers) {
           return window.__androidKanzenFetchResponse(url, {
@@ -395,33 +460,15 @@ private fun fetchBootstrap(isNovel: Boolean): String = """
           });
         });
       };
-      function kanzenFetchHtmlLike(url, options) {
-        options = options || {};
-        return window.fetchv2(url, options.headers || {}, "GET", null, options.redirect !== false, options.encoding || "utf-8")
-          .then(function(response) {
-            return response.text().then(function(body) {
-              return {
-                originalUrl: String(url),
-                requests: [String(url)],
-                html: options.returnHTML === false ? null : body,
-                cookies: null,
-                success: response.status >= 200 && response.status < 400,
-                status: response.status,
-                error: response.status >= 400 ? ("HTTP " + response.status) : null,
-                htmlCaptured: options.returnHTML !== false,
-                cookiesCaptured: false,
-                elementsClicked: [],
-                waitResults: {}
-              };
-            });
-          });
-      }
-      window.networkFetchSimple = function(url, options) {
-        return kanzenFetchHtmlLike(url, options || {});
+      window.__eclipseNativeNetworkFetch = function(url, options, simple) {
+        const id = String(Date.now()) + "-" + String(Math.random()).slice(2);
+        const absoluteUrl = new URL(String(url), window.location.href).href;
+        return new Promise(function(resolve, reject) {
+          window.__androidKanzenNetworkFetchCallbacks[id] = { resolve: resolve, reject: reject };
+          __AndroidKanzenFetch.networkFetch(id, absoluteUrl, JSON.stringify(options || {}), !!simple);
+        });
       };
-      window.networkFetch = function(url, options) {
-        return kanzenFetchHtmlLike(url, options || {});
-      };
+      ${networkFetchCompatibilityScript()}
       window.getElementsByTag = function(html, tag) {
         const regex = new RegExp("<" + tag + "[^>]*>([\\s\\S]*?)<\\/" + tag + ">", "gi");
         const result = [];

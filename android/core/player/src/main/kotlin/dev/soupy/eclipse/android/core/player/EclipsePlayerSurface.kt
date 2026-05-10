@@ -180,6 +180,9 @@ fun EclipsePlayerSurface(
             source = source,
             modifier = modifier,
             settings = settings,
+            skipSegments = skipSegments,
+            nextEpisodeLabel = nextEpisodeLabel,
+            onNextEpisode = onNextEpisode,
             onProgress = onProgressState.value,
             onPlaybackReady = onPlaybackReadyState.value,
             onPlaybackFailure = onPlaybackFailureState.value,
@@ -215,7 +218,7 @@ fun EclipsePlayerSurface(
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .apply {
-                setMediaItem(mediaItem)
+                setMediaItem(mediaItem, source.resumePositionMs.coerceAtLeast(0L))
                 prepare()
                 setPlaybackSpeed(settings.defaultPlaybackSpeed.toFloat())
                 playWhenReady = false
@@ -545,6 +548,71 @@ private fun List<SkipSegment>.nextManualSkip(positionSeconds: Double): SkipSegme
         positionSeconds >= segment.startTime - 8.0 && positionSeconds < segment.endTime
     }
 
+@Composable
+private fun VlcPlaybackShortcutRow(
+    mediaPlayer: MediaPlayer?,
+    settings: PlaybackSettingsSnapshot,
+    progressPercent: Float,
+    currentPositionSeconds: Double,
+    skipSegments: List<SkipSegment>,
+    nextEpisodeLabel: String?,
+    onNextEpisode: () -> Unit,
+    onProgressChanged: () -> Unit,
+) {
+    val showNextEpisode = settings.showNextEpisodeButton &&
+        nextEpisodeLabel != null &&
+        progressPercent * 100f >= settings.nextEpisodeThreshold
+    val manualSkipSegment = skipSegments.nextManualSkip(currentPositionSeconds)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+    ) {
+        if (manualSkipSegment != null) {
+            Button(
+                enabled = mediaPlayer != null,
+                onClick = {
+                    mediaPlayer?.setTime((manualSkipSegment.endTime * 1_000.0).toLong())
+                    onProgressChanged()
+                },
+                modifier = Modifier.padding(end = 10.dp),
+            ) {
+                Text(manualSkipSegment.type.displayLabel)
+            }
+        }
+
+        if (showNextEpisode) {
+            Button(
+                onClick = onNextEpisode,
+                modifier = Modifier.padding(end = 10.dp),
+            ) {
+                Text(nextEpisodeLabel)
+            }
+        }
+
+        if (settings.holdSpeed > 1.0) {
+            HoldSpeedSurface(
+                speed = settings.holdSpeed,
+                onHoldStart = { mediaPlayer?.setRate(settings.holdSpeed.toFloat()) },
+                onHoldEnd = { mediaPlayer?.setRate(settings.defaultPlaybackSpeed.toFloat()) },
+            )
+        }
+
+        if (settings.skip85sEnabled && (settings.skip85sAlwaysVisible || manualSkipSegment == null)) {
+            Button(
+                enabled = mediaPlayer != null,
+                onClick = {
+                    mediaPlayer?.seekBy(85_000L)
+                    onProgressChanged()
+                },
+                modifier = Modifier.padding(start = 10.dp),
+            ) {
+                Text("Skip 85s")
+            }
+        }
+    }
+}
+
 private data class VlcTrackOption(
     val id: Int,
     val name: String,
@@ -834,6 +902,9 @@ private fun EmbeddedVlcPlayerPanel(
     source: PlayerSource,
     modifier: Modifier = Modifier,
     settings: PlaybackSettingsSnapshot,
+    skipSegments: List<SkipSegment>,
+    nextEpisodeLabel: String?,
+    onNextEpisode: () -> Unit,
     onProgress: (PlaybackProgressSnapshot) -> Unit,
     onPlaybackReady: (PlayerSource) -> Unit,
     onPlaybackFailure: (PlayerSource, String, Boolean) -> Unit,
@@ -846,6 +917,9 @@ private fun EmbeddedVlcPlayerPanel(
     var selectedSubtitleTrackId by remember(source.uri) { mutableStateOf(VlcDisabledTrackId) }
     var userSelectedAudioTrack by remember(source.uri) { mutableStateOf(false) }
     var userSelectedSubtitleTrack by remember(source.uri) { mutableStateOf(false) }
+    var progressPercent by remember(source.uri) { mutableStateOf(0f) }
+    var currentPositionSeconds by remember(source.uri) { mutableStateOf(0.0) }
+    var initialResumeApplied by remember(source.uri, source.resumePositionMs) { mutableStateOf(false) }
     var autoAudioApplied by remember(source.uri, settings.preferredAnimeAudioLanguage) { mutableStateOf(false) }
     var autoSubtitleApplied by remember(
         source.uri,
@@ -863,8 +937,33 @@ private fun EmbeddedVlcPlayerPanel(
         selectedSubtitleTrackId = player.getSpuTrack()
     }
 
+    fun progressSnapshot(player: MediaPlayer?, forceFinished: Boolean = false): PlaybackProgressSnapshot? {
+        if (player == null) return null
+        val durationMs = player.length.coerceAtLeast(0L)
+        if (durationMs <= 0L) return null
+        val positionMs = player.time
+            .coerceAtLeast(0L)
+            .coerceAtMost(durationMs)
+        progressPercent = if (forceFinished) {
+            1f
+        } else {
+            (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        }
+        currentPositionSeconds = positionMs / 1_000.0
+        return PlaybackProgressSnapshot(
+            positionMs = positionMs,
+            durationMs = durationMs,
+            isFinished = forceFinished || positionMs >= (durationMs - 1_500L).coerceAtLeast(0L),
+        )
+    }
+
+    fun emitProgressSnapshot(forceFinished: Boolean = false) {
+        progressSnapshot(session?.mediaPlayer, forceFinished)?.let(onProgress)
+    }
+
     DisposableEffect(source.uri) {
         onDispose {
+            emitProgressSnapshot()
             session?.release()
             session = null
         }
@@ -872,6 +971,26 @@ private fun EmbeddedVlcPlayerPanel(
 
     LaunchedEffect(session, settings.defaultPlaybackSpeed) {
         session?.mediaPlayer?.setRate(settings.defaultPlaybackSpeed.toFloat())
+    }
+
+    LaunchedEffect(session, source.resumePositionMs) {
+        val player = session?.mediaPlayer ?: return@LaunchedEffect
+        val targetMs = source.resumePositionMs.coerceAtLeast(0L)
+        if (targetMs <= 0L || initialResumeApplied) return@LaunchedEffect
+        repeat(80) {
+            val durationMs = player.length
+            if (durationMs > 0L) {
+                val clamped = targetMs.coerceAtMost((durationMs - 1_000L).coerceAtLeast(0L))
+                player.setTime(clamped)
+                initialResumeApplied = true
+                emitProgressSnapshot()
+                return@LaunchedEffect
+            }
+            delay(250L)
+        }
+        player.setTime(targetMs)
+        initialResumeApplied = true
+        emitProgressSnapshot()
     }
 
     LaunchedEffect(session) {
@@ -912,16 +1031,19 @@ private fun EmbeddedVlcPlayerPanel(
     LaunchedEffect(session) {
         while (isActive) {
             val player = session?.mediaPlayer
-            if (player != null) {
-                val positionMs = player.time.coerceAtLeast(0L)
-                val durationMs = player.length.coerceAtLeast(0L)
-                onProgress(
-                    PlaybackProgressSnapshot(
-                        positionMs = positionMs,
-                        durationMs = durationMs,
-                        isFinished = durationMs > 0L && positionMs >= (durationMs - 1_000L).coerceAtLeast(0L),
-                    ),
-                )
+            val snapshot = progressSnapshot(player)
+            if (player != null && snapshot != null) {
+                val activeSegment = if (settings.aniSkipAutoSkip && player.isPlaying) {
+                    skipSegments.activeAt(snapshot.positionMs / 1_000.0)
+                } else {
+                    null
+                }
+                if (activeSegment != null) {
+                    player.setTime((activeSegment.endTime * 1_000.0).toLong())
+                    emitProgressSnapshot()
+                } else {
+                    onProgress(snapshot)
+                }
             }
             delay(1_000L)
         }
@@ -932,6 +1054,17 @@ private fun EmbeddedVlcPlayerPanel(
             .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        VlcPlaybackShortcutRow(
+            mediaPlayer = session?.mediaPlayer,
+            settings = settings,
+            progressPercent = progressPercent,
+            currentPositionSeconds = currentPositionSeconds,
+            skipSegments = skipSegments,
+            nextEpisodeLabel = nextEpisodeLabel,
+            onNextEpisode = onNextEpisode,
+            onProgressChanged = { emitProgressSnapshot() },
+        )
+
         VlcPlaybackTrackControls(
             audioTracks = audioTracks,
             subtitleTracks = subtitleTracks,
@@ -1240,12 +1373,24 @@ private class VlcSession(
             )
             val mediaPlayer = MediaPlayer(libVlc)
             mediaPlayer.attachViews(layout, null, false, false)
-            val media = Media(libVlc, Uri.parse(source.uri))
-            source.headers.forEach { (name, value) ->
-                media.addOption(":http-header=$name: $value")
+            val proxiedMediaUri = if (settings.vlcHeaderProxyEnabled) {
+                AndroidVlcHeaderProxy.proxiedUrl(source.uri, source.headers)
+            } else {
+                null
+            }
+            val media = Media(libVlc, Uri.parse(proxiedMediaUri ?: source.uri))
+            if (proxiedMediaUri == null) {
+                source.headers.forEach { (name, value) ->
+                    media.addOption(":http-header=$name: $value")
+                }
             }
             source.vlcSubtitleUris().forEach { subtitleUri ->
-                media.addSlave(IMedia.Slave(VlcSubtitleSlaveType, VlcExternalSubtitlePriority, subtitleUri))
+                val proxiedSubtitleUri = if (settings.vlcHeaderProxyEnabled) {
+                    AndroidVlcHeaderProxy.proxiedUrl(subtitleUri, source.headers)
+                } else {
+                    null
+                }
+                media.addSlave(IMedia.Slave(VlcSubtitleSlaveType, VlcExternalSubtitlePriority, proxiedSubtitleUri ?: subtitleUri))
             }
             mediaPlayer.media = media
             media.release()

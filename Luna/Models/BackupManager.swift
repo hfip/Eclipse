@@ -132,7 +132,7 @@ struct BackupData: Codable {
 
         version = try container.decodeIfPresent(String.self, forKey: .version) ?? "1.0"
         createdDate = try container.decode(Date.self, forKey: .createdDate)
-        accentColor = try container.decodeIfPresent(Data.self, forKey: .accentColor)
+        accentColor = try Self.decodeColorData(from: container, forKey: .accentColor)
         tmdbLanguage = try container.decodeIfPresent(String.self, forKey: .tmdbLanguage) ?? "en-US"
         selectedAppearance = try container.decodeIfPresent(String.self, forKey: .selectedAppearance) ?? "system"
         enableSubtitlesByDefault = try container.decodeIfPresent(Bool.self, forKey: .enableSubtitlesByDefault) ?? false
@@ -168,8 +168,8 @@ struct BackupData: Codable {
         vlcOpenSubtitlesAutoFallbackEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesAutoFallbackEnabled) ?? true
 
         // Subtitle styling
-        subtitleForegroundColor = try container.decodeIfPresent(Data.self, forKey: .subtitleForegroundColor)
-        subtitleStrokeColor = try container.decodeIfPresent(Data.self, forKey: .subtitleStrokeColor)
+        subtitleForegroundColor = try Self.decodeColorData(from: container, forKey: .subtitleForegroundColor)
+        subtitleStrokeColor = try Self.decodeColorData(from: container, forKey: .subtitleStrokeColor)
         subtitleStrokeWidth = try container.decodeIfPresent(Double.self, forKey: .subtitleStrokeWidth) ?? 1.0
         subtitleFontSize = try container.decodeIfPresent(Double.self, forKey: .subtitleFontSize) ?? 30.0
         subtitleVerticalOffset = try container.decodeIfPresent(Double.self, forKey: .subtitleVerticalOffset) ?? -6.0
@@ -214,6 +214,61 @@ struct BackupData: Codable {
         recommendationCache = try container.decodeIfPresent([TMDBSearchResult].self, forKey: .recommendationCache) ?? []
         userRatings = Self.decodeUserRatings(from: container)
         userRatingNotes = try container.decodeIfPresent([String: String].self, forKey: .userRatingNotes) ?? [:]
+    }
+
+    static func decodeColorData(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) throws -> Data? {
+        if let data = try? container.decodeIfPresent(Data.self, forKey: key) {
+            return data
+        }
+        if let string = try? container.decodeIfPresent(String.self, forKey: key) {
+            return backupColorData(from: string)
+        }
+        return nil
+    }
+
+    static func backupColorData(from value: Any?) -> Data? {
+        if let data = value as? Data {
+            return data
+        }
+        guard let string = value as? String else {
+            return nil
+        }
+        if let colorData = archivedColorData(fromHexString: string) {
+            return colorData
+        }
+        return Data(base64Encoded: string)
+    }
+
+    private static func archivedColorData(fromHexString rawValue: String) -> Data? {
+        let raw = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: "0x", with: "", options: .caseInsensitive)
+        guard raw.count == 6 || raw.count == 8, raw.allSatisfy({ $0.isHexDigit }) else {
+            return nil
+        }
+        let scanner = Scanner(string: raw)
+        var value: UInt64 = 0
+        guard scanner.scanHexInt64(&value) else {
+            return nil
+        }
+        let alpha: CGFloat
+        let red: CGFloat
+        let green: CGFloat
+        let blue: CGFloat
+        if raw.count == 8 {
+            alpha = CGFloat((value >> 24) & 0xFF) / 255.0
+            red = CGFloat((value >> 16) & 0xFF) / 255.0
+            green = CGFloat((value >> 8) & 0xFF) / 255.0
+            blue = CGFloat(value & 0xFF) / 255.0
+        } else {
+            alpha = 1.0
+            red = CGFloat((value >> 16) & 0xFF) / 255.0
+            green = CGFloat((value >> 8) & 0xFF) / 255.0
+            blue = CGFloat(value & 0xFF) / 255.0
+        }
+        let color = UIColor(red: red, green: green, blue: blue, alpha: alpha)
+        return try? NSKeyedArchiver.archivedData(withRootObject: color, requiringSecureCoding: true)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -917,7 +972,7 @@ class BackupManager {
         
         // Extract optional fields with defaults
         let version = json["version"] as? String ?? "1.0"
-        let accentColor = json["accentColor"] as? Data
+        let accentColor = BackupData.backupColorData(from: json["accentColor"])
         let tmdbLanguage = json["tmdbLanguage"] as? String ?? "en-US"
         let selectedAppearance = json["selectedAppearance"] as? String ?? "system"
         let enableSubtitlesByDefault = json["enableSubtitlesByDefault"] as? Bool ?? false
@@ -948,8 +1003,8 @@ class BackupManager {
         let vlcOpenSubtitlesAutoFallbackEnabled = json["vlcOpenSubtitlesAutoFallbackEnabled"] as? Bool ?? true
 
         // Subtitle styling
-        let subtitleForegroundColor = json["subtitleForegroundColor"] as? Data
-        let subtitleStrokeColor = json["subtitleStrokeColor"] as? Data
+        let subtitleForegroundColor = BackupData.backupColorData(from: json["subtitleForegroundColor"])
+        let subtitleStrokeColor = BackupData.backupColorData(from: json["subtitleStrokeColor"])
         let subtitleStrokeWidth = json["subtitleStrokeWidth"] as? Double ?? 1.0
         let subtitleFontSize = json["subtitleFontSize"] as? Double ?? 30.0
         let subtitleVerticalOffset = json["subtitleVerticalOffset"] as? Double ?? -6.0

@@ -25,6 +25,8 @@ import dev.soupy.eclipse.android.data.TrackerPlaybackProgressDraft
 import dev.soupy.eclipse.android.data.TrackerRepository
 import dev.soupy.eclipse.android.core.model.DetailTarget
 import dev.soupy.eclipse.android.core.model.EpisodePlaybackContext
+import dev.soupy.eclipse.android.core.model.EpisodeProgressBackup
+import dev.soupy.eclipse.android.core.model.MovieProgressBackup
 import dev.soupy.eclipse.android.core.model.PlayerSource
 import dev.soupy.eclipse.android.core.model.SkipSegment
 import dev.soupy.eclipse.android.core.model.TrackerStateSnapshot
@@ -337,11 +339,26 @@ class AndroidDetailViewModel(
             }
             streamResolutionRepository.resolve(target, episode)
                 .onSuccess { result ->
+                    val current = _state.value
+                    val selectedEpisodeId = episode?.let { selected ->
+                        current.episodes.firstOrNull { it.matchesSelection(selected) }?.id
+                    } ?: current.selectedEpisodeId
+                    val selectedEpisodeLabel = episode?.label ?: current.selectedEpisodeLabel
+                    val resumeState = current.copy(
+                        selectedEpisodeId = selectedEpisodeId,
+                        selectedEpisodeLabel = selectedEpisodeLabel,
+                    )
+                    val candidates = result.candidates.map { candidate ->
+                        candidate.copy(
+                            playerSource = candidate.playerSource?.withResumePosition(resumeState),
+                        )
+                    }
+                    val selectedSource = result.selectedSource?.withResumePosition(resumeState)
                     _state.update { state ->
                         state.copy(
                             isResolvingStreams = false,
                             streamStatusMessage = result.statusMessage,
-                            streamCandidates = result.candidates.map { candidate ->
+                            streamCandidates = candidates.map { candidate ->
                                 DetailStreamRow(
                                     id = candidate.id,
                                     title = candidate.title,
@@ -351,16 +368,16 @@ class AndroidDetailViewModel(
                                     playerSource = candidate.playerSource,
                                 )
                             },
-                            playerSource = result.selectedSource ?: state.playerSource,
-                            skipSegments = if (result.selectedSource != null) emptyList() else state.skipSegments,
-                            skipStatusMessage = if (result.selectedSource != null) {
+                            playerSource = selectedSource ?: state.playerSource,
+                            skipSegments = if (selectedSource != null) emptyList() else state.skipSegments,
+                            skipStatusMessage = if (selectedSource != null) {
                                 "Loading skip segments..."
                             } else {
                                 state.skipStatusMessage
                             },
                         )
                     }
-                    result.selectedSource?.let(::loadSkipSegmentsFor)
+                    selectedSource?.let(::loadSkipSegmentsFor)
                 }
                 .onFailure { error ->
                     _state.update {
@@ -375,15 +392,19 @@ class AndroidDetailViewModel(
     }
 
     fun playResolvedStream(streamId: String) {
-        val selectedSource = state.value.streamCandidates.firstOrNull { it.id == streamId }?.playerSource
-        _state.update { state ->
-            state.copy(
-                playerSource = selectedSource ?: state.playerSource,
-                skipSegments = if (selectedSource != null) emptyList() else state.skipSegments,
-                skipStatusMessage = if (selectedSource != null) "Loading skip segments..." else state.skipStatusMessage,
-            )
+        viewModelScope.launch {
+            val current = state.value
+            val selectedSource = current.streamCandidates.firstOrNull { it.id == streamId }?.playerSource
+                ?.withResumePosition(current)
+            _state.update { state ->
+                state.copy(
+                    playerSource = selectedSource ?: state.playerSource,
+                    skipSegments = if (selectedSource != null) emptyList() else state.skipSegments,
+                    skipStatusMessage = if (selectedSource != null) "Loading skip segments..." else state.skipStatusMessage,
+                )
+            }
+            selectedSource?.let(::loadSkipSegmentsFor)
         }
-        selectedSource?.let(::loadSkipSegmentsFor)
     }
 
     fun playNextEpisode() {
@@ -738,6 +759,48 @@ class AndroidDetailViewModel(
         return playableEpisodes.getOrNull(currentIndex + 1)
     }
 
+    private suspend fun PlayerSource.withResumePosition(snapshot: DetailScreenState): PlayerSource {
+        val resumePosition = resumePositionMsFor(snapshot, this)
+        return if (resumePosition > 0L) {
+            copy(resumePositionMs = resumePosition)
+        } else {
+            this
+        }
+    }
+
+    private suspend fun resumePositionMsFor(
+        snapshot: DetailScreenState,
+        source: PlayerSource,
+    ): Long {
+        val target = currentProgressTarget ?: currentTarget ?: return 0L
+        val progress = progressRepository.loadSnapshot().getOrNull() ?: return 0L
+        return when (target) {
+            is DetailTarget.TmdbMovie -> progress.movieProgress
+                .firstOrNull { movie -> movie.id == target.id }
+                ?.resumePositionMs()
+                ?: 0L
+            is DetailTarget.TmdbShow -> {
+                val episode = snapshot.selectedPlaybackEpisode(source)
+                val seasonNumber = episode?.sourceSeasonNumber
+                    ?: source.context?.resolvedTMDBSeasonNumber
+                    ?: return 0L
+                val episodeNumber = episode?.sourceEpisodeNumber
+                    ?: source.context?.resolvedTMDBEpisodeNumber
+                    ?: return 0L
+                progress.episodeProgress
+                    .firstOrNull { entry ->
+                        entry.showId == target.id &&
+                            entry.seasonNumber == seasonNumber &&
+                            entry.episodeNumber == episodeNumber
+                    }
+                    ?.resumePositionMs()
+                    ?: 0L
+            }
+            is DetailTarget.AniListMediaTarget,
+            is DetailTarget.ServiceMedia -> 0L
+        }
+    }
+
     private fun loadSkipSegmentsFor(source: PlayerSource) {
         val target = currentProgressTarget ?: currentTarget ?: return
         val context = source.context
@@ -837,8 +900,10 @@ private fun DetailContent.toUiState(
             seasonNumber = it.seasonNumber,
             episodeNumber = it.episodeNumber,
             runtimeMinutes = it.runtimeMinutes,
+            anilistMediaId = it.anilistMediaId,
             tmdbSeasonNumber = it.tmdbSeasonNumber,
             tmdbEpisodeNumber = it.tmdbEpisodeNumber,
+            tmdbEpisodeOffset = it.tmdbEpisodeOffset,
             isSpecial = it.isSpecial,
             titleOnlySearch = it.titleOnlySearch,
             searchTitle = it.searchTitle,
@@ -893,11 +958,31 @@ private fun DetailEpisodeRow.toStreamEpisodeSelection(): StreamEpisodeSelection?
         label = if (isSpecial) "Special E$localEpisode" else "S${localSeason}E${localEpisode}",
         localSeasonNumber = localSeason,
         localEpisodeNumber = localEpisode,
+        anilistMediaId = anilistMediaId,
+        tmdbEpisodeOffset = tmdbEpisodeOffset,
         searchTitle = searchTitle ?: title,
         isSpecial = isSpecial,
         titleOnlySearch = useTitleOnly,
         serviceHref = serviceHref,
     )
+}
+
+private fun DetailScreenState.selectedPlaybackEpisode(source: PlayerSource): DetailEpisodeRow? {
+    selectedEpisodeId
+        ?.let { id -> episodes.firstOrNull { episode -> episode.id == id } }
+        ?.let { return it }
+
+    val context = source.context ?: return episodes.firstOrNull()
+    return episodes.firstOrNull { episode ->
+        val seasonNumber = episode.sourceSeasonNumber
+            ?: episode.tmdbSeasonNumber
+            ?: episode.seasonNumber
+        val episodeNumber = episode.sourceEpisodeNumber
+            ?: episode.tmdbEpisodeNumber
+            ?: episode.episodeNumber
+        seasonNumber == context.resolvedTMDBSeasonNumber &&
+            episodeNumber == context.resolvedTMDBEpisodeNumber
+    } ?: episodes.firstOrNull()
 }
 
 private val DetailEpisodeRow.sourceSeasonNumber: Int?
@@ -915,11 +1000,51 @@ private fun DetailEpisodeRow.downloadKeySuffix(): String? {
 private fun EpisodePlaybackContext.downloadKeySuffix(): String =
     "s${resolvedTMDBSeasonNumber}_e${resolvedTMDBEpisodeNumber}"
 
-private fun DetailEpisodeRow.matchesSelection(selection: StreamEpisodeSelection): Boolean =
-    sourceSeasonNumber == selection.seasonNumber &&
+private fun MovieProgressBackup.resumePositionMs(): Long =
+    resumePositionMs(
+        currentTimeSeconds = currentTime,
+        totalDurationSeconds = totalDuration,
+        watched = isWatched,
+    )
+
+private fun EpisodeProgressBackup.resumePositionMs(): Long =
+    resumePositionMs(
+        currentTimeSeconds = currentTime,
+        totalDurationSeconds = totalDuration,
+        watched = isWatched,
+    )
+
+private fun resumePositionMs(
+    currentTimeSeconds: Double,
+    totalDurationSeconds: Double,
+    watched: Boolean,
+): Long {
+    if (watched || currentTimeSeconds <= 0.0) return 0L
+    val progress = if (totalDurationSeconds > 0.0) {
+        currentTimeSeconds / totalDurationSeconds
+    } else {
+        0.0
+    }
+    if (progress >= 0.95) return 0L
+    return (currentTimeSeconds * 1_000.0).toLong().coerceAtLeast(0L)
+}
+
+private fun DetailEpisodeRow.matchesSelection(selection: StreamEpisodeSelection): Boolean {
+    if (!selection.serviceHref.isNullOrBlank() && serviceHref == selection.serviceHref) {
+        return true
+    }
+    if (selection.titleOnlySearch) {
+        val selectedTitle = selection.searchTitle?.trim().orEmpty()
+        return selectedTitle.isNotBlank() &&
+            listOf(title, searchTitle).any { candidate ->
+                candidate?.trim()?.equals(selectedTitle, ignoreCase = true) == true
+            }
+    }
+    return sourceSeasonNumber == selection.seasonNumber &&
         sourceEpisodeNumber == selection.episodeNumber &&
         (seasonNumber ?: sourceSeasonNumber) == selection.localSeasonNumber &&
         (episodeNumber ?: sourceEpisodeNumber) == selection.localEpisodeNumber
+}
 
 private fun List<SkipSegment>.mergeSkipSegments(): List<SkipSegment> =
     sortedWith(

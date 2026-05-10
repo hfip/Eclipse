@@ -1970,9 +1970,10 @@ private fun TrackerAccountRow(
 }
 
 private fun ReaderModeLabel(mode: Int): String = when (mode) {
-    0 -> "Paged"
-    1 -> "Webtoon"
-    2 -> "Auto"
+    0 -> "Left to Right"
+    1 -> "Right to Left"
+    2 -> "Webtoon"
+    3 -> "Vertical"
     else -> "Mode $mode"
 }
 
@@ -1982,9 +1983,10 @@ private fun ReaderModeButtons(
     onSelected: (Int) -> Unit,
 ) {
     val modes = listOf(
-        0 to "Paged",
-        1 to "Webtoon",
-        2 to "Auto",
+        0 to "LTR",
+        1 to "RTL",
+        2 to "Webtoon",
+        3 to "Vertical",
     )
     Row(
         modifier = Modifier.fillMaxWidth(),

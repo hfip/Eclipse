@@ -219,6 +219,29 @@ class BackupDocumentTest {
     }
 
     @Test
+    fun decodesBackupColorsFromHexAndBase64TextData() {
+        val raw = """
+            {
+              "version": "1.0",
+              "accentColor": "I2ZmY2M4OA==",
+              "settingsGradientColor": "0x112233",
+              "subtitleForegroundColor": "ffffff",
+              "subtitleStrokeColor": "#80112233"
+            }
+        """.trimIndent()
+
+        val document = BackupDocument.decode(json, raw)
+        val encoded = document.encode(json)
+
+        assertEquals("#FFCC88", document.payload.accentColor)
+        assertEquals("#112233", document.payload.settingsGradientColor)
+        assertEquals("#FFFFFF", document.payload.subtitleForegroundColor)
+        assertEquals("#80112233", document.payload.subtitleStrokeColor)
+        assertTrue(encoded.contains("#FFCC88"))
+        assertTrue(encoded.contains("#80112233"))
+    }
+
+    @Test
     fun nextEpisodeThresholdMatchesIosRange() {
         assertEquals(50, BackupData(nextEpisodeThreshold = 0.50).nextEpisodeThresholdPercent())
         assertEquals(99, BackupData(nextEpisodeThreshold = 0.99).nextEpisodeThresholdPercent())

@@ -14,6 +14,7 @@ import dev.soupy.eclipse.android.core.model.PlayerSource
 import dev.soupy.eclipse.android.core.model.SubtitleTrack
 import dev.soupy.eclipse.android.core.storage.DownloadsStore
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.ByteBuffer
@@ -26,6 +27,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 private const val BufferSize = 64 * 1024
+private const val HttpStatusRangeNotSatisfiable = 416
 
 data class DownloadDraft(
     val detailTarget: DetailTarget,
@@ -243,7 +245,7 @@ class DownloadsRepository(
         val snapshot = downloadsStore.read()
         val directory = downloadsStore.downloadsDirectory().canonicalFile
         val referencedFileNames = snapshot.items
-            .flatMap { record -> listOfNotNull(record.localFileName) + record.subtitleFileNames }
+            .flatMap { record -> listOfNotNull(record.localFileName, record.partialFileName()) + record.subtitleFileNames }
             .toSet()
         var deletedFiles = 0
         var deletedBytes = 0L
@@ -433,7 +435,7 @@ class DownloadsRepository(
 
     private fun deleteDownloadedFiles(record: DownloadRecord) {
         val directory = downloadsStore.downloadsDirectory().canonicalFile
-        listOfNotNull(record.localDownloadedFile()?.name)
+        listOfNotNull(record.localDownloadedFile()?.name, record.partialFileName())
             .plus(record.subtitleFileNames)
             .forEach { name ->
                 File(directory, name)
@@ -494,7 +496,8 @@ private class DirectFileDownloadEngine(
         runCatching {
             val directory = downloadsStore.downloadsDirectory()
             val outputFile = File(directory, record.outputFileName(sourceUri))
-            var downloadedBytes = 0L
+            val partialFile = File(directory, "${outputFile.name}.part")
+            var downloadedBytes = partialFile.takeIf { it.exists() }?.length()?.takeIf { it > 0L } ?: 0L
             var totalBytes = 0L
 
             val connection = URL(sourceUri).openConnection() as HttpURLConnection
@@ -503,18 +506,35 @@ private class DirectFileDownloadEngine(
                 record.requestHeaders.forEach { (name, value) ->
                     connection.setRequestProperty(name, value)
                 }
+                if (downloadedBytes > 0L) {
+                    connection.setRequestProperty("Range", "bytes=$downloadedBytes-")
+                }
                 connection.connectTimeout = 20_000
                 connection.readTimeout = 30_000
                 connection.connect()
 
                 val status = connection.responseCode
+                if (status == HttpStatusRangeNotSatisfiable && downloadedBytes > 0L) {
+                    partialFile.delete()
+                    error("Server rejected resume range for ${record.title}. Retry restarted the transfer.")
+                }
                 if (status !in 200..299) {
                     error("HTTP $status while downloading ${record.title}")
                 }
+                val appendPartial = status == HttpURLConnection.HTTP_PARTIAL && downloadedBytes > 0L
+                if (!appendPartial && downloadedBytes > 0L) {
+                    partialFile.delete()
+                    downloadedBytes = 0L
+                }
 
-                totalBytes = connection.contentLengthLong.coerceAtLeast(0L)
+                totalBytes = resolveTotalBytesForResume(
+                    existingBytes = downloadedBytes,
+                    responseCode = status,
+                    contentLength = connection.contentLengthLong,
+                    contentRange = connection.getHeaderField("Content-Range"),
+                )
                 connection.inputStream.use { input ->
-                    outputFile.outputStream().use { output ->
+                    FileOutputStream(partialFile, appendPartial).use { output ->
                         val buffer = ByteArray(BufferSize)
                         while (true) {
                             coroutineContext.ensureActive()
@@ -528,6 +548,8 @@ private class DirectFileDownloadEngine(
             } finally {
                 connection.disconnect()
             }
+            if (outputFile.exists()) outputFile.delete()
+            require(partialFile.renameTo(outputFile)) { "Could not finalize downloaded file." }
 
             val subtitleFiles = record.subtitleTracks.downloadSubtitles(directory, record.id)
             record.copy(
@@ -567,11 +589,14 @@ private class DirectFileDownloadEngine(
         runCatching {
             val directory = downloadsStore.downloadsDirectory()
             val outputFile = File(directory, "${record.id.safeFileStem()}.ts")
+            val partialFile = File(directory, "${outputFile.name}.part")
             val hls = HlsPlaylistDownloader(
                 headers = record.requestHeaders,
-                outputFile = outputFile,
+                outputFile = partialFile,
             )
             val result = hls.download(URL(sourceUri))
+            if (outputFile.exists()) outputFile.delete()
+            require(partialFile.renameTo(outputFile)) { "Could not finalize packaged HLS file." }
             val subtitleFiles = record.subtitleTracks.downloadSubtitles(directory, record.id)
 
             record.copy(
@@ -604,54 +629,56 @@ private class DirectFileDownloadEngine(
     }
 }
 
-private data class HlsDownloadResult(
+internal data class HlsDownloadResult(
     val segmentCount: Int,
     val downloadedBytes: Long,
 )
 
-private data class HlsVariant(
+internal data class HlsVariant(
     val url: URL,
     val bandwidth: Int,
 )
 
-private data class HlsSegment(
+internal data class HlsSegment(
     val resource: HlsResource,
     val sequenceNumber: Long,
+    val encryptionKey: HlsEncryptionKey? = null,
 )
 
-private data class HlsResource(
+internal data class HlsResource(
     val url: URL,
     val byteRange: HlsByteRange? = null,
 )
 
-private data class HlsByteRange(
+internal data class HlsByteRange(
     val offset: Long,
     val length: Long,
 )
 
-private data class HlsByteRangeSpec(
+internal data class HlsByteRangeSpec(
     val length: Long,
     val offset: Long?,
 )
 
-private data class HlsEncryptionKey(
+internal data class HlsEncryptionKey(
     val method: String,
     val keyUrl: URL,
     val iv: ByteArray?,
 )
 
-private data class HlsDecryptionKey(
+internal data class HlsDecryptionKey(
     val bytes: ByteArray,
     val iv: ByteArray?,
 )
 
-private data class HlsMediaPlaylist(
+internal data class HlsMediaPlaylist(
     val segments: List<HlsSegment>,
     val initSegment: HlsResource?,
+    val initSegmentEncryptionKey: HlsEncryptionKey?,
     val encryptionKey: HlsEncryptionKey?,
 )
 
-private class HlsPlaylistDownloader(
+internal class HlsPlaylistDownloader(
     private val headers: Map<String, String>,
     private val outputFile: File,
 ) {
@@ -676,21 +703,31 @@ private class HlsPlaylistDownloader(
             error("HLS media playlist did not contain any segments.")
         }
 
-        val decryptionKey = parsed.encryptionKey?.let { key ->
+        val decryptionKeys = mutableMapOf<String, HlsDecryptionKey>()
+        fun decryptionKeyFor(key: HlsEncryptionKey): HlsDecryptionKey {
             if (!key.method.equals("AES-128", ignoreCase = true)) {
                 error("Unsupported HLS encryption method ${key.method}.")
             }
-            HlsDecryptionKey(
-                bytes = fetchBytes(key.keyUrl),
-                iv = key.iv,
-            )
+            return decryptionKeys.getOrPut(key.cacheKey()) {
+                HlsDecryptionKey(
+                    bytes = fetchBytes(key.keyUrl),
+                    iv = key.iv,
+                )
+            }
         }
 
         var downloadedBytes = 0L
         outputFile.outputStream().use { output ->
             parsed.initSegment?.let { initSegment ->
                 coroutineContext.ensureActive()
-                val initBytes = fetchBytes(initSegment.url, initSegment.byteRange)
+                val rawInitBytes = fetchBytes(initSegment.url, initSegment.byteRange)
+                val initBytes = parsed.initSegmentEncryptionKey?.let(::decryptionKeyFor)?.let { key ->
+                    decryptAes128(
+                        data = rawInitBytes,
+                        keyBytes = key.bytes,
+                        iv = key.iv ?: ByteArray(16),
+                    )
+                } ?: rawInitBytes
                 output.write(initBytes)
                 downloadedBytes += initBytes.size
             }
@@ -698,6 +735,7 @@ private class HlsPlaylistDownloader(
             parsed.segments.forEach { segment ->
                 coroutineContext.ensureActive()
                 val rawBytes = fetchBytes(segment.resource.url, segment.resource.byteRange)
+                val decryptionKey = segment.encryptionKey?.let(::decryptionKeyFor)
                 val segmentBytes = if (decryptionKey != null) {
                     decryptAes128(
                         data = rawBytes,
@@ -718,7 +756,7 @@ private class HlsPlaylistDownloader(
         )
     }
 
-    private fun parseMasterPlaylist(content: String, baseUrl: URL): List<HlsVariant> {
+    internal fun parseMasterPlaylist(content: String, baseUrl: URL): List<HlsVariant> {
         val lines = content.lineSequence().map(String::trim).toList()
         val variants = mutableListOf<HlsVariant>()
         var lastBandwidth = -1
@@ -739,12 +777,13 @@ private class HlsPlaylistDownloader(
         return variants
     }
 
-    private fun parseMediaPlaylist(content: String, baseUrl: URL): HlsMediaPlaylist {
+    internal fun parseMediaPlaylist(content: String, baseUrl: URL): HlsMediaPlaylist {
         val lines = content.lineSequence().map(String::trim).toList()
         val segments = mutableListOf<HlsSegment>()
         var mediaSequence = 0L
         var nextSequence = 0L
         var initSegment: HlsResource? = null
+        var initSegmentEncryptionKey: HlsEncryptionKey? = null
         var encryptionKey: HlsEncryptionKey? = null
         var pendingByteRange: HlsByteRangeSpec? = null
         val nextByteRangeOffsets = mutableMapOf<String, Long>()
@@ -767,6 +806,7 @@ private class HlsPlaylistDownloader(
                                 nextOffsets = nextByteRangeOffsets,
                             )
                         initSegment = HlsResource(url = url, byteRange = byteRange)
+                        initSegmentEncryptionKey = encryptionKey
                     }
                 }
                 line.startsWith("#EXT-X-KEY:") -> {
@@ -798,6 +838,7 @@ private class HlsPlaylistDownloader(
                             ),
                         ),
                         sequenceNumber = nextSequence,
+                        encryptionKey = encryptionKey,
                     )
                     pendingByteRange = null
                     nextSequence += 1
@@ -808,6 +849,7 @@ private class HlsPlaylistDownloader(
         return HlsMediaPlaylist(
             segments = segments,
             initSegment = initSegment,
+            initSegmentEncryptionKey = initSegmentEncryptionKey,
             encryptionKey = encryptionKey,
         )
     }
@@ -920,6 +962,28 @@ private fun DownloadRecord.outputFileName(sourceUri: String): String {
     return "${id.safeFileStem()}.$extension"
 }
 
+private fun DownloadRecord.partialFileName(): String? =
+    sourceUri?.takeIf { it.isDirectHttpDownloadUrl() || it.isHlsPlaylistSource() }
+        ?.let { source -> "${outputFileName(source)}.part" }
+
+internal fun resolveTotalBytesForResume(
+    existingBytes: Long,
+    responseCode: Int,
+    contentLength: Long,
+    contentRange: String?,
+): Long {
+    val rangeTotal = contentRange
+        ?.substringAfter('/', missingDelimiterValue = "")
+        ?.takeIf { it.isNotBlank() && it != "*" }
+        ?.toLongOrNull()
+    return when {
+        rangeTotal != null -> rangeTotal
+        responseCode == HttpURLConnection.HTTP_PARTIAL && contentLength > 0 -> existingBytes + contentLength
+        contentLength > 0 -> contentLength
+        else -> existingBytes.coerceAtLeast(0L)
+    }
+}
+
 private fun DetailTarget.downloadKey(suffix: String?): String {
     val base = when (this) {
         is DetailTarget.AniListMediaTarget -> "download:anilist:$id"
@@ -954,24 +1018,50 @@ private fun String.safeWorkNamePart(): String = replace(Regex("[^A-Za-z0-9._-]+"
     .take(120)
     .ifBlank { hashCode().toString() }
 
-private fun String.parseAttribute(key: String): String? {
-    val prefix = "$key="
+private fun String.parseAttribute(key: String): String? =
+    parseHlsAttributes()[key]
+
+private fun String.parseHlsAttributes(): Map<String, String> {
+    val attributes = linkedMapOf<String, String>()
     var index = 0
     while (index < length) {
-        val nextComma = indexOf(',', startIndex = index).takeIf { it >= 0 } ?: length
-        val partStart = index
-        val keyStart = substring(partStart, nextComma).indexOf(prefix)
-        if (keyStart == 0) {
-            val valueStart = partStart + prefix.length
-            if (valueStart < length && this[valueStart] == '"') {
-                val endQuote = indexOf('"', startIndex = valueStart + 1).takeIf { it >= 0 } ?: length
-                return substring(valueStart + 1, endQuote)
-            }
-            return substring(valueStart, nextComma)
+        while (index < length && (this[index] == ',' || this[index].isWhitespace())) index += 1
+        val keyStart = index
+        while (index < length && this[index] != '=' && this[index] != ',') index += 1
+        if (index >= length || this[index] != '=') {
+            index += 1
+            continue
         }
-        index = nextComma + 1
+        val name = substring(keyStart, index).trim()
+        index += 1
+        val value = if (index < length && this[index] == '"') {
+            index += 1
+            val builder = StringBuilder()
+            while (index < length) {
+                val char = this[index]
+                if (char == '"') {
+                    index += 1
+                    break
+                }
+                if (char == '\\' && index + 1 < length) {
+                    index += 1
+                    builder.append(this[index])
+                } else {
+                    builder.append(char)
+                }
+                index += 1
+            }
+            builder.toString()
+        } else {
+            val valueStart = index
+            while (index < length && this[index] != ',') index += 1
+            substring(valueStart, index).trim()
+        }
+        if (name.isNotBlank()) {
+            attributes[name] = value
+        }
     }
-    return null
+    return attributes
 }
 
 private val HlsByteRange.endInclusive: Long
@@ -1010,6 +1100,10 @@ private fun String.hexToBytes(): ByteArray {
         clean.substring(index * 2, index * 2 + 2).toInt(16).toByte()
     }
 }
+
+private fun HlsEncryptionKey.cacheKey(): String =
+    listOf(method, keyUrl.toExternalForm(), iv?.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }.orEmpty())
+        .joinToString("|")
 
 private fun Long.toAesIv(): ByteArray = ByteBuffer.allocate(16)
     .putLong(0L)

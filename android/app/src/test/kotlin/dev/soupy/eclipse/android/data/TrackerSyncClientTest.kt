@@ -62,4 +62,18 @@ class TrackerSyncClientTest {
         assertTrue("progress: 7" in mutation)
         assertTrue("status: CURRENT" in mutation)
     }
+
+    @Test
+    fun aniListRatingMutationUsesScoreAndHalfStarNormalization() {
+        val mutation = aniListRatingMutation(
+            anilistMediaId = 321,
+            ratingOutOf10 = 7.3,
+            note = "solid episode",
+        )
+
+        assertTrue("mediaId: 321" in mutation)
+        assertTrue("score: 7.5" in mutation)
+        assertTrue("notes: \"solid episode\"" in mutation)
+        assertTrue("scoreRaw" !in mutation)
+    }
 }

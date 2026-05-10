@@ -1317,12 +1317,16 @@ private fun MangaReaderPanel(
             }
             if (reader.pageImageUrls.isNotEmpty()) {
                 if (readerSettings.usesPagedImages()) {
+                    val displayedPageIndex = readerSettings.displayImageIndex(
+                        readingPosition = safePageIndex,
+                        lastIndex = reader.pageImageUrls.lastIndex,
+                    )
                     Column(
                         modifier = Modifier.padding(horizontal = readerSettings.horizontalPadding()),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         ContentImage(
-                            imageUrl = reader.pageImageUrls[safePageIndex],
+                            imageUrl = reader.pageImageUrls[displayedPageIndex],
                             contentDescription = "${reader.title} page ${safePageIndex + 1}",
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1384,19 +1388,31 @@ private fun MangaReaderChapterRow.buttonLabel(): String =
 
 private fun MangaReaderSettingsRow.modeLabel(): String =
     when (readingMode) {
-        0 -> "Paged"
-        1 -> "Webtoon"
-        else -> "Auto"
+        0 -> "Left to Right"
+        1 -> "Right to Left"
+        2 -> "Webtoon"
+        3 -> "Vertical"
+        else -> "Webtoon"
     }
 
 private fun MangaReaderSettingsRow.usesPagedImages(): Boolean =
-    readingMode == 0
+    readingMode != 2
+
+private fun MangaReaderSettingsRow.displayImageIndex(
+    readingPosition: Int,
+    lastIndex: Int,
+): Int =
+    if (readingMode == 1) {
+        (lastIndex - readingPosition).coerceIn(0, lastIndex.coerceAtLeast(0))
+    } else {
+        readingPosition.coerceIn(0, lastIndex.coerceAtLeast(0))
+    }
 
 private fun MangaReaderSettingsRow.horizontalPadding() =
     readerMargin.coerceIn(0.0, 30.0).dp
 
 private fun MangaReaderSettingsRow.imageSpacing() =
-    if (readingMode == 1) 4.dp else 12.dp
+    if (readingMode == 2) 4.dp else 12.dp
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

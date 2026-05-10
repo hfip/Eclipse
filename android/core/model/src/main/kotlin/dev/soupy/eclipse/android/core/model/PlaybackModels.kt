@@ -18,7 +18,7 @@ data class EpisodePlaybackContext(
         get() = tmdbSeasonNumber ?: localSeasonNumber
 
     val resolvedTMDBEpisodeNumber: Int
-        get() = (tmdbEpisodeNumber ?: localEpisodeNumber) + (tmdbEpisodeOffset ?: 0)
+        get() = tmdbEpisodeNumber ?: (localEpisodeNumber + (tmdbEpisodeOffset ?: 0))
 
     fun forEpisodeNumber(episodeNumber: Int): EpisodePlaybackContext = copy(
         localEpisodeNumber = episodeNumber,
@@ -94,6 +94,7 @@ data class PlayerSource(
     val serviceName: String? = null,
     val serviceHref: String? = null,
     val context: EpisodePlaybackContext? = null,
+    val resumePositionMs: Long = 0L,
 )
 
 @Serializable

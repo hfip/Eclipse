@@ -19,8 +19,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -34,22 +32,22 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 private const val ServiceRuntimeTimeoutMs = 20_000L
 private const val ServiceFetchMaxBytes = 10_000_000
+private val ServiceRuntimeJson = Json {
+    ignoreUnknownKeys = true
+    isLenient = true
+}
 
 class WebViewServiceRuntime(
     context: Context,
 ) : ServiceRuntime {
     private val appContext = context.applicationContext
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
+    private val json = ServiceRuntimeJson
 
     override suspend fun load(source: ServiceRuntimeSource): Result<Unit> = runCatching {
         require(source.script.isNotBlank()) { "Service script is empty." }
@@ -149,7 +147,7 @@ class WebViewServiceRuntime(
         val callId = UUID.randomUUID().toString()
         val result = CompletableDeferred<Result<String>>()
         lateinit var webView: WebView
-        val bridge = ServiceBridge(callId, result)
+        val bridge = ServiceBridge(appContext, callId, result)
 
         try {
             webView = WebView(appContext).apply {
@@ -225,64 +223,89 @@ class WebViewServiceRuntime(
     }
 
     private fun parseStreamResult(raw: String): ServiceStreamResult {
-        val element = parseJsonElement(raw)
-        return when (element) {
-            is JsonObject -> {
-                val streamStrings = buildList {
-                    element["stream"]?.primitiveString()?.let(::add)
-                    element["streams"]?.let { streams ->
-                        when (streams) {
-                            is JsonArray -> streams.forEach { stream ->
-                                stream.primitiveString()?.let(::add)
-                            }
-                            else -> streams.primitiveString()?.let(::add)
-                        }
-                    }
-                }
-                val sourceObjects = buildList {
-                    element["stream"]?.jsonObjectOrNull()?.let(::add)
-                    element["streams"]?.let { streams ->
-                        when (streams) {
-                            is JsonArray -> streams.forEach { stream ->
-                                stream.jsonObjectOrNull()?.let(::add)
-                            }
-                            else -> streams.jsonObjectOrNull()?.let(::add)
-                        }
-                    }
-                    element["sources"]?.let { sources ->
-                        (sources as? JsonArray)?.forEach { source -> source.jsonObjectOrNull()?.let(::add) }
-                    }
-                }
-                ServiceStreamResult(
-                    streams = streamStrings,
-                    subtitles = element.subtitleStrings(),
-                    sources = sourceObjects,
-                    headers = element["headers"]?.jsonObjectOrNull()?.mapValues { (_, value) ->
-                        value.jsonPrimitive.contentOrNull.orEmpty()
-                    }.orEmpty(),
-                    defaultSubtitle = element.stringValue("defaultSubtitle"),
-                )
-            }
-            is JsonArray -> ServiceStreamResult(streams = element.mapNotNull(JsonElement::primitiveString))
-            else -> ServiceStreamResult(streams = listOfNotNull(element.primitiveString()))
-        }
+        return parseServiceStreamResult(raw, json)
     }
 
     private fun parseJsonElement(raw: String): JsonElement {
-        val clean = raw.trim()
-        if (clean.isBlank()) return JsonNull
-        return runCatching { json.parseToJsonElement(clean) }
-            .recoverCatching {
-                val decodedString = json.decodeFromString<String>(clean)
-                json.parseToJsonElement(decodedString)
-            }
-            .getOrElse {
-                JsonPrimitive(clean)
-            }
+        return parseServiceJsonElement(raw, json)
     }
 }
 
+internal fun parseServiceStreamResult(
+    raw: String,
+    json: Json = ServiceRuntimeJson,
+): ServiceStreamResult {
+    val element = parseServiceJsonElement(raw, json)
+    return when (element) {
+        is JsonObject -> {
+            val streamStrings = buildList {
+                element["url"]?.primitiveString()?.let(::add)
+                element["file"]?.primitiveString()?.let(::add)
+                element["stream"]?.primitiveString()?.let(::add)
+                element["streams"]?.let { streams ->
+                    when (streams) {
+                        is JsonArray -> streams.forEach { stream ->
+                            stream.primitiveString()?.let(::add)
+                        }
+                        else -> streams.primitiveString()?.let(::add)
+                    }
+                }
+            }
+            val sourceObjects = buildList {
+                element["stream"]?.jsonObjectOrNull()?.let(::add)
+                element["source"]?.jsonObjectOrNull()?.let(::add)
+                element["streams"]?.let { streams ->
+                    when (streams) {
+                        is JsonArray -> streams.forEach { stream ->
+                            stream.jsonObjectOrNull()?.let(::add)
+                        }
+                        else -> streams.jsonObjectOrNull()?.let(::add)
+                    }
+                }
+                listOf("sources", "qualities", "servers").forEach { key ->
+                    element[key]?.let { sources ->
+                        when (sources) {
+                            is JsonArray -> sources.forEach { source -> source.jsonObjectOrNull()?.let(::add) }
+                            else -> sources.jsonObjectOrNull()?.let(::add)
+                        }
+                    }
+                }
+            }
+            ServiceStreamResult(
+                streams = streamStrings,
+                subtitles = element.subtitleStrings(),
+                subtitleTracks = element.subtitleObjects(),
+                sources = sourceObjects,
+                headers = element.headerStrings(),
+                defaultSubtitle = element.stringValue("defaultSubtitle")
+                    ?: element.stringValue("defaultSubtitleUrl")
+                    ?: element.stringValue("defaultSub"),
+            )
+        }
+        is JsonArray -> {
+            val streamStrings = element.mapNotNull(JsonElement::primitiveString)
+            val sourceObjects = element.mapNotNull(JsonElement::jsonObjectOrNull)
+            ServiceStreamResult(streams = streamStrings, sources = sourceObjects)
+        }
+        else -> ServiceStreamResult(streams = listOfNotNull(element.primitiveString()))
+    }
+}
+
+private fun parseServiceJsonElement(raw: String, json: Json): JsonElement {
+    val clean = raw.trim()
+    if (clean.isBlank()) return JsonNull
+    return runCatching { json.parseToJsonElement(clean) }
+        .recoverCatching {
+            val decodedString = json.decodeFromString<String>(clean)
+            json.parseToJsonElement(decodedString)
+        }
+        .getOrElse {
+            JsonPrimitive(clean)
+        }
+}
+
 private class ServiceBridge(
+    private val context: Context,
     private val callId: String,
     private val result: CompletableDeferred<Result<String>>,
 ) {
@@ -343,6 +366,36 @@ private class ServiceBridge(
                 .onFailure { error ->
                     dispatchToWebView(
                         "window.__eclipseNativeFetchReject && window.__eclipseNativeFetchReject(${requestId.jsQuoted()}, ${(error.message ?: "Native fetch failed.").jsQuoted()});",
+                    )
+                }
+        }
+    }
+
+    @JavascriptInterface
+    fun networkFetch(
+        requestId: String,
+        url: String?,
+        optionsJson: String?,
+        simple: Boolean,
+    ) {
+        scope.launch {
+            val fetchResult = runCatching {
+                AndroidNetworkFetchMonitor.perform(
+                    context = context,
+                    url = requireNotNull(url?.takeIf { it.isNotBlank() }) { "Missing networkFetch URL." },
+                    optionsJson = optionsJson,
+                    simple = simple,
+                )
+            }
+            fetchResult
+                .onSuccess { payload ->
+                    dispatchToWebView(
+                        "window.__eclipseNativeNetworkFetchResolve && window.__eclipseNativeNetworkFetchResolve(${requestId.jsQuoted()}, ${payload.jsQuoted()});",
+                    )
+                }
+                .onFailure { error ->
+                    dispatchToWebView(
+                        "window.__eclipseNativeNetworkFetchReject && window.__eclipseNativeNetworkFetchReject(${requestId.jsQuoted()}, ${(error.message ?: "networkFetch failed.").jsQuoted()});",
                     )
                 }
         }
@@ -503,6 +556,8 @@ private fun JsonElement.toJavaScriptLiteral(): String = when (this) {
 private fun serviceRuntimeBridgeScript(): String = """
     (function() {
       const nativeFetchCallbacks = {};
+      const nativeNetworkFetchCallbacks = {};
+      ${browserCompatibilityScript()}
 
       window.__eclipseNativeFetchResolve = function(id, payload) {
         const callback = nativeFetchCallbacks[id];
@@ -520,6 +575,24 @@ private fun serviceRuntimeBridgeScript(): String = """
         if (!callback) return;
         delete nativeFetchCallbacks[id];
         callback.reject(new Error(String(message || 'Native fetch failed.')));
+      };
+
+      window.__eclipseNativeNetworkFetchResolve = function(id, payload) {
+        const callback = nativeNetworkFetchCallbacks[id];
+        if (!callback) return;
+        delete nativeNetworkFetchCallbacks[id];
+        try {
+          callback.resolve(JSON.parse(payload || '{}'));
+        } catch (error) {
+          callback.reject(error);
+        }
+      };
+
+      window.__eclipseNativeNetworkFetchReject = function(id, message) {
+        const callback = nativeNetworkFetchCallbacks[id];
+        if (!callback) return;
+        delete nativeNetworkFetchCallbacks[id];
+        callback.reject(new Error(String(message || 'networkFetch failed.')));
       };
 
       window.__eclipseNativeFetch = function(url, options) {
@@ -541,6 +614,20 @@ private fun serviceRuntimeBridgeScript(): String = """
             body,
             !!redirect,
             String(encoding)
+          );
+        });
+      };
+
+      window.__eclipseNativeNetworkFetch = function(url, options, simple) {
+        const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const absoluteUrl = new URL(String(url), window.location.href).href;
+        return new Promise(function(resolve, reject) {
+          nativeNetworkFetchCallbacks[id] = { resolve: resolve, reject: reject };
+          EclipseAndroidBridge.networkFetch(
+            id,
+            absoluteUrl,
+            JSON.stringify(options || {}),
+            !!simple
           );
         });
       };
@@ -577,35 +664,7 @@ private fun serviceRuntimeBridgeScript(): String = """
         });
       };
 
-      function fetchHtmlLike(url, options) {
-        options = options || {};
-        return window.fetchv2(url, options.headers || {}, 'GET', null, options.redirect !== false, options.encoding || 'utf-8')
-          .then(function(response) {
-            return response.text().then(function(body) {
-              return {
-                originalUrl: String(url),
-                requests: [String(url)],
-                html: options.returnHTML === false ? null : body,
-                cookies: null,
-                success: response.status >= 200 && response.status < 400,
-                status: response.status,
-                error: response.status >= 400 ? ('HTTP ' + response.status) : null,
-                htmlCaptured: options.returnHTML !== false,
-                cookiesCaptured: false,
-                elementsClicked: [],
-                waitResults: {}
-              };
-            });
-          });
-      }
-
-      window.networkFetchSimple = function(url, options) {
-        return fetchHtmlLike(url, options || {});
-      };
-
-      window.networkFetch = function(url, options) {
-        return fetchHtmlLike(url, options || {});
-      };
+      ${networkFetchCompatibilityScript()}
 
       window.getElementsByTag = function(html, tag) {
         const regex = new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)<\\/' + tag + '>', 'gi');
@@ -661,17 +720,53 @@ private fun JsonElement.jsonObjectOrNull(): JsonObject? =
     this as? JsonObject
 
 private fun JsonObject.subtitleStrings(): List<String> {
-    val subtitles = this["subtitles"] ?: return emptyList()
-    return when (subtitles) {
-        is JsonArray -> subtitles.mapNotNull { subtitle ->
+    return listOf("subtitles", "subtitle", "subtitleUrls")
+        .flatMap { key -> this[key].subtitleStrings() }
+        .distinct()
+}
+
+private fun JsonObject.subtitleObjects(): List<JsonObject> =
+    listOf("subtitles", "subtitleTracks", "tracks", "captions")
+        .flatMap { key -> this[key].jsonObjects() }
+
+private fun JsonElement?.subtitleStrings(): List<String> =
+    when (this) {
+        is JsonArray -> mapNotNull { subtitle ->
             when (subtitle) {
-                is JsonObject -> subtitle.stringValue("url") ?: subtitle.stringValue("href")
+                is JsonObject -> subtitle.stringValue("url")
+                    ?: subtitle.stringValue("href")
+                    ?: subtitle.stringValue("file")
+                    ?: subtitle.stringValue("src")
                 else -> subtitle.primitiveString()
             }
         }
-        else -> listOfNotNull(subtitles.primitiveString())
+        is JsonObject -> listOfNotNull(
+            stringValue("url")
+                ?: stringValue("href")
+                ?: stringValue("file")
+                ?: stringValue("src"),
+        )
+        else -> listOfNotNull(this?.primitiveString())
     }
-}
+
+private fun JsonElement?.jsonObjects(): List<JsonObject> =
+    when (this) {
+        is JsonArray -> mapNotNull(JsonElement::jsonObjectOrNull)
+        is JsonObject -> listOf(this)
+        else -> emptyList()
+    }
+
+private fun JsonObject.headerStrings(): Map<String, String> =
+    listOf("headers", "requestHeaders", "httpHeaders")
+        .asSequence()
+        .mapNotNull { key -> this[key]?.jsonObjectOrNull() }
+        .flatMap { headers -> headers.entries.asSequence() }
+        .mapNotNull { (key, value) ->
+            value.jsonPrimitive.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?.let { key to it }
+        }
+        .toMap()
 
 private fun String.jsQuoted(): String =
     buildString {

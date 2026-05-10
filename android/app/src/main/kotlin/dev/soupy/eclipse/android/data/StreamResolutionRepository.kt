@@ -28,11 +28,11 @@ import dev.soupy.eclipse.android.core.storage.StremioAddonDao
 import dev.soupy.eclipse.android.core.storage.StremioAddonEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 private const val ExactStremioContentMatchFloor = 0.90
 
@@ -61,6 +61,7 @@ data class StreamEpisodeSelection(
     val localSeasonNumber: Int = seasonNumber ?: 0,
     val localEpisodeNumber: Int = episodeNumber ?: 1,
     val anilistMediaId: Int? = null,
+    val tmdbEpisodeOffset: Int? = null,
     val searchTitle: String? = null,
     val isSpecial: Boolean = false,
     val titleOnlySearch: Boolean = false,
@@ -448,6 +449,7 @@ private fun AnimeTmdbMatch.firstMappedEpisodeSelection(anilistMediaId: Int): Str
         localSeasonNumber = mapping.localSeasonNumber,
         localEpisodeNumber = mapping.localEpisodeNumber,
         anilistMediaId = mapping.anilistMediaId,
+        tmdbEpisodeOffset = mapping.tmdbEpisodeOffset,
     )
 }
 
@@ -548,18 +550,8 @@ private fun ServiceStreamResult.toServiceCandidates(
     episode: StreamEpisodeSelection?,
     sourceWarning: String?,
 ): List<ResolvedStreamCandidate> {
-    val directStreams = streams.filter { stream -> stream.isDirectHttpUrl() }
-    val sourceStreams = sources.mapNotNull { source ->
-        val url = source["url"]?.jsonPrimitive?.contentOrNull
-            ?: source["stream"]?.jsonPrimitive?.contentOrNull
-            ?: source["file"]?.jsonPrimitive?.contentOrNull
-        val headers = source["headers"]?.jsonObjectOrNull()?.mapValues { (_, value) ->
-            value.jsonPrimitive.contentOrNull.orEmpty()
-        }.orEmpty()
-        url?.takeIf { streamUrl -> streamUrl.isDirectHttpUrl() }?.let { url to headers }
-    }
-    val allStreams = directStreams.map { it to headers } + sourceStreams
-    return allStreams.distinctBy { it.first }.mapIndexed { index, (url, streamHeaders) ->
+    val allStreams = serviceStreamPayloads().distinctBy { stream -> stream.url }
+    return allStreams.mapIndexed { index, stream ->
         val title = if (episode != null) {
             "${target.title} ${episode.label}"
         } else {
@@ -578,16 +570,10 @@ private fun ServiceStreamResult.toServiceCandidates(
             qualityScore = 1.0,
             matchScore = 1.0,
             playerSource = PlayerSource(
-                uri = url,
+                uri = stream.url,
                 title = title,
-                headers = streamHeaders,
-                subtitles = subtitles.mapIndexed { subtitleIndex, subtitle ->
-                    SubtitleTrack(
-                        id = "service-subtitle-${subtitleIndex + 1}",
-                        label = "Subtitle ${subtitleIndex + 1}",
-                        uri = subtitle,
-                    )
-                },
+                headers = stream.headers,
+                subtitles = stream.subtitles,
                 serviceId = "service:${target.serviceId}",
                 serviceName = target.serviceId,
                 serviceHref = href,
@@ -595,6 +581,92 @@ private fun ServiceStreamResult.toServiceCandidates(
             ),
         )
     }
+}
+
+private data class ServiceStreamPayload(
+    val url: String,
+    val headers: Map<String, String>,
+    val subtitles: List<SubtitleTrack>,
+)
+
+private fun ServiceStreamResult.serviceStreamPayloads(): List<ServiceStreamPayload> {
+    val globalSubtitles = buildServiceSubtitleTracks(
+        subtitleStrings = subtitles,
+        subtitleObjects = subtitleTracks,
+        defaultSubtitle = defaultSubtitle,
+    )
+    val directStreams = streams.mapNotNull { stream ->
+        stream.takeIf(String::isDirectHttpUrl)?.let { url ->
+            ServiceStreamPayload(
+                url = url,
+                headers = headers,
+                subtitles = globalSubtitles,
+            )
+        }
+    }
+    val sourceStreams = sources.mapNotNull { source ->
+        val url = source.firstString("url", "stream", "file", "src", "href")
+            ?.takeIf(String::isDirectHttpUrl)
+            ?: return@mapNotNull null
+        val sourceHeaders = headers + source.headerStrings()
+        val sourceSubtitles = buildServiceSubtitleTracks(
+            subtitleStrings = source.subtitleStrings(),
+            subtitleObjects = source.subtitleObjects(),
+            defaultSubtitle = defaultSubtitle,
+        ).ifEmpty { globalSubtitles }
+        ServiceStreamPayload(
+            url = url,
+            headers = sourceHeaders,
+            subtitles = sourceSubtitles,
+        )
+    }
+    return directStreams + sourceStreams
+}
+
+private fun buildServiceSubtitleTracks(
+    subtitleStrings: List<String>,
+    subtitleObjects: List<JsonObject>,
+    defaultSubtitle: String?,
+): List<SubtitleTrack> {
+    val fromObjects = subtitleObjects.mapIndexedNotNull { index, subtitle ->
+        val uri = subtitle.firstString("url", "href", "file", "src")
+            ?.takeIf(String::isDirectHttpUrl)
+            ?: return@mapIndexedNotNull null
+        val language = subtitle.firstString("lang", "language", "locale")
+        val label = subtitle.firstString("label", "name", "title")
+            ?: language?.uppercase()
+            ?: "Subtitle ${index + 1}"
+        SubtitleTrack(
+            id = subtitle.firstString("id") ?: "service-subtitle-object-${index + 1}",
+            label = label,
+            language = language,
+            uri = uri,
+            format = subtitle.firstString("format", "type") ?: uri.subtitleFormatFromUrl(),
+            isDefault = subtitle.booleanValue("default") ||
+                subtitle.booleanValue("isDefault") ||
+                subtitle.matchesDefaultSubtitle(defaultSubtitle, uri, label, language),
+        )
+    }
+    val seenUris = fromObjects.mapNotNull(SubtitleTrack::uri).toMutableSet()
+    val fromStrings = subtitleStrings.mapIndexedNotNull { index, uri ->
+        uri.takeIf(String::isDirectHttpUrl)
+            ?.takeIf(seenUris::add)
+            ?.let { subtitleUri ->
+                SubtitleTrack(
+                    id = "service-subtitle-${index + 1}",
+                    label = subtitleUri.subtitleDisplayLabel(index),
+                    uri = subtitleUri,
+                    format = subtitleUri.subtitleFormatFromUrl(),
+                    isDefault = defaultSubtitle?.equals(subtitleUri, ignoreCase = true) == true,
+                )
+            }
+    }
+    return (fromObjects + fromStrings)
+        .let { tracks ->
+            if (tracks.any(SubtitleTrack::isDefault)) tracks else tracks.mapIndexed { index, track ->
+                if (index == 0 && defaultSubtitle == null) track.copy(isDefault = true) else track
+            }
+        }
 }
 
 private fun StremioAddonEntity.manifest(): StremioManifest? = manifestJson?.runCatching {
@@ -607,6 +679,7 @@ private fun StreamEpisodeSelection.toPlaybackContext(): EpisodePlaybackContext =
     anilistMediaId = anilistMediaId,
     tmdbSeasonNumber = seasonNumber.takeUnless { titleOnlySearch },
     tmdbEpisodeNumber = episodeNumber.takeUnless { titleOnlySearch },
+    tmdbEpisodeOffset = tmdbEpisodeOffset,
     isSpecial = isSpecial,
     titleOnlySearch = titleOnlySearch,
 )
@@ -621,9 +694,83 @@ private fun Int.rejectionSuffix(): String =
 private fun JsonElement.jsonObjectOrNull(): JsonObject? =
     this as? JsonObject
 
+private fun JsonObject.firstString(vararg keys: String): String? =
+    keys.firstNotNullOfOrNull { key ->
+        (this[key] as? JsonPrimitive)
+            ?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+    }
+
+private fun JsonObject.headerStrings(): Map<String, String> =
+    listOf("headers", "requestHeaders", "httpHeaders")
+        .asSequence()
+        .mapNotNull { key -> this[key]?.jsonObjectOrNull() }
+        .flatMap { headers -> headers.entries.asSequence() }
+        .mapNotNull { (key, value) ->
+            (value as? JsonPrimitive)
+                ?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?.let { key to it }
+        }
+        .toMap()
+
+private fun JsonObject.subtitleStrings(): List<String> =
+    listOf("subtitles", "subtitle", "subtitleUrls")
+        .flatMap { key -> this[key].subtitleStrings() }
+        .distinct()
+
+private fun JsonObject.subtitleObjects(): List<JsonObject> =
+    listOf("subtitles", "subtitleTracks", "tracks", "captions")
+        .flatMap { key -> this[key].jsonObjects() }
+
+private fun JsonElement?.subtitleStrings(): List<String> =
+    when (this) {
+        is JsonArray -> mapNotNull { subtitle ->
+            when (subtitle) {
+                is JsonObject -> subtitle.firstString("url", "href", "file", "src")
+                is JsonPrimitive -> subtitle.contentOrNull?.takeIf { it.isNotBlank() }
+                else -> null
+            }
+        }
+        is JsonObject -> listOfNotNull(firstString("url", "href", "file", "src"))
+        is JsonPrimitive -> listOfNotNull(contentOrNull?.takeIf { it.isNotBlank() })
+        else -> emptyList()
+    }
+
+private fun JsonElement?.jsonObjects(): List<JsonObject> =
+    when (this) {
+        is JsonArray -> mapNotNull { it as? JsonObject }
+        is JsonObject -> listOf(this)
+        else -> emptyList()
+    }
+
+private fun JsonObject.booleanValue(key: String): Boolean =
+    firstString(key)?.equals("true", ignoreCase = true) == true
+
+private fun JsonObject.matchesDefaultSubtitle(
+    defaultSubtitle: String?,
+    uri: String,
+    label: String,
+    language: String?,
+): Boolean {
+    val default = defaultSubtitle?.takeIf { it.isNotBlank() } ?: return false
+    return default.equals(uri, ignoreCase = true) ||
+        default.equals(label, ignoreCase = true) ||
+        language?.let { default.equals(it, ignoreCase = true) } == true ||
+        firstString("id")?.let { default.equals(it, ignoreCase = true) } == true
+}
+
 private fun String?.isDirectHttpUrl(): Boolean =
     this?.startsWith("http://", ignoreCase = true) == true ||
         this?.startsWith("https://", ignoreCase = true) == true
+
+private fun String.subtitleDisplayLabel(index: Int): String {
+    val fileName = substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('/')
+        .takeIf { it.isNotBlank() }
+    return fileName ?: "Subtitle ${index + 1}"
+}
 
 private fun String?.subtitleFormatFromUrl(): String? {
     val path = this

@@ -35,8 +35,10 @@ data class DetailEpisodeEntry(
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
     val runtimeMinutes: Int? = null,
+    val anilistMediaId: Int? = null,
     val tmdbSeasonNumber: Int? = null,
     val tmdbEpisodeNumber: Int? = null,
+    val tmdbEpisodeOffset: Int? = null,
     val isSpecial: Boolean = false,
     val titleOnlySearch: Boolean = false,
     val searchTitle: String? = null,
@@ -284,8 +286,12 @@ class DetailRepository(
                     seasonNumber = localSeason,
                     episodeNumber = localEpisode,
                     runtimeMinutes = tmdbEpisode?.runtime,
+                    anilistMediaId = anime.id,
                     tmdbSeasonNumber = tmdbEpisode?.seasonNumber,
                     tmdbEpisodeNumber = tmdbEpisode?.episodeNumber,
+                    tmdbEpisodeOffset = tmdbEpisode
+                        ?.let { episode -> episode.episodeNumber - localEpisode }
+                        ?.takeUnless { it == 0 },
                 )
                 absoluteEpisode += 1
             }
@@ -369,8 +375,10 @@ class DetailRepository(
                         seasonNumber = 0,
                         episodeNumber = number,
                         runtimeMinutes = tmdbEpisode?.runtime,
+                        anilistMediaId = anilistId,
                         tmdbSeasonNumber = mappedSeason,
                         tmdbEpisodeNumber = mappedEpisodeNumber,
+                        tmdbEpisodeOffset = mapping.tvdbEpisodeOffset,
                         isSpecial = true,
                         titleOnlySearch = mappedSeason == null || mappedEpisodeNumber == null,
                         searchTitle = title,
@@ -699,6 +707,7 @@ private fun AniListMedia.syntheticAnimeEpisodes(): List<DetailEpisodeEntry> {
             overview = null,
             seasonNumber = 1,
             episodeNumber = episode,
+            anilistMediaId = id,
         )
     }
 }
@@ -748,8 +757,11 @@ private fun AniListMedia.toAnimeDetailEpisodeEntries(
             seasonNumber = localSeasonNumber,
             episodeNumber = localEpisodeNumber,
             runtimeMinutes = tmdbEpisode?.runtime,
+            anilistMediaId = mapping?.anilistMediaId ?: id,
             tmdbSeasonNumber = resolvedSeasonNumber,
             tmdbEpisodeNumber = resolvedTmdbEpisodeNumber,
+            tmdbEpisodeOffset = mapping?.tmdbEpisodeOffset ?: offset.takeUnless { it == 0 },
+            isSpecial = mapping?.isSpecial == true,
         )
     }
 }

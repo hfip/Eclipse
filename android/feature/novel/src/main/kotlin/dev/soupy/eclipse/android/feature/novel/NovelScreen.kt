@@ -1250,9 +1250,11 @@ private fun NovelReaderChapterRow.buttonLabel(): String =
 
 private fun NovelReaderSettingsRow.modeLabel(): String =
     when (readingMode) {
-        0 -> "Paged"
-        1 -> "Webtoon"
-        else -> "Auto"
+        0 -> "Left to Right"
+        1 -> "Right to Left"
+        2 -> "Webtoon"
+        3 -> "Vertical"
+        else -> "Webtoon"
     }
 
 private fun NovelReaderSettingsRow.readerBackgroundColor(): Color =
