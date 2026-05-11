@@ -956,6 +956,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
+    private func logPictureInPicture(_ message: String) {
+        if isVLCPlayer {
+            Logger.shared.log("[PlayerVC.PiP] \(message)", type: "Player")
+        } else {
+            logMPV("[PlayerVC.PiP] \(message)")
+        }
+    }
+
     private func logVLCUIViewSnapshot(_ event: String) {
         guard isVLCPlayer else { return }
         let appState: String
@@ -1993,6 +2001,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         brightnessSlider.addTarget(self, action: #selector(brightnessSliderChanged(_:)), for: .valueChanged)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleBrightnessPan(_:)))
         pan.delegate = self
+        pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
         brightnessPanGesture = pan
         videoContainer.addGestureRecognizer(pan)
         loadBrightnessLevel()
@@ -2006,6 +2017,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         volumeSlider.addTarget(self, action: #selector(volumeSliderChanged(_:)), for: .valueChanged)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleVolumePan(_:)))
         pan.delegate = self
+        pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
         volumePanGesture = pan
         videoContainer.addGestureRecognizer(pan)
         loadVolumeLevel()
@@ -5003,9 +5017,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
         guard let pip = pipController else { return }
-        Logger.shared.log("[PlayerVC.PiP] button tap state active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported) isVLC=\(isVLCPlayer)", type: "Player")
+        logPictureInPicture("button tap state active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported) isVLC=\(isVLCPlayer)")
         if pip.isPictureInPictureActive {
-            Logger.shared.log("[PlayerVC.PiP] stopping PiP from button", type: "Player")
+            logPictureInPicture("stopping PiP from button")
             pip.stopPictureInPicture()
         } else {
             startMPVPictureInPictureWhenPossible(source: "button")
@@ -5016,6 +5030,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard pipController != nil else { return }
         mpvPiPStartAttemptID += 1
         let attemptID = mpvPiPStartAttemptID
+        logPictureInPicture("prepare MPV PiP source=\(source) attemptID=\(attemptID)")
         rendererPreparePictureInPictureStart()
         attemptMPVPictureInPictureStart(source: source, attemptID: attemptID, attempt: 0)
     }
@@ -5025,20 +5040,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard let pip = pipController else { return }
         rendererPrimePictureInPictureFrames(reason: "\(source)-attempt-\(attempt)")
         pip.updatePlaybackState()
+        logPictureInPicture("MPV PiP attempt source=\(source) attempt=\(attempt) active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)")
 
         if pip.isPictureInPicturePossible && !pip.isPictureInPictureActive {
-            Logger.shared.log("[PlayerVC.PiP] starting MPV PiP source=\(source) attempt=\(attempt)", type: "Player")
+            logPictureInPicture("starting MPV PiP source=\(source) attempt=\(attempt)")
             pip.startPictureInPicture()
             return
         }
 
         if pip.isPictureInPictureActive {
-            Logger.shared.log("[PlayerVC.PiP] MPV PiP already active source=\(source) attempt=\(attempt)", type: "Player")
+            logPictureInPicture("MPV PiP already active source=\(source) attempt=\(attempt)")
             return
         }
 
         guard attempt < 12 else {
-            Logger.shared.log("[PlayerVC.PiP] MPV start blocked after retries source=\(source) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)", type: "Player")
+            logPictureInPicture("MPV start blocked after retries source=\(source) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)")
             rendererFinishPictureInPicture()
             return
         }
@@ -6201,12 +6217,12 @@ extension PlayerViewController: VLCRendererDelegate {
 // MARK: - PiP Support
 extension PlayerViewController: PiPControllerDelegate {
     func pipController(_ controller: PiPController, willStartPictureInPicture: Bool) {
-        Logger.shared.log("[PlayerVC.PiP] delegate willStart possible=\(controller.isPictureInPicturePossible)", type: "Player")
+        logPictureInPicture("delegate willStart possible=\(controller.isPictureInPicturePossible)")
         rendererPreparePictureInPictureStart()
         pipController?.updatePlaybackState()
     }
     func pipController(_ controller: PiPController, didStartPictureInPicture: Bool) {
-        Logger.shared.log("[PlayerVC.PiP] delegate didStart success=\(didStartPictureInPicture)", type: "Player")
+        logPictureInPicture("delegate didStart success=\(didStartPictureInPicture) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive)")
         if !didStartPictureInPicture {
             mpvPiPStartAttemptID += 1
             rendererFinishPictureInPicture()
@@ -6215,10 +6231,10 @@ extension PlayerViewController: PiPControllerDelegate {
         updatePiPButtonVisibility()
     }
     func pipController(_ controller: PiPController, willStopPictureInPicture: Bool) {
-        Logger.shared.log("[PlayerVC.PiP] delegate willStop", type: "Player")
+        logPictureInPicture("delegate willStop")
     }
     func pipController(_ controller: PiPController, didStopPictureInPicture: Bool) {
-        Logger.shared.log("[PlayerVC.PiP] delegate didStop", type: "Player")
+        logPictureInPicture("delegate didStop")
         mpvPiPStartAttemptID += 1
         rendererFinishPictureInPicture()
         updatePiPButtonVisibility()

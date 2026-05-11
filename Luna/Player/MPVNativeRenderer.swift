@@ -118,6 +118,8 @@ private final class MPVPiPBridge {
     private var renderParams = [mpv_render_param](repeating: mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil), count: 5)
     private let bgraFormatCString: [CChar] = Array("bgra\0".utf8CString)
     private let maxBufferedFrames = 4
+    private var lastLoggedRenderSize: CGSize = .zero
+    private var enqueuedFrameCount = 0
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
@@ -133,6 +135,8 @@ private final class MPVPiPBridge {
             self.poolWidth = 0
             self.poolHeight = 0
             self.didFlushForFormatChange = false
+            self.lastLoggedRenderSize = .zero
+            self.enqueuedFrameCount = 0
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if #available(iOS 18.0, *) {
@@ -146,6 +150,13 @@ private final class MPVPiPBridge {
         }
     }
 
+    func waitForPendingRenders() {
+        if DispatchQueue.getSpecific(key: renderQueueKey) != nil {
+            return
+        }
+        renderQueue.sync { }
+    }
+
     func render(context: OpaquePointer, videoSize: CGSize) {
         renderQueue.async { [weak self] in
             self?.renderOnQueue(context: context, videoSize: videoSize)
@@ -157,6 +168,10 @@ private final class MPVPiPBridge {
         let width = Int(targetSize.width)
         let height = Int(targetSize.height)
         guard width > 0, height > 0 else { return }
+        if lastLoggedRenderSize != targetSize {
+            lastLoggedRenderSize = targetSize
+            Logger.shared.log("[MPVPiPBridge] render target size=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height))", type: "MPV")
+        }
 
         if poolWidth != width || poolHeight != height {
             recreatePixelBufferPool(width: width, height: height)
@@ -317,6 +332,10 @@ private final class MPVPiPBridge {
                 self.displayLayer.sampleBufferRenderer.enqueue(sampleBuffer)
             } else {
                 self.displayLayer.enqueue(sampleBuffer)
+            }
+            self.enqueuedFrameCount += 1
+            if self.enqueuedFrameCount <= 3 {
+                Logger.shared.log("[MPVPiPBridge] enqueued sample frame count=\(self.enqueuedFrameCount) layerReady=\(self.displayLayer.isReadyForMoreMediaData)", type: "MPV")
             }
         }
     }
@@ -630,11 +649,16 @@ final class MPVNativeRenderer: PlayerRenderer {
         currentMode = .pictureInPicture
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.glView.isHidden = true
+            // Keep the inline GL surface visible while PiP is being primed. If
+            // AVKit refuses to start PiP, the user should see a frozen frame at
+            // worst, not a black player.
+            self.glView.isHidden = false
             self.displayLayer.isHidden = false
-            self.displayLayer.opacity = 1.0
+            self.displayLayer.opacity = 0.01
+            self.displayLayer.zPosition = -1
         }
         do {
+            refreshVideoState()
             try createSoftwareRenderContext()
             requestRenderBurst(reason: "enter-pip", count: 8, interval: 0.06)
         } catch {
@@ -771,6 +795,7 @@ final class MPVNativeRenderer: PlayerRenderer {
                 EAGLContext.setCurrent(nil)
             }
         } else {
+            pipBridge.waitForPendingRenders()
             mpv_render_context_set_update_callback(context, nil, nil)
             mpv_render_context_free(context)
         }
@@ -858,38 +883,30 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func scheduleOpenGLRender() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
+            guard !self.isRenderScheduled else { return }
+            self.isRenderScheduled = true
             let now = CACurrentMediaTime()
-            let remaining = self.foregroundFrameInterval - (now - self.lastForegroundRenderTime)
-            if remaining > 0 {
-                guard !self.isRenderScheduled else { return }
-                self.isRenderScheduled = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-                    guard let self else { return }
-                    self.isRenderScheduled = false
-                    self.glView.display()
-                }
-                return
+            let delay = max(0, self.foregroundFrameInterval - (now - self.lastForegroundRenderTime))
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
+                self.isRenderScheduled = false
+                self.glView.display()
             }
-            self.glView.display()
         }
     }
 
     private func schedulePiPRender() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isRunning, !self.isStopping, self.currentMode == .pictureInPicture else { return }
+            guard !self.isRenderScheduled else { return }
+            self.isRenderScheduled = true
             let now = CACurrentMediaTime()
-            let remaining = self.pipFrameInterval - (now - self.lastPiPRenderTime)
-            if remaining > 0 {
-                guard !self.isRenderScheduled else { return }
-                self.isRenderScheduled = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-                    guard let self else { return }
-                    self.isRenderScheduled = false
-                    self.renderPiPFrame()
-                }
-                return
+            let delay = max(0, self.pipFrameInterval - (now - self.lastPiPRenderTime))
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.isRunning, !self.isStopping, self.currentMode == .pictureInPicture else { return }
+                self.isRenderScheduled = false
+                self.renderPiPFrame()
             }
-            self.renderPiPFrame()
         }
     }
 
@@ -950,7 +967,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             forcedPiPRenderCount -= 1
         }
         if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
-            pipBridge.render(context: context, videoSize: currentVideoSize())
+            pipBridge.render(context: context, videoSize: currentPiPRenderSize())
         }
         if updateFlags > 0 {
             scheduleRender()
@@ -1017,6 +1034,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func handleFileLoaded() {
         isReadyToSeek = true
         setLoading(false)
+        refreshVideoState()
         let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
         logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
         logTrackSummaryIfChanged(reason: "file-loaded")
@@ -1059,6 +1077,28 @@ final class MPVNativeRenderer: PlayerRenderer {
         updateVideoSize(width: Int(width), height: Int(height))
         logMPV("video state width=\(width) height=\(height) glBounds=\(String(format: "%.0fx%.0f", glView.bounds.width, glView.bounds.height)) drawable=\(glView.drawableWidth)x\(glView.drawableHeight)")
         scheduleRender()
+    }
+
+    private func currentPiPRenderSize() -> CGSize {
+        let videoSize = currentVideoSize()
+        if videoSize.width > 0, videoSize.height > 0 {
+            return videoSize
+        }
+
+        let viewSize = glView.bounds.size
+        if viewSize.width > 0, viewSize.height > 0 {
+            logMPV("PiP render using GL bounds fallback size=\(String(format: "%.0fx%.0f", viewSize.width, viewSize.height))")
+            return viewSize
+        }
+
+        let layerSize = displayLayer.bounds.size
+        if layerSize.width > 0, layerSize.height > 0 {
+            logMPV("PiP render using displayLayer fallback size=\(String(format: "%.0fx%.0f", layerSize.width, layerSize.height))")
+            return layerSize
+        }
+
+        logMPV("PiP render using default fallback size=640x360")
+        return CGSize(width: 640, height: 360)
     }
 
     private func refreshProperty(named name: String) {

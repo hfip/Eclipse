@@ -54,7 +54,7 @@ final class PiPController: NSObject {
     private func setupSampleBufferPictureInPicture() {
         guard isPictureInPictureSupported,
               let displayLayer = sampleBufferDisplayLayer else {
-                        Logger.shared.log("[PiPController] setup skipped: supported=\(isPictureInPictureSupported) hasDisplayLayer=\(sampleBufferDisplayLayer != nil)", type: "Player")
+                        Logger.shared.log("[PiPController] setup skipped: supported=\(isPictureInPictureSupported) hasDisplayLayer=\(sampleBufferDisplayLayer != nil)", type: "MPV")
             return
         }
         
@@ -69,31 +69,31 @@ final class PiPController: NSObject {
         #if !os(tvOS)
         pipController?.canStartPictureInPictureAutomaticallyFromInline = true
         #endif
-        Logger.shared.log("[PiPController] initialized supported=\(isPictureInPictureSupported) possible=\(pipController?.isPictureInPicturePossible ?? false)", type: "Player")
+        Logger.shared.log("[PiPController] initialized supported=\(isPictureInPictureSupported) possible=\(pipController?.isPictureInPicturePossible ?? false)", type: "MPV")
     }
 
     func startPictureInPicture() {
         guard let pipController = pipController,
               pipController.isPictureInPicturePossible else {
-            Logger.shared.log("[PiPController] start blocked: controllerNil=\(pipController == nil) possible=\(self.pipController?.isPictureInPicturePossible ?? false)", type: "Player")
+            Logger.shared.log("[PiPController] start blocked: controllerNil=\(pipController == nil) possible=\(self.pipController?.isPictureInPicturePossible ?? false)", type: "MPV")
             return
         }
         if pipController.isPictureInPictureActive {
-            Logger.shared.log("[PiPController] start ignored: already active", type: "Player")
+            Logger.shared.log("[PiPController] start ignored: already active", type: "MPV")
             return
         }
         if isStartRequestPending {
-            Logger.shared.log("[PiPController] start ignored: request already pending", type: "Player")
+            Logger.shared.log("[PiPController] start ignored: request already pending", type: "MPV")
             return
         }
         isStartRequestPending = true
-        Logger.shared.log("[PiPController] start requested active=\(pipController.isPictureInPictureActive) possible=\(pipController.isPictureInPicturePossible) supported=\(isPictureInPictureSupported) pending=\(isStartRequestPending)", type: "Player")
+        Logger.shared.log("[PiPController] start requested active=\(pipController.isPictureInPictureActive) possible=\(pipController.isPictureInPicturePossible) supported=\(isPictureInPictureSupported) pending=\(isStartRequestPending)", type: "MPV")
         pipController.startPictureInPicture()
     }
     
     func stopPictureInPicture() {
         isStartRequestPending = false
-        Logger.shared.log("[PiPController] stop requested active=\(pipController?.isPictureInPictureActive ?? false)", type: "Player")
+        Logger.shared.log("[PiPController] stop requested active=\(pipController?.isPictureInPictureActive ?? false)", type: "MPV")
         pipController?.stopPictureInPicture()
     }
     
@@ -110,31 +110,31 @@ final class PiPController: NSObject {
 
 extension PiPController: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        Logger.shared.log("[PiPController] delegate willStart active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending)", type: "Player")
+        Logger.shared.log("[PiPController] delegate willStart active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending)", type: "MPV")
         delegate?.pipController(self, willStartPictureInPicture: true)
     }
     
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         isStartRequestPending = false
-        Logger.shared.log("[PiPController] delegate didStart active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending)", type: "Player")
+        Logger.shared.log("[PiPController] delegate didStart active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending)", type: "MPV")
         delegate?.pipController(self, didStartPictureInPicture: true)
     }
     
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
         isStartRequestPending = false
         let nsError = error as NSError
-        Logger.shared.log("[PiPController] failedToStart error=\(nsError.domain)#\(nsError.code) desc=\(nsError.localizedDescription) active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending)", type: "Error")
+        Logger.shared.log("[PiPController] failedToStart error=\(nsError.domain)#\(nsError.code) desc=\(nsError.localizedDescription) active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending)", type: "MPV")
         delegate?.pipController(self, didStartPictureInPicture: false)
     }
     
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         isStartRequestPending = false
-        Logger.shared.log("[PiPController] delegate willStop", type: "Player")
+        Logger.shared.log("[PiPController] delegate willStop", type: "MPV")
         delegate?.pipController(self, willStopPictureInPicture: true)
     }
     
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        Logger.shared.log("[PiPController] delegate didStop active=\(pictureInPictureController.isPictureInPictureActive)", type: "Player")
+        Logger.shared.log("[PiPController] delegate didStop active=\(pictureInPictureController.isPictureInPictureActive)", type: "MPV")
         delegate?.pipController(self, didStopPictureInPicture: true)
     }
     
