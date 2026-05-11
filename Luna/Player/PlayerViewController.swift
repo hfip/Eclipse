@@ -569,6 +569,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var playbackDidStart = false
     private var playbackFailureHandled = false
     private var playbackSlowProbeCount = 0
+    private var mpvSilentStartupRetryKey: String?
     private var userSelectedAudioTrack = false
     private var userSelectedSubtitleTrack = false
     private var pendingInitialResumeTarget: Double?
@@ -838,6 +839,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func rendererPrimePictureInPictureFrames(reason: String) {
         mpvRenderer?.primePictureInPictureFrames(reason: reason)
+    }
+
+    private func rendererIsPictureInPicturePrimed() -> Bool {
+        mpvRenderer?.isPictureInPicturePrimed() ?? false
     }
 
     private func rendererResumeForegroundRendering(reason: String) {
@@ -1469,6 +1474,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func handlePlaybackStartupFailure(_ message: String, isSourceFailure: Bool) {
         guard !playbackDidStart, !playbackFailureHandled else { return }
+        if !isVLCPlayer, attemptMPVTransportBridgeFallbackIfNeeded(after: message) {
+            return
+        }
+        if !isVLCPlayer,
+           playbackLaunchContext?.autoMode != true,
+           shouldSilentlyRetryMPVStartup(after: message) {
+            let retryKey = playbackLaunchContext?.streamURL ?? initialURL?.absoluteString ?? message
+            if mpvSilentStartupRetryKey != retryKey {
+                mpvSilentStartupRetryKey = retryKey
+                playbackStartupWorkItem?.cancel()
+                Logger.shared.log("[PlayerVC.PlaybackStart] MPV silently retrying startup after first failure: \(message)", type: "MPV")
+                retryPlaybackAfterFailure()
+                return
+            }
+        }
         playbackFailureHandled = true
         playbackStartupWorkItem?.cancel()
 
@@ -1498,6 +1518,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             showManualPlaybackFailureAlert(report)
         }
+    }
+
+    private func shouldSilentlyRetryMPVStartup(after message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("stayed idle")
+            || lower.contains("taking too long")
+            || lower.contains("failed to open")
+            || lower.contains("unexpected tls packet")
+            || lower.contains("tls")
     }
 
     private func showManualPlaybackFailureAlert(_ report: PlaybackFailureReport) {
@@ -5040,9 +5069,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard let pip = pipController else { return }
         rendererPrimePictureInPictureFrames(reason: "\(source)-attempt-\(attempt)")
         pip.updatePlaybackState()
-        logPictureInPicture("MPV PiP attempt source=\(source) attempt=\(attempt) active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)")
+        let primed = rendererIsPictureInPicturePrimed()
+        logPictureInPicture("MPV PiP attempt source=\(source) attempt=\(attempt) active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported) primed=\(primed)")
 
-        if pip.isPictureInPicturePossible && !pip.isPictureInPictureActive {
+        if pip.isPictureInPicturePossible && primed && !pip.isPictureInPictureActive {
             logPictureInPicture("starting MPV PiP source=\(source) attempt=\(attempt)")
             pip.startPictureInPicture()
             return
@@ -5053,13 +5083,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        guard attempt < 12 else {
-            logPictureInPicture("MPV start blocked after retries source=\(source) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)")
+        guard attempt < 18 else {
+            logPictureInPicture("MPV start blocked after retries source=\(source) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported) primed=\(primed)")
             rendererFinishPictureInPicture()
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             self?.attemptMPVPictureInPictureStart(source: source, attemptID: attemptID, attempt: attempt + 1)
         }
     }

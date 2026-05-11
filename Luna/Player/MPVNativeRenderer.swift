@@ -136,9 +136,9 @@ private final class MPVPiPBridge {
             self.poolHeight = 0
             self.didFlushForFormatChange = false
             self.lastLoggedRenderSize = .zero
-            self.enqueuedFrameCount = 0
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.enqueuedFrameCount = 0
                 if #available(iOS 18.0, *) {
                     self.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: removingDisplayedImage, completionHandler: nil)
                 } else if removingDisplayedImage {
@@ -155,6 +155,25 @@ private final class MPVPiPBridge {
             return
         }
         renderQueue.sync { }
+    }
+
+    func clearPrimedFrameState() {
+        if Thread.isMainThread {
+            enqueuedFrameCount = 0
+        } else {
+            DispatchQueue.main.sync { enqueuedFrameCount = 0 }
+        }
+    }
+
+    func hasEnqueuedFrame() -> Bool {
+        if Thread.isMainThread {
+            return enqueuedFrameCount > 0
+        }
+        var result = false
+        DispatchQueue.main.sync {
+            result = enqueuedFrameCount > 0
+        }
+        return result
     }
 
     func render(context: OpaquePointer, videoSize: CGSize) {
@@ -645,6 +664,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func prepareForPictureInPictureStart() {
         guard isRunning, currentMode != .pictureInPicture else { return }
         logMPV("switching to capped sample-buffer PiP render path")
+        pipBridge.clearPrimedFrameState()
         destroyRenderContext()
         currentMode = .pictureInPicture
         DispatchQueue.main.async { [weak self] in
@@ -708,6 +728,11 @@ final class MPVNativeRenderer: PlayerRenderer {
     func primePictureInPictureFrames(reason: String) {
         guard isRunning, currentMode == .pictureInPicture else { return }
         requestRenderBurst(reason: "pip-prime-\(reason)", count: 6, interval: 0.06)
+    }
+
+    func isPictureInPicturePrimed() -> Bool {
+        guard isRunning, currentMode == .pictureInPicture else { return false }
+        return pipBridge.hasEnqueuedFrame()
     }
 
     func resumeForegroundRendering(reason: String) {
@@ -1695,6 +1720,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func prepareForPictureInPictureStart() { }
     func finishPictureInPicture() { }
     func primePictureInPictureFrames(reason: String) { }
+    func isPictureInPicturePrimed() -> Bool { false }
     func resumeForegroundRendering(reason: String) { }
     func play() { }
     func pausePlayback() { }

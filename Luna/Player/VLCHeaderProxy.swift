@@ -44,6 +44,7 @@ final class PlayerHeaderProxy {
     private let playlistProbeBytes = 4 * 1024
     fileprivate let logPrefix: String
     private let playlistMode: PlayerHeaderProxyPlaylistMode
+    private let gracefulResponseClose: Bool
     private let hopByHopRequestHeaders: Set<String> = [
         "connection",
         "keep-alive",
@@ -58,10 +59,12 @@ final class PlayerHeaderProxy {
 
     fileprivate init(
         logPrefix: String = "PlayerHeaderProxy",
-        playlistMode: PlayerHeaderProxyPlaylistMode = .preserveUpstream
+        playlistMode: PlayerHeaderProxyPlaylistMode = .preserveUpstream,
+        gracefulResponseClose: Bool = false
     ) {
         self.logPrefix = logPrefix
         self.playlistMode = playlistMode
+        self.gracefulResponseClose = gracefulResponseClose
     }
 
     private func withSessionsLock<T>(_ body: () -> T) -> T {
@@ -541,9 +544,15 @@ final class PlayerHeaderProxy {
         let headerData = responseHeaderData(statusCode: statusCode, headers: headers)
         let responseData = headerData + body
 
-        connection.send(content: responseData, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
+        if gracefulResponseClose {
+            connection.send(content: responseData, contentContext: .defaultMessage, isComplete: true, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+        } else {
+            connection.send(content: responseData, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+        }
     }
 
     private func sendResponseHeaders(_ connection: NWConnection, statusCode: Int, headers: [String: String], completion: @escaping (NWError?) -> Void) {
@@ -556,6 +565,16 @@ final class PlayerHeaderProxy {
             return
         }
         connection.send(content: data, completion: .contentProcessed(completion))
+    }
+
+    private func finishResponse(on connection: NWConnection) {
+        if gracefulResponseClose {
+            connection.send(content: nil, contentContext: .defaultMessage, isComplete: true, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+        } else {
+            connection.cancel()
+        }
     }
 
     private func responseHeaderData(statusCode: Int, headers: [String: String]) -> Data {
@@ -683,6 +702,7 @@ final class PlayerHeaderProxy {
         private var bufferedData = Data()
         private var responseHeadersSent = false
         private var finished = false
+        private var streamedByteCount = 0
 
         init(
             proxy: PlayerHeaderProxy,
@@ -863,8 +883,9 @@ final class PlayerHeaderProxy {
                 Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream done status=\(http.statusCode) responseStatus=\(responseStatus) bytes=\(bufferedData.count) responseBytes=\(body.count) rewritten=\(rewritten) target=\(proxy.logURLSummary(targetURL))", type: logType)
                 proxy.sendResponse(connection, statusCode: responseStatus, headers: headers, body: body)
             case .stream:
-                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream stream complete target=\(proxy.logURLSummary(targetURL))", type: logType)
-                connection.cancel()
+                let expected = http.expectedContentLength >= 0 ? String(http.expectedContentLength) : "unknown"
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream stream complete bytes=\(streamedByteCount) expected=\(expected) target=\(proxy.logURLSummary(targetURL))", type: logType)
+                proxy.finishResponse(on: connection)
             }
 
             finish()
@@ -915,11 +936,13 @@ final class PlayerHeaderProxy {
             proxy.sendData(data, on: connection) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("\(self.proxy?.logPrefix ?? "PlayerHeaderProxy")[\(self.requestId)]: downstream send failed: \(error)", type: self.errorLogType)
+                    Logger.shared.log("\(self.proxy?.logPrefix ?? "PlayerHeaderProxy")[\(self.requestId)]: downstream send failed afterBytes=\(self.streamedByteCount) chunkBytes=\(data.count) error=\(error)", type: self.errorLogType)
                     dataTask.cancel()
+                    self.connection.cancel()
                     self.finish()
                     return
                 }
+                self.streamedByteCount += data.count
                 dataTask.resume()
             }
         }
@@ -939,7 +962,8 @@ final class MPVHeaderProxy {
 
     private let proxy = PlayerHeaderProxy(
         logPrefix: "MPVHeaderProxy",
-        playlistMode: .normalizeRewrittenPlaylist
+        playlistMode: .normalizeRewrittenPlaylist,
+        gracefulResponseClose: true
     )
 
     private init() {}
