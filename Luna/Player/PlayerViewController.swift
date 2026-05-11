@@ -5493,7 +5493,7 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
         )
     }
 
-    static func fullImageURL(from path: String?) -> String? {
+    nonisolated static func fullImageURL(from path: String?) -> String? {
         guard let path, !path.isEmpty else { return nil }
         if path.hasPrefix("http") { return path }
         return "\(TMDBService.tmdbImageBaseURL)\(path)"
