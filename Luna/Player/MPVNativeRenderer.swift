@@ -1107,98 +1107,21 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func updateHTTPHeaders(_ headers: [String: String]?) {
         guard let headers, !headers.isEmpty else {
             logMPV("clearing HTTP headers")
-            clearDedicatedHTTPHeaderOptions()
-            setHTTPHeaderFields([])
+            clearProperty(name: "http-header-fields")
             return
         }
 
-        applyDedicatedHTTPHeaderOptions(headers)
-
-        let dedicatedHeaderNames: Set<String> = ["user-agent", "referer", "referrer"]
-        let fields = headers
-            .filter { !$0.key.isEmpty && !$0.value.isEmpty && !dedicatedHeaderNames.contains($0.key.lowercased()) }
+        let headerString = headers
+            .filter { !$0.key.isEmpty && !$0.value.isEmpty }
             .map { key, value in "\(key): \(value)" }
+            .joined(separator: "\r\n")
 
-        if fields.isEmpty {
+        if headerString.isEmpty {
             logMPV("HTTP header update had no usable values; clearing")
-            setHTTPHeaderFields([])
+            clearProperty(name: "http-header-fields")
         } else {
-            logMPV("applying HTTP headers count=\(headers.count) keys=[\(headers.keys.sorted().joined(separator: ","))]")
-            setHTTPHeaderFields(fields)
-        }
-    }
-
-    private func applyDedicatedHTTPHeaderOptions(_ headers: [String: String]) {
-        let userAgent = headerValue(in: headers, named: ["User-Agent"])
-        let referer = headerValue(in: headers, named: ["Referer", "Referrer"])
-
-        if let userAgent {
-            setProperty(name: "user-agent", value: userAgent)
-        } else {
-            clearProperty(name: "user-agent")
-        }
-
-        if let referer {
-            setProperty(name: "referrer", value: referer)
-        } else {
-            clearProperty(name: "referrer")
-        }
-
-        logMPV("dedicated HTTP options userAgent=\(userAgent != nil) referer=\(referer != nil) extraHeaderKeys=[\(headers.keys.filter { !["user-agent", "referer", "referrer"].contains($0.lowercased()) }.sorted().joined(separator: ","))]")
-    }
-
-    private func clearDedicatedHTTPHeaderOptions() {
-        clearProperty(name: "user-agent")
-        clearProperty(name: "referrer")
-    }
-
-    private func headerValue(in headers: [String: String], named names: [String]) -> String? {
-        for name in names {
-            if let match = headers.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame })?.value.trimmingCharacters(in: .whitespacesAndNewlines),
-               !match.isEmpty {
-                return match
-            }
-        }
-        return nil
-    }
-
-    private func setHTTPHeaderFields(_ fields: [String]) {
-        guard let handle = mpv else { return }
-
-        var cStrings = fields.compactMap { strdup($0) }
-        defer {
-            for pointer in cStrings {
-                free(pointer)
-            }
-        }
-
-        var values = cStrings.map { pointer -> mpv_node in
-            var node = mpv_node()
-            node.format = MPV_FORMAT_STRING
-            node.u.string = pointer
-            return node
-        }
-
-        var list = mpv_node_list()
-        list.num = Int32(values.count)
-        list.keys = nil
-
-        let status = values.withUnsafeMutableBufferPointer { valuesPointer -> Int32 in
-            list.values = valuesPointer.baseAddress
-            var root = mpv_node()
-            root.format = MPV_FORMAT_NODE_ARRAY
-            return withUnsafeMutablePointer(to: &list) { listPointer in
-                root.u.list = listPointer
-                return withUnsafeMutablePointer(to: &root) { rootPointer in
-                    "http-header-fields".withCString { namePointer in
-                        mpv_set_property(handle, namePointer, MPV_FORMAT_NODE, rootPointer)
-                    }
-                }
-            }
-        }
-
-        if status < 0 {
-            logMPV("failed to set http-header-fields node count=\(fields.count) status=\(status)")
+            logMPV("applying MPV raw HTTP headers count=\(headers.count) keys=[\(headers.keys.sorted().joined(separator: ","))]")
+            setProperty(name: "http-header-fields", value: headerString)
         }
     }
 
@@ -1247,7 +1170,8 @@ final class MPVNativeRenderer: PlayerRenderer {
                   self.isRunning,
                   !self.isStopping,
                   self.loadGeneration == generation,
-                  self.isLoading || !self.isReadyToSeek else {
+                  self.isLoading,
+                  !self.isReadyToSeek else {
                 return
             }
 
