@@ -613,33 +613,31 @@ struct PlayerSettingsView: View {
                             binding: $store.vlcDoubleTapSeekEnabled
                         )
 
-                        if store.vlcDoubleTapSeekEnabled {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Double-Tap Seek Amount")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Seek Amount")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
 
-                                    Text("Seek \(Int(store.vlcDoubleTapSeekSeconds)) seconds backward or forward.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.leading)
-                                }
+                                Text("Seek \(Int(store.vlcDoubleTapSeekSeconds)) seconds with skip buttons, PiP, and double-tap when enabled.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.leading)
+                            }
 
-                                Spacer()
+                            Spacer()
 
 #if os(tvOS)
-                                Picker("", selection: $store.vlcDoubleTapSeekSeconds) {
-                                    ForEach(doubleTapSeekOptions, id: \.self) { seconds in
-                                        Text("\(Int(seconds))s").tag(seconds)
-                                    }
+                            Picker("", selection: $store.vlcDoubleTapSeekSeconds) {
+                                ForEach(doubleTapSeekOptions, id: \.self) { seconds in
+                                    Text("\(Int(seconds))s").tag(seconds)
                                 }
-                                .pickerStyle(.menu)
-#else
-                                Stepper("", value: $store.vlcDoubleTapSeekSeconds, in: 5...60, step: 5)
-                                    .frame(width: 100)
-#endif
                             }
+                            .pickerStyle(.menu)
+#else
+                            Stepper("", value: $store.vlcDoubleTapSeekSeconds, in: 5...60, step: 5)
+                                .frame(width: 100)
+#endif
                         }
                     } label: {
                         Label("Playback Gestures", systemImage: "hand.draw")

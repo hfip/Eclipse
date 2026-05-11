@@ -40,7 +40,7 @@ protocol PlayerRenderer: AnyObject {
     func setSubtitleTrack(id: Int)
     func disableSubtitles()
     func refreshSubtitleOverlay()
-    func loadExternalSubtitles(urls: [String], enforce: Bool)
+    func loadExternalSubtitles(urls: [String], names: [String]?, enforce: Bool)
     func applySubtitleStyle(_ style: SubtitleStyle)
 }
 
@@ -400,6 +400,8 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var isStopping = false
     private var isReadyToSeek = false
     private var isRenderScheduled = false
+    private var forcedOpenGLRenderCount = 0
+    private var forcedPiPRenderCount = 0
     private var lastForegroundRenderTime: CFTimeInterval = 0
     private var lastPiPRenderTime: CFTimeInterval = 0
     private let foregroundFrameInterval: CFTimeInterval
@@ -634,15 +636,32 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
         do {
             try createSoftwareRenderContext()
-            scheduleRender()
+            requestRenderBurst(reason: "enter-pip", count: 8, interval: 0.06)
         } catch {
             logMPV("failed to enter PiP render mode: \(error)")
+            currentMode = .openGL
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.displayLayer.isHidden = true
+                self.displayLayer.opacity = 0.0
+                self.glView.isHidden = false
+            }
+            do {
+                try createOpenGLRenderContext()
+                resumeForegroundRendering(reason: "pip-enter-failed")
+            } catch {
+                logMPV("failed to recover OpenGL after PiP enter failure: \(error)")
+            }
             delegate?.renderer(self, didFailWithError: "MPV PiP render bridge failed")
         }
     }
 
     func finishPictureInPicture() {
-        guard isRunning, currentMode != .openGL else { return }
+        guard isRunning else { return }
+        guard currentMode != .openGL else {
+            resumeForegroundRendering(reason: "finish-pip-already-openGL")
+            return
+        }
         logMPV("restoring OpenGL render path after PiP")
         destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
@@ -655,11 +674,39 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
         do {
             try createOpenGLRenderContext()
-            scheduleRender()
+            resumeForegroundRendering(reason: "finish-pip")
         } catch {
             logMPV("failed to restore OpenGL render path: \(error)")
             delegate?.renderer(self, didFailWithError: "MPV foreground render restore failed")
         }
+    }
+
+    func primePictureInPictureFrames(reason: String) {
+        guard isRunning, currentMode == .pictureInPicture else { return }
+        requestRenderBurst(reason: "pip-prime-\(reason)", count: 6, interval: 0.06)
+    }
+
+    func resumeForegroundRendering(reason: String) {
+        guard isRunning else { return }
+        guard currentMode == .openGL else {
+            logMPV("foreground render recovery skipped reason=\(reason) mode=\(currentMode)")
+            return
+        }
+        logMPV("foreground render recovery reason=\(reason)")
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
+            self.displayLayer.isHidden = true
+            self.displayLayer.opacity = 0.0
+            self.glView.isHidden = false
+            self.glView.setNeedsLayout()
+            EAGLContext.setCurrent(self.glContext)
+            self.glView.deleteDrawable()
+            EAGLContext.setCurrent(nil)
+        }
+        if let handle = mpv {
+            mpv_wakeup(handle)
+        }
+        requestRenderBurst(reason: reason, count: 6, interval: 0.08)
     }
 
     private func createOpenGLRenderContext() throws {
@@ -771,13 +818,40 @@ final class MPVNativeRenderer: PlayerRenderer {
         logMPV("wakeup handler installed")
     }
 
-    private func scheduleRender() {
+    private func scheduleRender(force: Bool = false) {
         guard isRunning, !isStopping else { return }
+        if force {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isRunning, !self.isStopping else { return }
+                switch self.currentMode {
+                case .openGL:
+                    self.forcedOpenGLRenderCount = max(self.forcedOpenGLRenderCount, 1)
+                case .pictureInPicture:
+                    self.forcedPiPRenderCount = max(self.forcedPiPRenderCount, 1)
+                }
+                self.scheduleRender()
+            }
+            return
+        }
         switch currentMode {
         case .openGL:
             scheduleOpenGLRender()
         case .pictureInPicture:
             schedulePiPRender()
+        }
+    }
+
+    private func requestRenderBurst(reason: String, count: Int, interval: CFTimeInterval) {
+        guard count > 0 else { return }
+        logMPV("render burst reason=\(reason) count=\(count) mode=\(currentMode)")
+        for index in 0..<count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (interval * Double(index))) { [weak self] in
+                guard let self, self.isRunning, !self.isStopping else { return }
+                if let handle = self.mpv {
+                    mpv_wakeup(handle)
+                }
+                self.scheduleRender(force: true)
+            }
         }
     }
 
@@ -828,7 +902,11 @@ final class MPVNativeRenderer: PlayerRenderer {
         glView.bindDrawable()
 
         let updateFlags = UInt32(mpv_render_context_update(context))
-        if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 {
+        let shouldForceRender = forcedOpenGLRenderCount > 0
+        if shouldForceRender {
+            forcedOpenGLRenderCount -= 1
+        }
+        if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
             var framebuffer: GLint = 0
             glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &framebuffer)
             glViewport(0, 0, GLsizei(glView.drawableWidth), GLsizei(glView.drawableHeight))
@@ -867,7 +945,11 @@ final class MPVNativeRenderer: PlayerRenderer {
         guard isRunning, !isStopping, currentMode == .pictureInPicture, let context = renderContext else { return }
         lastPiPRenderTime = CACurrentMediaTime()
         let updateFlags = UInt32(mpv_render_context_update(context))
-        if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 {
+        let shouldForceRender = forcedPiPRenderCount > 0
+        if shouldForceRender {
+            forcedPiPRenderCount -= 1
+        }
+        if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
             pipBridge.render(context: context, videoSize: currentVideoSize())
         }
         if updateFlags > 0 {
@@ -1400,6 +1482,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         logMPV("play requested")
         ensureAudioSessionActive()
         setProperty(name: "pause", value: "no")
+        requestRenderBurst(reason: "play", count: 4, interval: 0.08)
     }
 
     func pausePlayback() {
@@ -1414,11 +1497,13 @@ final class MPVNativeRenderer: PlayerRenderer {
     func seek(to seconds: Double) {
         guard let handle = mpv else { return }
         command(handle, ["seek", String(max(0, seconds)), "absolute", "exact"])
+        requestRenderBurst(reason: "seek-absolute", count: 3, interval: 0.06)
     }
 
     func seek(by seconds: Double) {
         guard let handle = mpv else { return }
         command(handle, ["seek", String(seconds), "relative", "exact"])
+        requestRenderBurst(reason: "seek-relative", count: 3, interval: 0.06)
     }
 
     func setSpeed(_ speed: Double) {
@@ -1462,7 +1547,9 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     func getCurrentSubtitleTrackId() -> Int {
-        getTrackIdProperty("sid")
+        let id = getTrackIdProperty("sid")
+        if id >= 0 { return id }
+        return fetchTrackList().first(where: { $0.type == "sub" && $0.selected })?.id ?? -1
     }
 
     func setSubtitleTrack(id: Int) {
@@ -1481,15 +1568,34 @@ final class MPVNativeRenderer: PlayerRenderer {
         applySubtitleStyle(lastAppliedSubtitleStyle)
     }
 
-    func loadExternalSubtitles(urls: [String], enforce: Bool = false) {
+    func loadExternalSubtitles(urls: [String], names: [String]? = nil, enforce: Bool = false) {
         guard let handle = mpv else { return }
         logMPV("loadExternalSubtitles count=\(urls.count) enforce=\(enforce)")
         for (index, url) in urls.enumerated() {
             guard !url.isEmpty else { continue }
-            let title = "Subtitle \(index + 1)"
+            let fallbackName: String?
+            if let names, index < names.count {
+                fallbackName = names[index]
+            } else {
+                fallbackName = nil
+            }
+            let title = externalSubtitleTitle(urlString: url, fallbackName: fallbackName, fallbackIndex: index)
             let flag = enforce ? "select" : "auto"
             command(handle, ["sub-add", url, flag, title])
         }
+    }
+
+    private func externalSubtitleTitle(urlString: String, fallbackName: String?, fallbackIndex: Int) -> String {
+        if let fallbackName, !fallbackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return fallbackName
+        }
+        if let url = URL(string: urlString) {
+            let filename = url.deletingPathExtension().lastPathComponent
+            if !filename.isEmpty {
+                return filename
+            }
+        }
+        return "Subtitle \(fallbackIndex + 1)"
     }
 
     func applySubtitleStyle(_ style: SubtitleStyle) {
@@ -1548,6 +1654,8 @@ final class MPVNativeRenderer: PlayerRenderer {
     func prepareInitialSeek(to seconds: Double?) { }
     func prepareForPictureInPictureStart() { }
     func finishPictureInPicture() { }
+    func primePictureInPictureFrames(reason: String) { }
+    func resumeForegroundRendering(reason: String) { }
     func play() { }
     func pausePlayback() { }
     func togglePause() { }
@@ -1564,7 +1672,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func setSubtitleTrack(id: Int) { }
     func disableSubtitles() { }
     func refreshSubtitleOverlay() { }
-    func loadExternalSubtitles(urls: [String], enforce: Bool = false) { }
+    func loadExternalSubtitles(urls: [String], names: [String]? = nil, enforce: Bool = false) { }
     func applySubtitleStyle(_ style: SubtitleStyle) { }
     var isPausedState: Bool { true }
 }

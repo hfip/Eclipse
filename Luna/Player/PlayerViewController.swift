@@ -419,7 +419,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private let twoFingerSettingKey = "playerTwoFingerTapPlayPauseEnabled"
     private let legacyTwoFingerSettingKey = "mpvTwoFingerTapEnabled"
     private let doubleTapSeekEnabledKey = "vlcDoubleTapSeekEnabled"
-    private let doubleTapSeekSecondsKey = "vlcDoubleTapSeekSeconds"
+    private let playerSeekSecondsKey = "vlcDoubleTapSeekSeconds"
     private let brightnessLevelKey = "mpvBrightnessLevel"
     
     private lazy var renderer: PlayerRenderer = {
@@ -557,6 +557,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var isVLCPlaybackStartupInProgress = false
     private var canMutateVLCSubtitleTracks = false
     private var pipController: PiPController?
+    private var mpvPiPStartAttemptID = 0
     private var initialURL: URL?
     private var initialPreset: PlayerPreset?
     private var initialHeaders: [String: String]?
@@ -751,13 +752,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         renderer.refreshSubtitleOverlay()
     }
     
-    private func rendererLoadExternalSubtitles(urls: [String], enforce: Bool = false) {
+    private func rendererLoadExternalSubtitles(urls: [String], names: [String]? = nil, enforce: Bool = false) {
         if vlcRenderer != nil {
-            logVLCUI("rendererLoadExternalSubtitles count=\(urls.count) enforce=\(enforce) urls=\(urls.joined(separator: " | "))", type: "Player")
+            logVLCUI("rendererLoadExternalSubtitles count=\(urls.count) names=\(names?.count ?? 0) enforce=\(enforce) urls=\(urls.joined(separator: " | "))", type: "Player")
         } else {
-            logMPV("rendererLoadExternalSubtitles count=\(urls.count) enforce=\(enforce) urls=\(urls.joined(separator: " | "))")
+            logMPV("rendererLoadExternalSubtitles count=\(urls.count) names=\(names?.count ?? 0) enforce=\(enforce) urls=\(urls.joined(separator: " | "))")
         }
-        renderer.loadExternalSubtitles(urls: urls, enforce: enforce)
+        renderer.loadExternalSubtitles(urls: urls, names: names, enforce: enforce)
     }
 
     private func rendererDisableSubtitlesIfReady(reason: String) {
@@ -833,6 +834,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func rendererFinishPictureInPicture() {
         mpvRenderer?.finishPictureInPicture()
+    }
+
+    private func rendererPrimePictureInPictureFrames(reason: String) {
+        mpvRenderer?.primePictureInPictureFrames(reason: reason)
+    }
+
+    private func rendererResumeForegroundRendering(reason: String) {
+        mpvRenderer?.resumeForegroundRendering(reason: reason)
     }
     
     private var subtitleURLs: [String] = []
@@ -937,6 +946,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func logVLCUI(_ message: String, type: String = "Player") {
         guard isVLCPlayer else { return }
         Logger.shared.log("[PlayerVC.VLC \(playerLogId)] \(message)", type: type)
+    }
+
+    private func logSharedPlayerControl(_ message: String) {
+        if isVLCPlayer {
+            logVLCUI(message, type: "Player")
+        } else {
+            logMPV(message)
+        }
     }
 
     private func logVLCUIViewSnapshot(_ event: String) {
@@ -1087,8 +1104,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         return UserDefaults.standard.bool(forKey: doubleTapSeekEnabledKey)
     }
-    private var doubleTapSeekSeconds: Double {
-        let savedSeconds = UserDefaults.standard.double(forKey: doubleTapSeekSecondsKey)
+    private var playerSeekSeconds: Double {
+        let savedSeconds = UserDefaults.standard.double(forKey: playerSeekSecondsKey)
         let seconds = savedSeconds > 0 ? savedSeconds : 10.0
         return min(max(seconds, 5.0), 60.0)
     }
@@ -1131,11 +1148,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         setupBrightnessControls()
         setupVolumeControls()
     #endif
+        configureSeekButtons()
 
         if !isVLCPlayer {
-            let cfg = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
-            skipBackwardButton.setImage(UIImage(systemName: "gobackward.15", withConfiguration: cfg), for: .normal)
-            skipForwardButton.setImage(UIImage(systemName: "goforward.15", withConfiguration: cfg), for: .normal)
             subtitleButton.showsMenuAsPrimaryAction = true
             updateSubtitleTracksMenu()
         } else {
@@ -1154,7 +1169,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         do {
             try rendererStart()
-            logMPV("renderer.start succeeded")
+            logSharedPlayerControl("renderer.start succeeded")
         } catch {
             let rendererName = vlcRenderer != nil ? "VLC" : "MPV"
             Logger.shared.log("Failed to start \(rendererName) renderer: \(error)", type: "Error")
@@ -1167,7 +1182,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         showControlsTemporarily()
         
         if let url = initialURL, let preset = initialPreset {
-            logMPV("loading initial url=\(url.absoluteString) preset=\(preset.id.rawValue)")
+            logSharedPlayerControl("loading initial url=\(url.absoluteString) preset=\(preset.id.rawValue)")
             load(url: url, preset: preset, headers: initialHeaders)
         }
         
@@ -1176,6 +1191,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -1264,7 +1280,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else if let vlc = vlcRenderer {
             vlc.delegate = nil
         }
-        logMPV("deinit; stopping renderer and restoring state")
+        logSharedPlayerControl("deinit; stopping renderer and restoring state")
         pipController?.delegate = nil
         if pipController?.isPictureInPictureActive == true {
             pipController?.stopPictureInPicture()
@@ -1835,7 +1851,36 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
     
+    private var playerGestureSurfaceView: UIView {
+        // MPV's GL view can be aggressive about touch delivery on iOS. Attaching
+        // background gestures to the container lets them see touches through the
+        // overlay while the delegate still filters real controls.
+        return mpvRenderer != nil ? videoContainer : tapOverlayView
+    }
+
+    private func configureSeekButtons() {
+        let seconds = Int(playerSeekSeconds.rounded())
+        let cfg = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        let backwardImage = UIImage(systemName: "gobackward.\(seconds)", withConfiguration: cfg)
+            ?? UIImage(systemName: "gobackward", withConfiguration: cfg)
+            ?? UIImage(systemName: "backward.fill", withConfiguration: cfg)
+        let forwardImage = UIImage(systemName: "goforward.\(seconds)", withConfiguration: cfg)
+            ?? UIImage(systemName: "goforward", withConfiguration: cfg)
+            ?? UIImage(systemName: "forward.fill", withConfiguration: cfg)
+        skipBackwardButton.setImage(backwardImage, for: .normal)
+        skipForwardButton.setImage(forwardImage, for: .normal)
+        skipBackwardButton.accessibilityLabel = "Seek Back \(seconds) Seconds"
+        skipForwardButton.accessibilityLabel = "Seek Forward \(seconds) Seconds"
+    }
+
     private func setupActions() {
+        videoContainer.isMultipleTouchEnabled = true
+        tapOverlayView.isMultipleTouchEnabled = true
+#if !os(tvOS)
+        videoContainer.isExclusiveTouch = false
+        tapOverlayView.isExclusiveTouch = false
+#endif
+
         centerPlayPauseButton.addTarget(self, action: #selector(centerPlayPauseTapped), for: .touchUpInside)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         pipButton.addTarget(self, action: #selector(pipTouchDown), for: .touchDown)
@@ -1867,7 +1912,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         tap.cancelsTouchesInView = false
         tap.delaysTouchesBegan = false
         tap.delaysTouchesEnded = false
-        tapOverlayView.addGestureRecognizer(tap)
+        playerGestureSurfaceView.addGestureRecognizer(tap)
         containerTapGesture = tap
     }
 
@@ -1879,7 +1924,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         holdGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleHoldGesture(_:)))
         holdGesture?.minimumPressDuration = 0.5
         if let holdGesture = holdGesture {
-            tapOverlayView.addGestureRecognizer(holdGesture)
+            playerGestureSurfaceView.addGestureRecognizer(holdGesture)
         }
     }
     
@@ -1888,15 +1933,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         leftDoubleTap.numberOfTapsRequired = 2
         leftDoubleTap.delegate = self
         leftDoubleTapGesture = leftDoubleTap
-        tapOverlayView.addGestureRecognizer(leftDoubleTap)
+        playerGestureSurfaceView.addGestureRecognizer(leftDoubleTap)
         
         let rightDoubleTap = UITapGestureRecognizer(target: self, action: #selector(rightSideDoubleTapped))
         rightDoubleTap.numberOfTapsRequired = 2
         rightDoubleTap.delegate = self
         rightDoubleTapGesture = rightDoubleTap
-        tapOverlayView.addGestureRecognizer(rightDoubleTap)
+        playerGestureSurfaceView.addGestureRecognizer(rightDoubleTap)
         
-        if let tap = containerTapGesture {
+        if mpvRenderer == nil, let tap = containerTapGesture {
             tap.require(toFail: leftDoubleTap)
             tap.require(toFail: rightDoubleTap)
         }
@@ -1906,7 +1951,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(twoFingerTapped))
             twoFingerTap.numberOfTouchesRequired = 2
             twoFingerTap.delegate = self
-            tapOverlayView.addGestureRecognizer(twoFingerTap)
+            playerGestureSurfaceView.addGestureRecognizer(twoFingerTap)
         }
         #endif
     }
@@ -1916,8 +1961,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let location = gesture.location(in: videoContainer)
         let isLeftSide = location.x < videoContainer.bounds.width / 2
         guard isLeftSide else { return }
-        logMPV("left double-tap seek by -\(String(format: "%.1f", doubleTapSeekSeconds))")
-        rendererSeek(by: -doubleTapSeekSeconds)
+        logSharedPlayerControl("left double-tap seek by -\(String(format: "%.1f", playerSeekSeconds))")
+        rendererSeek(by: -playerSeekSeconds)
         animateButtonTap(skipBackwardButton)
     }
 
@@ -1926,14 +1971,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let location = gesture.location(in: videoContainer)
         let isRightSide = location.x >= videoContainer.bounds.width / 2
         guard isRightSide else { return }
-        logMPV("right double-tap seek by \(String(format: "%.1f", doubleTapSeekSeconds))")
-        rendererSeek(by: doubleTapSeekSeconds)
+        logSharedPlayerControl("right double-tap seek by \(String(format: "%.1f", playerSeekSeconds))")
+        rendererSeek(by: playerSeekSeconds)
         animateButtonTap(skipForwardButton)
     }
 
     @objc private func twoFingerTapped(_ gesture: UITapGestureRecognizer) {
         // Two-finger tap: toggle play/pause without showing UI
-        logMPV("two-finger tap toggle pause currentPaused=\(rendererIsPausedState())")
+        logSharedPlayerControl("two-finger tap toggle pause currentPaused=\(rendererIsPausedState())")
         if rendererIsPausedState() {
             rendererPlay()
             updatePlayPauseButton(isPaused: false, shouldShowControls: false)
@@ -2262,15 +2307,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     @objc private func skipBackwardTapped() {
-        logMPV("skip backward button tapped")
-        rendererSeek(by: isVLCPlayer ? -10 : -15)
+        let seconds = playerSeekSeconds
+        logSharedPlayerControl("skip backward button tapped seek=\(String(format: "%.1f", seconds))")
+        rendererSeek(by: -seconds)
         animateButtonTap(skipBackwardButton)
         showControlsTemporarily()
     }
     
     @objc private func skipForwardTapped() {
-        logMPV("skip forward button tapped")
-        rendererSeek(by: isVLCPlayer ? 10 : 15)
+        let seconds = playerSeekSeconds
+        logSharedPlayerControl("skip forward button tapped seek=\(String(format: "%.1f", seconds))")
+        rendererSeek(by: seconds)
         animateButtonTap(skipForwardButton)
         showControlsTemporarily()
     }
@@ -3647,6 +3694,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     Logger.shared.log("[PlayerVC.Subtitles] default selected external track index=\(selectedExternalTrack.0)", type: "Player")
                 } else if maybeUseOpenSubtitlesFallback(preferredLang: preferredLang) {
                     Logger.shared.log("[PlayerVC.Subtitles] OpenSubtitles fallback requested for preferredLang=\(preferredLang)", type: "Player")
+                } else if !isVLCPlayer, let fallbackEmbeddedTrack = fallbackDefaultSubtitleTrack(from: embeddedTracks) {
+                    if rendererGetCurrentSubtitleTrackId() != fallbackEmbeddedTrack.0 {
+                        rendererSetSubtitleTrack(id: fallbackEmbeddedTrack.0)
+                    }
+                    userSelectedSubtitleTrack = true
+                    setSubtitleVisible(true, persist: false)
+                    vlcSubtitleSelection = .embedded(trackId: fallbackEmbeddedTrack.0)
+                    Logger.shared.log("[PlayerVC.Subtitles] default selected fallback MPV/native track id=\(fallbackEmbeddedTrack.0) name=\(fallbackEmbeddedTrack.1)", type: "Player")
                 } else if let fallbackExternalTrack = fallbackDefaultSubtitleTrack(from: externalTracks) {
                     currentSubtitleIndex = fallbackExternalTrack.0
                     loadCurrentSubtitle()
@@ -4080,7 +4135,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             loadCurrentSubtitle()
             updateVLCSubtitleOverlay(for: cachedPosition)
         } else {
-            rendererLoadExternalSubtitles(urls: [urlString], enforce: true)
+            rendererLoadExternalSubtitles(urls: [urlString], names: [displayName], enforce: true)
             vlcExternalSubtitlesLoadedNatively = true
             vlcExternalSubtitlePriorityDeadline = nil
             vlcSubtitleSelection = .none
@@ -4106,6 +4161,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
         Logger.shared.log("[PlayerVC.Settings] UserDefaults changed; evaluating in-app player subtitle mode", type: "Player")
+        configureSeekButtons()
         if isVLCPlayer {
             applyVLCSubtitleModeSettingIfNeeded()
             applyVLCSubtitleOverlayPositionSetting()
@@ -4156,7 +4212,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if !subtitleURLs.isEmpty {
                 if !vlcExternalSubtitlesLoadedNatively {
                     Logger.shared.log("[PlayerVC.Subtitles] switching to native VLC subtitle mode; loading external tracks into VLC", type: "Player")
-                    rendererLoadExternalSubtitles(urls: subtitleURLs)
+                    rendererLoadExternalSubtitles(urls: subtitleURLs, names: subtitleNames)
                     vlcExternalSubtitlesLoadedNatively = true
                     vlcExternalSubtitlePriorityDeadline = Date().addingTimeInterval(1.2)
                 }
@@ -4193,7 +4249,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     updateVLCSubtitleOverlay(for: cachedPosition)
                 } else {
                     Logger.shared.log("[PlayerVC.Subtitles] loadSubtitles path=VLC native", type: "Stream")
-                    rendererLoadExternalSubtitles(urls: urls)
+                    rendererLoadExternalSubtitles(urls: urls, names: names)
                     vlcExternalSubtitlesLoadedNatively = true
                     vlcExternalSubtitlePriorityDeadline = Date().addingTimeInterval(1.2)
                     // Update subtitle menu after VLC loads the external subs
@@ -4216,7 +4272,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     }
                 }
             } else {
-                rendererLoadExternalSubtitles(urls: urls)
+                rendererLoadExternalSubtitles(urls: urls, names: names)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.updateSubtitleTracksMenuWhenReady()
                 }
@@ -4238,7 +4294,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         Logger.shared.log("[PlayerVC.Subtitles] loadCurrentSubtitle index=\(currentSubtitleIndex) renderer=\(isVLCPlayer ? "VLC" : "MPV")", type: "Stream")
 
         if !isVLCPlayer {
-            rendererLoadExternalSubtitles(urls: [urlString], enforce: true)
+            let subtitleName = currentSubtitleIndex < subtitleNames.count ? subtitleNames[currentSubtitleIndex] : nil
+            rendererLoadExternalSubtitles(urls: [urlString], names: subtitleName.map { [$0] }, enforce: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.updateSubtitleTracksMenuWhenReady()
             }
@@ -4643,7 +4700,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     @objc private func containerTapped() {
-        logMPV("container tapped controlsVisible=\(controlsVisible)")
+        logSharedPlayerControl("container tapped controlsVisible=\(controlsVisible)")
         if controlsVisible {
             hideControls()
         } else {
@@ -4864,7 +4921,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if isClosing { return }
         isClosing = true
         let isAnyPiPActive = rendererIsPictureInPictureActive()
-        logMPV("closeTapped; pipActive=\(isAnyPiPActive); mediaInfo=\(String(describing: mediaInfo))")
+        logSharedPlayerControl("closeTapped; pipActive=\(isAnyPiPActive); mediaInfo=\(String(describing: mediaInfo))")
         dismissEpisodeBrowser(animated: false)
         closeButton.isEnabled = false
         view.isUserInteractionEnabled = false
@@ -4890,7 +4947,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
 
             self.rendererStop()
-            self.logMPV("renderer.stop called from closeTapped")
+            self.logSharedPlayerControl("renderer.stop called from closeTapped")
             self.postPlayerDidCloseNotification()
         }
 
@@ -4951,22 +5008,43 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("[PlayerVC.PiP] stopping PiP from button", type: "Player")
             pip.stopPictureInPicture()
         } else {
-            rendererPreparePictureInPictureStart()
-            let startPiP = { [weak self, weak pip] in
-                guard let self, let pip else { return }
-                if pip.isPictureInPicturePossible {
-                    Logger.shared.log("[PlayerVC.PiP] starting PiP from button", type: "Player")
-                    pip.startPictureInPicture()
-                } else {
-                    Logger.shared.log("[PlayerVC.PiP] start blocked: PiP not possible active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)", type: "Player")
-                    self.rendererFinishPictureInPicture()
-                }
-            }
-            if pip.isPictureInPicturePossible {
-                startPiP()
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: startPiP)
-            }
+            startMPVPictureInPictureWhenPossible(source: "button")
+        }
+    }
+
+    private func startMPVPictureInPictureWhenPossible(source: String) {
+        guard pipController != nil else { return }
+        mpvPiPStartAttemptID += 1
+        let attemptID = mpvPiPStartAttemptID
+        rendererPreparePictureInPictureStart()
+        attemptMPVPictureInPictureStart(source: source, attemptID: attemptID, attempt: 0)
+    }
+
+    private func attemptMPVPictureInPictureStart(source: String, attemptID: Int, attempt: Int) {
+        guard attemptID == mpvPiPStartAttemptID else { return }
+        guard let pip = pipController else { return }
+        rendererPrimePictureInPictureFrames(reason: "\(source)-attempt-\(attempt)")
+        pip.updatePlaybackState()
+
+        if pip.isPictureInPicturePossible && !pip.isPictureInPictureActive {
+            Logger.shared.log("[PlayerVC.PiP] starting MPV PiP source=\(source) attempt=\(attempt)", type: "Player")
+            pip.startPictureInPicture()
+            return
+        }
+
+        if pip.isPictureInPictureActive {
+            Logger.shared.log("[PlayerVC.PiP] MPV PiP already active source=\(source) attempt=\(attempt)", type: "Player")
+            return
+        }
+
+        guard attempt < 12 else {
+            Logger.shared.log("[PlayerVC.PiP] MPV start blocked after retries source=\(source) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)", type: "Player")
+            rendererFinishPictureInPicture()
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.attemptMPVPictureInPictureStart(source: source, attemptID: attemptID, attempt: attempt + 1)
         }
     }
 
@@ -5857,6 +5935,7 @@ extension PlayerViewController: MPVNativeRendererDelegate {
         if isClosing { return }
         if !isPaused {
             markPlaybackStarted(reason: "playing")
+            rendererResumeForegroundRendering(reason: "mpv-unpause")
         }
         if isRendererLoading && !isPaused {
             isRendererLoading = false
@@ -6129,6 +6208,7 @@ extension PlayerViewController: PiPControllerDelegate {
     func pipController(_ controller: PiPController, didStartPictureInPicture: Bool) {
         Logger.shared.log("[PlayerVC.PiP] delegate didStart success=\(didStartPictureInPicture)", type: "Player")
         if !didStartPictureInPicture {
+            mpvPiPStartAttemptID += 1
             rendererFinishPictureInPicture()
         }
         pipController?.updatePlaybackState()
@@ -6139,6 +6219,7 @@ extension PlayerViewController: PiPControllerDelegate {
     }
     func pipController(_ controller: PiPController, didStopPictureInPicture: Bool) {
         Logger.shared.log("[PlayerVC.PiP] delegate didStop", type: "Player")
+        mpvPiPStartAttemptID += 1
         rendererFinishPictureInPicture()
         updatePiPButtonVisibility()
     }
@@ -6156,7 +6237,9 @@ extension PlayerViewController: PiPControllerDelegate {
         rendererPausePlayback()
     }
     func pipController(_ controller: PiPController, skipByInterval interval: CMTime) {
-        let seconds = CMTimeGetSeconds(interval)
+        let requestedSeconds = CMTimeGetSeconds(interval)
+        let seconds = requestedSeconds < 0 ? -playerSeekSeconds : playerSeekSeconds
+        logMPV("PiP skip requested=\(String(format: "%.1f", requestedSeconds)) applying=\(String(format: "%.1f", seconds))")
         let target = max(0, cachedPosition + seconds)
         rendererSeek(to: target)
         pipController?.updatePlaybackState()
@@ -6204,24 +6287,7 @@ extension PlayerViewController: PiPControllerDelegate {
             guard let pip = self.pipController else { return }
             self.logMPV("background PiP check active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)")
             if !pip.isPictureInPictureActive {
-                self.rendererPreparePictureInPictureStart()
-            }
-            let startPiP = { [weak self, weak pip] in
-                guard let self, let pip else { return }
-                if pip.isPictureInPicturePossible && !pip.isPictureInPictureActive {
-                    self.logMPV("Entering background; starting PiP")
-                    pip.startPictureInPicture()
-                } else {
-                    self.logMPV("background PiP auto-start not triggered possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive)")
-                    if !pip.isPictureInPictureActive {
-                        self.rendererFinishPictureInPicture()
-                    }
-                }
-            }
-            if pip.isPictureInPicturePossible {
-                startPiP()
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: startPiP)
+                self.startMPVPictureInPictureWhenPossible(source: "background")
             }
         }
     }
@@ -6248,6 +6314,7 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
             guard let pip = self.pipController else { return }
+            self.mpvPiPStartAttemptID += 1
             if pip.isPictureInPictureActive {
                 self.logMPV("Returning to foreground; stopping PiP")
                 pip.stopPictureInPicture()
@@ -6255,6 +6322,14 @@ extension PlayerViewController: PiPControllerDelegate {
                 self.rendererFinishPictureInPicture()
             }
             self.logVLCUIViewSnapshot("appWillEnterForeground async end")
+        }
+    }
+
+    @objc private func appDidBecomeActive() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.vlcRenderer == nil else { return }
+            self.logMPV("appDidBecomeActive foreground render recovery")
+            self.rendererResumeForegroundRendering(reason: "app-did-become-active")
         }
     }
 }

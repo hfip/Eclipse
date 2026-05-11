@@ -843,7 +843,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     
     // MARK: - External Subtitles
     
-    func loadExternalSubtitles(urls: [String], enforce: Bool = false) {
+    func loadExternalSubtitles(urls: [String], names: [String]? = nil, enforce: Bool = false) {
         guard let player = mediaPlayer, currentMedia != nil else { return }
         
         eventQueue.async { [weak self] in
@@ -1348,7 +1348,7 @@ final class VLCRenderer: PlayerRenderer {
     func setSubtitleTrack(id: Int) { }
     func disableSubtitles() { }
     func refreshSubtitleOverlay() { }
-    func loadExternalSubtitles(urls: [String], enforce: Bool = false) { }
+    func loadExternalSubtitles(urls: [String], names: [String]? = nil, enforce: Bool = false) { }
     func applySubtitleStyle(_ style: SubtitleStyle) { }
     var isPictureInPictureAvailable: Bool { false }
     var isPictureInPictureActive: Bool { false }
