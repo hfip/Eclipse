@@ -492,7 +492,6 @@ struct MediaDetailView: View {
                 contentContainer
             }
         }
-        .ignoresSafeArea(edges: [.top, .leading, .trailing])
     }
 
     private func refreshDetailContentLayout(reason: String) {

@@ -30,7 +30,7 @@ class Logger: @unchecked Sendable {
     private let sessionMarkerURL: URL
     private let maxLogEntries = 1000
     private let maxLogFileBytes = 2_000_000
-    private let noisyTypes: Set<String> = ["AniList", "Tracker", "Progress", "Stream", "General", "Info", "TMDB"]
+    private let noisyTypes: Set<String> = ["AniList", "Tracker", "Progress", "Stream", "General", "Info", "TMDB", "MPV", "Matching"]
     private let noisyWindowDuration: TimeInterval = 20
     private let noisyTypeBurstLimit = 30
     private let repeatDedupWindow: TimeInterval = 2
@@ -50,6 +50,18 @@ class Logger: @unchecked Sendable {
         detectPreviousUncleanShutdown()
         markSessionRunning()
         installLifecycleHooks()
+    }
+
+    static func displayCategory(for type: String) -> String {
+        let trimmed = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "General" }
+
+        switch trimmed.lowercased() {
+        case "crashprobe", "matching", "animatch", "animap", "tmdbmatch", "mediamatch":
+            return "Matching"
+        default:
+            return trimmed
+        }
     }
     
     func log(_ message: String, type: String = "General") {
@@ -73,7 +85,7 @@ class Logger: @unchecked Sendable {
                         object: nil,
                         userInfo: [
                             "message": entry.message,
-                            "type": entry.type,
+                            "type": Self.displayCategory(for: entry.type),
                             "timestamp": entry.timestamp
                         ]
                     )
@@ -123,21 +135,22 @@ class Logger: @unchecked Sendable {
     func getLogs() -> String {
         var result = ""
         queue.sync {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "dd-MM HH:mm:ss"
-            result = logs.map { "[\(dateFormatter.string(from: $0.timestamp))] [\($0.type)] \($0.message)" }
-                .joined(separator: "\n----\n")
+            result = self.formatLogs(self.logs)
         }
         return result
     }
     
-    func getLogsAsync() async -> String {
+    func getLogsAsync(category: String? = nil) async -> String {
         return await withCheckedContinuation { continuation in
             queue.async {
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "dd-MM HH:mm:ss"
-                let result = self.logs.map { "[\(dateFormatter.string(from: $0.timestamp))] [\($0.type)] \($0.message)" }
-                    .joined(separator: "\n----\n")
+                let selectedCategory = category.flatMap { value -> String? in
+                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty || trimmed == "All" ? nil : Self.displayCategory(for: trimmed)
+                }
+                let entries = selectedCategory.map { category in
+                    self.logs.filter { Self.displayCategory(for: $0.type) == category }
+                } ?? self.logs
+                let result = self.formatLogs(entries)
                 continuation.resume(returning: result)
             }
         }
@@ -176,8 +189,12 @@ class Logger: @unchecked Sendable {
         }
     }
     
-    func exportLogsToTempFile() async throws -> URL {
-        let logs = await getLogsAsync()
+    func exportLogsToTempFile(category: String? = nil) async throws -> URL {
+        let selectedCategory = category.flatMap { value -> String? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty || trimmed == "All" ? nil : Self.displayCategory(for: trimmed)
+        }
+        let logs = await getLogsAsync(category: selectedCategory)
         let content = logs.isEmpty ? "No logs available." : logs
         guard let data = content.data(using: .utf8) else {
             throw ExportError.encodingFailed
@@ -185,17 +202,27 @@ class Logger: @unchecked Sendable {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let filename = "luna-logs-\(formatter.string(from: Date())).txt"
+        let suffix = selectedCategory.map { "-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))" } ?? ""
+        let filename = "luna-logs\(suffix)-\(formatter.string(from: Date())).txt"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    private func formatLogs(_ entries: [LogEntry]) -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "dd-MM HH:mm:ss"
+        return entries.map { entry in
+            "[\(dateFormatter.string(from: entry.timestamp))] [\(Self.displayCategory(for: entry.type))] \(entry.message)"
+        }
+        .joined(separator: "\n----\n")
     }
     
     private func debugLog(_ entry: LogEntry) {
 #if DEBUG
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM HH:mm:ss"
-        let formattedMessage = "[\(dateFormatter.string(from: entry.timestamp))] [\(entry.type)] \(entry.message)"
+        let formattedMessage = "[\(dateFormatter.string(from: entry.timestamp))] [\(Self.displayCategory(for: entry.type))] \(entry.message)"
         print(formattedMessage)
 #endif
     }
@@ -230,7 +257,7 @@ class Logger: @unchecked Sendable {
                     object: nil,
                     userInfo: [
                         "message": entry.message,
-                        "type": entry.type,
+                        "type": Self.displayCategory(for: entry.type),
                         "timestamp": entry.timestamp
                     ]
                 )
@@ -304,7 +331,7 @@ class Logger: @unchecked Sendable {
                 object: nil,
                 userInfo: [
                     "message": entry.message,
-                    "type": entry.type,
+                    "type": Self.displayCategory(for: entry.type),
                     "timestamp": entry.timestamp
                 ]
             )

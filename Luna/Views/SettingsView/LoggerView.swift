@@ -23,6 +23,10 @@ struct LogEntry: Identifiable {
             return .blue
         case "servicemanager":
             return .purple
+        case "matching":
+            return .teal
+        case "mpv":
+            return .indigo
         case "debug":
             return .gray
         default:
@@ -40,6 +44,10 @@ struct LogEntry: Identifiable {
             return "play.circle"
         case "servicemanager":
             return "gear.circle"
+        case "matching":
+            return "point.3.connected.trianglepath.dotted"
+        case "mpv":
+            return "play.tv"
         case "debug":
             return "ladybug"
         default:
@@ -51,6 +59,7 @@ struct LogEntry: Identifiable {
 struct LoggerView: View {
     @StateObject private var loggerManager = LoggerManager.shared
     @State private var searchText = ""
+    @State private var selectedCategory = "All"
     #if !os(tvOS)
     @State private var exportItem: ExportItem?
     #endif
@@ -58,6 +67,10 @@ struct LoggerView: View {
     
     private var filteredLogs: [LogEntry] {
         var logs = loggerManager.logs
+
+        if selectedCategory != "All" {
+            logs = logs.filter { $0.type == selectedCategory }
+        }
         
         if !searchText.isEmpty {
             logs = logs.filter {
@@ -68,6 +81,11 @@ struct LoggerView: View {
         
         return logs.sorted { $0.timestamp > $1.timestamp }
     }
+
+    private var availableCategories: [String] {
+        let categories = Set(loggerManager.logs.map { $0.type }).sorted()
+        return ["All"] + categories
+    }
     
     var body: some View {
         List {
@@ -75,6 +93,15 @@ struct LoggerView: View {
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
                 .lunaHideListRowSeparator()
+
+            Picker("Category", selection: $selectedCategory) {
+                ForEach(availableCategories, id: \.self) { category in
+                    Text(category).tag(category)
+                }
+            }
+            .pickerStyle(.menu)
+            .listRowBackground(Color.clear)
+            .lunaHideListRowSeparator()
 
             if filteredLogs.isEmpty {
                 VStack(spacing: 16) {
@@ -106,7 +133,8 @@ struct LoggerView: View {
                     Button(action: {
                         Task {
                             do {
-                                let url = try await Logger.shared.exportLogsToTempFile()
+                                let exportCategory = selectedCategory == "All" ? nil : selectedCategory
+                                let url = try await Logger.shared.exportLogsToTempFile(category: exportCategory)
                                 exportItem = ExportItem(url: url)
                             } catch {
                                 exportErrorMessage = "Failed to export logs."
@@ -279,7 +307,7 @@ class LoggerManager: ObservableObject {
                 let messageRange = Range(match.range(at: 3), in: section)!
                 
                 let timestampString = String(section[timestampRange])
-                let type = String(section[typeRange])
+                let type = Logger.displayCategory(for: String(section[typeRange]))
                 let message = String(section[messageRange])
                 
                 if let timestamp = dateFormatter.date(from: timestampString) {
@@ -303,7 +331,7 @@ class LoggerManager: ObservableObject {
     }
     
     func addLog(message: String, type: String) {
-        let log = LogEntry(timestamp: Date(), message: message, type: type)
+        let log = LogEntry(timestamp: Date(), message: message, type: Logger.displayCategory(for: type))
         logs.insert(log, at: 0)
         
         if logs.count > maxLogs {

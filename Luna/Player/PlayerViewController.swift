@@ -449,6 +449,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var isVLCPlayer: Bool {
         return vlcRenderer != nil
     }
+
+    private var supportsSharedPlayerControls: Bool {
+        isVLCPlayer || mpvRenderer != nil
+    }
     
     var mediaInfo: MediaInfo?
     var imdbId: String?
@@ -614,10 +618,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererStart() throws {
         if vlcRenderer != nil {
             logVLCUI("rendererStart requested isRunning=\(isRunning)", type: "Stream")
+        } else {
+            logMPV("rendererStart requested isRunning=\(isRunning)")
         }
         try renderer.start()
         if vlcRenderer != nil {
             logVLCUI("rendererStart completed", type: "Stream")
+        } else {
+            logMPV("rendererStart completed")
         }
         isRunning = true
     }
@@ -625,6 +633,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererStop() {
         if let vlc = vlcRenderer {
             logVLCUI("rendererStop requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) pipActive=\(vlc.isPictureInPictureActive)", type: "Stream")
+        } else {
+            logMPV("rendererStop requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) pipActive=\(pipController?.isPictureInPictureActive == true)")
         }
         renderer.stop()
         isRunning = false
@@ -635,6 +645,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererPlay() {
         if vlcRenderer != nil {
             logVLCUI("rendererPlay requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)", type: "Stream")
+        } else {
+            logMPV("rendererPlay requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)")
         }
         renderer.play()
     }
@@ -642,6 +654,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererPausePlayback() {
         if vlcRenderer != nil {
             logVLCUI("rendererPause requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)", type: "Stream")
+        } else {
+            logMPV("rendererPause requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)")
         }
         renderer.pausePlayback()
     }
@@ -653,6 +667,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererSeek(to seconds: Double) {
         if vlcRenderer != nil {
             logVLCUI("rendererSeek(to:) target=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)", type: "Progress")
+        } else {
+            logMPV("rendererSeek(to:) target=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)")
         }
         renderer.seek(to: seconds)
     }
@@ -660,6 +676,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererSeek(by seconds: Double) {
         if vlcRenderer != nil {
             logVLCUI("rendererSeek(by:) delta=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)", type: "Progress")
+        } else {
+            logMPV("rendererSeek(by:) delta=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)")
         }
         renderer.seek(by: seconds)
     }
@@ -667,6 +685,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererSetSpeed(_ speed: Double) {
         if vlcRenderer != nil {
             logVLCUI("rendererSetSpeed \(String(format: "%.2f", speed))", type: "Player")
+        } else {
+            logMPV("rendererSetSpeed \(String(format: "%.2f", speed))")
         }
         renderer.setSpeed(speed)
     }
@@ -686,6 +706,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererSetAudioTrack(id: Int) {
         if vlcRenderer != nil {
             logVLCUI("rendererSetAudioTrack id=\(id) userSelected=\(userSelectedAudioTrack)", type: "Player")
+        } else {
+            logMPV("rendererSetAudioTrack id=\(id) userSelected=\(userSelectedAudioTrack)")
         }
         renderer.setAudioTrack(id: id)
     }
@@ -701,6 +723,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererSetSubtitleTrack(id: Int) {
         if vlcRenderer != nil {
             logVLCUI("rendererSetSubtitleTrack id=\(id) userSelected=\(userSelectedSubtitleTrack) selection=\(vlcSubtitleSelection)", type: "Player")
+        } else {
+            logMPV("rendererSetSubtitleTrack id=\(id) userSelected=\(userSelectedSubtitleTrack) selection=\(vlcSubtitleSelection)")
         }
         renderer.setSubtitleTrack(id: id)
     }
@@ -712,6 +736,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererDisableSubtitles() {
         if vlcRenderer != nil {
             logVLCUI("rendererDisableSubtitles currentSelection=\(vlcSubtitleSelection)", type: "Player")
+        } else {
+            logMPV("rendererDisableSubtitles currentSelection=\(vlcSubtitleSelection)")
         }
         renderer.disableSubtitles()
     }
@@ -723,6 +749,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererLoadExternalSubtitles(urls: [String], enforce: Bool = false) {
         if vlcRenderer != nil {
             logVLCUI("rendererLoadExternalSubtitles count=\(urls.count) enforce=\(enforce) urls=\(urls.joined(separator: " | "))", type: "Player")
+        } else {
+            logMPV("rendererLoadExternalSubtitles count=\(urls.count) enforce=\(enforce) urls=\(urls.joined(separator: " | "))")
         }
         renderer.loadExternalSubtitles(urls: urls, enforce: enforce)
     }
@@ -738,6 +766,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererPrepareInitialSeek(to seconds: Double?) {
         if vlcRenderer != nil {
             logVLCUI("rendererPrepareInitialSeek \(secondsText(seconds))", type: "Progress")
+        } else {
+            logMPV("rendererPrepareInitialSeek \(secondsText(seconds))")
         }
         renderer.prepareInitialSeek(to: seconds)
     }
@@ -759,6 +789,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func rendererApplySubtitleStyle(_ style: SubtitleStyle) {
         if vlcRenderer != nil {
             logVLCUI("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))", type: "Player")
+        } else {
+            logMPV("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         }
         renderer.applySubtitleStyle(style)
     }
@@ -842,6 +874,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if key != lastPiPButtonVisibilityLogKey {
                 lastPiPButtonVisibilityLogKey = key
                 logVLCUI("updatePiPButtonVisibility \(key)", type: "Player")
+            }
+        } else {
+            let key = "available=\(isAvailable) show=\(shouldShow) hidden=\(pipButton.isHidden) active=\(rendererIsPictureInPictureActive()) image=\(imageName)"
+            if key != lastPiPButtonVisibilityLogKey {
+                lastPiPButtonVisibilityLogKey = key
+                logMPV("updatePiPButtonVisibility \(key)")
             }
         }
     }
@@ -1072,7 +1110,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        logMPV("viewDidLoad, initialURL=")
+        logMPV("viewDidLoad initialURL=\(initialURL?.absoluteString ?? "nil") preset=\(initialPreset?.id.rawValue ?? "nil") mediaInfo=\(String(describing: mediaInfo))")
         logVLCUI("viewDidLoad initialURL=\(initialURL?.absoluteString ?? "nil") preset=\(initialPreset?.id.rawValue ?? "nil") mediaInfo=\(String(describing: mediaInfo))", type: "Stream")
         
 #if !os(tvOS)
@@ -1129,9 +1167,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         
         updateProgressHostingController()
-        if isVLCPlayer {
-            updateSpeedMenu()
-        }
+        updateSpeedMenu()
         
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
@@ -1158,8 +1194,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         setNeedsStatusBarAppearanceUpdate()
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             refreshGestureControlLevels(animated: false)
+        }
+        if isVLCPlayer {
             logVLCUIViewSnapshot("viewWillAppear")
         }
     }
@@ -1313,6 +1351,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         logVLCUI("load resume prepared pendingSeek=\(secondsText(pendingSeekTime)) progressCached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) launchContext=\(String(describing: playbackLaunchContext))", type: "Progress")
         rendererPrepareInitialSeek(to: pendingSeekTime)
         let playbackRequest = prepareVLCHeaderProxyIfNeeded(originalURL: url, headers: headers)
+        if !isVLCPlayer {
+            preparePlaybackStartupMonitoring(for: playbackRequest.url, headers: playbackRequest.headers ?? headers ?? [:])
+        }
         rendererLoad(url: playbackRequest.url, preset: preset, headers: playbackRequest.headers)
         applyDefaultPlaybackSpeed()
         
@@ -1327,7 +1368,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         playbackDidStart = false
         playbackFailureHandled = false
         playbackSlowProbeCount = 0
-        Logger.shared.log("[PlayerVC.PlaybackStart] smart startup recovery disabled; using normal player/proxy behavior", type: "Stream")
+        guard !url.isFileURL else {
+            Logger.shared.log("[PlayerVC.PlaybackStart] startup monitor skipped for local file", type: "Stream")
+            return
+        }
+        Logger.shared.log("[PlayerVC.PlaybackStart] startup monitor armed renderer=\(isVLCPlayer ? "VLC" : "MPV") url=\(url.absoluteString) headerKeys=[\(headers.keys.sorted().joined(separator: ","))]", type: isVLCPlayer ? "Stream" : "MPV")
+        schedulePlaybackStartupCheck(url: url, headers: headers, delay: 18)
     }
 
     private func schedulePlaybackStartupCheck(url: URL, headers: [String: String], delay: TimeInterval) {
@@ -1390,9 +1436,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func handlePlaybackStartupFailure(_ message: String, isSourceFailure: Bool) {
-        guard !playbackDidStart, !playbackFailureHandled, let context = playbackLaunchContext else { return }
+        guard !playbackDidStart, !playbackFailureHandled else { return }
         playbackFailureHandled = true
         playbackStartupWorkItem?.cancel()
+
+        guard let context = playbackLaunchContext else {
+            Logger.shared.log("[PlayerVC.PlaybackStart] startup failed without launch context: \(message)", type: "MPV")
+            showErrorBanner(message)
+            return
+        }
 
         SourceHealthStore.shared.recordPlaybackFailure(
             sourceId: context.sourceId,
@@ -1528,6 +1580,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             videoContainer.addSubview(mpvView)
             mpvView.translatesAutoresizingMaskIntoConstraints = false
             mpvView.layer.zPosition = 0
+            mpvView.isUserInteractionEnabled = false
             videoContainer.isUserInteractionEnabled = true
             NSLayoutConstraint.activate([
                 mpvView.topAnchor.constraint(equalTo: videoContainer.topAnchor),
@@ -1568,7 +1621,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         videoContainer.addSubview(speedIndicatorLabel)
         videoContainer.addSubview(vlcSubtitleOverlayLabel)
         videoContainer.addSubview(subtitleButton)
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             videoContainer.addSubview(episodeBrowserButton)
             videoContainer.addSubview(speedButton)
             videoContainer.addSubview(audioButton)
@@ -1583,7 +1636,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #if canImport(MediaPlayer)
         view.addSubview(systemVolumeView)
 #endif
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             videoContainer.addSubview(skipButton)
             videoContainer.addSubview(nextEpisodeButton)
             videoContainer.addSubview(skip85sButton)
@@ -1669,7 +1722,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         vlcSubtitleOverlayBottomConstraint = vlcSubtitleOverlayLabel.bottomAnchor.constraint(equalTo: progressContainer.topAnchor, constant: vlcSubtitleOverlayBottomConstant)
         vlcSubtitleOverlayBottomConstraint?.isActive = true
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             subtitleTrailingToEpisodeBrowserConstraint = subtitleButton.trailingAnchor.constraint(equalTo: episodeBrowserButton.leadingAnchor, constant: -8)
             NSLayoutConstraint.activate([
                 episodeBrowserButton.trailingAnchor.constraint(equalTo: progressContainer.trailingAnchor, constant: 0),
@@ -1731,7 +1784,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             systemVolumeView.heightAnchor.constraint(equalToConstant: 1)
         ])
 #endif
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             NSLayoutConstraint.activate([
                 skipButton.trailingAnchor.constraint(equalTo: progressContainer.trailingAnchor),
                 skipButton.bottomAnchor.constraint(equalTo: subtitleButton.topAnchor, constant: -12),
@@ -1775,19 +1828,19 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         skipBackwardButton.addTarget(self, action: #selector(skipBackwardTapped), for: .touchUpInside)
         skipForwardButton.addTarget(self, action: #selector(skipForwardTapped), for: .touchUpInside)
 #if !os(tvOS)
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             skipButton.addTarget(self, action: #selector(skipButtonTapped), for: .touchUpInside)
             nextEpisodeButton.addTarget(self, action: #selector(nextEpisodeButtonTapped), for: .touchUpInside)
             skip85sButton.addTarget(self, action: #selector(skip85sButtonTapped), for: .touchUpInside)
         }
 #endif
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             subtitleButton.addTarget(self, action: #selector(subtitleButtonTapped), for: .touchUpInside)
             episodeBrowserButton.addTarget(self, action: #selector(episodeBrowserButtonTapped), for: .touchUpInside)
         }
         
-        // Ensure buttons work with VLC
-        if vlcRenderer != nil {
+        // Ensure shared player buttons stay interactive above renderer views.
+        if supportsSharedPlayerControls {
             [centerPlayPauseButton, closeButton, pipButton, skipBackwardButton,
              skipForwardButton, subtitleButton, episodeBrowserButton, speedButton, audioButton].forEach {
                 $0.isUserInteractionEnabled = true
@@ -2410,7 +2463,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func updateEpisodeBrowserButtonVisibility() {
         let shouldShow: Bool
-        if isVLCPlayer,
+        if supportsSharedPlayerControls,
            isVLCEpisodeBrowserButtonSettingEnabled,
            case .episode = mediaInfo {
             shouldShow = true
@@ -4131,6 +4184,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let urlString = subtitleURLs[currentSubtitleIndex]
         Logger.shared.log("[PlayerVC.Subtitles] loadCurrentSubtitle index=\(currentSubtitleIndex) renderer=\(isVLCPlayer ? "VLC" : "MPV")", type: "Stream")
 
+        if !isVLCPlayer {
+            rendererLoadExternalSubtitles(urls: [urlString], enforce: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.updateSubtitleTracksMenuWhenReady()
+            }
+            return
+        }
+
         // Handle local file:// URLs directly (e.g. downloaded media subtitles)
         if let url = URL(string: urlString), url.isFileURL {
             Logger.shared.log("[PlayerVC.Subtitles] Loading local subtitle file: \(url.path)", type: "Stream")
@@ -4150,30 +4211,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        if !isVLCPlayer {
-            guard let url = URL(string: urlString) else {
-                Logger.shared.log("Invalid subtitle URL: \(urlString)", type: "Error")
-                return
-            }
-
-            URLSession.custom.dataTask(with: url) { [weak self] data, _, error in
-                guard let self else { return }
-
-                if let error = error {
-                    Logger.shared.log("Failed to download subtitles: \(error.localizedDescription)", type: "Error")
-                    return
-                }
-
-                guard let data = data, let subtitleContent = String(data: data, encoding: .utf8) else {
-                    Logger.shared.log("Failed to parse subtitle data", type: "Error")
-                    return
-                }
-
-                self.parseAndDisplaySubtitles(subtitleContent)
-            }.resume()
-            return
-        }
-        
         Logger.shared.log("Loading subtitle from: \(urlString)", type: "Info")
         
         guard let url = URL(string: urlString) else {
@@ -4574,7 +4611,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         videoContainer.bringSubviewToFront(skipForwardButton)
         videoContainer.bringSubviewToFront(speedIndicatorLabel)
         videoContainer.bringSubviewToFront(subtitleButton)
-        if isVLCPlayer {
+        if supportsSharedPlayerControls {
             videoContainer.bringSubviewToFront(episodeBrowserButton)
             videoContainer.bringSubviewToFront(speedButton)
             videoContainer.bringSubviewToFront(audioButton)
@@ -4602,7 +4639,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 if !self.subtitleButton.isHidden {
                     self.subtitleButton.alpha = 1.0
                 }
-                if self.isVLCPlayer {
+                if self.supportsSharedPlayerControls {
                     if !self.episodeBrowserButton.isHidden {
                         self.episodeBrowserButton.alpha = 1.0
                     }
@@ -4646,7 +4683,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 self.skipBackwardButton.alpha = 0.0
                 self.skipForwardButton.alpha = 0.0
                 self.subtitleButton.alpha = 0.0
-                if self.isVLCPlayer {
+                if self.supportsSharedPlayerControls {
                     self.episodeBrowserButton.alpha = 0.0
                     self.speedButton.alpha = 0.0
                     self.audioButton.alpha = 0.0
@@ -4946,7 +4983,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     self.updateVLCSubtitleOverlay(for: safePosition)
                 }
 #if !os(tvOS)
-                if self.isVLCPlayer, durationIsReliable {
+                if self.supportsSharedPlayerControls, durationIsReliable {
                     if !self.skipDataFetched {
                         self.fetchSkipData()
                     }
@@ -4981,7 +5018,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
 
 #if !os(tvOS)
-            if self.isVLCPlayer, durationIsReliable {
+            if self.supportsSharedPlayerControls, durationIsReliable {
                 if !self.skipDataFetched {
                     self.fetchSkipData()
                 }
@@ -6067,7 +6104,7 @@ extension PlayerViewController: PiPControllerDelegate {
             }
 
             guard let pip = self.pipController else { return }
-            Logger.shared.log("[PlayerVC.PiP] background check active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported) isVLC=\(self.isVLCPlayer)", type: "Player")
+            self.logMPV("background PiP check active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported)")
             if !pip.isPictureInPictureActive {
                 self.rendererPreparePictureInPictureStart()
             }
@@ -6077,7 +6114,7 @@ extension PlayerViewController: PiPControllerDelegate {
                     self.logMPV("Entering background; starting PiP")
                     pip.startPictureInPicture()
                 } else {
-                    Logger.shared.log("[PlayerVC.PiP] background auto-start not triggered possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive)", type: "Player")
+                    self.logMPV("background PiP auto-start not triggered possible=\(pip.isPictureInPicturePossible) active=\(pip.isPictureInPictureActive)")
                     if !pip.isPictureInPictureActive {
                         self.rendererFinishPictureInPicture()
                     }
@@ -6096,7 +6133,7 @@ extension PlayerViewController: PiPControllerDelegate {
             guard let self else { return }
             self.logVLCUIViewSnapshot("appWillEnterForeground async start")
 #if !os(tvOS)
-            if self.isVLCPlayer {
+            if self.supportsSharedPlayerControls {
                 self.refreshGestureControlLevels(animated: false)
             }
 #endif

@@ -187,7 +187,7 @@ private final class MPVPiPBridge {
         }
 
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            Logger.shared.log("[MPVPiPBridge] failed to allocate pixel buffer status=\(status)", type: "Error")
+            Logger.shared.log("[MPVPiPBridge] failed to allocate pixel buffer status=\(status)", type: "MPV")
             return
         }
 
@@ -214,7 +214,7 @@ private final class MPVPiPBridge {
                         return mpv_render_context_render(context, baseAddress)
                     }
                     if result < 0 {
-                        Logger.shared.log("[MPVPiPBridge] mpv software PiP render failed \(result)", type: "Error")
+                        Logger.shared.log("[MPVPiPBridge] mpv software PiP render failed \(result)", type: "MPV")
                     }
                 }
             }
@@ -259,7 +259,7 @@ private final class MPVPiPBridge {
             pixelBufferPool = pool
             pixelBufferPoolAuxAttributes = auxAttrs as CFDictionary
         } else {
-            Logger.shared.log("[MPVPiPBridge] failed to create pixel buffer pool status=\(status)", type: "Error")
+            Logger.shared.log("[MPVPiPBridge] failed to create pixel buffer pool status=\(status)", type: "MPV")
         }
     }
 
@@ -282,7 +282,7 @@ private final class MPVPiPBridge {
         )
 
         guard result == noErr, let sampleBuffer else {
-            Logger.shared.log("[MPVPiPBridge] failed to create sample buffer result=\(result)", type: "Error")
+            Logger.shared.log("[MPVPiPBridge] failed to create sample buffer result=\(result)", type: "MPV")
             return
         }
 
@@ -345,7 +345,7 @@ private final class MPVPiPBridge {
             formatDescription = newDescription
             needsFlush = true
         } else {
-            Logger.shared.log("[MPVPiPBridge] failed to create format description status=\(status)", type: "Error")
+            Logger.shared.log("[MPVPiPBridge] failed to create format description status=\(status)", type: "MPV")
         }
         return needsFlush
     }
@@ -405,11 +405,20 @@ final class MPVNativeRenderer: PlayerRenderer {
     private let foregroundFrameInterval: CFTimeInterval
     private let pipFrameInterval: CFTimeInterval = 1.0 / 24.0
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
+    private var loadGeneration = 0
+    private var currentLoadStartedAt: Date?
+    private var lastProgressLogBucket = -1
+    private var lastDurationLogValue: Double = -1
+    private var lastTrackSummary = ""
 
     weak var delegate: MPVNativeRendererDelegate?
 
     var isPausedState: Bool {
         isPaused
+    }
+
+    private func logMPV(_ message: String) {
+        Logger.shared.log("[MPVNativeRenderer] \(message)", type: "MPV")
     }
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
@@ -452,8 +461,13 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     func start() throws {
-        guard !isRunning else { return }
+        guard !isRunning else {
+            logMPV("start skipped because renderer is already running")
+            return
+        }
+        logMPV("start requested")
         guard let handle = mpv_create() else {
+            logMPV("mpv_create failed")
             throw RendererError.mpvCreationFailed
         }
         mpv = handle
@@ -480,25 +494,42 @@ final class MPVNativeRenderer: PlayerRenderer {
 
         let initStatus = mpv_initialize(handle)
         guard initStatus >= 0 else {
+            logMPV("mpv_initialize failed status=\(initStatus)")
+            mpv_destroy(handle)
+            mpv = nil
             throw RendererError.mpvInitialization(initStatus)
         }
 
-        mpv_request_log_messages(handle, "warn")
-        try createOpenGLRenderContext()
-        observeProperties()
-        installWakeupHandler()
-        ensureAudioSessionActive()
         isRunning = true
+        currentMode = .openGL
+        mpv_request_log_messages(handle, "info")
+        do {
+            try createOpenGLRenderContext()
+            observeProperties()
+            installWakeupHandler()
+            ensureAudioSessionActive()
+            logMPV("start completed mode=openGL hwdec=videotoolbox dr=yes")
+            scheduleRender()
+        } catch {
+            logMPV("start failed after mpv_initialize: \(error)")
+            isRunning = false
+            destroyRenderContext()
+            mpv_destroy(handle)
+            mpv = nil
+            throw error
+        }
     }
 
     func stop() {
         if isStopping { return }
         if !isRunning, mpv == nil { return }
+        logMPV("stop requested running=\(isRunning) ready=\(isReadyToSeek) loading=\(isLoading) cached=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration))")
         isRunning = false
         isStopping = true
 
         destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
+        currentMode = .openGL
 
         var handleForShutdown: OpaquePointer?
         handleForShutdown = mpv
@@ -519,8 +550,13 @@ final class MPVNativeRenderer: PlayerRenderer {
         isLoading = false
         cachedDuration = 0
         cachedPosition = 0
+        currentLoadStartedAt = nil
+        lastProgressLogBucket = -1
+        lastDurationLogValue = -1
+        lastTrackSummary = ""
         updateVideoSize(width: 0, height: 0)
         isStopping = false
+        logMPV("stop completed")
     }
 
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]? = nil) {
@@ -530,9 +566,21 @@ final class MPVNativeRenderer: PlayerRenderer {
         cachedPosition = 0
         cachedDuration = 0
         isReadyToSeek = false
+        loadGeneration += 1
+        currentLoadStartedAt = Date()
+        lastProgressLogBucket = -1
+        lastDurationLogValue = -1
+        lastTrackSummary = ""
+        let generation = loadGeneration
+        logMPV("load start gen=\(generation) target=\(describe(url: url)) preset=\(preset.id.rawValue) headerKeys=[\((headers ?? [:]).keys.sorted().joined(separator: ","))] pendingInitialSeek=\(pendingInitialSeek.map { String(format: "%.2f", $0) } ?? "nil")")
         setLoading(true)
 
-        guard let handle = mpv else { return }
+        guard let handle = mpv else {
+            logMPV("load aborted gen=\(generation): mpv handle is nil")
+            setLoading(false)
+            delegate?.renderer(self, didFailWithError: "MPV was not ready to load media")
+            return
+        }
         ensureAudioSessionActive()
 
         apply(commands: preset.commands, on: handle)
@@ -542,6 +590,10 @@ final class MPVNativeRenderer: PlayerRenderer {
 
         let target = url.isFileURL ? url.path : url.absoluteString
         command(handle, ["loadfile", target, "replace"])
+        mpv_wakeup(handle)
+        scheduleRender()
+        scheduleLoadWatchdog(generation: generation, delay: 8)
+        scheduleLoadWatchdog(generation: generation, delay: 20)
     }
 
     func reloadCurrentItem() {
@@ -561,7 +613,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func prepareForPictureInPictureStart() {
         guard isRunning, currentMode != .pictureInPicture else { return }
-        Logger.shared.log("[MPVNativeRenderer] switching to capped sample-buffer PiP render path", type: "Player")
+        logMPV("switching to capped sample-buffer PiP render path")
         destroyRenderContext()
         currentMode = .pictureInPicture
         DispatchQueue.main.async { [weak self] in
@@ -574,14 +626,14 @@ final class MPVNativeRenderer: PlayerRenderer {
             try createSoftwareRenderContext()
             scheduleRender()
         } catch {
-            Logger.shared.log("[MPVNativeRenderer] failed to enter PiP render mode: \(error)", type: "Error")
+            logMPV("failed to enter PiP render mode: \(error)")
             delegate?.renderer(self, didFailWithError: "MPV PiP render bridge failed")
         }
     }
 
     func finishPictureInPicture() {
         guard isRunning, currentMode != .openGL else { return }
-        Logger.shared.log("[MPVNativeRenderer] restoring OpenGL render path after PiP", type: "Player")
+        logMPV("restoring OpenGL render path after PiP")
         destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
         currentMode = .openGL
@@ -595,13 +647,14 @@ final class MPVNativeRenderer: PlayerRenderer {
             try createOpenGLRenderContext()
             scheduleRender()
         } catch {
-            Logger.shared.log("[MPVNativeRenderer] failed to restore OpenGL render path: \(error)", type: "Error")
+            logMPV("failed to restore OpenGL render path: \(error)")
             delegate?.renderer(self, didFailWithError: "MPV foreground render restore failed")
         }
     }
 
     private func createOpenGLRenderContext() throws {
         guard let handle = mpv else { return }
+        logMPV("creating OpenGL render context")
         var status: Int32 = 0
         performOnMainSync {
             EAGLContext.setCurrent(glContext)
@@ -622,13 +675,16 @@ final class MPVNativeRenderer: PlayerRenderer {
             EAGLContext.setCurrent(nil)
         }
         guard status >= 0, renderContext != nil else {
+            logMPV("OpenGL render context creation failed status=\(status)")
             throw RendererError.renderContextCreation(status)
         }
         installRenderUpdateCallback()
+        logMPV("OpenGL render context ready")
     }
 
     private func createSoftwareRenderContext() throws {
         guard let handle = mpv else { return }
+        logMPV("creating software render context for PiP")
         let status = softwareAPIType.withUnsafeMutableBufferPointer { apiPointer -> Int32 in
             var params = [
                 mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(apiPointer.baseAddress)),
@@ -640,13 +696,16 @@ final class MPVNativeRenderer: PlayerRenderer {
             }
         }
         guard status >= 0, renderContext != nil else {
+            logMPV("software render context creation failed status=\(status)")
             throw RendererError.renderContextCreation(status)
         }
         installRenderUpdateCallback()
+        logMPV("software render context ready")
     }
 
     private func destroyRenderContext() {
         guard let context = renderContext else { return }
+        logMPV("destroying render context mode=\(currentMode)")
         if currentMode == .openGL {
             performOnMainSync {
                 EAGLContext.setCurrent(glContext)
@@ -689,6 +748,7 @@ final class MPVNativeRenderer: PlayerRenderer {
                 mpv_observe_property(handle, 0, pointer, format)
             }
         }
+        logMPV("observing properties \(properties.map { $0.0 }.joined(separator: ","))")
     }
 
     private func installWakeupHandler() {
@@ -698,6 +758,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             let instance = Unmanaged<MPVNativeRenderer>.fromOpaque(userdata).takeUnretainedValue()
             instance.processEvents()
         }, Unmanaged.passUnretained(self).toOpaque())
+        logMPV("wakeup handler installed")
     }
 
     private func scheduleRender() {
@@ -780,7 +841,7 @@ final class MPVNativeRenderer: PlayerRenderer {
                         return mpv_render_context_render(context, baseAddress)
                     }
                     if result < 0 {
-                        Logger.shared.log("[MPVNativeRenderer] OpenGL render failed \(result)", type: "Error")
+                        logMPV("OpenGL render failed \(result)")
                     }
                 }
             }
@@ -807,24 +868,25 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func handleEvent(_ event: mpv_event) {
         switch event.event_id {
         case MPV_EVENT_VIDEO_RECONFIG:
+            logMPV("event video-reconfig")
             refreshVideoState()
         case MPV_EVENT_FILE_LOADED:
+            logMPV("event file-loaded gen=\(loadGeneration)")
             handleFileLoaded()
         case MPV_EVENT_PROPERTY_CHANGE:
             if let property = event.data?.assumingMemoryBound(to: mpv_event_property.self).pointee.name {
                 refreshProperty(named: String(cString: property))
             }
         case MPV_EVENT_SHUTDOWN:
-            Logger.shared.log("[MPVNativeRenderer] mpv shutdown", type: "Player")
+            logMPV("event shutdown")
         case MPV_EVENT_LOG_MESSAGE:
             if let logPointer = event.data?.assumingMemoryBound(to: mpv_event_log_message.self) {
-                let component = String(cString: logPointer.pointee.prefix)
-                let text = String(cString: logPointer.pointee.text)
-                let lower = text.lowercased()
-                if lower.contains("error") {
-                    Logger.shared.log("mpv[\(component)] \(text)", type: "Error")
-                } else if lower.contains("warn") || lower.contains("warning") || lower.contains("deprecated") {
-                    Logger.shared.log("mpv[\(component)] \(text)", type: "Warn")
+                let component = logPointer.pointee.prefix.map { String(cString: $0) } ?? "unknown"
+                let text = logPointer.pointee.text.map { String(cString: $0) } ?? ""
+                let level = logPointer.pointee.level.map { String(cString: $0) } ?? "info"
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    logMPV("mpv[\(component)] \(level): \(trimmed)")
                 }
             }
         default:
@@ -835,10 +897,15 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func handleFileLoaded() {
         isReadyToSeek = true
         setLoading(false)
+        let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
+        logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
+        logTrackSummaryIfChanged(reason: "file-loaded")
         if let initialSeek = pendingInitialSeek {
+            logMPV("applying pending initial seek \(String(format: "%.2f", initialSeek))s")
             seek(to: initialSeek)
             pendingInitialSeek = nil
         }
+        scheduleRender()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.delegate?.renderer(self, didBecomeReadyToSeek: true)
@@ -870,6 +937,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         getProperty(handle: handle, name: "dwidth", format: MPV_FORMAT_INT64, value: &width)
         getProperty(handle: handle, name: "dheight", format: MPV_FORMAT_INT64, value: &height)
         updateVideoSize(width: Int(width), height: Int(height))
+        logMPV("video state width=\(width) height=\(height) glBounds=\(String(format: "%.0fx%.0f", glView.bounds.width, glView.bounds.height)) drawable=\(glView.drawableWidth)x\(glView.drawableHeight)")
+        scheduleRender()
     }
 
     private func refreshProperty(named name: String) {
@@ -879,12 +948,21 @@ final class MPVNativeRenderer: PlayerRenderer {
             var value = Double(0)
             if getProperty(handle: handle, name: name, format: MPV_FORMAT_DOUBLE, value: &value) >= 0 {
                 cachedDuration = max(0, value)
+                if cachedDuration > 0, abs(cachedDuration - lastDurationLogValue) > 5 {
+                    lastDurationLogValue = cachedDuration
+                    logMPV("duration updated \(String(format: "%.2f", cachedDuration))s")
+                }
                 publishProgress()
             }
         case "time-pos":
             var value = Double(0)
             if getProperty(handle: handle, name: name, format: MPV_FORMAT_DOUBLE, value: &value) >= 0 {
                 cachedPosition = max(0, value)
+                let bucket = Int(cachedPosition / 10.0)
+                if bucket != lastProgressLogBucket {
+                    lastProgressLogBucket = bucket
+                    logMPV("progress position=\(String(format: "%.2f", cachedPosition)) duration=\(String(format: "%.2f", cachedDuration)) loading=\(isLoading) ready=\(isReadyToSeek) paused=\(isPaused)")
+                }
                 publishProgress()
             }
         case "pause":
@@ -893,6 +971,7 @@ final class MPVNativeRenderer: PlayerRenderer {
                 let newPaused = flag != 0
                 if newPaused != isPaused {
                     isPaused = newPaused
+                    logMPV("pause changed isPaused=\(newPaused)")
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
                         self.delegate?.renderer(self, didChangePause: newPaused)
@@ -901,12 +980,15 @@ final class MPVNativeRenderer: PlayerRenderer {
             }
         case "sid":
             let current = getCurrentSubtitleTrackId()
+            logMPV("subtitle track changed sid=\(current)")
+            logTrackSummaryIfChanged(reason: "sid")
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.delegate?.renderer(self, subtitleTrackDidChange: current)
                 self.delegate?.rendererDidChangeTracks(self)
             }
         case "aid", "track-list":
+            logTrackSummaryIfChanged(reason: name)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.delegate?.rendererDidChangeTracks(self)
@@ -928,6 +1010,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func setLoading(_ loading: Bool) {
         guard isLoading != loading else { return }
         isLoading = loading
+        logMPV("loading changed \(loading)")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.delegate?.renderer(self, didChangeLoading: loading)
@@ -951,7 +1034,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             try session.setCategory(.playback, mode: .moviePlayback)
             try session.setActive(true)
         } catch {
-            Logger.shared.log("[MPVNativeRenderer] failed to activate AVAudioSession: \(error)", type: "Error")
+            logMPV("failed to activate AVAudioSession: \(error)")
         }
     }
 
@@ -972,7 +1055,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             }
         }
         if status < 0 {
-            Logger.shared.log("[MPVNativeRenderer] failed to set property \(name)=\(value) status=\(status)", type: "Warn")
+            logMPV("failed to set property \(name)=\(redactIfSensitive(name: name, value: value)) status=\(status)")
         }
     }
 
@@ -982,12 +1065,13 @@ final class MPVNativeRenderer: PlayerRenderer {
             mpv_set_property(handle, namePointer, MPV_FORMAT_NONE, nil)
         }
         if status < 0 {
-            Logger.shared.log("[MPVNativeRenderer] failed to clear property \(name) status=\(status)", type: "Warn")
+            logMPV("failed to clear property \(name) status=\(status)")
         }
     }
 
     private func updateHTTPHeaders(_ headers: [String: String]?) {
         guard let headers, !headers.isEmpty else {
+            logMPV("clearing HTTP headers")
             clearProperty(name: "http-header-fields")
             return
         }
@@ -998,8 +1082,10 @@ final class MPVNativeRenderer: PlayerRenderer {
             .joined(separator: "\r\n")
 
         if headerString.isEmpty {
+            logMPV("HTTP header update had no usable values; clearing")
             clearProperty(name: "http-header-fields")
         } else {
+            logMPV("applying HTTP headers count=\(headers.count) keys=[\(headers.keys.sorted().joined(separator: ","))]")
             setProperty(name: "http-header-fields", value: headerString)
         }
     }
@@ -1012,6 +1098,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     private func command(_ handle: OpaquePointer, _ args: [String]) {
         guard !args.isEmpty else { return }
+        logMPV("command \(sanitizedCommand(args))")
         _ = withCStringArray(args) { pointer in
             mpv_command_async(handle, 0, pointer)
         }
@@ -1035,6 +1122,83 @@ final class MPVNativeRenderer: PlayerRenderer {
                 mpv_get_property(handle, pointer, format, mutablePointer)
             }
         }
+    }
+
+    private func scheduleLoadWatchdog(generation: Int, delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  self.isRunning,
+                  !self.isStopping,
+                  self.loadGeneration == generation,
+                  self.isLoading || !self.isReadyToSeek else {
+                return
+            }
+
+            let elapsed = self.currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
+            let videoSize = self.currentVideoSize()
+            let coreIdle = self.mpv.flatMap { self.getStringProperty(handle: $0, name: "core-idle") } ?? "nil"
+            let idleActive = self.mpv.flatMap { self.getStringProperty(handle: $0, name: "idle-active") } ?? "nil"
+            self.logMPV("startup watchdog gen=\(generation) delay=\(String(format: "%.0f", delay))s elapsed=\(elapsed)s loading=\(self.isLoading) ready=\(self.isReadyToSeek) paused=\(self.isPaused) pos=\(String(format: "%.2f", self.cachedPosition)) dur=\(String(format: "%.2f", self.cachedDuration)) video=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height)) glBounds=\(String(format: "%.0fx%.0f", self.glView.bounds.width, self.glView.bounds.height)) coreIdle=\(coreIdle) idleActive=\(idleActive) url=\(self.currentURL.map { self.describe(url: $0) } ?? "nil")")
+            if let handle = self.mpv {
+                mpv_wakeup(handle)
+            }
+            self.scheduleRender()
+        }
+    }
+
+    private func logTrackSummaryIfChanged(reason: String) {
+        let tracks = fetchTrackList()
+        let audioCount = tracks.filter { $0.type == "audio" }.count
+        let subtitleCount = tracks.filter { $0.type == "sub" }.count
+        let selectedAudio = tracks.first(where: { $0.type == "audio" && $0.selected })?.id ?? -1
+        let selectedSubtitle = tracks.first(where: { $0.type == "sub" && $0.selected })?.id ?? -1
+        let preview = tracks.prefix(8).map { track -> String in
+            let selected = track.selected ? "*" : ""
+            return "\(track.type)#\(track.id)\(selected):\(track.title)"
+        }.joined(separator: "|")
+        let summary = "audio=\(audioCount) selectedAudio=\(selectedAudio) subs=\(subtitleCount) selectedSub=\(selectedSubtitle) preview=\(preview)"
+        guard summary != lastTrackSummary else { return }
+        lastTrackSummary = summary
+        logMPV("tracks changed reason=\(reason) \(summary)")
+    }
+
+    private func describe(url: URL) -> String {
+        if url.isFileURL {
+            return "file://\(url.lastPathComponent)"
+        }
+
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return shortText(url.absoluteString, limit: 180)
+        }
+        if components.query != nil {
+            components.query = "<query>"
+        }
+        return shortText(components.string ?? url.absoluteString, limit: 180)
+    }
+
+    private func sanitizedCommand(_ args: [String]) -> String {
+        args.enumerated().map { index, arg in
+            if index == 1, args.first == "loadfile", let url = URL(string: arg) {
+                return describe(url: url)
+            }
+            if arg.contains("\r\n") || arg.localizedCaseInsensitiveContains("cookie:") || arg.localizedCaseInsensitiveContains("authorization:") {
+                return "<redacted>"
+            }
+            return shortText(arg, limit: 120)
+        }
+        .joined(separator: " ")
+    }
+
+    private func redactIfSensitive(name: String, value: String) -> String {
+        if name == "http-header-fields" {
+            return "<\(value.components(separatedBy: "\r\n").count) headers>"
+        }
+        return shortText(value, limit: 120)
+    }
+
+    private func shortText(_ value: String, limit: Int) -> String {
+        guard value.count > limit else { return value }
+        return String(value.prefix(limit)) + "..."
     }
 
     @inline(__always)
@@ -1177,11 +1341,13 @@ final class MPVNativeRenderer: PlayerRenderer {
     // MARK: - Playback controls
 
     func play() {
+        logMPV("play requested")
         ensureAudioSessionActive()
         setProperty(name: "pause", value: "no")
     }
 
     func pausePlayback() {
+        logMPV("pause requested")
         setProperty(name: "pause", value: "yes")
     }
 
@@ -1229,6 +1395,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     func setAudioTrack(id: Int) {
+        logMPV("setAudioTrack id=\(id)")
         setProperty(name: "aid", value: String(id))
     }
 
@@ -1243,11 +1410,13 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     func setSubtitleTrack(id: Int) {
+        logMPV("setSubtitleTrack id=\(id)")
         setProperty(name: "sid", value: String(id))
         setProperty(name: "sub-visibility", value: "yes")
     }
 
     func disableSubtitles() {
+        logMPV("disableSubtitles requested")
         setProperty(name: "sid", value: "no")
         setProperty(name: "sub-visibility", value: "no")
     }
@@ -1258,6 +1427,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func loadExternalSubtitles(urls: [String], enforce: Bool = false) {
         guard let handle = mpv else { return }
+        logMPV("loadExternalSubtitles count=\(urls.count) enforce=\(enforce)")
         for (index, url) in urls.enumerated() {
             guard !url.isEmpty else { continue }
             let title = "Subtitle \(index + 1)"
@@ -1268,6 +1438,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func applySubtitleStyle(_ style: SubtitleStyle) {
         lastAppliedSubtitleStyle = style
+        logMPV("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         setProperty(name: "sub-visibility", value: style.isVisible ? "yes" : "no")
         setProperty(name: "sub-font-size", value: String(Int(max(10, min(style.fontSize, 72)))))
         setProperty(name: "sub-color", value: mpvColor(style.foregroundColor))
