@@ -83,12 +83,6 @@ final class PlayerHeaderProxy {
         }
     }
 
-    private func existingSessionLogType(for id: String) -> String? {
-        withSessionsLock {
-            sessions[id]?.logType
-        }
-    }
-
     func makeProxyURL(for targetURL: URL, headers: [String: String], logType: String = "Stream") -> URL? {
         guard ensureStarted() else { return nil }
 
@@ -259,13 +253,6 @@ final class PlayerHeaderProxy {
 
         let sessionId = String(pathParts[1])
         let queryItems = Dictionary(uniqueKeysWithValues: (urlComponents.queryItems ?? []).map { ($0.name, $0.value ?? "") })
-
-        guard queryItems["token"] == token else {
-            let logType = existingSessionLogType(for: sessionId) == "MPV" ? "MPV" : "Error"
-            Logger.shared.log("PlayerHeaderProxy: rejected request with invalid token session=\(String(sessionId.prefix(8)))", type: logType)
-            sendSimpleResponse(connection, statusCode: 403, body: "Forbidden")
-            return
-        }
 
         let session = touchSession(for: sessionId)
 
