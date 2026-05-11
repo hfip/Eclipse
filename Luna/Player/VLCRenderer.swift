@@ -548,7 +548,11 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         reloadCurrentItemPreservingPosition(savedPosition)
     }
     
-    func pausePlayback(forceSendToPlayer: Bool = false) {
+    func pausePlayback() {
+        pausePlayback(forceSendToPlayer: false)
+    }
+
+    private func pausePlayback(forceSendToPlayer: Bool) {
         let player = mediaPlayer
         let shouldSendPause = player.map {
             forceSendToPlayer || isPlayerActivelyPlaying($0) || isPlayingState($0.state) || (!isPaused && !isVLCPlayerPausedState($0.state) && !isTerminalState($0.state))
