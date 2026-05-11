@@ -574,6 +574,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var pendingInitialResumeDeadline: Date?
     private var vlcProxyFallbackTried = false
     private var mpvTransportBridgeFallbackTried = false
+    private var isMPVTransportBridgePlaybackActive = false
+    private var lastIgnoredMPVBridgeDurationLogValue: Double = -1
     
     // Debounce timers for menu updates to avoid excessive rebuilds
     private var audioMenuDebounceTimer: Timer?
@@ -1345,7 +1347,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if !isLocalProxyURL(url) {
             vlcProxyFallbackTried = false
             mpvTransportBridgeFallbackTried = false
+            isMPVTransportBridgePlaybackActive = false
         }
+        lastIgnoredMPVBridgeDurationLogValue = -1
         pendingSeekTime = nil
         pendingInitialResumeTarget = nil
         pendingInitialResumeDeadline = nil
@@ -1858,10 +1862,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         
         let tap = UITapGestureRecognizer(target: self, action: #selector(containerTapped))
+        tap.delegate = self
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
         if vlcRenderer != nil {
-            tap.delegate = self
-            tap.cancelsTouchesInView = false
-            tap.delaysTouchesBegan = false
             tapOverlayView.addGestureRecognizer(tap)
         } else {
             videoContainer.addGestureRecognizer(tap)
@@ -3568,12 +3573,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: initialHeaders ?? [:])
-        guard let proxyURL = PlayerHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
+        guard let proxyURL = PlayerHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders, logType: "MPV") else {
             Logger.shared.log("[PlayerVC.PlaybackStart] MPV transport bridge URL creation failed; keeping direct failure", type: "MPV")
             return false
         }
 
         mpvTransportBridgeFallbackTried = true
+        isMPVTransportBridgePlaybackActive = true
         Logger.shared.log("[PlayerVC.PlaybackStart] MPV transport bridge activated after TLS failure target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
         load(url: proxyURL, preset: preset, headers: nil)
         return true
@@ -4766,6 +4772,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return false
         }
 
+        if let touchedView = touch.view,
+           isInteractivePlayerControl(touchedView) {
+            return false
+        }
+
         #if !os(tvOS)
         if isBrightnessControlEnabled && !brightnessContainer.isHidden && brightnessContainer.alpha > 0.01 {
             let location = touch.location(in: brightnessContainer)
@@ -4792,6 +4803,23 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         
         return true
+    }
+
+    private func isInteractivePlayerControl(_ view: UIView) -> Bool {
+        var current: UIView? = view
+        while let candidate = current {
+            if candidate is UIControl {
+                return true
+            }
+            if candidate === progressContainer
+                || candidate === brightnessContainer
+                || candidate === volumeContainer
+                || candidate === errorBanner {
+                return true
+            }
+            current = candidate.superview
+        }
+        return false
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -4952,12 +4980,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // valid playback time is already advancing. Treat that as unknown instead
         // of letting the slider collapse to the end of a 1-second range.
         let minimumReliableDuration = 5.0
+        let mpvBridgeDurationLooksLikeWindow = isMPVTransportBridgePlaybackActive
+            && !isVLCPlayer
+            && mediaInfo != nil
+            && duration.isFinite
+            && duration > 0
+            && duration < 60
+            && safePosition > 0.1
         let reportedDurationIsReliable = duration.isFinite
             && duration >= minimumReliableDuration
             && safePosition <= duration + 2.0
+            && !mpvBridgeDurationLooksLikeWindow
         let cachedDurationIsReliable = cachedDuration.isFinite
             && cachedDuration >= minimumReliableDuration
             && safePosition <= cachedDuration + 2.0
+            && !mpvBridgeDurationLooksLikeWindow
         let effectiveDuration: Double
         if reportedDurationIsReliable, cachedDurationIsReliable {
             effectiveDuration = max(duration, cachedDuration)
@@ -4980,6 +5017,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         if !position.isFinite || !duration.isFinite {
             Logger.shared.log("[PlayerVC.progress] non-finite input from renderer. rawPos=\(position) rawDur=\(duration) cachedPos=\(cachedPosition) cachedDur=\(cachedDuration)", type: "Error")
+        }
+        if mpvBridgeDurationLooksLikeWindow && abs(duration - lastIgnoredMPVBridgeDurationLogValue) > 0.5 {
+            lastIgnoredMPVBridgeDurationLogValue = duration
+            Logger.shared.log("[PlayerVC.progress] ignoring tiny MPV bridge duration raw=\(secondsText(duration)) position=\(secondsText(safePosition)); treating HLS window as unknown duration", type: "MPV")
         }
 
         let previousPosition = cachedPosition

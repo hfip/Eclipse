@@ -446,6 +446,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         glView.drawableDepthFormat = .format24
         glView.drawableStencilFormat = .format8
         glView.drawableMultisample = .multisampleNone
+        glView.isUserInteractionEnabled = false
 
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
@@ -481,10 +482,12 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "profile", value: "fast")
         setOption(name: "hwdec", value: "videotoolbox")
         setOption(name: "vd-lavc-dr", value: "yes")
+        setOption(name: "vd-lavc-software-fallback", value: "no")
         setOption(name: "demuxer-thread", value: "yes")
         setOption(name: "cache", value: "yes")
         setOption(name: "demuxer-max-bytes", value: "80M")
         setOption(name: "demuxer-readahead-secs", value: "10")
+        setOption(name: "force-seekable", value: "yes")
         setOption(name: "video-sync", value: "audio")
         setOption(name: "interpolation", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")

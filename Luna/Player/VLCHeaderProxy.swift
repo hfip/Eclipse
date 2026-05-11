@@ -16,6 +16,7 @@ final class PlayerHeaderProxy {
         let headers: [String: String]
         let createdAt: Date
         let lastAccessed: Date
+        let logType: String
     }
 
     private enum UpstreamBodyMode {
@@ -76,13 +77,19 @@ final class PlayerHeaderProxy {
     private func touchSession(for id: String) -> Session? {
         withSessionsLock {
             guard let session = sessions[id] else { return nil }
-            let updated = Session(headers: session.headers, createdAt: session.createdAt, lastAccessed: Date())
+            let updated = Session(headers: session.headers, createdAt: session.createdAt, lastAccessed: Date(), logType: session.logType)
             sessions[id] = updated
             return updated
         }
     }
 
-    func makeProxyURL(for targetURL: URL, headers: [String: String]) -> URL? {
+    private func existingSessionLogType(for id: String) -> String? {
+        withSessionsLock {
+            sessions[id]?.logType
+        }
+    }
+
+    func makeProxyURL(for targetURL: URL, headers: [String: String], logType: String = "Stream") -> URL? {
         guard ensureStarted() else { return nil }
 
         var activePort = port
@@ -105,8 +112,8 @@ final class PlayerHeaderProxy {
 
         let sessionId = UUID().uuidString
         let now = Date()
-        setSession(Session(headers: headers, createdAt: now, lastAccessed: now), for: sessionId)
-        Logger.shared.log("PlayerHeaderProxy: created session=\(String(sessionId.prefix(8))) target=\(logURLSummary(targetURL)) headerKeys=[\(headers.keys.sorted().joined(separator: ","))] activeSessions=\(sessionCount())", type: "Stream")
+        setSession(Session(headers: headers, createdAt: now, lastAccessed: now, logType: logType), for: sessionId)
+        Logger.shared.log("PlayerHeaderProxy: created session=\(String(sessionId.prefix(8))) target=\(logURLSummary(targetURL)) headerKeys=[\(headers.keys.sorted().joined(separator: ","))] activeSessions=\(sessionCount())", type: logType)
 
         return buildProxyURL(port: activePort, sessionId: sessionId, targetURL: targetURL)
     }
@@ -254,6 +261,8 @@ final class PlayerHeaderProxy {
         let queryItems = Dictionary(uniqueKeysWithValues: (urlComponents.queryItems ?? []).map { ($0.name, $0.value ?? "") })
 
         guard queryItems["token"] == token else {
+            let logType = existingSessionLogType(for: sessionId) == "MPV" ? "MPV" : "Error"
+            Logger.shared.log("PlayerHeaderProxy: rejected request with invalid token session=\(String(sessionId.prefix(8)))", type: logType)
             sendSimpleResponse(connection, statusCode: 403, body: "Forbidden")
             return
         }
@@ -277,8 +286,9 @@ final class PlayerHeaderProxy {
         }
 
         let requestId = String(UUID().uuidString.prefix(8))
+        let logType = session.logType
         let incomingRange = headers.first { $0.key.caseInsensitiveCompare("Range") == .orderedSame }?.value ?? "nil"
-        Logger.shared.log("PlayerHeaderProxy[\(requestId)]: request method=\(method) target=\(logURLSummary(targetURL)) incomingRange=\(incomingRange) incomingHeaderKeys=[\(headers.keys.sorted().joined(separator: ","))] sessionHeaderKeys=[\(session.headers.keys.sorted().joined(separator: ","))]", type: "Stream")
+        Logger.shared.log("PlayerHeaderProxy[\(requestId)]: request method=\(method) target=\(logURLSummary(targetURL)) incomingRange=\(incomingRange) incomingHeaderKeys=[\(headers.keys.sorted().joined(separator: ","))] sessionHeaderKeys=[\(session.headers.keys.sorted().joined(separator: ","))]", type: logType)
 
         var request = URLRequest(url: targetURL)
         request.httpMethod = method
@@ -296,7 +306,7 @@ final class PlayerHeaderProxy {
         }
 
         let upstreamRange = request.value(forHTTPHeaderField: "Range") ?? "nil"
-        Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: "Stream")
+        Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: logType)
         let bridge = UpstreamBridge(
             proxy: self,
             request: request,
@@ -304,6 +314,7 @@ final class PlayerHeaderProxy {
             method: method,
             targetURL: targetURL,
             sessionId: sessionId,
+            logType: logType,
             connection: connection
         )
         await bridge.start()
@@ -371,12 +382,13 @@ final class PlayerHeaderProxy {
         http: HTTPURLResponse,
         data: Data,
         targetURL: URL,
-        sessionId: String
+        sessionId: String,
+        logType: String
     ) -> (Data, [String: String], Bool) {
         var headers: [String: String] = filteredResponseHeaders(from: http)
 
         if let text = String(data: data, encoding: .utf8), isPlaylistData(data) || isPlaylistMetadata(http: http, targetURL: targetURL) {
-            let rewritten = rewritePlaylist(text: text, baseURL: targetURL, sessionId: sessionId)
+            let rewritten = rewritePlaylist(text: text, baseURL: targetURL, sessionId: sessionId, logType: logType)
             let outData = Data(rewritten.utf8)
             setHeader("Content-Type", value: "application/vnd.apple.mpegurl", in: &headers)
             setHeader("Content-Length", value: String(outData.count), in: &headers)
@@ -389,7 +401,7 @@ final class PlayerHeaderProxy {
         return (data, headers, false)
     }
 
-    private func rewritePlaylist(text: String, baseURL: URL, sessionId: String) -> String {
+    private func rewritePlaylist(text: String, baseURL: URL, sessionId: String, logType: String) -> String {
         let lines = text.components(separatedBy: "\n")
         let base = baseURL.deletingLastPathComponent()
         var mediaLineRewriteCount = 0
@@ -413,7 +425,7 @@ final class PlayerHeaderProxy {
             return line
         }
 
-        Logger.shared.log("PlayerHeaderProxy: playlist rewrite target=\(logURLSummary(baseURL)) lines=\(lines.count) mediaLines=\(mediaLineRewriteCount) attributes=\(attributeRewriteCount) session=\(String(sessionId.prefix(8)))", type: "Stream")
+        Logger.shared.log("PlayerHeaderProxy: playlist rewrite target=\(logURLSummary(baseURL)) lines=\(lines.count) mediaLines=\(mediaLineRewriteCount) attributes=\(attributeRewriteCount) session=\(String(sessionId.prefix(8)))", type: logType)
         return rewritten.joined(separator: "\n")
     }
 
@@ -645,6 +657,7 @@ final class PlayerHeaderProxy {
         private let method: String
         private let targetURL: URL
         private let sessionId: String
+        private let logType: String
         private let connection: NWConnection
         private let callbackQueue: OperationQueue
 
@@ -664,6 +677,7 @@ final class PlayerHeaderProxy {
             method: String,
             targetURL: URL,
             sessionId: String,
+            logType: String,
             connection: NWConnection
         ) {
             self.proxy = proxy
@@ -672,12 +686,17 @@ final class PlayerHeaderProxy {
             self.method = method
             self.targetURL = targetURL
             self.sessionId = sessionId
+            self.logType = logType
             self.connection = connection
             let callbackQueue = OperationQueue()
             callbackQueue.maxConcurrentOperationCount = 1
             callbackQueue.qualityOfService = .userInitiated
             self.callbackQueue = callbackQueue
             super.init()
+        }
+
+        private var errorLogType: String {
+            logType == "MPV" ? "MPV" : "Error"
         }
 
         func start() async {
@@ -713,7 +732,7 @@ final class PlayerHeaderProxy {
             }
 
             guard let http = response as? HTTPURLResponse else {
-                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream response was not HTTP target=\(proxy.logURLSummary(targetURL))", type: "Error")
+                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream response was not HTTP target=\(proxy.logURLSummary(targetURL))", type: errorLogType)
                 proxy.sendSimpleResponse(connection, statusCode: 502, body: "Bad gateway")
                 completionHandler(.cancel)
                 finish()
@@ -724,7 +743,7 @@ final class PlayerHeaderProxy {
             let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "nil"
             let contentLength = http.value(forHTTPHeaderField: "Content-Length") ?? "nil"
             let contentRange = http.value(forHTTPHeaderField: "Content-Range") ?? "nil"
-            Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream response status=\(http.statusCode) target=\(proxy.logURLSummary(targetURL)) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: "Stream")
+            Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream response status=\(http.statusCode) target=\(proxy.logURLSummary(targetURL)) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: logType)
 
             let responseHeaders = proxy.filteredResponseHeaders(from: http)
             if method == "HEAD" {
@@ -742,7 +761,7 @@ final class PlayerHeaderProxy {
                 proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                     guard let self else { return }
                     if let error {
-                        Logger.shared.log("PlayerHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                        Logger.shared.log("PlayerHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: self.errorLogType)
                         completionHandler(.cancel)
                         self.finish()
                         return
@@ -762,7 +781,7 @@ final class PlayerHeaderProxy {
             case .playlist:
                 bufferedData.append(data)
                 if bufferedData.count > proxy.maxPlaylistBytes {
-                    Logger.shared.log("PlayerHeaderProxy[\(requestId)]: playlist exceeded rewrite limit; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: "Error")
+                    Logger.shared.log("PlayerHeaderProxy[\(requestId)]: playlist exceeded rewrite limit; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: errorLogType)
                     startStreamingBufferedData(dataTask: dataTask)
                 }
             case .probe:
@@ -770,7 +789,7 @@ final class PlayerHeaderProxy {
                 if proxy.isPlaylistData(bufferedData) {
                     mode = .playlist
                     if bufferedData.count > proxy.maxPlaylistBytes {
-                        Logger.shared.log("PlayerHeaderProxy[\(requestId)]: playlist exceeded rewrite limit during probe; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: "Error")
+                        Logger.shared.log("PlayerHeaderProxy[\(requestId)]: playlist exceeded rewrite limit during probe; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: errorLogType)
                         startStreamingBufferedData(dataTask: dataTask)
                     }
                 } else if proxy.shouldStopPlaylistProbe(bufferedData) {
@@ -794,7 +813,7 @@ final class PlayerHeaderProxy {
                 redirected.setValue(value, forHTTPHeaderField: key)
             }
             let redirectTarget = redirected.url.flatMap { proxy?.logURLSummary($0) } ?? "nil"
-            Logger.shared.log("PlayerHeaderProxy[\(requestId)]: following redirect status=\(response.statusCode) target=\(redirectTarget)", type: "Stream")
+            Logger.shared.log("PlayerHeaderProxy[\(requestId)]: following redirect status=\(response.statusCode) target=\(redirectTarget)", type: logType)
             completionHandler(redirected)
         }
 
@@ -802,7 +821,7 @@ final class PlayerHeaderProxy {
             guard let proxy, !finished else { return }
 
             if let error {
-                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream error target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: "Error")
+                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream error target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: errorLogType)
                 if responseHeadersSent {
                     connection.cancel()
                 } else {
@@ -824,12 +843,13 @@ final class PlayerHeaderProxy {
                     http: http,
                     data: bufferedData,
                     targetURL: targetURL,
-                    sessionId: sessionId
+                    sessionId: sessionId,
+                    logType: logType
                 )
-                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream done status=\(http.statusCode) bytes=\(bufferedData.count) responseBytes=\(body.count) rewritten=\(rewritten) target=\(proxy.logURLSummary(targetURL))", type: "Stream")
+                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream done status=\(http.statusCode) bytes=\(bufferedData.count) responseBytes=\(body.count) rewritten=\(rewritten) target=\(proxy.logURLSummary(targetURL))", type: logType)
                 proxy.sendResponse(connection, statusCode: http.statusCode, headers: headers, body: body)
             case .stream:
-                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream stream complete target=\(proxy.logURLSummary(targetURL))", type: "Stream")
+                Logger.shared.log("PlayerHeaderProxy[\(requestId)]: upstream stream complete target=\(proxy.logURLSummary(targetURL))", type: logType)
                 connection.cancel()
             }
 
@@ -852,7 +872,7 @@ final class PlayerHeaderProxy {
             proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("PlayerHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                    Logger.shared.log("PlayerHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: self.errorLogType)
                     dataTask.cancel()
                     self.finish()
                     return
@@ -881,7 +901,7 @@ final class PlayerHeaderProxy {
             proxy.sendData(data, on: connection) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("PlayerHeaderProxy[\(self.requestId)]: downstream send failed: \(error)", type: "Error")
+                    Logger.shared.log("PlayerHeaderProxy[\(self.requestId)]: downstream send failed: \(error)", type: self.errorLogType)
                     dataTask.cancel()
                     self.finish()
                     return
