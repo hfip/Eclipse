@@ -410,6 +410,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastProgressLogBucket = -1
     private var lastDurationLogValue: Double = -1
     private var lastTrackSummary = ""
+    private var lastPlaybackErrorMessage: String?
 
     weak var delegate: MPVNativeRendererDelegate?
 
@@ -571,6 +572,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         lastProgressLogBucket = -1
         lastDurationLogValue = -1
         lastTrackSummary = ""
+        lastPlaybackErrorMessage = nil
         let generation = loadGeneration
         logMPV("load start gen=\(generation) target=\(describe(url: url)) preset=\(preset.id.rawValue) headerKeys=[\((headers ?? [:]).keys.sorted().joined(separator: ","))] pendingInitialSeek=\(pendingInitialSeek.map { String(format: "%.2f", $0) } ?? "nil")")
         setLoading(true)
@@ -884,6 +886,14 @@ final class MPVNativeRenderer: PlayerRenderer {
             handleFileLoaded()
         case MPV_EVENT_END_FILE:
             logMPV("event end-file gen=\(loadGeneration) ready=\(isReadyToSeek) loading=\(isLoading) pos=\(String(format: "%.2f", cachedPosition)) dur=\(String(format: "%.2f", cachedDuration))")
+            if !isReadyToSeek {
+                let message = lastPlaybackErrorMessage ?? "MPV ended before playback became ready"
+                setLoading(false)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.delegate?.renderer(self, didFailWithError: message)
+                }
+            }
         case MPV_EVENT_PROPERTY_CHANGE:
             if let property = event.data?.assumingMemoryBound(to: mpv_event_property.self).pointee.name {
                 refreshProperty(named: String(cString: property))
@@ -897,6 +907,16 @@ final class MPVNativeRenderer: PlayerRenderer {
                 let level = logPointer.pointee.level.map { String(cString: $0) } ?? "info"
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
+                    let lower = trimmed.lowercased()
+                    if lower.contains("http error")
+                        || lower.contains("failed to open")
+                        || lower.contains("error opening")
+                        || lower.contains("tls")
+                        || lower.contains("403")
+                        || lower.contains("404")
+                        || lower.contains("502") {
+                        lastPlaybackErrorMessage = trimmed
+                    }
                     logMPV("mpv[\(component)] \(level): \(trimmed)")
                 }
             }
@@ -1083,21 +1103,60 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func updateHTTPHeaders(_ headers: [String: String]?) {
         guard let headers, !headers.isEmpty else {
             logMPV("clearing HTTP headers")
-            clearProperty(name: "http-header-fields")
+            setHTTPHeaderFields([])
             return
         }
 
-        let headerString = headers
+        let fields = headers
             .filter { !$0.key.isEmpty && !$0.value.isEmpty }
             .map { key, value in "\(key): \(value)" }
-            .joined(separator: "\r\n")
 
-        if headerString.isEmpty {
+        if fields.isEmpty {
             logMPV("HTTP header update had no usable values; clearing")
-            clearProperty(name: "http-header-fields")
+            setHTTPHeaderFields([])
         } else {
             logMPV("applying HTTP headers count=\(headers.count) keys=[\(headers.keys.sorted().joined(separator: ","))]")
-            setProperty(name: "http-header-fields", value: headerString)
+            setHTTPHeaderFields(fields)
+        }
+    }
+
+    private func setHTTPHeaderFields(_ fields: [String]) {
+        guard let handle = mpv else { return }
+
+        var cStrings = fields.compactMap { strdup($0) }
+        defer {
+            for pointer in cStrings {
+                free(pointer)
+            }
+        }
+
+        var values = cStrings.map { pointer -> mpv_node in
+            var node = mpv_node()
+            node.format = MPV_FORMAT_STRING
+            node.u.string = pointer
+            return node
+        }
+
+        var list = mpv_node_list()
+        list.num = Int32(values.count)
+        list.keys = nil
+
+        let status = values.withUnsafeMutableBufferPointer { valuesPointer -> Int32 in
+            list.values = valuesPointer.baseAddress
+            var root = mpv_node()
+            root.format = MPV_FORMAT_NODE_ARRAY
+            return withUnsafeMutablePointer(to: &list) { listPointer in
+                root.u.list = listPointer
+                return withUnsafeMutablePointer(to: &root) { rootPointer in
+                    "http-header-fields".withCString { namePointer in
+                        mpv_set_property(handle, namePointer, MPV_FORMAT_NODE, rootPointer)
+                    }
+                }
+            }
+        }
+
+        if status < 0 {
+            logMPV("failed to set http-header-fields node count=\(fields.count) status=\(status)")
         }
     }
 

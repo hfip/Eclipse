@@ -222,7 +222,6 @@ struct MediaDetailView: View {
                 loadMediaDetails()
             } else {
                 Logger.shared.log("MediaDetailView onAppear using existing loaded state: id=\(searchResult.id) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
-                refreshDetailContentLayout(reason: "detail appeared")
             }
             updateBookmarkStatus()
         }
@@ -315,7 +314,7 @@ struct MediaDetailView: View {
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {
-                refreshDetailContentLayout(reason: "scene active")
+                updateBookmarkStatus()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .playerDidClose)) { notification in

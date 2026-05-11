@@ -217,7 +217,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 type: "CrashProbe"
             )
             if let tvShow = tvShow, let selectedSeason = selectedSeason {
-                loadSeasonDetails(tvShowId: tvShow.id, season: selectedSeason)
+                ensureSeasonDetailsLoaded(tvShowId: tvShow.id, season: selectedSeason, reason: "appear")
                 Task {
                     Logger.shared.log("TVShowSeasonsSection romaji fetch begin: showId=\(tvShow.id)", type: "CrashProbe")
                     let romaji = await tmdbService.getRomajiTitle(for: "tv", id: tvShow.id)
@@ -748,6 +748,12 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
 
     private func loadSeasonDetails(tvShowId: Int, season: TMDBSeason) {
         Logger.shared.log("TVShowSeasonsSection loadSeasonDetails start: showId=\(tvShowId) season=\(season.seasonNumber) seasonId=\(season.id) isAnime=\(isAnime) animeEpisodes=\(animeEpisodes?.count ?? 0)", type: "CrashProbe")
+        guard seasonDetail?.seasonNumber != season.seasonNumber || seasonDetail?.id != season.id else {
+            currentSeasonTitle = isAnime ? (animeSeasonTitles?[season.seasonNumber] ?? season.name) : nil
+            isLoadingSeason = false
+            Logger.shared.log("TVShowSeasonsSection loadSeasonDetails skipped existing detail: showId=\(tvShowId) season=\(season.seasonNumber) episodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
+            return
+        }
         seasonLoadTask?.cancel()
         seasonLoadGeneration += 1
         let generation = seasonLoadGeneration
@@ -845,6 +851,18 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 }
             }
         }
+    }
+
+    private func ensureSeasonDetailsLoaded(tvShowId: Int, season: TMDBSeason, reason: String) {
+        if seasonDetail?.seasonNumber == season.seasonNumber,
+           seasonDetail?.id == season.id {
+            currentSeasonTitle = isAnime ? (animeSeasonTitles?[season.seasonNumber] ?? season.name) : nil
+            isLoadingSeason = false
+            Logger.shared.log("TVShowSeasonsSection preserve existing season detail reason=\(reason): showId=\(tvShowId) season=\(season.seasonNumber) episodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
+            return
+        }
+
+        loadSeasonDetails(tvShowId: tvShowId, season: season)
     }
     
     private func getAgeRating(from contentRatings: TMDBContentRatings?) -> String? {
