@@ -1393,7 +1393,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         logVLCUI("load resume prepared pendingSeek=\(secondsText(pendingSeekTime)) progressCached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) launchContext=\(String(describing: playbackLaunchContext))", type: "Progress")
         rendererPrepareInitialSeek(to: pendingSeekTime)
-        let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
+        let playbackRequest = prepareVLCHeaderProxyIfNeeded(originalURL: url, headers: headers)
         if !isVLCPlayer {
             preparePlaybackStartupMonitoring(for: playbackRequest.url, headers: playbackRequest.headers ?? headers ?? [:])
         }
@@ -3559,7 +3559,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return baseHeaders
     }
 
-    private var isPlayerHeaderProxyEnabled: Bool {
+    private var isVLCHeaderProxyEnabled: Bool {
         UserDefaults.standard.object(forKey: "vlcHeaderProxyEnabled") as? Bool ?? true
     }
 
@@ -3568,14 +3568,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return scheme == "http" || scheme == "https"
     }
 
-    private func preparePlayerHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
+    private func prepareVLCHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
         guard isVLCPlayer else { return (originalURL, headers) }
-        guard isPlayerHeaderProxyEnabled else { return (originalURL, headers) }
+        guard isVLCHeaderProxyEnabled else { return (originalURL, headers) }
         guard isRemoteHTTPURL(originalURL), !isLocalProxyURL(originalURL) else { return (originalURL, headers) }
         guard let headers, !headers.isEmpty else { return (originalURL, headers) }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
-        guard let proxyURL = PlayerHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
+        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
             Logger.shared.log("PlayerViewController: proactive VLC proxy URL creation failed; using direct VLC headers", type: "Stream")
             return (originalURL, headers)
         }
@@ -3607,7 +3607,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
 
             let proxyHeaders = buildProxyHeaders(for: url, baseHeaders: headers)
-            guard let proxiedURL = PlayerHeaderProxy.shared.makeProxyURL(for: url, headers: proxyHeaders) else {
+            guard let proxiedURL = VLCHeaderProxy.shared.makeProxyURL(for: url, headers: proxyHeaders) else {
                 Logger.shared.log("PlayerViewController: subtitle proxy URL creation failed", type: "Stream")
                 return nil
             }
@@ -3626,7 +3626,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard let preset = initialPreset else { return false }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
-        guard let proxyURL = PlayerHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
+        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
             return false
         }
 
@@ -3684,7 +3684,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     #else
-    private func preparePlayerHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
+    private func prepareVLCHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
         return (originalURL, headers)
     }
 

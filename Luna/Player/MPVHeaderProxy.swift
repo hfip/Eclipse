@@ -1,21 +1,25 @@
 //
-//  VLCHeaderProxy.swift
+//  MPVHeaderProxy.swift
 //  Luna
 //
-//  Local loopback proxy to inject headers for VLC playback.
+//  Local loopback proxy to bridge MPV playback requests.
 //
 
 import Foundation
 import Network
 
 #if !os(tvOS)
-final class VLCHeaderProxy {
-    static let shared = VLCHeaderProxy()
+private enum MPVHeaderProxyPlaylistMode {
+    case preserveUpstream
+    case normalizeRewrittenPlaylist
+}
 
+private final class MPVHeaderProxyCore {
     private struct Session {
         let headers: [String: String]
         let createdAt: Date
         let lastAccessed: Date
+        let logType: String
     }
 
     private enum UpstreamBodyMode {
@@ -24,7 +28,7 @@ final class VLCHeaderProxy {
         case probe
     }
 
-    private let queue = DispatchQueue(label: "vlc.header.proxy")
+    private let queue = DispatchQueue(label: "mpv.header.proxy")
     private var listener: NWListener?
     private var port: UInt16?
     private let token = UUID().uuidString
@@ -36,6 +40,9 @@ final class VLCHeaderProxy {
     private let maxHeaderBytes = 64 * 1024
     private let maxPlaylistBytes = 5 * 1024 * 1024
     private let playlistProbeBytes = 4 * 1024
+    fileprivate let logPrefix: String
+    private let playlistMode: MPVHeaderProxyPlaylistMode
+    private let gracefulResponseClose: Bool
     private let hopByHopRequestHeaders: Set<String> = [
         "connection",
         "keep-alive",
@@ -48,7 +55,15 @@ final class VLCHeaderProxy {
         "upgrade"
     ]
 
-    private init() {}
+    fileprivate init(
+        logPrefix: String = "MPVHeaderProxy",
+        playlistMode: MPVHeaderProxyPlaylistMode = .preserveUpstream,
+        gracefulResponseClose: Bool = false
+    ) {
+        self.logPrefix = logPrefix
+        self.playlistMode = playlistMode
+        self.gracefulResponseClose = gracefulResponseClose
+    }
 
     private func withSessionsLock<T>(_ body: () -> T) -> T {
         sessionLock.lock()
@@ -76,13 +91,13 @@ final class VLCHeaderProxy {
     private func touchSession(for id: String) -> Session? {
         withSessionsLock {
             guard let session = sessions[id] else { return nil }
-            let updated = Session(headers: session.headers, createdAt: session.createdAt, lastAccessed: Date())
+            let updated = Session(headers: session.headers, createdAt: session.createdAt, lastAccessed: Date(), logType: session.logType)
             sessions[id] = updated
             return updated
         }
     }
 
-    func makeProxyURL(for targetURL: URL, headers: [String: String]) -> URL? {
+    func makeProxyURL(for targetURL: URL, headers: [String: String], logType: String = "Stream") -> URL? {
         guard ensureStarted() else { return nil }
 
         var activePort = port
@@ -91,7 +106,7 @@ final class VLCHeaderProxy {
         }
 
         guard let activePort, activePort > 0 else {
-            Logger.shared.log("VLCHeaderProxy: listener port unavailable", type: "Error")
+            Logger.shared.log("\(logPrefix): listener port unavailable", type: "Error")
             return nil
         }
 
@@ -105,8 +120,8 @@ final class VLCHeaderProxy {
 
         let sessionId = UUID().uuidString
         let now = Date()
-        setSession(Session(headers: headers, createdAt: now, lastAccessed: now), for: sessionId)
-        Logger.shared.log("VLCHeaderProxy: created session=\(String(sessionId.prefix(8))) target=\(logURLSummary(targetURL)) headerKeys=[\(headers.keys.sorted().joined(separator: ","))] activeSessions=\(sessionCount())", type: "Stream")
+        setSession(Session(headers: headers, createdAt: now, lastAccessed: now, logType: logType), for: sessionId)
+        Logger.shared.log("\(logPrefix): created session=\(String(sessionId.prefix(8))) target=\(logURLSummary(targetURL)) headerKeys=[\(headers.keys.sorted().joined(separator: ","))] activeSessions=\(sessionCount())", type: logType)
 
         return buildProxyURL(port: activePort, sessionId: sessionId, targetURL: targetURL)
     }
@@ -129,14 +144,14 @@ final class VLCHeaderProxy {
                     if readyPort > 0 {
                         self.port = readyPort
                     } else {
-                        Logger.shared.log("VLCHeaderProxy: listener ready without a valid port", type: "Error")
+                        Logger.shared.log("\(self.logPrefix): listener ready without a valid port", type: "Error")
                     }
                 case .failed(let error):
-                    Logger.shared.log("VLCHeaderProxy: listener failed: \(error)", type: "Error")
+                    Logger.shared.log("\(self.logPrefix): listener failed: \(error)", type: "Error")
                     self.listener = nil
                     self.port = nil
                 case .cancelled:
-                    Logger.shared.log("VLCHeaderProxy: listener cancelled", type: "Stream")
+                    Logger.shared.log("\(self.logPrefix): listener cancelled", type: "Stream")
                     self.listener = nil
                     self.port = nil
                 default:
@@ -148,13 +163,13 @@ final class VLCHeaderProxy {
             let initialPort = listener.port?.rawValue ?? 0
             if initialPort > 0 {
                 self.port = initialPort
-                Logger.shared.log("VLCHeaderProxy: started on 127.0.0.1:\(initialPort)", type: "Info")
+                Logger.shared.log("\(logPrefix): started on 127.0.0.1:\(initialPort)", type: "Info")
             } else {
-                Logger.shared.log("VLCHeaderProxy: started; awaiting port assignment", type: "Info")
+                Logger.shared.log("\(logPrefix): started; awaiting port assignment", type: "Info")
             }
             return true
         } catch {
-            Logger.shared.log("VLCHeaderProxy: failed to start listener: \(error)", type: "Error")
+            Logger.shared.log("\(logPrefix): failed to start listener: \(error)", type: "Error")
             return false
         }
     }
@@ -162,7 +177,7 @@ final class VLCHeaderProxy {
     private func handleConnection(_ connection: NWConnection) {
         connection.stateUpdateHandler = { state in
             if case .failed(let error) = state {
-                Logger.shared.log("VLCHeaderProxy: connection failed: \(error)", type: "Error")
+                Logger.shared.log("\(self.logPrefix): connection failed: \(error)", type: "Error")
             }
         }
         connection.start(queue: queue)
@@ -173,7 +188,7 @@ final class VLCHeaderProxy {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             if let error {
-                Logger.shared.log("VLCHeaderProxy: receive error: \(error)", type: "Error")
+                Logger.shared.log("\(self.logPrefix): receive error: \(error)", type: "Error")
                 connection.cancel()
                 return
             }
@@ -253,11 +268,6 @@ final class VLCHeaderProxy {
         let sessionId = String(pathParts[1])
         let queryItems = Dictionary(uniqueKeysWithValues: (urlComponents.queryItems ?? []).map { ($0.name, $0.value ?? "") })
 
-        guard queryItems["token"] == token else {
-            sendSimpleResponse(connection, statusCode: 403, body: "Forbidden")
-            return
-        }
-
         let session = touchSession(for: sessionId)
 
         guard let session = session else {
@@ -277,8 +287,9 @@ final class VLCHeaderProxy {
         }
 
         let requestId = String(UUID().uuidString.prefix(8))
+        let logType = session.logType
         let incomingRange = headers.first { $0.key.caseInsensitiveCompare("Range") == .orderedSame }?.value ?? "nil"
-        Logger.shared.log("VLCHeaderProxy[\(requestId)]: request method=\(method) target=\(logURLSummary(targetURL)) incomingRange=\(incomingRange) incomingHeaderKeys=[\(headers.keys.sorted().joined(separator: ","))] sessionHeaderKeys=[\(session.headers.keys.sorted().joined(separator: ","))]", type: "Stream")
+        Logger.shared.log("\(logPrefix)[\(requestId)]: request method=\(method) target=\(logURLSummary(targetURL)) incomingRange=\(incomingRange) incomingHeaderKeys=[\(headers.keys.sorted().joined(separator: ","))] sessionHeaderKeys=[\(session.headers.keys.sorted().joined(separator: ","))]", type: logType)
 
         var request = URLRequest(url: targetURL)
         request.httpMethod = method
@@ -295,8 +306,17 @@ final class VLCHeaderProxy {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
+        if playlistMode == .normalizeRewrittenPlaylist {
+            let normalizedRange = request.value(forHTTPHeaderField: "Range")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if isLikelyPlaylistURL(targetURL) || normalizedRange == "bytes=0-" {
+                request.setValue(nil, forHTTPHeaderField: "Range")
+            }
+        }
+
         let upstreamRange = request.value(forHTTPHeaderField: "Range") ?? "nil"
-        Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: "Stream")
+        Logger.shared.log("\(logPrefix)[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: logType)
         let bridge = UpstreamBridge(
             proxy: self,
             request: request,
@@ -304,6 +324,7 @@ final class VLCHeaderProxy {
             method: method,
             targetURL: targetURL,
             sessionId: sessionId,
+            logType: logType,
             connection: connection
         )
         await bridge.start()
@@ -333,6 +354,11 @@ final class VLCHeaderProxy {
         }
 
         let ext = targetURL.pathExtension.lowercased()
+        return ext == "m3u8" || ext == "m3u"
+    }
+
+    private func isLikelyPlaylistURL(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
         return ext == "m3u8" || ext == "m3u"
     }
 
@@ -371,25 +397,31 @@ final class VLCHeaderProxy {
         http: HTTPURLResponse,
         data: Data,
         targetURL: URL,
-        sessionId: String
-    ) -> (Data, [String: String], Bool) {
+        sessionId: String,
+        logType: String
+    ) -> (Data, [String: String], Bool, Int) {
         var headers: [String: String] = filteredResponseHeaders(from: http)
 
         if let text = String(data: data, encoding: .utf8), isPlaylistData(data) || isPlaylistMetadata(http: http, targetURL: targetURL) {
-            let rewritten = rewritePlaylist(text: text, baseURL: targetURL, sessionId: sessionId)
+            let rewritten = rewritePlaylist(text: text, baseURL: targetURL, sessionId: sessionId, logType: logType)
             let outData = Data(rewritten.utf8)
             setHeader("Content-Type", value: "application/vnd.apple.mpegurl", in: &headers)
             setHeader("Content-Length", value: String(outData.count), in: &headers)
             removeHeader("Content-Encoding", from: &headers)
-            return (outData, headers, true)
+            if playlistMode == .normalizeRewrittenPlaylist {
+                removeHeader("Content-Range", from: &headers)
+                removeHeader("Accept-Ranges", from: &headers)
+                return (outData, headers, true, 200)
+            }
+            return (outData, headers, true, http.statusCode)
         }
 
         setHeader("Content-Length", value: String(data.count), in: &headers)
         removeHeader("Content-Encoding", from: &headers)
-        return (data, headers, false)
+        return (data, headers, false, http.statusCode)
     }
 
-    private func rewritePlaylist(text: String, baseURL: URL, sessionId: String) -> String {
+    private func rewritePlaylist(text: String, baseURL: URL, sessionId: String, logType: String) -> String {
         let lines = text.components(separatedBy: "\n")
         let base = baseURL.deletingLastPathComponent()
         var mediaLineRewriteCount = 0
@@ -413,7 +445,7 @@ final class VLCHeaderProxy {
             return line
         }
 
-        Logger.shared.log("VLCHeaderProxy: playlist rewrite target=\(logURLSummary(baseURL)) lines=\(lines.count) mediaLines=\(mediaLineRewriteCount) attributes=\(attributeRewriteCount) session=\(String(sessionId.prefix(8)))", type: "Stream")
+        Logger.shared.log("\(logPrefix): playlist rewrite target=\(logURLSummary(baseURL)) lines=\(lines.count) mediaLines=\(mediaLineRewriteCount) attributes=\(attributeRewriteCount) session=\(String(sessionId.prefix(8)))", type: logType)
         return rewritten.joined(separator: "\n")
     }
 
@@ -515,9 +547,15 @@ final class VLCHeaderProxy {
         let headerData = responseHeaderData(statusCode: statusCode, headers: headers)
         let responseData = headerData + body
 
-        connection.send(content: responseData, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
+        if gracefulResponseClose {
+            connection.send(content: responseData, contentContext: .defaultMessage, isComplete: true, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+        } else {
+            connection.send(content: responseData, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+        }
     }
 
     private func sendResponseHeaders(_ connection: NWConnection, statusCode: Int, headers: [String: String], completion: @escaping (NWError?) -> Void) {
@@ -530,6 +568,16 @@ final class VLCHeaderProxy {
             return
         }
         connection.send(content: data, completion: .contentProcessed(completion))
+    }
+
+    private func finishResponse(on connection: NWConnection) {
+        if gracefulResponseClose {
+            connection.send(content: nil, contentContext: .defaultMessage, isComplete: true, completion: .contentProcessed { _ in
+                connection.cancel()
+            })
+        } else {
+            connection.cancel()
+        }
     }
 
     private func responseHeaderData(statusCode: Int, headers: [String: String]) -> Data {
@@ -639,12 +687,13 @@ final class VLCHeaderProxy {
     }
 
     private final class UpstreamBridge: NSObject, URLSessionDataDelegate {
-        private weak var proxy: VLCHeaderProxy?
+        private weak var proxy: MPVHeaderProxyCore?
         private let request: URLRequest
         private let requestId: String
         private let method: String
         private let targetURL: URL
         private let sessionId: String
+        private let logType: String
         private let connection: NWConnection
         private let callbackQueue: OperationQueue
 
@@ -656,14 +705,16 @@ final class VLCHeaderProxy {
         private var bufferedData = Data()
         private var responseHeadersSent = false
         private var finished = false
+        private var streamedByteCount = 0
 
         init(
-            proxy: VLCHeaderProxy,
+            proxy: MPVHeaderProxyCore,
             request: URLRequest,
             requestId: String,
             method: String,
             targetURL: URL,
             sessionId: String,
+            logType: String,
             connection: NWConnection
         ) {
             self.proxy = proxy
@@ -672,12 +723,17 @@ final class VLCHeaderProxy {
             self.method = method
             self.targetURL = targetURL
             self.sessionId = sessionId
+            self.logType = logType
             self.connection = connection
             let callbackQueue = OperationQueue()
             callbackQueue.maxConcurrentOperationCount = 1
             callbackQueue.qualityOfService = .userInitiated
             self.callbackQueue = callbackQueue
             super.init()
+        }
+
+        private var errorLogType: String {
+            logType == "MPV" ? "MPV" : "Error"
         }
 
         func start() async {
@@ -713,7 +769,7 @@ final class VLCHeaderProxy {
             }
 
             guard let http = response as? HTTPURLResponse else {
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream response was not HTTP target=\(proxy.logURLSummary(targetURL))", type: "Error")
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream response was not HTTP target=\(proxy.logURLSummary(targetURL))", type: errorLogType)
                 proxy.sendSimpleResponse(connection, statusCode: 502, body: "Bad gateway")
                 completionHandler(.cancel)
                 finish()
@@ -724,7 +780,7 @@ final class VLCHeaderProxy {
             let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "nil"
             let contentLength = http.value(forHTTPHeaderField: "Content-Length") ?? "nil"
             let contentRange = http.value(forHTTPHeaderField: "Content-Range") ?? "nil"
-            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream response status=\(http.statusCode) target=\(proxy.logURLSummary(targetURL)) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: "Stream")
+            Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream response status=\(http.statusCode) target=\(proxy.logURLSummary(targetURL)) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: logType)
 
             let responseHeaders = proxy.filteredResponseHeaders(from: http)
             if method == "HEAD" {
@@ -742,7 +798,7 @@ final class VLCHeaderProxy {
                 proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                     guard let self else { return }
                     if let error {
-                        Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                        Logger.shared.log("\(self.proxy?.logPrefix ?? "MPVHeaderProxy")[\(self.requestId)]: failed to send response headers: \(error)", type: self.errorLogType)
                         completionHandler(.cancel)
                         self.finish()
                         return
@@ -762,7 +818,7 @@ final class VLCHeaderProxy {
             case .playlist:
                 bufferedData.append(data)
                 if bufferedData.count > proxy.maxPlaylistBytes {
-                    Logger.shared.log("VLCHeaderProxy[\(requestId)]: playlist exceeded rewrite limit; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: "Error")
+                    Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: playlist exceeded rewrite limit; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: errorLogType)
                     startStreamingBufferedData(dataTask: dataTask)
                 }
             case .probe:
@@ -770,7 +826,7 @@ final class VLCHeaderProxy {
                 if proxy.isPlaylistData(bufferedData) {
                     mode = .playlist
                     if bufferedData.count > proxy.maxPlaylistBytes {
-                        Logger.shared.log("VLCHeaderProxy[\(requestId)]: playlist exceeded rewrite limit during probe; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: "Error")
+                        Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: playlist exceeded rewrite limit during probe; streaming original target=\(proxy.logURLSummary(targetURL)) bytes=\(bufferedData.count)", type: errorLogType)
                         startStreamingBufferedData(dataTask: dataTask)
                     }
                 } else if proxy.shouldStopPlaylistProbe(bufferedData) {
@@ -794,7 +850,7 @@ final class VLCHeaderProxy {
                 redirected.setValue(value, forHTTPHeaderField: key)
             }
             let redirectTarget = redirected.url.flatMap { proxy?.logURLSummary($0) } ?? "nil"
-            Logger.shared.log("VLCHeaderProxy[\(requestId)]: following redirect status=\(response.statusCode) target=\(redirectTarget)", type: "Stream")
+            Logger.shared.log("\(proxy?.logPrefix ?? "MPVHeaderProxy")[\(requestId)]: following redirect status=\(response.statusCode) target=\(redirectTarget)", type: logType)
             completionHandler(redirected)
         }
 
@@ -802,7 +858,7 @@ final class VLCHeaderProxy {
             guard let proxy, !finished else { return }
 
             if let error {
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream error target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: "Error")
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream error target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: errorLogType)
                 if responseHeadersSent {
                     connection.cancel()
                 } else {
@@ -820,17 +876,19 @@ final class VLCHeaderProxy {
 
             switch mode {
             case .playlist, .probe:
-                let (body, headers, rewritten) = proxy.rewrittenPlaylistResponse(
+                let (body, headers, rewritten, responseStatus) = proxy.rewrittenPlaylistResponse(
                     http: http,
                     data: bufferedData,
                     targetURL: targetURL,
-                    sessionId: sessionId
+                    sessionId: sessionId,
+                    logType: logType
                 )
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream done status=\(http.statusCode) bytes=\(bufferedData.count) responseBytes=\(body.count) rewritten=\(rewritten) target=\(proxy.logURLSummary(targetURL))", type: "Stream")
-                proxy.sendResponse(connection, statusCode: http.statusCode, headers: headers, body: body)
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream done status=\(http.statusCode) responseStatus=\(responseStatus) bytes=\(bufferedData.count) responseBytes=\(body.count) rewritten=\(rewritten) target=\(proxy.logURLSummary(targetURL))", type: logType)
+                proxy.sendResponse(connection, statusCode: responseStatus, headers: headers, body: body)
             case .stream:
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream stream complete target=\(proxy.logURLSummary(targetURL))", type: "Stream")
-                connection.cancel()
+                let expected = http.expectedContentLength >= 0 ? String(http.expectedContentLength) : "unknown"
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream stream complete bytes=\(streamedByteCount) expected=\(expected) target=\(proxy.logURLSummary(targetURL))", type: logType)
+                proxy.finishResponse(on: connection)
             }
 
             finish()
@@ -852,7 +910,7 @@ final class VLCHeaderProxy {
             proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                    Logger.shared.log("\(self.proxy?.logPrefix ?? "MPVHeaderProxy")[\(self.requestId)]: failed to send response headers: \(error)", type: self.errorLogType)
                     dataTask.cancel()
                     self.finish()
                     return
@@ -881,11 +939,13 @@ final class VLCHeaderProxy {
             proxy.sendData(data, on: connection) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: downstream send failed: \(error)", type: "Error")
+                    Logger.shared.log("\(self.proxy?.logPrefix ?? "MPVHeaderProxy")[\(self.requestId)]: downstream send failed afterBytes=\(self.streamedByteCount) chunkBytes=\(data.count) error=\(error)", type: self.errorLogType)
                     dataTask.cancel()
+                    self.connection.cancel()
                     self.finish()
                     return
                 }
+                self.streamedByteCount += data.count
                 dataTask.resume()
             }
         }
@@ -897,6 +957,22 @@ final class VLCHeaderProxy {
             continuation?.resume()
             continuation = nil
         }
+    }
+}
+
+final class MPVHeaderProxy {
+    static let shared = MPVHeaderProxy()
+
+    private let proxy = MPVHeaderProxyCore(
+        logPrefix: "MPVHeaderProxy",
+        playlistMode: .normalizeRewrittenPlaylist,
+        gracefulResponseClose: true
+    )
+
+    private init() {}
+
+    func makeProxyURL(for targetURL: URL, headers: [String: String], logType: String = "MPV") -> URL? {
+        proxy.makeProxyURL(for: targetURL, headers: headers, logType: logType)
     }
 }
 #endif
