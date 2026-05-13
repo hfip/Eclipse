@@ -898,6 +898,7 @@ struct ModulesSearchResultsSheet: View {
         }
 
         return candidates.compactMap { raw in
+            guard let raw else { return nil }
             let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty else { return nil }
             let key = normalizeTitleForRanking(value)
