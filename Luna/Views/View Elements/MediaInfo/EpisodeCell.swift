@@ -24,6 +24,13 @@ struct EpisodeCell: View {
     @State private var isWatched: Bool = false
     @State private var progressValue: Double = 0
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList: Bool = false
+
+    private var horizontalCellWidth: CGFloat { 240 * iPadScaleSmall }
+    private var horizontalImageHeight: CGFloat { 135 * iPadScaleSmall }
+    private var horizontalTitleHeight: CGFloat { 18 }
+    private var horizontalOverviewHeight: CGFloat { 42 }
+    private var horizontalDetailsHeight: CGFloat { 86 }
+    private var horizontalCellHeight: CGFloat { horizontalImageHeight + 8 + horizontalDetailsHeight }
     
     var body: some View {
         if horizontalEpisodeList {
@@ -49,7 +56,7 @@ struct EpisodeCell: View {
                         }
                         .resizable()
                         .aspectRatio(16/9, contentMode: .fill)
-                        .frame(width: 240 * iPadScaleSmall, height: 135 * iPadScaleSmall)
+                        .frame(width: horizontalCellWidth, height: horizontalImageHeight)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     
                     if progressValue > 0 && progressValue < 0.85 {
@@ -61,7 +68,7 @@ struct EpisodeCell: View {
                                 .padding(.horizontal, 4)
                                 .padding(.bottom, 4)
                         }
-                        .frame(width: 240 * iPadScaleSmall, height: 135 * iPadScaleSmall)
+                        .frame(width: horizontalCellWidth, height: horizontalImageHeight)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
@@ -126,6 +133,10 @@ struct EpisodeCell: View {
                             .font(.subheadline)
                             .foregroundColor(.white)
                             .lineLimit(1)
+                            .frame(height: horizontalTitleHeight, alignment: .top)
+                    } else {
+                        Color.clear
+                            .frame(height: horizontalTitleHeight)
                     }
                     
                     if let overview = episode.overview, !overview.isEmpty {
@@ -135,10 +146,17 @@ struct EpisodeCell: View {
                             .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
+                            .frame(height: horizontalOverviewHeight, alignment: .top)
+                            .clipped()
+                    } else {
+                        Color.clear
+                            .frame(height: horizontalOverviewHeight)
                     }
                 }
-                .frame(width: 240 * iPadScaleSmall, alignment: .leading)
+                .frame(width: horizontalCellWidth, height: horizontalDetailsHeight, alignment: .topLeading)
             }
+            .frame(width: horizontalCellWidth, height: horizontalCellHeight, alignment: .topLeading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .contextMenu {
