@@ -5,6 +5,15 @@
 import SwiftUI
 import Kingfisher
 
+func homeImageDecodeSize(width: CGFloat, height: CGFloat) -> CGSize {
+#if os(iOS) || os(tvOS)
+    let scale = UIScreen.main.scale
+#else
+    let scale: CGFloat = 2
+#endif
+    return CGSize(width: max(width * scale, 1), height: max(height * scale, 1))
+}
+
 struct HomeView: View {
     @State private var showingSettings = false
     @State private var isHoveringWatchNow = false
@@ -39,6 +48,22 @@ struct HomeView: View {
 
     private var ambientColor: Color { homeViewModel.ambientColor }
     private var atmosphereColor: Color { theme.atmosphereColor(dominant: ambientColor) }
+
+    private var tracksBackgroundScroll: Bool {
+#if os(iOS)
+        !isIPad
+#else
+        true
+#endif
+    }
+
+    private var backgroundScrollOffset: CGFloat {
+        tracksBackgroundScroll ? scrollOffset : 0
+    }
+
+    private var scrollOffsetUpdateThreshold: CGFloat {
+        8
+    }
     
     var body: some View {
         if #available(iOS 16.0, *) {
@@ -55,7 +80,7 @@ struct HomeView: View {
     
     private var homeContent: some View {
         ZStack {
-            GlobalGradientBackground(scrollOffset: scrollOffset)
+            GlobalGradientBackground(scrollOffset: backgroundScrollOffset)
                 .ignoresSafeArea(.all)
             
             Group {
@@ -149,16 +174,24 @@ struct HomeView: View {
                 contentSections
             }
             .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: -geo.frame(in: .named("homeScroll")).origin.y
-                    )
+                Group {
+                    if tracksBackgroundScroll {
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ScrollOffsetPreferenceKey.self,
+                                value: -geo.frame(in: .named("homeScroll")).origin.y
+                            )
+                        }
+                    }
                 }
             )
         }
         .coordinateSpace(name: "homeScroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
+            guard tracksBackgroundScroll else { return }
+            guard abs(scrollOffset - newOffset) >= scrollOffsetUpdateThreshold else { return }
+            scrollOffset = newOffset
+        }
         .ignoresSafeArea(edges: [.top, .leading, .trailing])
     }
 
@@ -536,6 +569,10 @@ struct MediaCard: View {
     let heroID: String
     @State private var isHovering: Bool = false
     @Environment(\.heroNamespace) private var heroNamespace
+
+    private var posterWidth: CGFloat { isTvOS ? 280 : 120 * iPadScale }
+    private var posterHeight: CGFloat { isTvOS ? 380 : 180 * iPadScale }
+    private var posterShadowRadius: CGFloat { isIPad ? 4 : 8 }
     
     var body: some View {
         NavigationLink(destination: MediaDetailView(searchResult: result)
@@ -543,26 +580,27 @@ struct MediaCard: View {
         ) {
             VStack(alignment: .leading, spacing: 6) {
                 KFImage(URL(string: result.fullPosterURL ?? ""))
+                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                     .placeholder {
                         FallbackImageView(
                             isMovie: result.isMovie,
-                            size: CGSize(width: 120, height: 180)
+                            size: CGSize(width: posterWidth, height: posterHeight)
                         )
                     }
                     .resizable()
                     .aspectRatio(2/3, contentMode: .fill)
                     .tvos({ view in
                         view
-                            .frame(width: 280, height: 380)
+                            .frame(width: posterWidth, height: posterHeight)
                             .clipShape(RoundedRectangle(cornerRadius: 20))
                             .hoverEffect(.highlight)
                             .modifier(ContinuousHoverModifier(isHovering: $isHovering))
                             .padding(.vertical, 30)
                     }, else: { view in
                         view
-                            .frame(width: 120 * iPadScale, height: 180 * iPadScale)
+                            .frame(width: posterWidth, height: posterHeight)
                             .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+                            .shadow(color: .black.opacity(0.25), radius: posterShadowRadius, x: 0, y: 4)
                     })
                     .heroSource(id: heroID, namespace: heroNamespace)
                 
@@ -610,7 +648,7 @@ struct MediaCard: View {
                             .applyLiquidGlassBackground(cornerRadius: 12)
                     }
                 }
-                .frame(width: isTvOS ? 280 : 120 * iPadScale, alignment: .leading)
+                .frame(width: posterWidth, alignment: .leading)
             }
         }
         .tvos({ view in
@@ -673,6 +711,7 @@ struct ContinueWatchingCard: View {
     // Anime metadata resolved from TMDB + AniList (mirrors MediaDetailView logic)
     @State private var isAnimeContent = false
     @State private var animeSeasonTitle: String? = nil
+    @State private var animeSeasonRomajiTitle: String? = nil
     @State private var originalTitle: String? = nil
     @State private var isMetadataReady = false
     @State private var pendingOpenSheet = false
@@ -682,6 +721,10 @@ struct ContinueWatchingCard: View {
     private var cardHeight: CGFloat { isTvOS ? 220 : (isIPad ? 200 : 146) }
     private var logoMaxWidth: CGFloat { isTvOS ? 200 : (isIPad ? 180 : 140) }
     private var logoMaxHeight: CGFloat { isTvOS ? 60 : (isIPad ? 52 : 40) }
+    private var backdropDecodeSize: CGSize { homeImageDecodeSize(width: cardWidth, height: cardHeight) }
+    private var logoDecodeSize: CGSize { homeImageDecodeSize(width: logoMaxWidth, height: logoMaxHeight) }
+    private var cardShadowRadius: CGFloat { isIPad ? (isHovering ? 8 : 5) : (isHovering ? 12 : 8) }
+    private var cardShadowYOffset: CGFloat { isIPad ? (isHovering ? 5 : 3) : (isHovering ? 8 : 4) }
 
     private var displayTitle: String {
         title.isEmpty ? item.title : title
@@ -747,6 +790,7 @@ struct ContinueWatchingCard: View {
                 ZStack {
                     if let backdropURL {
                         KFImage(URL(string: backdropURL))
+                            .setProcessor(DownsamplingImageProcessor(size: backdropDecodeSize))
                             .placeholder { backdropPlaceholder }
                             .resizable()
                             .aspectRatio(contentMode: .fill)
@@ -773,6 +817,7 @@ struct ContinueWatchingCard: View {
                     HStack(alignment: .bottom, spacing: isTvOS ? 12 : 8) {
                         if let logoURL {
                             KFImage(URL(string: logoURL))
+                                .setProcessor(DownsamplingImageProcessor(size: logoDecodeSize))
                                 .placeholder { titleText }
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
@@ -820,7 +865,7 @@ struct ContinueWatchingCard: View {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(Color.white.opacity(isHovering ? 0.5 : 0.15), lineWidth: isHovering ? 2 : 0.5)
             )
-            .shadow(color: .black.opacity(0.35), radius: isHovering ? 12 : 8, x: 0, y: isHovering ? 8 : 4)
+            .shadow(color: .black.opacity(0.35), radius: cardShadowRadius, x: 0, y: cardShadowYOffset)
             .scaleEffect(isHovering ? 1.02 : 1.0)
             .animation(.easeInOut(duration: 0.2), value: isHovering)
             .modifier(ContinuousHoverModifier(isHovering: $isHovering))
@@ -837,7 +882,7 @@ struct ContinueWatchingCard: View {
             ModulesSearchResultsSheet(
                 mediaTitle: searchSheetTitle,
                 seasonTitleOverride: isAnimeContent ? animeSeasonTitle : nil,
-                originalTitle: originalTitle,
+                originalTitle: isAnimeContent ? (animeSeasonRomajiTitle ?? originalTitle) : originalTitle,
                 isMovie: item.isMovie,
                 isAnimeContent: isAnimeContent,
                 selectedEpisode: selectedEpisodeForSearch,
@@ -921,6 +966,7 @@ struct ContinueWatchingCard: View {
                         self.logoURL = logo.fullURL
                     }
                     self.originalTitle = romaji
+                    self.animeSeasonRomajiTitle = nil
                     self.imdbId = details.imdbId
                     self.isAnimeContent = false
                     self.isLoaded = true
@@ -980,9 +1026,16 @@ struct ContinueWatchingCard: View {
                                 ?? animeData.seasons.first?.title
                         }()
 
+                        let matchedSeasonRomajiTitle: String? = {
+                            guard let sn = item.seasonNumber else { return animeData.seasons.first?.romajiTitle }
+                            return animeData.seasons.first(where: { $0.seasonNumber == sn })?.romajiTitle
+                                ?? animeData.seasons.first?.romajiTitle
+                        }()
+
                         await MainActor.run {
                             self.isAnimeContent = true
                             self.animeSeasonTitle = matchedSeasonTitle
+                            self.animeSeasonRomajiTitle = matchedSeasonRomajiTitle
                             self.backdropURL = animeEpisodeArtworkURL ?? episodeArtworkURL ?? showArtworkURL
                             self.isMetadataReady = true
                             if self.pendingOpenSheet {
@@ -997,6 +1050,7 @@ struct ContinueWatchingCard: View {
                         Logger.shared.log("ContinueWatchingCard: AniList fetch failed for \(details.name): \(error.localizedDescription)", type: "AniList")
                         await MainActor.run {
                             self.isAnimeContent = true
+                            self.animeSeasonRomajiTitle = nil
                             self.isMetadataReady = true
                             if self.pendingOpenSheet {
                                 self.pendingOpenSheet = false
@@ -1008,6 +1062,7 @@ struct ContinueWatchingCard: View {
                     // Not anime – metadata is ready
                     await MainActor.run {
                         self.isAnimeContent = false
+                        self.animeSeasonRomajiTitle = nil
                         self.isMetadataReady = true
                         if self.pendingOpenSheet {
                             self.pendingOpenSheet = false
@@ -1022,6 +1077,7 @@ struct ContinueWatchingCard: View {
                     self.title = item.title
                 }
                 self.backdropURL = item.posterURL
+                self.animeSeasonRomajiTitle = nil
                 self.isLoaded = true
                 self.isMetadataReady = true
                 if self.pendingOpenSheet {

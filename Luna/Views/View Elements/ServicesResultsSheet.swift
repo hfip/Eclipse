@@ -154,6 +154,7 @@ struct ModulesSearchResultsSheet: View {
     @State private var autoModeCancelled = false
     @State private var showManualPicker = false
     @State private var sheetHostController: UIViewController?
+    private static let autoModeInitialMatchThreshold = 0.85
 
     private var effectiveTitle: String { seasonTitleOverride ?? mediaTitle }
     private var playerMediaTitle: String {
@@ -763,19 +764,10 @@ struct ModulesSearchResultsSheet: View {
     }
     
     private func filterResults(for results: [SearchItem]) -> (highQuality: [SearchItem], lowQuality: [SearchItem]) {
-        let sortedResults = results.enumerated().map { index, result -> (index: Int, result: SearchItem, similarity: Double) in
-            return (index: index, result: result, similarity: resultSimilarity(result))
-        }.sorted {
-            if $0.similarity != $1.similarity { return $0.similarity > $1.similarity }
-            let lhsTie = resultTieBreakScore($0.result)
-            let rhsTie = resultTieBreakScore($1.result)
-            if lhsTie != rhsTie { return lhsTie > rhsTie }
-            return $0.index < $1.index
-        }
-        
+        let sortedResults = rankedServiceResults(results)
         let threshold = viewModel.highQualityThreshold
-        let highQuality = sortedResults.filter { $0.similarity >= threshold }.map { $0.result }
-        let lowQuality = sortedResults.filter { $0.similarity < threshold }.map { $0.result }
+        let highQuality = sortedResults.filter { $0.initialSimilarity >= threshold }.map { $0.result }
+        let lowQuality = sortedResults.filter { $0.initialSimilarity < threshold }.map { $0.result }
         
         return (highQuality, lowQuality)
     }
@@ -799,6 +791,53 @@ struct ModulesSearchResultsSheet: View {
 
     private func autoModeSourceId(for item: ResultItem) -> String {
         item.sourceId
+    }
+
+    private struct RankedSearchResult {
+        let index: Int
+        let result: SearchItem
+        let initialSimilarity: Double
+        let titleSimilarity: Double
+        let tieBreakScore: Int
+    }
+
+    private func rankedServiceResults(_ results: [SearchItem]) -> [RankedSearchResult] {
+        results.enumerated().map { index, result in
+            RankedSearchResult(
+                index: index,
+                result: result,
+                initialSimilarity: resultSimilarity(result),
+                titleSimilarity: titleRankingScore(result),
+                tieBreakScore: resultTieBreakScore(result)
+            )
+        }
+        .sorted { lhs, rhs in
+            let lhsEligible = lhs.initialSimilarity >= Self.autoModeInitialMatchThreshold
+            let rhsEligible = rhs.initialSimilarity >= Self.autoModeInitialMatchThreshold
+
+            if lhsEligible != rhsEligible {
+                return lhsEligible && !rhsEligible
+            }
+
+            if lhsEligible && rhsEligible,
+               !scoresAreEquivalent(lhs.titleSimilarity, rhs.titleSimilarity) {
+                return lhs.titleSimilarity > rhs.titleSimilarity
+            }
+
+            if !scoresAreEquivalent(lhs.initialSimilarity, rhs.initialSimilarity) {
+                return lhs.initialSimilarity > rhs.initialSimilarity
+            }
+
+            if lhs.tieBreakScore != rhs.tieBreakScore {
+                return lhs.tieBreakScore > rhs.tieBreakScore
+            }
+
+            return lhs.index < rhs.index
+        }
+    }
+
+    private func scoresAreEquivalent(_ lhs: Double, _ rhs: Double) -> Bool {
+        abs(lhs - rhs) < 0.0001
     }
 
     private func normalizeTitle(_ title: String) -> String {
@@ -845,6 +884,90 @@ struct ModulesSearchResultsSheet: View {
         .filter { seen.insert(normalizeTitle($0)).inserted }
     }
 
+    private func titleRankingCandidates() -> [String] {
+        var seen = Set<String>()
+        var candidates = [
+            sheetTitleBaseForMatching,
+            effectiveTitle,
+            mediaTitle,
+            strippedAnimeFallbackTitle
+        ]
+
+        if !(isAnimeContent || animeSeasonTitle != nil) {
+            candidates.append(originalTitle)
+        }
+
+        return candidates.compactMap { raw in
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+            let key = normalizeTitleForRanking(value)
+            guard seen.insert(key).inserted else { return nil }
+            return value
+        }
+    }
+
+    private func titleRankingScore(_ result: SearchItem) -> Double {
+        rankingCandidates(for: result)
+            .map { titleSimilarityForRanking(expected: $0, result: result.title) }
+            .max() ?? resultSimilarity(result)
+    }
+
+    private func rankingCandidates(for result: SearchItem) -> [String] {
+        guard isAnimeContent || animeSeasonTitle != nil,
+              let alternate = originalTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !alternate.isEmpty,
+              serviceResultLooksLikeAlternateTitle(result, alternateTitle: alternate) else {
+            return titleRankingCandidates()
+        }
+
+        return [alternate]
+    }
+
+    private func serviceResultLooksLikeAlternateTitle(_ result: SearchItem, alternateTitle: String) -> Bool {
+        let displayScore = titleSimilarityForRanking(expected: sheetTitleBaseForMatching, result: result.title)
+        let alternateScore = titleSimilarityForRanking(expected: alternateTitle, result: result.title)
+        return alternateScore >= 0.82 && alternateScore > displayScore + 0.06
+    }
+
+    private func titleSimilarityForRanking(expected: String, result: String) -> Double {
+        let expectedCanonical = normalizeTitleForRanking(expected)
+        let resultCanonical = normalizeTitleForRanking(result)
+
+        let rawSimilarity = algorithmManager.calculateSimilarity(original: expected, result: result)
+        let canonicalSimilarity = algorithmManager.calculateSimilarity(original: expectedCanonical, result: resultCanonical)
+        let tokenScore = tokenOverlapScore(expectedCanonical, resultCanonical)
+
+        var score = max(rawSimilarity, canonicalSimilarity) * 0.70 + tokenScore * 0.30
+
+        if !expectedCanonical.isEmpty {
+            if resultCanonical == expectedCanonical {
+                score += 0.15
+            } else if resultCanonical.contains(expectedCanonical) || expectedCanonical.contains(resultCanonical) {
+                score += 0.08
+            }
+        }
+
+        return max(0, score)
+    }
+
+    private func normalizeTitleForRanking(_ title: String) -> String {
+        title
+            .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func tokenOverlapScore(_ lhs: String, _ rhs: String) -> Double {
+        let ignored: Set<String> = ["a", "an", "and", "the", "of", "to", "in", "on", "tv", "series", "episode"]
+        let lhsTokens = Set(lhs.split(separator: " ").map(String.init).filter { $0.count > 1 && !ignored.contains($0) })
+        let rhsTokens = Set(rhs.split(separator: " ").map(String.init).filter { $0.count > 1 && !ignored.contains($0) })
+
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
+        let shared = lhsTokens.intersection(rhsTokens).count
+        return Double(shared) / Double(max(lhsTokens.count, rhsTokens.count))
+    }
+
     private func resultSimilarity(_ result: SearchItem) -> Double {
         titleMatchCandidates()
             .map { algorithmManager.calculateSimilarity(original: $0, result: result.title) }
@@ -884,22 +1007,9 @@ struct ModulesSearchResultsSheet: View {
 
     private func bestServiceResult(for service: Service) -> SearchItem? {
         guard let results = viewModel.moduleResults[service.id], !results.isEmpty else { return nil }
-        let threshold = viewModel.highQualityThreshold
-
-        let ranked = results.enumerated().map { index, result in
-            let similarity = resultSimilarity(result)
-            return (index: index, result: result, similarity: similarity)
-        }
-        .filter { $0.similarity >= threshold }
-        .sorted { lhs, rhs in
-            if lhs.similarity != rhs.similarity { return lhs.similarity > rhs.similarity }
-            let lhsTie = resultTieBreakScore(lhs.result)
-            let rhsTie = resultTieBreakScore(rhs.result)
-            if lhsTie != rhsTie { return lhsTie > rhsTie }
-            return lhs.index < rhs.index
-        }
-
-        return ranked.first?.result
+        return rankedServiceResults(results)
+            .first { $0.initialSimilarity >= Self.autoModeInitialMatchThreshold }?
+            .result
     }
 
     private func stremioStreamScore(_ stream: StremioStream) -> Double {
@@ -991,7 +1101,7 @@ struct ModulesSearchResultsSheet: View {
             }
         }
 
-        viewModel.streamError = "Auto Mode could not find a match above your quality threshold in the selected sources. Try lowering the quality threshold or selecting more services/addons."
+        viewModel.streamError = "Auto Mode could not find a service match above \(Int(Self.autoModeInitialMatchThreshold * 100))% in the selected sources. Try selecting more services/addons."
         viewModel.showingStreamError = true
     }
 
@@ -1217,7 +1327,7 @@ struct ModulesSearchResultsSheet: View {
             }
         }
 
-        showAutoModeFailure("Auto Mode could not find a match above your quality threshold in the selected sources.")
+        showAutoModeFailure("Auto Mode could not find a service match above \(Int(Self.autoModeInitialMatchThreshold * 100))% in the selected sources.")
     }
 
     @MainActor
@@ -1234,13 +1344,9 @@ struct ModulesSearchResultsSheet: View {
             combined.append(contentsOf: newResults)
             viewModel.moduleResults[service.id] = combined
             viewModel.searchedServices.insert(service.id)
-
-            if let best = bestServiceResult(for: service) {
-                return best
-            }
         }
 
-        return nil
+        return bestServiceResult(for: service)
     }
 
     @MainActor

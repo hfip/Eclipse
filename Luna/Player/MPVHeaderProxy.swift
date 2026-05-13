@@ -266,7 +266,15 @@ private final class MPVHeaderProxyCore {
         }
 
         let sessionId = String(pathParts[1])
-        let queryItems = Dictionary(uniqueKeysWithValues: (urlComponents.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        var queryItems: [String: String] = [:]
+        for item in urlComponents.queryItems ?? [] where queryItems[item.name] == nil {
+            queryItems[item.name] = item.value ?? ""
+        }
+
+        guard queryItems["token"] == token else {
+            sendSimpleResponse(connection, statusCode: 403, body: "Forbidden")
+            return
+        }
 
         let session = touchSession(for: sessionId)
 

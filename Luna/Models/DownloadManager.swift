@@ -121,6 +121,9 @@ final class DownloadManager: NSObject, ObservableObject {
     private var resumeDataStore: [String: Data] = [:]
     private var lastProgressUpdate: [String: Date] = [:]
     private var activeHLSDownloaders: [String: HLSDownloader] = [:]
+    #if canImport(UIKit)
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    #endif
     
     private let maxConcurrentDownloads = 2
     private let maxConcurrentHLSDownloads = 1
@@ -162,12 +165,35 @@ final class DownloadManager: NSObject, ObservableObject {
         backgroundSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         
         loadDownloads()
+        observeAppLifecycle()
         
         // Clean up orphaned files that aren't tracked in metadata
         cleanOrphanedFiles()
         
         // Resume any downloads that were marked as downloading (app was killed)
         resumeInterruptedDownloads()
+    }
+
+    deinit {
+        #if canImport(UIKit)
+        for observer in lifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        #endif
+    }
+
+    private func observeAppLifecycle() {
+        #if canImport(UIKit) && !os(watchOS)
+        lifecycleObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.processQueue()
+            }
+        )
+        #endif
     }
     
     // MARK: - Public API
@@ -269,9 +295,9 @@ final class DownloadManager: NSObject, ObservableObject {
             })
             activeTasks.removeValue(forKey: id)
         } else if let downloader = activeHLSDownloaders[id] {
-            // HLS downloads don't support resume — cancel and restart on resume
+            // HLS downloads do not support resume; cancel and restart on resume.
+            // Keep the HLS lane occupied until cancellation is confirmed.
             downloader.cancel()
-            activeHLSDownloaders.removeValue(forKey: id)
         }
         
         DispatchQueue.main.async {
@@ -294,6 +320,7 @@ final class DownloadManager: NSObject, ObservableObject {
             if self.downloads[index].isHLS {
                 self.downloads[index].progress = 0
                 self.downloads[index].downloadedBytes = 0
+                self.downloads[index].totalBytes = 0
             }
             self.saveDownloads()
             self.processQueue()
@@ -619,18 +646,20 @@ final class DownloadManager: NSObject, ObservableObject {
         
         downloader.onProgress = { [weak self] progress in
             guard let self = self else { return }
-            if let index = self.downloads.firstIndex(where: { $0.id == item.id }) {
+            if let index = self.downloads.firstIndex(where: { $0.id == item.id }),
+               self.downloads[index].status == .downloading {
                 self.downloads[index].progress = progress
             }
         }
         
         downloader.onCompletion = { [weak self] result in
             guard let self = self else { return }
-            self.activeHLSDownloaders.removeValue(forKey: item.id)
-            
-            switch result {
-            case .success(let fileURL):
-                DispatchQueue.main.async {
+
+            DispatchQueue.main.async {
+                self.activeHLSDownloaders.removeValue(forKey: item.id)
+
+                switch result {
+                case .success(let fileURL):
                     if let index = self.downloads.firstIndex(where: { $0.id == item.id }) {
                         self.downloads[index].status = .completed
                         self.downloads[index].progress = 1.0
@@ -644,25 +673,28 @@ final class DownloadManager: NSObject, ObservableObject {
                         }
                         
                         self.saveDownloads()
-                        self.processQueue()
                     }
-                }
-                Logger.shared.log("HLS download completed: \(item.displayTitle) -> \(fileName)", type: "Download")
-                
-            case .failure(let error):
-                if let hlsError = error as? HLSError,
-                   case .systemBackoff(let reason) = hlsError {
-                    DispatchQueue.main.async {
-                        if let index = self.downloads.firstIndex(where: { $0.id == item.id }) {
-                            self.downloads[index].status = .queued
-                            self.downloads[index].error = reason
-                            self.saveDownloads()
-                            self.processQueue()
+                    self.processQueue()
+                    Logger.shared.log("HLS download completed: \(item.displayTitle) -> \(fileName)", type: "Download")
+
+                case .failure(let error):
+                    if let hlsError = error as? HLSError {
+                        switch hlsError {
+                        case .cancelled:
+                            self.handleCancelledHLSDownload(id: item.id)
+                            Logger.shared.log("HLS download cancelled: \(item.displayTitle)", type: "Download")
+                        case .backgroundTimeExpired:
+                            self.requeueInterruptedHLSDownload(id: item.id, message: "Waiting for app to reopen")
+                            Logger.shared.log("HLS background time expired for \(item.displayTitle)", type: "Download")
+                        case .systemBackoff(let reason):
+                            self.requeueInterruptedHLSDownload(id: item.id, message: reason)
+                            Logger.shared.log("HLS packaging paused for \(item.displayTitle): \(reason)", type: "Download")
+                        default:
+                            self.markFailed(id: item.id, error: error.localizedDescription)
                         }
+                    } else {
+                        self.markFailed(id: item.id, error: error.localizedDescription)
                     }
-                    Logger.shared.log("HLS packaging paused for \(item.displayTitle): \(reason)", type: "Download")
-                } else {
-                    self.markFailed(id: item.id, error: error.localizedDescription)
                 }
             }
         }
@@ -672,6 +704,9 @@ final class DownloadManager: NSObject, ObservableObject {
         if let index = downloads.firstIndex(where: { $0.id == item.id }) {
             DispatchQueue.main.async {
                 self.downloads[index].status = .downloading
+                self.downloads[index].progress = 0
+                self.downloads[index].downloadedBytes = 0
+                self.downloads[index].totalBytes = 0
                 self.saveDownloads()
             }
         }
@@ -688,6 +723,10 @@ final class DownloadManager: NSObject, ObservableObject {
 
     private func hlsStartDelayReason() -> String? {
         #if canImport(UIKit)
+        if !backgroundHLSPipelineEnabled && UIApplication.shared.applicationState != .active {
+            return "Waiting for app to reopen"
+        }
+
         let thermalState = ProcessInfo.processInfo.thermalState
         if thermalState == .serious || thermalState == .critical {
             return "Paused for thermal state"
@@ -798,6 +837,35 @@ final class DownloadManager: NSObject, ObservableObject {
             }
         }
         subtitleTask.resume()
+    }
+
+    private func handleCancelledHLSDownload(id: String) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else {
+            processQueue()
+            return
+        }
+
+        if downloads[index].status == .downloading {
+            downloads[index].status = .paused
+        }
+
+        saveDownloads()
+        processQueue()
+    }
+
+    private func requeueInterruptedHLSDownload(id: String, message: String) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else {
+            processQueue()
+            return
+        }
+
+        if downloads[index].status == .downloading || downloads[index].status == .queued {
+            downloads[index].status = .queued
+            downloads[index].error = message
+        }
+
+        saveDownloads()
+        processQueue()
     }
     
     private func markFailed(id: String, error: String) {

@@ -104,6 +104,22 @@ private final class MPVOpenGLView: GLKView {
     }
 }
 
+private final class MPVForegroundDisplayLinkTarget: NSObject {
+    weak var renderer: MPVNativeRenderer?
+
+    init(renderer: MPVNativeRenderer) {
+        self.renderer = renderer
+    }
+
+    @objc func displayLinkDidFire(_ link: CADisplayLink) {
+        guard let renderer else {
+            link.invalidate()
+            return
+        }
+        renderer.handleForegroundDisplayLink(link)
+    }
+}
+
 private final class MPVPiPBridge {
     private let displayLayer: AVSampleBufferDisplayLayer
     private let renderQueue = DispatchQueue(label: "mpv.pip.sample-buffer.render", qos: .userInitiated)
@@ -139,6 +155,7 @@ private final class MPVPiPBridge {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.enqueuedFrameCount = 0
+                self.displayLayer.controlTimebase = nil
                 if #available(iOS 18.0, *) {
                     self.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: removingDisplayedImage, completionHandler: nil)
                 } else if removingDisplayedImage {
@@ -417,6 +434,8 @@ final class MPVNativeRenderer: PlayerRenderer {
     private let eventQueue = DispatchQueue(label: "mpv.native.events", qos: .utility)
     private let stateQueue = DispatchQueue(label: "mpv.native.state", attributes: .concurrent)
     private let eventQueueGroup = DispatchGroup()
+    private var foregroundDisplayLink: CADisplayLink?
+    private var foregroundDisplayLinkTarget: MPVForegroundDisplayLinkTarget?
 
     private var mpv: OpaquePointer?
     private var renderContext: OpaquePointer?
@@ -443,6 +462,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastForegroundRenderTime: CFTimeInterval = 0
     private var lastPiPRenderTime: CFTimeInterval = 0
     private let foregroundFrameInterval: CFTimeInterval
+    private let foregroundFramesPerSecond: Int
     private let pipFrameInterval: CFTimeInterval = 1.0 / 24.0
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
     private var loadGeneration = 0
@@ -476,6 +496,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             .compactMap { ($0 as? UIWindowScene)?.screen }
             .first ?? UIScreen.main
         let maxFPS = max(1, min(screen.maximumFramesPerSecond, 60))
+        self.foregroundFramesPerSecond = maxFPS
         self.foregroundFrameInterval = 1.0 / CFTimeInterval(maxFPS)
 
         glView.renderer = self
@@ -520,14 +541,15 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "idle", value: "yes")
         setOption(name: "vo", value: "libmpv")
         setOption(name: "profile", value: "fast")
-        setOption(name: "hwdec", value: "videotoolbox")
-        setOption(name: "vd-lavc-dr", value: "yes")
+        setOption(name: "hwdec", value: "videotoolbox-copy")
+        setOption(name: "vd-lavc-dr", value: "no")
         setOption(name: "vd-lavc-software-fallback", value: "no")
         setOption(name: "demuxer-thread", value: "yes")
         setOption(name: "cache", value: "yes")
         setOption(name: "demuxer-max-bytes", value: "80M")
         setOption(name: "demuxer-readahead-secs", value: "10")
         setOption(name: "video-sync", value: "audio")
+        setOption(name: "framedrop", value: "vo")
         setOption(name: "interpolation", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")
         setOption(name: "subs-fallback", value: "yes")
@@ -551,7 +573,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             observeProperties()
             installWakeupHandler()
             ensureAudioSessionActive()
-            logMPV("start completed mode=openGL hwdec=videotoolbox dr=yes")
+            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=no")
             scheduleRender()
         } catch {
             logMPV("start failed after mpv_initialize: \(error)")
@@ -569,6 +591,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         logMPV("stop requested running=\(isRunning) ready=\(isReadyToSeek) loading=\(isLoading) cached=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration))")
         isRunning = false
         isStopping = true
+        stopForegroundDisplayLink(reason: "stop")
 
         destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
@@ -597,6 +620,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         lastProgressLogBucket = -1
         lastDurationLogValue = -1
         lastTrackSummary = ""
+        lastPlaybackErrorMessage = nil
         updateVideoSize(width: 0, height: 0)
         isStopping = false
         logMPV("stop completed")
@@ -664,6 +688,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func prepareForPictureInPictureStart() {
         guard isRunning, currentMode != .pictureInPicture else { return }
         logMPV("switching to capped sample-buffer PiP render path")
+        stopForegroundDisplayLink(reason: "enter-pip")
         pipBridge.clearPrimedFrameState()
         destroyRenderContext()
         currentMode = .pictureInPicture
@@ -757,6 +782,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             return
         }
         logMPV("foreground render recovery reason=\(reason)")
+        startForegroundDisplayLink(reason: reason)
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
             self.displayLayer.isHidden = true
@@ -882,6 +908,52 @@ final class MPVNativeRenderer: PlayerRenderer {
             instance.processEvents()
         }, Unmanaged.passUnretained(self).toOpaque())
         logMPV("wakeup handler installed")
+    }
+
+    private func startForegroundDisplayLink(reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.isRunning,
+                  !self.isStopping,
+                  self.currentMode == .openGL else {
+                return
+            }
+            guard self.foregroundDisplayLink == nil else { return }
+            let target = MPVForegroundDisplayLinkTarget(renderer: self)
+            let link = CADisplayLink(target: target, selector: #selector(MPVForegroundDisplayLinkTarget.displayLinkDidFire(_:)))
+            if #available(iOS 15.0, *) {
+                link.preferredFrameRateRange = CAFrameRateRange(
+                    minimum: Float(min(24, self.foregroundFramesPerSecond)),
+                    maximum: Float(self.foregroundFramesPerSecond),
+                    preferred: Float(self.foregroundFramesPerSecond)
+                )
+            } else {
+                link.preferredFramesPerSecond = self.foregroundFramesPerSecond
+            }
+            link.add(to: .main, forMode: .common)
+            self.foregroundDisplayLinkTarget = target
+            self.foregroundDisplayLink = link
+            self.logMPV("foreground display link started reason=\(reason) fps=\(self.foregroundFramesPerSecond)")
+        }
+    }
+
+    private func stopForegroundDisplayLink(reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let link = self.foregroundDisplayLink else { return }
+            link.invalidate()
+            self.foregroundDisplayLink = nil
+            self.foregroundDisplayLinkTarget = nil
+            self.logMPV("foreground display link stopped reason=\(reason)")
+        }
+    }
+
+    fileprivate func handleForegroundDisplayLink(_ link: CADisplayLink) {
+        guard isRunning, !isStopping, currentMode == .openGL else {
+            stopForegroundDisplayLink(reason: "not-openGL")
+            return
+        }
+        guard !isPaused || isLoading || forcedOpenGLRenderCount > 0 else { return }
+        glView.display()
     }
 
     private func scheduleRender(force: Bool = false) {
@@ -1079,6 +1151,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
         logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
         logTrackSummaryIfChanged(reason: "file-loaded")
+        startForegroundDisplayLink(reason: "file-loaded")
         if let initialSeek = pendingInitialSeek {
             logMPV("applying pending initial seek \(String(format: "%.2f", initialSeek))s")
             seek(to: initialSeek)
@@ -1173,6 +1246,11 @@ final class MPVNativeRenderer: PlayerRenderer {
                 if newPaused != isPaused {
                     isPaused = newPaused
                     logMPV("pause changed isPaused=\(newPaused)")
+                    if newPaused {
+                        stopForegroundDisplayLink(reason: "paused")
+                    } else {
+                        startForegroundDisplayLink(reason: "unpaused")
+                    }
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
                         self.delegate?.renderer(self, didChangePause: newPaused)
@@ -1562,12 +1640,14 @@ final class MPVNativeRenderer: PlayerRenderer {
     func play() {
         logMPV("play requested")
         ensureAudioSessionActive()
+        startForegroundDisplayLink(reason: "play")
         setProperty(name: "pause", value: "no")
         requestRenderBurst(reason: "play", count: 4, interval: 0.08)
     }
 
     func pausePlayback() {
         logMPV("pause requested")
+        stopForegroundDisplayLink(reason: "pause-request")
         setProperty(name: "pause", value: "yes")
     }
 

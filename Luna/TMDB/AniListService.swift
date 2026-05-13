@@ -1022,6 +1022,9 @@ final class AniListService {
                 seasonNumber: seasonIndex,
                 anilistId: currentAnime.id,
                 title: seasonTitle,
+                englishTitle: currentAnime.title.english.map(AniListTitlePicker.cleanedTitle),
+                romajiTitle: currentAnime.title.romaji.map(AniListTitlePicker.cleanedTitle),
+                nativeTitle: currentAnime.title.native.map(AniListTitlePicker.cleanedTitle),
                 episodes: seasonEpisodes,
                 posterUrl: posterUrl
             ))
@@ -2319,6 +2322,9 @@ struct AniListSeasonWithPoster {
     let seasonNumber: Int
     let anilistId: Int             // AniList anime ID for this specific season
     let title: String              // Full AniList title for this season (e.g., "SPYÃ—FAMILY Season 2")
+    let englishTitle: String?
+    let romajiTitle: String?
+    let nativeTitle: String?
     let episodes: [AniListEpisode]
     let posterUrl: String?
 }

@@ -1393,7 +1393,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         logVLCUI("load resume prepared pendingSeek=\(secondsText(pendingSeekTime)) progressCached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) launchContext=\(String(describing: playbackLaunchContext))", type: "Progress")
         rendererPrepareInitialSeek(to: pendingSeekTime)
-        let playbackRequest = prepareVLCHeaderProxyIfNeeded(originalURL: url, headers: headers)
+        let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
         if !isVLCPlayer {
             preparePlaybackStartupMonitoring(for: playbackRequest.url, headers: playbackRequest.headers ?? headers ?? [:])
         }
@@ -3552,6 +3552,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     #if !os(tvOS)
+    private func preparePlayerHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
+        if isVLCPlayer {
+            return prepareVLCHeaderProxyIfNeeded(originalURL: originalURL, headers: headers)
+        }
+        if mpvRenderer != nil {
+            return prepareMPVHeaderProxyIfNeeded(originalURL: originalURL, headers: headers)
+        }
+        return (originalURL, headers)
+    }
+
     private func buildProxyHeaders(for _: URL, baseHeaders: [String: String]) -> [String: String] {
         // Services often require exact Origin/Referer/Cookie/User-Agent values.
         // The proxy must preserve the caller-provided header set without filling
@@ -3594,6 +3604,24 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         Logger.shared.log("PlayerViewController: proactive VLC proxy activated headerKeys=[\(headers.keys.sorted().joined(separator: ","))]", type: "Stream")
+        return (proxyURL, nil)
+    }
+
+    private func prepareMPVHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
+        guard isRemoteHTTPURL(originalURL), !isLocalProxyURL(originalURL) else { return (originalURL, headers) }
+
+        let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers ?? [:])
+        let shouldBridge = !proxyHeaders.isEmpty || playbackLaunchContext?.sourceKind == .stremio
+        guard shouldBridge else { return (originalURL, headers) }
+
+        guard let proxyURL = MPVHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders, logType: "MPV") else {
+            Logger.shared.log("[PlayerVC.PlaybackStart] proactive MPV bridge URL creation failed; using direct MPV headers", type: "MPV")
+            return (originalURL, headers)
+        }
+
+        mpvTransportBridgeFallbackTried = true
+        isMPVTransportBridgePlaybackActive = true
+        Logger.shared.log("[PlayerVC.PlaybackStart] proactive MPV bridge activated target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
         return (proxyURL, nil)
     }
 
@@ -3684,7 +3712,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     #else
-    private func prepareVLCHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
+    private func preparePlayerHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
         return (originalURL, headers)
     }
 
@@ -5746,6 +5774,8 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
 
 struct PlayerEpisodeBrowserDrawer: View {
     @StateObject private var viewModel: PlayerEpisodeBrowserViewModel
+    @State private var selectedSeasonID: String?
+    @State private var didManuallySelectSeason = false
     let onClose: () -> Void
     let onEpisodeSelected: (PlayerEpisodeBrowserItem) -> Void
 
@@ -5826,59 +5856,238 @@ struct PlayerEpisodeBrowserDrawer: View {
                     .padding(.horizontal, 24)
                 Spacer()
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18, pinnedViews: []) {
-                            ForEach(viewModel.seasons) { season in
-                                seasonSection(season)
+                seasonSelector
+                selectedSeasonEpisodes
+            }
+        }
+        .onAppear {
+            syncSelectedSeasonIfNeeded()
+        }
+        .onChange(of: viewModel.seasons.map(\.id)) { _ in
+            syncSelectedSeasonIfNeeded()
+        }
+        .onChange(of: viewModel.currentItemID) { _ in
+            syncSelectedSeasonIfNeeded()
+        }
+    }
+
+    private var selectedSeason: PlayerEpisodeBrowserSeason? {
+        if let selectedSeasonID,
+           let season = viewModel.seasons.first(where: { $0.id == selectedSeasonID }) {
+            return season
+        }
+        return currentSeason ?? viewModel.seasons.first
+    }
+
+    private var currentSeason: PlayerEpisodeBrowserSeason? {
+        guard let currentID = viewModel.currentItemID else { return nil }
+        return viewModel.seasons.first { season in
+            season.episodes.contains(where: { $0.id == currentID })
+        }
+    }
+
+    private var seasonSelector: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedSeason?.title ?? "Season")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    if let subtitle = selectedSeasonSubtitle {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.58))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if viewModel.seasons.count > 1 {
+                    Menu {
+                        ForEach(viewModel.seasons) { season in
+                            Button {
+                                selectSeason(season)
+                            } label: {
+                                Label(
+                                    seasonMenuTitle(season),
+                                    systemImage: season.id == selectedSeason?.id ? "checkmark" : "tv"
+                                )
                             }
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 14)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Change")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Image(systemName: "chevron.down")
+                                .font(.caption2)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
                     }
-                    .onChange(of: viewModel.currentItemID) { id in
-                        guard let id else { return }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            withAnimation(.easeOut(duration: 0.25)) {
-                                proxy.scrollTo(id, anchor: .center)
-                            }
+                }
+            }
+
+            if viewModel.seasons.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 8) {
+                        ForEach(viewModel.seasons) { season in
+                            seasonChip(season)
                         }
                     }
-                    .onAppear {
-                        if let id = viewModel.currentItemID {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                proxy.scrollTo(id, anchor: .center)
-                            }
+                    .padding(.vertical, 1)
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(Color.black.opacity(0.22))
+    }
+
+    private var selectedSeasonSubtitle: String? {
+        guard let season = selectedSeason else { return nil }
+        let episodeText = "\(season.episodes.count) episode\(season.episodes.count == 1 ? "" : "s")"
+        if let subtitle = season.subtitle, !subtitle.isEmpty {
+            return "\(subtitle) - \(episodeText)"
+        }
+        return episodeText
+    }
+
+    private var selectedSeasonEpisodes: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10, pinnedViews: []) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id("selected-season-top")
+
+                    if let season = selectedSeason {
+                        ForEach(season.episodes) { item in
+                            episodeRow(item)
+                                .id(item.id)
                         }
+                    } else if viewModel.isLoading {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 28)
+                    } else {
+                        Text("No episodes found.")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.68))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 28)
                     }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+            }
+            .onChange(of: selectedSeasonID) { _ in
+                scrollToSelectedSeasonStart(proxy: proxy)
+            }
+            .onChange(of: viewModel.currentItemID) { _ in
+                scrollToCurrentIfVisible(proxy: proxy)
+            }
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    scrollToCurrentIfVisible(proxy: proxy)
                 }
             }
         }
     }
 
-    private func seasonSection(_ season: PlayerEpisodeBrowserSeason) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(season.title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                if let subtitle = season.subtitle {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.55))
-                        .lineLimit(1)
+    private func seasonChip(_ season: PlayerEpisodeBrowserSeason) -> some View {
+        let selected = season.id == selectedSeason?.id
+        return Button {
+            selectSeason(season)
+        } label: {
+            HStack(spacing: 6) {
+                if season.episodes.contains(where: { $0.isCurrent }) {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 6, height: 6)
                 }
-                Spacer()
+                Text(seasonChipTitle(season))
+                    .font(.caption)
+                    .fontWeight(selected ? .semibold : .medium)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 4)
-
-            ForEach(season.episodes) { item in
-                episodeRow(item)
-                    .id(item.id)
+            .foregroundColor(.white.opacity(selected ? 1.0 : 0.72))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(selected ? Color.white.opacity(0.18) : Color.white.opacity(0.08))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(selected ? Color.accentColor.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
             }
         }
+        .buttonStyle(.plain)
+    }
+
+    private func selectSeason(_ season: PlayerEpisodeBrowserSeason) {
+        didManuallySelectSeason = true
+        selectedSeasonID = season.id
+    }
+
+    private func syncSelectedSeasonIfNeeded() {
+        guard !viewModel.seasons.isEmpty else {
+            selectedSeasonID = nil
+            didManuallySelectSeason = false
+            return
+        }
+
+        if let selectedSeasonID,
+           viewModel.seasons.contains(where: { $0.id == selectedSeasonID }) {
+            return
+        }
+
+        if !didManuallySelectSeason, let currentSeason {
+            selectedSeasonID = currentSeason.id
+        } else {
+            selectedSeasonID = viewModel.seasons.first?.id
+        }
+    }
+
+    private func scrollToSelectedSeasonStart(proxy: ScrollViewProxy) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo("selected-season-top", anchor: .top)
+            }
+        }
+    }
+
+    private func scrollToCurrentIfVisible(proxy: ScrollViewProxy) {
+        guard let id = viewModel.currentItemID,
+              selectedSeason?.episodes.contains(where: { $0.id == id }) == true else {
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        }
+    }
+
+    private func seasonChipTitle(_ season: PlayerEpisodeBrowserSeason) -> String {
+        if season.episodes.first?.isSpecial == true {
+            return season.title
+        }
+        if let subtitle = season.subtitle, !subtitle.isEmpty {
+            return subtitle
+        }
+        return season.title
+    }
+
+    private func seasonMenuTitle(_ season: PlayerEpisodeBrowserSeason) -> String {
+        let title = seasonChipTitle(season)
+        return "\(title) (\(season.episodes.count))"
     }
 
     private func episodeRow(_ item: PlayerEpisodeBrowserItem) -> some View {

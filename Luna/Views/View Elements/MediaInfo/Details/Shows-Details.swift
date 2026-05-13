@@ -19,6 +19,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     let seasonSelectorInsertedContent: AnyView
     var animeEpisodes: [AniListEpisode]? = nil
     var animeSeasonTitles: [Int: String]? = nil
+    var animeSeasonRomajiTitles: [Int: String] = [:]
     let tmdbService: TMDBService
     @ViewBuilder let insertedContent: () -> InsertedContent
     
@@ -99,8 +100,17 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         return tvShow?.name ?? "Unknown Show"
     }
 
-    private func getOriginalTitle() -> String? {
-        specialEpisodeContext?.alternateTitle ?? romajiTitle
+    private func getOriginalTitle(for episode: TMDBEpisode?) -> String? {
+        if let specialEpisodeContext {
+            return specialEpisodeContext.alternateTitle ?? romajiTitle
+        }
+        if isAnime,
+           let seasonNumber = episode?.seasonNumber ?? selectedSeason?.seasonNumber,
+           let seasonRomaji = animeSeasonRomajiTitles[seasonNumber],
+           !seasonRomaji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return seasonRomaji
+        }
+        return romajiTitle
     }
 
     private func playbackContext(for episode: TMDBEpisode) -> EpisodePlaybackContext? {
@@ -258,7 +268,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
             ModulesSearchResultsSheet(
                 mediaTitle: getSearchTitle(),
                 seasonTitleOverride: activeSeasonTitle,
-                originalTitle: getOriginalTitle(),
+                originalTitle: getOriginalTitle(for: selectedEpisodeForSearch),
                 isMovie: false,
                 isAnimeContent: isAnime,
                 selectedEpisode: selectedEpisodeForSearch,
@@ -302,7 +312,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
             ModulesSearchResultsSheet(
                 mediaTitle: getSearchTitle(),
                 seasonTitleOverride: activeSeasonTitle,
-                originalTitle: getOriginalTitle(),
+                originalTitle: getOriginalTitle(for: downloadEpisode ?? selectedEpisodeForSearch),
                 isMovie: false,
                 isAnimeContent: isAnime,
                 selectedEpisode: downloadEpisode ?? selectedEpisodeForSearch,

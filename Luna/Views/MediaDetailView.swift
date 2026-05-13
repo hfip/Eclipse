@@ -24,6 +24,7 @@ private final class MediaDetailCacheStore {
         let isAnimeShow: Bool
         let anilistEpisodes: [AniListEpisode]?
         let animeSeasonTitles: [Int: String]?
+        let animeSeasonRomajiTitles: [Int: String]
         let animeSeasonAniListIds: [Int: Int]
         let animeSpecialEntries: [AniListSpecialSearchEntry]
         let castMembers: [TMDBCastMember]
@@ -69,6 +70,7 @@ private final class MediaDetailCacheStore {
             isAnimeShow: existing.isAnimeShow,
             anilistEpisodes: existing.anilistEpisodes,
             animeSeasonTitles: existing.animeSeasonTitles,
+            animeSeasonRomajiTitles: existing.animeSeasonRomajiTitles,
             animeSeasonAniListIds: existing.animeSeasonAniListIds,
             animeSpecialEntries: entries,
             castMembers: existing.castMembers,
@@ -100,6 +102,7 @@ struct MediaDetailView: View {
     @State private var isAnimeShow = false
     @State private var anilistEpisodes: [AniListEpisode]? = nil
     @State private var animeSeasonTitles: [Int: String]? = nil
+    @State private var animeSeasonRomajiTitles: [Int: String] = [:]
     @State private var animeSeasonAniListIds: [Int: Int] = [:]
     @State private var animeSpecialEntries: [AniListSpecialSearchEntry] = []
     @State private var isLoadingAnimeSpecials = false
@@ -341,7 +344,7 @@ struct MediaDetailView: View {
                     }
                     return nil
                 }(),
-                originalTitle: romajiTitle,
+                originalTitle: originalTitleForSearchSheet(selectedEpisodeForSearch),
                 isMovie: searchResult.isMovie,
                 isAnimeContent: isAnimeShow,
                 selectedEpisode: selectedEpisodeForSearch,
@@ -370,7 +373,7 @@ struct MediaDetailView: View {
                     }
                     return nil
                 }(),
-                originalTitle: romajiTitle,
+                originalTitle: originalTitleForSearchSheet(selectedEpisodeForSearch),
                 isMovie: searchResult.isMovie,
                 isAnimeContent: isAnimeShow,
                 selectedEpisode: selectedEpisodeForSearch,
@@ -735,6 +738,7 @@ struct MediaDetailView: View {
                 seasonSelectorInsertedContent: AnyView(specialsOVASection),
                 animeEpisodes: anilistEpisodes,
                 animeSeasonTitles: animeSeasonTitles,
+                animeSeasonRomajiTitles: animeSeasonRomajiTitles,
                 tmdbService: tmdbService
             ) {
                 if showCastSection && !castMembers.isEmpty {
@@ -747,6 +751,16 @@ struct MediaDetailView: View {
                 Logger.shared.log("MediaDetailView episodesSection appeared: tmdbId=\(searchResult.id) isAnime=\(isAnimeShow) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil") anilistEpisodes=\(anilistEpisodes?.count ?? 0)", type: "CrashProbe")
             }
         }
+    }
+
+    private func originalTitleForSearchSheet(_ episode: TMDBEpisode?) -> String? {
+        guard isAnimeShow,
+              let seasonNumber = episode?.seasonNumber,
+              let seasonRomaji = animeSeasonRomajiTitles[seasonNumber],
+              !seasonRomaji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return romajiTitle
+        }
+        return seasonRomaji
     }
     
     private func toggleBookmark() {
@@ -1369,6 +1383,7 @@ struct MediaDetailView: View {
                 self.isAnimeShow = cached.isAnimeShow
                 self.anilistEpisodes = cached.anilistEpisodes
                 self.animeSeasonTitles = cached.animeSeasonTitles
+                self.animeSeasonRomajiTitles = cached.animeSeasonRomajiTitles
                 self.animeSeasonAniListIds = cached.animeSeasonAniListIds
                 self.animeSpecialEntries = cached.animeSpecialEntries
                 self.selectedEpisodeForSearch = nil
@@ -1395,6 +1410,7 @@ struct MediaDetailView: View {
         errorMessage = nil
         seasonDetail = nil
         selectedEpisodeForSearch = nil
+        animeSeasonRomajiTitles = [:]
         animeSeasonAniListIds = [:]
         animeSpecialEntries = []
         isLoadingAnimeSpecials = false
@@ -1459,6 +1475,7 @@ struct MediaDetailView: View {
                             isAnimeShow: false,
                             anilistEpisodes: nil,
                             animeSeasonTitles: nil,
+                            animeSeasonRomajiTitles: [:],
                             animeSeasonAniListIds: [:],
                             animeSpecialEntries: [],
                             castMembers: self.castMembers,
@@ -1607,17 +1624,23 @@ struct MediaDetailView: View {
                             Logger.shared.log("MediaDetailView: assigned detailWithAniSeasons tmdbId=\(detail.id) seasons=\(detailWithAniSeasons.seasons.count) totalEpisodes=\(detailWithAniSeasons.numberOfEpisodes ?? 0)", type: "CrashProbe")
                             
                             var seasonTitles: [Int: String] = [:]
+                            var seasonRomajiTitles: [Int: String] = [:]
                             var seasonAniListIds: [Int: Int] = [:]
                             var allEpisodes: [AniListEpisode] = []
                             for season in animeData.seasons {
                                 Logger.shared.log("MediaDetailView: flatten AniList season tmdbId=\(detail.id) season=\(season.seasonNumber) title=\(season.title) episodes=\(season.episodes.count)", type: "CrashProbe")
                                 seasonTitles[season.seasonNumber] = season.title
+                                if let romaji = season.romajiTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !romaji.isEmpty {
+                                    seasonRomajiTitles[season.seasonNumber] = romaji
+                                }
                                 seasonAniListIds[season.seasonNumber] = season.anilistId
                                 allEpisodes.append(contentsOf: season.episodes)
                             }
                             Logger.shared.log("MediaDetailView: AniList season conversion complete tmdbId=\(detail.id) aniSeasons=\(aniSeasons.count) summary=\(aniSeasons.prefix(8).map { "s\($0.seasonNumber):id\($0.id):eps\($0.episodeCount)" }.joined(separator: "|"))", type: "CrashProbe")
                             Logger.shared.log("MediaDetailView: anime state preassign tmdbId=\(detail.id) aniSeasons=\(aniSeasons.count) allEpisodes=\(allEpisodes.count) seasonTitles=\(seasonTitles.count)", type: "CrashProbe")
                             self.animeSeasonTitles = seasonTitles
+                            self.animeSeasonRomajiTitles = seasonRomajiTitles
                             self.animeSeasonAniListIds = seasonAniListIds
                             self.anilistEpisodes = allEpisodes
                             
@@ -1634,6 +1657,7 @@ struct MediaDetailView: View {
                             self.tvShowDetail = detail
                             self.anilistEpisodes = nil
                             self.animeSeasonTitles = nil
+                            self.animeSeasonRomajiTitles = [:]
                             self.animeSeasonAniListIds = [:]
                             if let firstSeason = detail.seasons.first(where: { $0.seasonNumber > 0 }) {
                                 self.selectedSeason = firstSeason
@@ -1666,6 +1690,7 @@ struct MediaDetailView: View {
                             isAnimeShow: self.isAnimeShow,
                             anilistEpisodes: self.anilistEpisodes,
                             animeSeasonTitles: self.animeSeasonTitles,
+                            animeSeasonRomajiTitles: self.animeSeasonRomajiTitles,
                             animeSeasonAniListIds: self.animeSeasonAniListIds,
                             animeSpecialEntries: self.animeSpecialEntries,
                             castMembers: self.castMembers,

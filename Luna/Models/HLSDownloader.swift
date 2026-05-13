@@ -39,7 +39,10 @@ final class HLSDownloader: @unchecked Sendable {
     private let downloadId: String
     
     private var isCancelled = false
-    private var currentTask: URLSessionDataTask?
+    private var cancellationError: HLSError = .cancelled
+    private var workerTask: Task<Void, Never>?
+    private var didFinish = false
+    private let stateLock = NSLock()
     private let session: URLSession
     #if canImport(UIKit)
     private var backgroundTaskId: UIBackgroundTaskIdentifier = .invalid
@@ -66,40 +69,56 @@ final class HLSDownloader: @unchecked Sendable {
     // MARK: - Public API
     
     func start() {
+        stateLock.lock()
+        guard workerTask == nil else {
+            stateLock.unlock()
+            return
+        }
         isCancelled = false
+        cancellationError = .cancelled
+        didFinish = false
+        stateLock.unlock()
+
         beginBackgroundTask()
         
-        Task {
+        let task = Task { [weak self] in
+            guard let self = self else { return }
+            defer {
+                self.clearWorkerTask()
+                self.endBackgroundTask()
+            }
+
             do {
                 // Step 1: Fetch the M3U8 playlist
-                let playlistContent = try await fetchPlaylist(url: streamURL)
+                try self.checkCancelled()
+                let playlistContent = try await self.fetchPlaylist(url: self.streamURL)
                 
-                guard !isCancelled else { return }
+                try self.checkCancelled()
                 
                 // Step 2: Determine if master or media playlist
                 let mediaPlaylistURL: URL
                 let mediaPlaylistContent: String
                 
-                if isMasterPlaylist(playlistContent) {
+                if self.isMasterPlaylist(playlistContent) {
                     // Parse master playlist and select best variant
-                    let variants = parseMasterPlaylist(playlistContent, baseURL: streamURL)
-                    guard let best = selectBestVariant(variants) else {
+                    let variants = self.parseMasterPlaylist(playlistContent, baseURL: self.streamURL)
+                    guard let best = self.selectBestVariant(variants) else {
                         throw HLSError.noVariantsFound
                     }
                     Logger.shared.log("HLS: Selected variant \(best.resolution ?? "unknown") @ \(best.bandwidth)bps", type: "Download")
                     
-                    mediaPlaylistContent = try await fetchPlaylist(url: best.url)
+                    mediaPlaylistContent = try await self.fetchPlaylist(url: best.url)
                     mediaPlaylistURL = best.url
                 } else {
                     // Already a media playlist
                     mediaPlaylistContent = playlistContent
-                    mediaPlaylistURL = streamURL
+                    mediaPlaylistURL = self.streamURL
                 }
                 
-                guard !isCancelled else { return }
+                try self.checkCancelled()
                 
                 // Step 3: Parse media playlist for segments
-                let segments = parseMediaPlaylist(mediaPlaylistContent, baseURL: mediaPlaylistURL)
+                let segments = self.parseMediaPlaylist(mediaPlaylistContent, baseURL: mediaPlaylistURL)
                 guard !segments.isEmpty else {
                     throw HLSError.noSegmentsFound
                 }
@@ -107,49 +126,58 @@ final class HLSDownloader: @unchecked Sendable {
                 Logger.shared.log("HLS: Found \(segments.count) segments to download", type: "Download")
                 
                 // Step 4: Parse encryption info if present
-                let encryptionKey = parseEncryptionKey(from: mediaPlaylistContent, baseURL: mediaPlaylistURL)
+                let encryptionKey = self.parseEncryptionKey(from: mediaPlaylistContent, baseURL: mediaPlaylistURL)
                 var keyData: Data? = nil
                 if let encKey = encryptionKey, encKey.method == "AES-128" {
-                    keyData = try await fetchData(url: encKey.keyURL)
+                    keyData = try await self.fetchData(url: encKey.keyURL)
+                    try self.checkCancelled()
                     Logger.shared.log("HLS: Downloaded AES-128 encryption key", type: "Download")
                 }
                 
                 // Step 5: Check for initialization segment (#EXT-X-MAP)
-                let initSegmentURL = parseInitSegment(from: mediaPlaylistContent, baseURL: mediaPlaylistURL)
+                let initSegmentURL = self.parseInitSegment(from: mediaPlaylistContent, baseURL: mediaPlaylistURL)
                 
-                guard !isCancelled else { return }
+                try self.checkCancelled()
                 
                 // Step 6: Download and concatenate segments
-                try await downloadAndConcatenateSegments(
+                try await self.downloadAndConcatenateSegments(
                     segments: segments,
                     initSegmentURL: initSegmentURL,
                     encryptionKey: encryptionKey,
                     keyData: keyData,
-                    to: destinationURL
+                    to: self.destinationURL
                 )
                 
-                guard !isCancelled else {
-                    try? FileManager.default.removeItem(at: destinationURL)
-                    return
-                }
+                try self.checkCancelled()
                 
-                Logger.shared.log("HLS: Download complete -> \(destinationURL.lastPathComponent)", type: "Download")
-                onCompletion?(.success(destinationURL))
-                endBackgroundTask()
+                Logger.shared.log("HLS: Download complete -> \(self.destinationURL.lastPathComponent)", type: "Download")
+                self.finish(.success(self.destinationURL))
                 
             } catch {
-                if !isCancelled {
+                if self.isCancellationError(error) {
+                    self.finish(.failure(self.currentCancellationError()))
+                } else {
                     Logger.shared.log("HLS download failed: \(error.localizedDescription)", type: "Download")
-                    onCompletion?(.failure(error))
+                    self.finish(.failure(error))
                 }
-                endBackgroundTask()
             }
         }
+
+        stateLock.lock()
+        workerTask = task
+        stateLock.unlock()
     }
     
-    func cancel() {
+    func cancel(reason: HLSError = .cancelled) {
+        let task: Task<Void, Never>?
+        stateLock.lock()
         isCancelled = true
-        currentTask?.cancel()
+        cancellationError = reason
+        task = workerTask
+        stateLock.unlock()
+
+        task?.cancel()
+        session.invalidateAndCancel()
         endBackgroundTask()
     }
     
@@ -159,8 +187,8 @@ final class HLSDownloader: @unchecked Sendable {
         #if canImport(UIKit) && !os(watchOS)
         guard backgroundTaskId == .invalid else { return }
         backgroundTaskId = UIApplication.shared.beginBackgroundTask(withName: "HLSDownload-\(downloadId)") { [weak self] in
-            // System is about to expire the task — cancel gracefully
-            self?.cancel()
+            // System is about to expire the task; let the manager requeue it.
+            self?.cancel(reason: .backgroundTimeExpired)
         }
         #endif
     }
@@ -184,12 +212,15 @@ final class HLSDownloader: @unchecked Sendable {
     }
     
     private func fetchData(url: URL) async throws -> Data {
+        try checkCancelled()
+
         var request = URLRequest(url: url)
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
         let (data, response) = try await session.data(for: request)
+        try checkCancelled()
         
         if let httpResponse = response as? HTTPURLResponse,
            !(200...299).contains(httpResponse.statusCode) {
@@ -342,6 +373,7 @@ final class HLSDownloader: @unchecked Sendable {
         if let initURL = initSegmentURL {
             try checkSystemBackoff()
             let initData = try await fetchData(url: initURL)
+            try checkCancelled()
             let decrypted = try decryptIfNeeded(data: initData, key: encryptionKey, keyData: keyData, segmentIndex: -1)
             fileHandle.write(decrypted)
         }
@@ -350,13 +382,12 @@ final class HLSDownloader: @unchecked Sendable {
         let totalSegments = segments.count
         
         for (index, segmentURL) in segments.enumerated() {
-            guard !isCancelled else {
-                throw HLSError.cancelled
-            }
+            try checkCancelled()
 
             try checkSystemBackoff()
             
             let segmentData = try await fetchSegmentWithRetry(url: segmentURL, maxRetries: 3)
+            try checkCancelled()
             let decrypted = try decryptIfNeeded(data: segmentData, key: encryptionKey, keyData: keyData, segmentIndex: index)
             
             fileHandle.write(decrypted)
@@ -381,12 +412,13 @@ final class HLSDownloader: @unchecked Sendable {
                 return try await fetchData(url: url)
             } catch {
                 lastError = error
-                if isCancelled { throw HLSError.cancelled }
+                if isCancellationError(error) { throw currentCancellationError() }
                 
                 // Wait before retrying (exponential backoff)
                 if attempt < maxRetries - 1 {
                     let delay = UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
                     try await Task.sleep(nanoseconds: delay)
+                    try checkCancelled()
                 }
             }
         }
@@ -486,6 +518,61 @@ final class HLSDownloader: @unchecked Sendable {
         return baseDir.appendingPathComponent(urlString)
     }
 
+    private func checkCancelled() throws {
+        if Task.isCancelled {
+            throw currentCancellationError()
+        }
+
+        stateLock.lock()
+        let cancelled = isCancelled
+        let error = cancellationError
+        stateLock.unlock()
+
+        if cancelled {
+            throw error
+        }
+    }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let hlsError = error as? HLSError {
+            switch hlsError {
+            case .cancelled, .backgroundTimeExpired:
+                return true
+            default:
+                return false
+            }
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    private func currentCancellationError() -> HLSError {
+        stateLock.lock()
+        let error = cancellationError
+        stateLock.unlock()
+        return error
+    }
+
+    private func clearWorkerTask() {
+        stateLock.lock()
+        workerTask = nil
+        stateLock.unlock()
+    }
+
+    private func finish(_ result: Result<URL, Error>) {
+        stateLock.lock()
+        guard !didFinish else {
+            stateLock.unlock()
+            return
+        }
+        didFinish = true
+        stateLock.unlock()
+
+        onCompletion?(result)
+    }
+
     private func checkSystemBackoff() throws {
         #if canImport(UIKit)
         let thermalState = ProcessInfo.processInfo.thermalState
@@ -524,6 +611,7 @@ enum HLSError: LocalizedError {
     case httpError(statusCode: Int)
     case decryptionFailed(status: Int)
     case cancelled
+    case backgroundTimeExpired
     case couldNotCreateOutput
     case systemBackoff(reason: String)
     case unknownError
@@ -542,6 +630,8 @@ enum HLSError: LocalizedError {
             return "AES-128 decryption failed (status: \(status))"
         case .cancelled:
             return "Download was cancelled"
+        case .backgroundTimeExpired:
+            return "HLS download paused after iOS background time expired"
         case .couldNotCreateOutput:
             return "Could not create HLS output file"
         case .systemBackoff(let reason):

@@ -56,16 +56,20 @@ struct NetworkSectionWidget: View {
     
     @ViewBuilder
     private func networkCard(network: WidgetNetwork, items: [TMDBSearchResult]) -> some View {
+        let posterWidth: CGFloat = isIPad ? 100 : 80
+        let posterHeight: CGFloat = isIPad ? 150 : 120
+
         ZStack(alignment: .leading) {
             // Poster collage on the right
             HStack(spacing: -20) {
                 Spacer()
                 ForEach(Array(items.prefix(3).enumerated()), id: \.element.id) { index, item in
                     KFImage(URL(string: item.fullPosterURL ?? ""))
+                        .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                         .placeholder { Color.gray.opacity(0.3) }
                         .resizable()
                         .aspectRatio(2/3, contentMode: .fill)
-                        .frame(width: isIPad ? 100 : 80, height: isIPad ? 150 : 120)
+                        .frame(width: posterWidth, height: posterHeight)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .rotationEffect(.degrees(Double(index - 1) * 5))
                         .offset(y: index == 1 ? -5 : 5)
@@ -159,14 +163,18 @@ struct GenreSectionWidget: View {
     
     @ViewBuilder
     private func genreCard(genre: WidgetGenre, items: [TMDBSearchResult]) -> some View {
+        let posterWidth = 60 * iPadScale
+        let posterHeight = 80 * iPadScale
+
         HStack(spacing: 0) {
             // Poster thumbnail
             if let posterURL = items.first?.fullPosterURL {
                 KFImage(URL(string: posterURL))
+                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                     .placeholder { Color.gray.opacity(0.3) }
                     .resizable()
                     .aspectRatio(2/3, contentMode: .fill)
-                    .frame(width: 60 * iPadScale, height: 80 * iPadScale)
+                    .frame(width: posterWidth, height: posterHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .padding(.leading, 10)
                     .padding(.vertical, 10)
@@ -257,14 +265,18 @@ struct CompanySectionWidget: View {
     
     @ViewBuilder
     private func companyCard(company: WidgetCompany, items: [TMDBSearchResult]) -> some View {
+        let backdropWidth: CGFloat = isIPad ? 360 : 260
+        let backdropHeight: CGFloat = 100
+
         ZStack {
             // Backdrop from first item
             if let backdropURL = items.first?.fullBackdropURL {
                 KFImage(URL(string: backdropURL))
+                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: backdropWidth, height: backdropHeight)))
                     .placeholder { Color.gray.opacity(0.15) }
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(height: 100)
+                    .frame(height: backdropHeight)
                     .clipped()
                     .overlay(Color.black.opacity(0.55))
             } else {
@@ -316,11 +328,15 @@ struct RankedListWidget: View {
     
     @ViewBuilder
     private func rankedCard(title: String, items: [TMDBSearchResult]) -> some View {
+        let posterWidth: CGFloat = isIPad ? 112 : 86
+        let posterHeight: CGFloat = 140
+
         VStack(alignment: .leading, spacing: 0) {
             // Top: poster collage
             HStack(spacing: 4) {
                 ForEach(Array(items.prefix(3).enumerated()), id: \.element.id) { _, item in
                     KFImage(URL(string: item.fullPosterURL ?? ""))
+                        .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                         .placeholder { Color.gray.opacity(0.3) }
                         .resizable()
                         .aspectRatio(2/3, contentMode: .fill)
@@ -437,15 +453,18 @@ struct FeaturedSpotlightWidget: View {
     
     @ViewBuilder
     private func spotlightBanner(spotlight: TMDBSearchResult) -> some View {
+        let bannerHeight: CGFloat = isIPad ? 280 : 200
+
         ZStack(alignment: .bottomLeading) {
             // Large backdrop
             KFImage(URL(string: spotlight.fullBackdropURL ?? spotlight.fullPosterURL ?? ""))
+                .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: UIScreen.main.bounds.width, height: bannerHeight)))
                 .placeholder {
                     Rectangle().fill(Color.gray.opacity(0.2))
                 }
                 .resizable()
                 .aspectRatio(16/9, contentMode: .fill)
-                .frame(height: isIPad ? 280 : 200)
+                .frame(height: bannerHeight)
                 .clipped()
             
             // Gradient overlay
@@ -480,7 +499,7 @@ struct FeaturedSpotlightWidget: View {
             .padding(16)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: isIPad ? 280 : 200)
+        .frame(height: bannerHeight)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
@@ -491,26 +510,31 @@ struct FeaturedSpotlightWidget: View {
     
     @ViewBuilder
     private func spotlightSmallCard(item: TMDBSearchResult) -> some View {
+        let posterWidth = 120 * iPadScale
+        let posterHeight = 180 * iPadScale
+        let posterShadowRadius: CGFloat = isIPad ? 3 : 6
+
         VStack(alignment: .leading, spacing: 6) {
             KFImage(URL(string: item.fullPosterURL ?? ""))
+                .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                 .placeholder {
                     FallbackImageView(
                         isMovie: item.isMovie,
-                        size: CGSize(width: 120, height: 180)
+                        size: CGSize(width: posterWidth, height: posterHeight)
                     )
                 }
                 .resizable()
                 .aspectRatio(2/3, contentMode: .fill)
-                .frame(width: 120 * iPadScale, height: 180 * iPadScale)
+                .frame(width: posterWidth, height: posterHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 3)
+                .shadow(color: .black.opacity(0.25), radius: posterShadowRadius, x: 0, y: 3)
             
             Text(item.displayTitle)
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundColor(.white)
                 .lineLimit(1)
-                .frame(width: 120 * iPadScale, alignment: .leading)
+                .frame(width: posterWidth, alignment: .leading)
             
             HStack(spacing: 4) {
                 if !item.displayDate.isEmpty {
@@ -520,7 +544,7 @@ struct FeaturedSpotlightWidget: View {
                         .foregroundColor(.white.opacity(0.6))
                 }
             }
-            .frame(width: 120 * iPadScale, alignment: .leading)
+            .frame(width: posterWidth, alignment: .leading)
         }
     }
 }
