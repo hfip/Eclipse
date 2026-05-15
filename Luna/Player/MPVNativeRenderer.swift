@@ -336,6 +336,15 @@ private final class MPVPiPBridge {
             Logger.shared.log("[MPVPiPBridge] failed to create sample buffer result=\(result)", type: "MPV")
             return
         }
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
+           CFArrayGetCount(attachments) > 0 {
+            let attachment = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(
+                attachment,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+            )
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -436,6 +445,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private let eventQueueGroup = DispatchGroup()
     private var foregroundDisplayLink: CADisplayLink?
     private var foregroundDisplayLinkTarget: MPVForegroundDisplayLinkTarget?
+    private var pipRenderTimer: DispatchSourceTimer?
 
     private var mpv: OpaquePointer?
     private var renderContext: OpaquePointer?
@@ -471,6 +481,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastDurationLogValue: Double = -1
     private var lastTrackSummary = ""
     private var lastPlaybackErrorMessage: String?
+    private var selectedVideoTrackID: Int?
 
     weak var delegate: MPVNativeRendererDelegate?
 
@@ -592,6 +603,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         isRunning = false
         isStopping = true
         stopForegroundDisplayLink(reason: "stop")
+        stopPiPRenderLoop(reason: "stop")
 
         destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
@@ -688,6 +700,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func prepareForPictureInPictureStart() {
         guard isRunning, currentMode != .pictureInPicture else { return }
         logMPV("switching to capped sample-buffer PiP render path")
+        rememberSelectedVideoTrack(reason: "enter-pip")
         stopForegroundDisplayLink(reason: "enter-pip")
         pipBridge.clearPrimedFrameState()
         destroyRenderContext()
@@ -705,9 +718,12 @@ final class MPVNativeRenderer: PlayerRenderer {
         do {
             refreshVideoState()
             try createSoftwareRenderContext()
+            restoreSelectedVideoTrack(reason: "enter-pip")
+            startPiPRenderLoop(reason: "enter-pip")
             requestRenderBurst(reason: "enter-pip", count: 8, interval: 0.06)
         } catch {
             logMPV("failed to enter PiP render mode: \(error)")
+            stopPiPRenderLoop(reason: "pip-enter-failed")
             currentMode = .openGL
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -733,6 +749,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             return
         }
         logMPV("restoring OpenGL render path after PiP")
+        stopPiPRenderLoop(reason: "finish-pip")
         destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
         currentMode = .openGL
@@ -745,6 +762,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
         do {
             try createOpenGLRenderContext()
+            restoreSelectedVideoTrack(reason: "finish-pip")
+            refreshVideoState()
             resumeForegroundRendering(reason: "finish-pip")
         } catch {
             logMPV("failed to restore OpenGL render path: \(error)")
@@ -947,6 +966,52 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
     }
 
+    private func startPiPRenderLoop(reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.isRunning,
+                  !self.isStopping,
+                  self.currentMode == .pictureInPicture,
+                  self.pipRenderTimer == nil else {
+                return
+            }
+
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now(), repeating: self.pipFrameInterval, leeway: .milliseconds(8))
+            timer.setEventHandler { [weak self] in
+                guard let self,
+                      self.isRunning,
+                      !self.isStopping,
+                      self.currentMode == .pictureInPicture else {
+                    self?.stopPiPRenderLoop(reason: "pip-loop-ended")
+                    return
+                }
+                if !self.isPaused || self.forcedPiPRenderCount > 0 {
+                    self.renderPiPFrame(force: true)
+                }
+            }
+            self.pipRenderTimer = timer
+            timer.resume()
+            self.logMPV("PiP render loop started reason=\(reason) fps=24")
+        }
+    }
+
+    private func stopPiPRenderLoop(reason: String) {
+        let stop = { [weak self] in
+            guard let self, let timer = self.pipRenderTimer else { return }
+            timer.setEventHandler {}
+            timer.cancel()
+            self.pipRenderTimer = nil
+            self.logMPV("PiP render loop stopped reason=\(reason)")
+        }
+
+        if Thread.isMainThread {
+            stop()
+        } else {
+            DispatchQueue.main.sync(execute: stop)
+        }
+    }
+
     fileprivate func handleForegroundDisplayLink(_ link: CADisplayLink) {
         guard isRunning, !isStopping, currentMode == .openGL else {
             stopForegroundDisplayLink(reason: "not-openGL")
@@ -1071,13 +1136,13 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
     }
 
-    private func renderPiPFrame() {
+    private func renderPiPFrame(force: Bool = false) {
         guard isRunning, !isStopping, currentMode == .pictureInPicture, let context = renderContext else { return }
         lastPiPRenderTime = CACurrentMediaTime()
         let updateFlags = UInt32(mpv_render_context_update(context))
-        let shouldForceRender = forcedPiPRenderCount > 0
+        let shouldForceRender = force || forcedPiPRenderCount > 0
         if shouldForceRender {
-            forcedPiPRenderCount -= 1
+            forcedPiPRenderCount = max(0, forcedPiPRenderCount - 1)
         }
         if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
             pipBridge.render(context: context, videoSize: currentPiPRenderSize())
@@ -1190,6 +1255,9 @@ final class MPVNativeRenderer: PlayerRenderer {
         getProperty(handle: handle, name: "dheight", format: MPV_FORMAT_INT64, value: &height)
         updateVideoSize(width: Int(width), height: Int(height))
         logMPV("video state width=\(width) height=\(height) glBounds=\(String(format: "%.0fx%.0f", glView.bounds.width, glView.bounds.height)) drawable=\(glView.drawableWidth)x\(glView.drawableHeight)")
+        if width <= 0 || height <= 0 {
+            restoreSelectedVideoTrack(reason: "zero-video-size-\(currentMode)")
+        }
         scheduleRender()
     }
 
@@ -1443,8 +1511,45 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
     }
 
+    private func rememberSelectedVideoTrack(reason: String) {
+        let tracks = fetchTrackList()
+        if let selected = tracks.first(where: { $0.type == "video" && $0.selected })?.id {
+            selectedVideoTrackID = selected
+            logMPV("remembered selected video track id=\(selected) reason=\(reason)")
+            return
+        }
+
+        guard selectedVideoTrackID == nil,
+              let fallback = tracks.first(where: { $0.type == "video" })?.id else {
+            return
+        }
+        selectedVideoTrackID = fallback
+        logMPV("remembered fallback video track id=\(fallback) reason=\(reason)")
+    }
+
+    private func restoreSelectedVideoTrack(reason: String) {
+        guard mpv != nil else { return }
+        let tracks = fetchTrackList()
+        let videoTrackIDs = tracks.filter { $0.type == "video" }.map(\.id)
+        guard !videoTrackIDs.isEmpty else { return }
+
+        let target = selectedVideoTrackID.flatMap { videoTrackIDs.contains($0) ? $0 : nil } ?? videoTrackIDs[0]
+        if tracks.contains(where: { $0.type == "video" && $0.id == target && $0.selected }) {
+            return
+        }
+
+        selectedVideoTrackID = target
+        logMPV("restoring video track id=\(target) reason=\(reason)")
+        setProperty(name: "vid", value: "\(target)")
+    }
+
     private func logTrackSummaryIfChanged(reason: String) {
         let tracks = fetchTrackList()
+        let videoCount = tracks.filter { $0.type == "video" }.count
+        let selectedVideo = tracks.first(where: { $0.type == "video" && $0.selected })?.id
+        if let selectedVideo {
+            selectedVideoTrackID = selectedVideo
+        }
         let audioCount = tracks.filter { $0.type == "audio" }.count
         let subtitleCount = tracks.filter { $0.type == "sub" }.count
         let selectedAudio = tracks.first(where: { $0.type == "audio" && $0.selected })?.id ?? -1
@@ -1453,10 +1558,13 @@ final class MPVNativeRenderer: PlayerRenderer {
             let selected = track.selected ? "*" : ""
             return "\(track.type)#\(track.id)\(selected):\(track.title)"
         }.joined(separator: "|")
-        let summary = "audio=\(audioCount) selectedAudio=\(selectedAudio) subs=\(subtitleCount) selectedSub=\(selectedSubtitle) preview=\(preview)"
+        let summary = "video=\(videoCount) selectedVideo=\(selectedVideo ?? -1) audio=\(audioCount) selectedAudio=\(selectedAudio) subs=\(subtitleCount) selectedSub=\(selectedSubtitle) preview=\(preview)"
         guard summary != lastTrackSummary else { return }
         lastTrackSummary = summary
         logMPV("tracks changed reason=\(reason) \(summary)")
+        if currentMode == .pictureInPicture, selectedVideo == nil {
+            restoreSelectedVideoTrack(reason: "track-list-\(reason)")
+        }
     }
 
     private func describe(url: URL) -> String {

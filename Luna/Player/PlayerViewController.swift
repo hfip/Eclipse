@@ -6621,10 +6621,15 @@ extension PlayerViewController: PiPControllerDelegate {
         updatePiPButtonVisibility()
     }
     func pipController(_ controller: PiPController, restoreUserInterfaceForPictureInPictureStop completionHandler: @escaping (Bool) -> Void) {
-        if presentedViewController != nil {
-            dismiss(animated: true) { completionHandler(true) }
-        } else {
+        let completeRestore: () -> Void = { [weak self] in
+            self?.rendererFinishPictureInPicture()
+            self?.updatePiPButtonVisibility()
             completionHandler(true)
+        }
+        if presentedViewController != nil {
+            dismiss(animated: true) { completeRestore() }
+        } else {
+            completeRestore()
         }
     }
     func pipControllerPlay(_ controller: PiPController) {
