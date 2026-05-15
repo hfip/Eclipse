@@ -17,6 +17,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     @Binding var selectedEpisodeForSearch: TMDBEpisode?
     @Binding var specialEpisodeContext: SpecialEpisodeListContext?
     let seasonSelectorInsertedContent: AnyView
+    let hasSpecialEpisodeChoices: Bool
     var animeEpisodes: [AniListEpisode]? = nil
     var animeSeasonTitles: [Int: String]? = nil
     var animeSeasonRomajiTitles: [Int: String] = [:]
@@ -51,6 +52,10 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     
     private var useSeasonMenu: Bool {
         return UserDefaults.standard.bool(forKey: "seasonMenu")
+    }
+
+    private func shouldShowSeasonSwitcher(for seasons: [TMDBSeason]) -> Bool {
+        seasons.count > 1 || (isAnime && !seasons.isEmpty && (hasSpecialEpisodeChoices || specialEpisodeContext != nil))
     }
 
     private var hasActiveSources: Bool {
@@ -171,7 +176,9 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 
                 if !tvShow.seasons.isEmpty {
                     let _ = Logger.shared.log("TVShowSeasonsSection body branch seasons-present: showId=\(tvShow.id) seasons=\(tvShow.seasons.count)", type: "CrashProbe")
-                    if isGroupedBySeasons && !useSeasonMenu {
+                    let regularSeasons = tvShow.seasons.filter { $0.seasonNumber > 0 }
+                    let showSeasonSwitcher = shouldShowSeasonSwitcher(for: regularSeasons)
+                    if showSeasonSwitcher && !useSeasonMenu {
                         let _ = Logger.shared.log("TVShowSeasonsSection body branch styled selector: showId=\(tvShow.id)", type: "CrashProbe")
                         HStack {
                             Text("Seasons")
@@ -343,7 +350,9 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     
     @ViewBuilder
     private var episodesSectionHeader: some View {
-        let _ = Logger.shared.log("TVShowSeasonsSection construct episodesSectionHeader: showId=\(tvShow?.id ?? 0) hasSeasonDetail=\(seasonDetail != nil) hasActiveSources=\(hasActiveSources) grouped=\(isGroupedBySeasons) menu=\(useSeasonMenu)", type: "CrashProbe")
+        let regularSeasons = tvShow?.seasons.filter { $0.seasonNumber > 0 } ?? []
+        let showSeasonSwitcher = shouldShowSeasonSwitcher(for: regularSeasons)
+        let _ = Logger.shared.log("TVShowSeasonsSection construct episodesSectionHeader: showId=\(tvShow?.id ?? 0) hasSeasonDetail=\(seasonDetail != nil) hasActiveSources=\(hasActiveSources) grouped=\(isGroupedBySeasons) switcher=\(showSeasonSwitcher) menu=\(useSeasonMenu)", type: "CrashProbe")
         HStack {
             Text(specialEpisodeContext?.title ?? "Episodes")
                 .font(.title2)
@@ -361,7 +370,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 .disabled(isDownloadingAll)
             }
             
-            if let tvShow = tvShow, isGroupedBySeasons && useSeasonMenu {
+            if let tvShow = tvShow, showSeasonSwitcher && useSeasonMenu {
                 seasonMenu(for: tvShow)
             }
         }
@@ -374,7 +383,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         let seasons = tvShow.seasons.filter { $0.seasonNumber > 0 }
         let _ = Logger.shared.log("TVShowSeasonsSection construct seasonMenu: showId=\(tvShow.id) seasons=\(seasons.count) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
         
-        if seasons.count > 1 {
+        if shouldShowSeasonSwitcher(for: seasons) {
             Menu {
                 ForEach(seasons) { season in
                     Button(action: {
@@ -382,7 +391,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                     }) {
                         HStack {
                             Text(season.name)
-                            if selectedSeason?.id == season.id {
+                            if specialEpisodeContext == nil && selectedSeason?.id == season.id {
                                 Spacer()
                                 Image(systemName: "checkmark")
                             }
@@ -410,7 +419,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         if let tvShow = tvShow {
             let seasons = tvShow.seasons.filter { $0.seasonNumber > 0 }
             let _ = Logger.shared.log("TVShowSeasonsSection construct seasonSelectorStyled: showId=\(tvShow.id) seasons=\(seasons.count) selected=\(selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
-            if seasons.count > 1 {
+            if shouldShowSeasonSwitcher(for: seasons) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         ForEach(seasons) { season in
@@ -418,7 +427,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                                 selectSeason(season, tvShowId: tvShow.id)
                             }) {
                                 VStack(spacing: 8) {
-                                    KFImage(URL(string: season.fullPosterURL ?? ""))
+                                    KFImage(URL(string: season.fullPosterURL ?? tvShow.fullPosterURL ?? ""))
                                         .placeholder {
                                             Rectangle()
                                                 .fill(Color.gray.opacity(0.3))
@@ -441,7 +450,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 12))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 12)
-                                                .stroke(selectedSeason?.id == season.id ? Color.accentColor : Color.clear, lineWidth: 2)
+                                                .stroke(specialEpisodeContext == nil && selectedSeason?.id == season.id ? Color.accentColor : Color.clear, lineWidth: 2)
                                         )
                                     
                                     Text(season.name)
@@ -450,7 +459,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                                         .lineLimit(1)
                                         .multilineTextAlignment(.center)
                                         .frame(width: 80)
-                                        .foregroundColor(selectedSeason?.id == season.id ? .accentColor : .white)
+                                        .foregroundColor(specialEpisodeContext == nil && selectedSeason?.id == season.id ? .accentColor : .white)
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -748,11 +757,15 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
 
     private func selectSeason(_ season: TMDBSeason, tvShowId: Int) {
         Logger.shared.log("TVShowSeasonsSection selectSeason begin: showId=\(tvShowId) season=\(season.seasonNumber)", type: "CrashProbe")
+        let wasShowingSpecial = specialEpisodeContext != nil
         specialEpisodeContext = nil
         selectedEpisodePlaybackContext = nil
         downloadEpisodePlaybackContext = nil
         downloadAllSpecialContext = nil
         selectedSeason = season
+        if wasShowingSpecial {
+            selectedEpisodeForSearch = seasonDetail?.episodes.first
+        }
         currentSeasonTitle = isAnime ? (animeSeasonTitles?[season.seasonNumber] ?? season.name) : nil
         Logger.shared.log("TVShowSeasonsSection selected season: showId=\(tvShowId) season=\(season.seasonNumber)", type: "CrashProbe")
         loadSeasonDetails(tvShowId: tvShowId, season: season)
@@ -763,6 +776,9 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         guard seasonDetail?.seasonNumber != season.seasonNumber || seasonDetail?.id != season.id else {
             currentSeasonTitle = isAnime ? (animeSeasonTitles?[season.seasonNumber] ?? season.name) : nil
             isLoadingSeason = false
+            if specialEpisodeContext == nil, let firstEpisode = seasonDetail?.episodes.first {
+                selectedEpisodeForSearch = firstEpisode
+            }
             Logger.shared.log("TVShowSeasonsSection loadSeasonDetails skipped existing detail: showId=\(tvShowId) season=\(season.seasonNumber) episodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
             return
         }

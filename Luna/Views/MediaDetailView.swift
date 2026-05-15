@@ -736,6 +736,7 @@ struct MediaDetailView: View {
                 selectedEpisodeForSearch: $selectedEpisodeForSearch,
                 specialEpisodeContext: $selectedSpecialEpisodeContext,
                 seasonSelectorInsertedContent: AnyView(specialsOVASection),
+                hasSpecialEpisodeChoices: !animeSpecialEntries.isEmpty,
                 animeEpisodes: anilistEpisodes,
                 animeSeasonTitles: animeSeasonTitles,
                 animeSeasonRomajiTitles: animeSeasonRomajiTitles,
