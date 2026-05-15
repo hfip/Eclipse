@@ -115,6 +115,13 @@ class EclipseAppContainer(
     val trackerRepository: TrackerRepository = TrackerRepository(
         trackerStore = trackerStore,
         progressRepository = progressRepository,
+        syncClient = TrackerSyncClient(
+            traktClientId = BuildConfig.TRAKT_CLIENT_ID,
+        ),
+        aniListClientId = BuildConfig.ANILIST_CLIENT_ID,
+        aniListClientSecret = BuildConfig.ANILIST_CLIENT_SECRET,
+        traktClientId = BuildConfig.TRAKT_CLIENT_ID,
+        traktClientSecret = BuildConfig.TRAKT_CLIENT_SECRET,
         myAnimeListClientId = BuildConfig.MAL_CLIENT_ID,
         myAnimeListClientSecret = BuildConfig.MAL_CLIENT_SECRET,
     )

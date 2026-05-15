@@ -70,6 +70,7 @@ internal data class TrackerItemSyncResult(
 
 class TrackerSyncClient(
     private val httpClient: EclipseHttpClient = EclipseHttpClient(),
+    private val traktClientId: String = "",
 ) {
     private val aniListToMalAnimeIdCache = mutableMapOf<Int, Int>()
 
@@ -131,6 +132,10 @@ class TrackerSyncClient(
         account: TrackerAccountSnapshot,
         item: TrackerSyncItem,
     ): TrackerItemSyncResult {
+        val configuredTraktClientId = traktClientId.trim()
+        if (configuredTraktClientId.isBlank()) {
+            return TrackerItemSyncResult(skipped = true, message = "Trakt sync needs TRAKT_CLIENT_ID.")
+        }
         if (!item.isWatchedEnough) {
             return TrackerItemSyncResult(skipped = true, message = "Trakt history waits until 85% watched.")
         }
@@ -142,7 +147,7 @@ class TrackerSyncClient(
                 body = EclipseJson.encodeToString(payload),
                 headers = mapOf(
                     "Authorization" to "Bearer ${account.accessToken}",
-                    "trakt-api-key" to TraktClientId,
+                    "trakt-api-key" to configuredTraktClientId,
                     "trakt-api-version" to "2",
                 ),
             )
@@ -326,5 +331,3 @@ private fun String.graphQlErrorMessage(): String? =
 private fun Int.s(): String = if (this == 1) "" else "s"
 
 internal const val TrackerWatchedThreshold = 0.85
-
-private const val TraktClientId = "e92207aaef82a1b0b42d5901efa4756b6c417911b7b031b986d37773c234ccab"

@@ -1,15 +1,28 @@
-val tmdbApiKey = providers.gradleProperty("TMDB_API_KEY")
-    .orElse(providers.environmentVariable("TMDB_API_KEY"))
-    .orElse("738b4edd0a156cc126dc4a4b8aea4aca")
-    .get()
-val malClientId = providers.gradleProperty("MAL_CLIENT_ID")
-    .orElse(providers.environmentVariable("MAL_CLIENT_ID"))
-    .orElse("")
-    .get()
-val malClientSecret = providers.gradleProperty("MAL_CLIENT_SECRET")
-    .orElse(providers.environmentVariable("MAL_CLIENT_SECRET"))
-    .orElse("")
-    .get()
+import java.util.Properties
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.isFile) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+fun secretProperty(name: String): String =
+    providers.gradleProperty(name)
+        .orElse(providers.environmentVariable(name))
+        .orElse(localProperties.getProperty(name, ""))
+        .get()
+
+fun buildConfigString(value: String): String =
+    "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val tmdbApiKey = secretProperty("TMDB_API_KEY")
+val anilistClientId = secretProperty("ANILIST_CLIENT_ID")
+val anilistClientSecret = secretProperty("ANILIST_CLIENT_SECRET")
+val traktClientId = secretProperty("TRAKT_CLIENT_ID")
+val traktClientSecret = secretProperty("TRAKT_CLIENT_SECRET")
+val malClientId = secretProperty("MAL_CLIENT_ID")
+val malClientSecret = secretProperty("MAL_CLIENT_SECRET")
 
 plugins {
     alias(libs.plugins.android.application)
@@ -27,9 +40,13 @@ android {
         targetSdk = 36
         versionCode = 3
         versionName = "1.0.2"
-        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
-        buildConfigField("String", "MAL_CLIENT_ID", "\"$malClientId\"")
-        buildConfigField("String", "MAL_CLIENT_SECRET", "\"$malClientSecret\"")
+        buildConfigField("String", "TMDB_API_KEY", buildConfigString(tmdbApiKey))
+        buildConfigField("String", "ANILIST_CLIENT_ID", buildConfigString(anilistClientId))
+        buildConfigField("String", "ANILIST_CLIENT_SECRET", buildConfigString(anilistClientSecret))
+        buildConfigField("String", "TRAKT_CLIENT_ID", buildConfigString(traktClientId))
+        buildConfigField("String", "TRAKT_CLIENT_SECRET", buildConfigString(traktClientSecret))
+        buildConfigField("String", "MAL_CLIENT_ID", buildConfigString(malClientId))
+        buildConfigField("String", "MAL_CLIENT_SECRET", buildConfigString(malClientSecret))
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

@@ -148,11 +148,22 @@ final class TrackerManager: NSObject, ObservableObject {
     private var syncSuppressedDuringBackupRestore = false
     private let backupRestoreSyncQueue = DispatchQueue(label: "com.luna.backupRestoreSync")
 
-    // OAuth config (redirects can be overridden via Info.plist keys AniListRedirectUri / TraktRedirectUri)
-    private let anilistClientId = "33908"
-    private let anilistClientSecret = "1TeOfbdHy3Uk88UQdE8HKoJDtdI5ARHP4sDCi5Jh"
+    // OAuth config is supplied by ignored local build settings.
+    private func bundledCredential(_ key: String) -> String {
+        let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.contains("$(") ? "" : trimmed
+    }
+
+    private var anilistClientId: String {
+        bundledCredential("AniListClientID")
+    }
+    private var anilistClientSecret: String {
+        bundledCredential("AniListClientSecret")
+    }
     private var anilistRedirectUri: String {
-        Bundle.main.object(forInfoDictionaryKey: "AniListRedirectUri") as? String ?? "luna://anilist-callback"
+        let configured = bundledCredential("AniListRedirectUri")
+        return configured.isEmpty ? "luna://anilist-callback" : configured
     }
 
     private var malClientId: String {
@@ -171,10 +182,15 @@ final class TrackerManager: NSObject, ObservableObject {
     }
     private var pendingMALCodeVerifier: String?
 
-    private let traktClientId = "e92207aaef82a1b0b42d5901efa4756b6c417911b7b031b986d37773c234ccab"
-    private let traktClientSecret = "03c457ea5986e900f140243c69d616313533cedcc776e42e07a6ddd3ab699035"
+    private var traktClientId: String {
+        bundledCredential("TraktClientID")
+    }
+    private var traktClientSecret: String {
+        bundledCredential("TraktClientSecret")
+    }
     private var traktRedirectUri: String {
-        Bundle.main.object(forInfoDictionaryKey: "TraktRedirectUri") as? String ?? "luna://trakt-callback"
+        let configured = bundledCredential("TraktRedirectUri")
+        return configured.isEmpty ? "luna://trakt-callback" : configured
     }
 
     override private init() {
@@ -339,6 +355,11 @@ final class TrackerManager: NSObject, ObservableObject {
     // MARK: - AniList Authentication
 
     func getAniListAuthURL() -> URL? {
+        guard !anilistClientId.isEmpty, !anilistClientSecret.isEmpty else {
+            authError = "Add ANILIST_CLIENT_ID and ANILIST_CLIENT_SECRET to Build.local.xcconfig before connecting AniList."
+            return nil
+        }
+
         var components = URLComponents(string: "https://anilist.co/api/v2/oauth/authorize")
         components?.queryItems = [
             URLQueryItem(name: "client_id", value: anilistClientId),
@@ -468,6 +489,10 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private func exchangeAniListCode(_ code: String) async throws -> AniListAuthResponse {
+        guard !anilistClientId.isEmpty, !anilistClientSecret.isEmpty else {
+            throw NSError(domain: "AniListAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "AniList credentials are not configured."])
+        }
+
         let url = URL(string: "https://anilist.co/api/v2/oauth/token")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -764,6 +789,11 @@ final class TrackerManager: NSObject, ObservableObject {
     // MARK: - Trakt Authentication
 
     func getTraktAuthURL() -> URL? {
+        guard !traktClientId.isEmpty, !traktClientSecret.isEmpty else {
+            authError = "Add TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET to Build.local.xcconfig before connecting Trakt."
+            return nil
+        }
+
         var components = URLComponents(string: "https://trakt.tv/oauth/authorize")
         components?.queryItems = [
             URLQueryItem(name: "client_id", value: traktClientId),
@@ -893,6 +923,10 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private func exchangeTraktCode(_ code: String) async throws -> TraktAuthResponse {
+        guard !traktClientId.isEmpty, !traktClientSecret.isEmpty else {
+            throw NSError(domain: "TraktAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Trakt credentials are not configured."])
+        }
+
         let url = URL(string: "https://api.trakt.tv/oauth/token")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -935,6 +969,10 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private func fetchTraktUser(token: String) async throws -> TraktUser {
+        guard !traktClientId.isEmpty else {
+            throw NSError(domain: "TraktAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "TRAKT_CLIENT_ID is not configured."])
+        }
+
         let url = URL(string: "https://api.trakt.tv/users/me")!
         var request = URLRequest(url: url)
         request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
@@ -1652,6 +1690,11 @@ final class TrackerManager: NSObject, ObservableObject {
         ]
 
         do {
+            guard !traktClientId.isEmpty else {
+                Logger.shared.log("Skipping Trakt sync because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
+                return
+            }
+
             let url = URL(string: "https://api.trakt.tv/sync/history")!
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -1690,6 +1733,11 @@ final class TrackerManager: NSObject, ObservableObject {
         ]
 
         do {
+            guard !traktClientId.isEmpty else {
+                Logger.shared.log("Skipping Trakt scrobble because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
+                return
+            }
+
             let url = URL(string: "https://api.trakt.tv/scrobble/pause")!
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -1711,6 +1759,11 @@ final class TrackerManager: NSObject, ObservableObject {
 
     private func getTraktIdFromTmdbId(_ tmdbId: Int) async -> Int? {
         do {
+            guard !traktClientId.isEmpty else {
+                Logger.shared.log("Skipping Trakt TMDB lookup because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
+                return nil
+            }
+
             let url = URL(string: "https://api.trakt.tv/search/tmdb/\(tmdbId)?type=show")!
             var request = URLRequest(url: url)
             request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")

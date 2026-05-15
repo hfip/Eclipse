@@ -1,0 +1,10 @@
+# Copy this file to local.properties and fill in your own values.
+# local.properties is ignored by Git.
+
+TMDB_API_KEY=
+ANILIST_CLIENT_ID=
+ANILIST_CLIENT_SECRET=
+TRAKT_CLIENT_ID=
+TRAKT_CLIENT_SECRET=
+MAL_CLIENT_ID=
+MAL_CLIENT_SECRET=

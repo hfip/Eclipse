@@ -69,6 +69,10 @@ class TrackerRepository(
     private val progressRepository: ProgressRepository,
     private val syncClient: TrackerSyncClient = TrackerSyncClient(),
     private val httpClient: EclipseHttpClient = EclipseHttpClient(),
+    private val aniListClientId: String = "",
+    private val aniListClientSecret: String = "",
+    private val traktClientId: String = "",
+    private val traktClientSecret: String = "",
     private val myAnimeListClientId: String = "",
     private val myAnimeListClientSecret: String = "",
 ) {
@@ -84,7 +88,7 @@ class TrackerRepository(
         if (service.isMyAnimeListService()) {
             myAnimeListAuthorizationUrl()
         } else {
-            service.oauthProvider()?.authorizationUrl()
+            service.oauthProvider()?.let(::authorizationUrl)
         }
 
     suspend fun exchangeOAuthCallback(callbackUri: String): Result<TrackerStateSnapshot> = runCatching {
@@ -647,15 +651,49 @@ class TrackerRepository(
         )
     }
 
+    private fun authorizationUrl(provider: OAuthProvider): String? {
+        val credentials = provider.credentialsOrNull() ?: return null
+        return Uri.parse(provider.authorizeUrl)
+            .buildUpon()
+            .appendQueryParameter("client_id", credentials.clientId)
+            .appendQueryParameter("redirect_uri", provider.redirectUri)
+            .appendQueryParameter("response_type", "code")
+            .build()
+            .toString()
+    }
+
+    private fun OAuthProvider.credentialsOrNull(): OAuthCredentials? {
+        val clientId = when (this) {
+            OAuthProvider.AniList -> aniListClientId
+            OAuthProvider.Trakt -> traktClientId
+        }.trim()
+        val clientSecret = when (this) {
+            OAuthProvider.AniList -> aniListClientSecret
+            OAuthProvider.Trakt -> traktClientSecret
+        }.trim()
+        if (clientId.isBlank() || clientSecret.isBlank()) return null
+        return OAuthCredentials(clientId = clientId, clientSecret = clientSecret)
+    }
+
+    private fun OAuthProvider.credentialsOrError(): OAuthCredentials =
+        credentialsOrNull() ?: error("$service OAuth needs ${requiredConfigNames()}.")
+
+    private fun OAuthProvider.requiredConfigNames(): String =
+        when (this) {
+            OAuthProvider.AniList -> "ANILIST_CLIENT_ID and ANILIST_CLIENT_SECRET"
+            OAuthProvider.Trakt -> "TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET"
+        }
+
     private suspend fun exchangeAuthorizationCode(
         provider: OAuthProvider,
         code: String,
     ): OAuthTokenResponse {
+        val credentials = provider.credentialsOrError()
         val body = EclipseJson.encodeToString(
             OAuthTokenRequest(
                 grantType = "authorization_code",
-                clientId = provider.clientId,
-                clientSecret = provider.clientSecret,
+                clientId = credentials.clientId,
+                clientSecret = credentials.clientSecret,
                 redirectUri = provider.redirectUri,
                 code = code,
             ),
@@ -677,11 +715,12 @@ class TrackerRepository(
         provider: OAuthProvider,
         refreshToken: String,
     ): OAuthTokenResponse {
+        val credentials = provider.credentialsOrError()
         val body = EclipseJson.encodeToString(
             OAuthTokenRequest(
                 grantType = "refresh_token",
-                clientId = provider.clientId,
-                clientSecret = provider.clientSecret,
+                clientId = credentials.clientId,
+                clientSecret = credentials.clientSecret,
                 redirectUri = provider.redirectUri,
                 refreshToken = refreshToken,
             ),
@@ -828,11 +867,12 @@ class TrackerRepository(
     }
 
     private suspend fun fetchTraktIdentity(accessToken: String): TrackerIdentity {
+        val credentials = OAuthProvider.Trakt.credentialsOrError()
         return when (
             val result = httpClient.get(
                 url = "https://api.trakt.tv/users/settings",
                 headers = accessToken.bearerAuthorizationHeader() + mapOf(
-                    "trakt-api-key" to OAuthProvider.Trakt.clientId,
+                    "trakt-api-key" to credentials.clientId,
                     "trakt-api-version" to "2",
                 ),
             )
@@ -1131,13 +1171,16 @@ class TrackerRepository(
     }
 }
 
+private data class OAuthCredentials(
+    val clientId: String,
+    val clientSecret: String,
+)
+
 private enum class OAuthProvider(
     val service: String,
     val callbackHost: String,
     val authorizeUrl: String,
     val tokenUrl: String,
-    val clientId: String,
-    val clientSecret: String,
     val redirectUri: String,
 ) {
     AniList(
@@ -1145,8 +1188,6 @@ private enum class OAuthProvider(
         callbackHost = "anilist-callback",
         authorizeUrl = "https://anilist.co/api/v2/oauth/authorize",
         tokenUrl = "https://anilist.co/api/v2/oauth/token",
-        clientId = "33908",
-        clientSecret = "1TeOfbdHy3Uk88UQdE8HKoJDtdI5ARHP4sDCi5Jh",
         redirectUri = "luna://anilist-callback",
     ),
     Trakt(
@@ -1154,19 +1195,8 @@ private enum class OAuthProvider(
         callbackHost = "trakt-callback",
         authorizeUrl = "https://trakt.tv/oauth/authorize",
         tokenUrl = "https://api.trakt.tv/oauth/token",
-        clientId = "e92207aaef82a1b0b42d5901efa4756b6c417911b7b031b986d37773c234ccab",
-        clientSecret = "03c457ea5986e900f140243c69d616313533cedcc776e42e07a6ddd3ab699035",
         redirectUri = "luna://trakt-callback",
     );
-
-    fun authorizationUrl(): String =
-        Uri.parse(authorizeUrl)
-            .buildUpon()
-            .appendQueryParameter("client_id", clientId)
-            .appendQueryParameter("redirect_uri", redirectUri)
-            .appendQueryParameter("response_type", "code")
-            .build()
-            .toString()
 }
 
 @Serializable

@@ -18,6 +18,11 @@ struct SettingsView: View {
     @AppStorage("showKanzen") private var showKanzen: Bool = false
     @State private var scrollOffset: CGFloat = 0
     @State private var isCheckingGitHubRelease = false
+
+    private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
+    private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Luna")!
+    private let originalProjectURL = URL(string: "https://github.com/cranci1/Luna")!
+    private let licenseURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
     
     let languages = [
         ("en-US", "English (US)"),
@@ -211,6 +216,28 @@ struct SettingsView: View {
                             GlassSettingsRow(icon: "book.fill", iconColor: .orange, title: "Switch to Reader Mode")
                         }
                         .buttonStyle(.plain)
+
+                        GlassDivider()
+
+                        NavigationLink(destination: LegalNoticeView(
+                            sourceCodeURL: sourceCodeURL,
+                            originalProjectURL: originalProjectURL,
+                            licenseURL: licenseURL
+                        )) {
+                            GlassSettingsRow(icon: "scroll.fill", iconColor: .cyan, title: "Legal & Source")
+                        }
+                        .buttonStyle(.plain)
+
+                        GlassDivider()
+
+                        Link(destination: patreonURL) {
+                            GlassSettingsRow(icon: "heart.fill", iconColor: .pink, title: "Support on Patreon") {
+                                Text("Optional")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -361,6 +388,16 @@ struct SettingsView: View {
         Section {
             Text("Switch to Reader Mode")
                 .onTapGesture { showKanzen = true }
+
+            NavigationLink(destination: LegalNoticeView(
+                sourceCodeURL: sourceCodeURL,
+                originalProjectURL: originalProjectURL,
+                licenseURL: licenseURL
+            )) {
+                Text("Legal & Source")
+            }
+
+            Link("Support on Patreon", destination: patreonURL)
         } header: {
             Text("Others")
         }
@@ -377,6 +414,33 @@ struct SettingsView: View {
                 isCheckingGitHubRelease = false
             }
         }
+    }
+}
+
+struct LegalNoticeView: View {
+    let sourceCodeURL: URL
+    let originalProjectURL: URL
+    let licenseURL: URL
+
+    var body: some View {
+        List {
+            Section("License") {
+                Text("Eclipse is released under the GNU General Public License version 3.")
+                Link("View GPLv3 License", destination: licenseURL)
+            }
+
+            Section("Source") {
+                Text("Eclipse is a modified fork of Luna. This fork was modified by Soupy-dev in 2026.")
+                Link("Eclipse Source Code", destination: sourceCodeURL)
+                Link("Original Luna Project", destination: originalProjectURL)
+            }
+
+            Section("Warranty") {
+                Text("This program comes with no warranty, to the extent permitted by law.")
+            }
+        }
+        .navigationTitle("Legal & Source")
+        .lunaSettingsStyle()
     }
 }
 

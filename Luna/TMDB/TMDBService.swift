@@ -13,7 +13,11 @@ class TMDBService: ObservableObject {
     static let tmdbBaseURL = "https://api.themoviedb.org/3"
     static let tmdbImageBaseURL = "https://image.tmdb.org/t/p/original"
     
-    private let apiKey = "738b4edd0a156cc126dc4a4b8aea4aca"
+    private var apiKey: String {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "TMDBAPIKey") as? String ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.contains("$(") ? "" : trimmed
+    }
     private let baseURL = tmdbBaseURL
 
     // MARK: - Rate Limiting
