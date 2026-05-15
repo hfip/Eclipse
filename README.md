@@ -2,8 +2,7 @@
 
 Eclipse is a feature-rich fork of Luna for iOS, built for anime, movies, shows, manga, light novels, downloads, tracker sync, and a stronger in-app playback experience.
 
-Eclipse is a modified fork of Luna, originally developed at `https://github.com/cranci1/Luna`. Eclipse is not affiliated with the original Luna project. The app does not include content services, addons, or media. Users are responsible for the services and addons they choose to add. The app and dev do not support piracy.
-
+Eclipse is a modified fork of Luna, originally developed at `https://github.com/cranci1/Luna`. Eclipse is not affiliated with the original Luna project.
 If you don't know how to sideload, dont worry! Here's a recommended guide https://gist.github.com/sinceohsix/688637ac04695d1ff38f844acc8ba7f3, if you don't want to use SideStore there are other options too, google and reddit r/sideloaded have great guides.
 
 ## Why Eclipse
@@ -76,6 +75,8 @@ Configured keys include:
 - Use GitHub Issues for feature requests and bug reports.
 - The app does use AI for development. As I don't know swift well (learning other languages like Java and soon C, not swift). Just for transparency. The app gets tested a ton, and I do try to make sure the code looks okay.
 - Patreon is not required and will never block any feature. Just a way to help out if you want.
+-The app does not include content services, addons, or media. Users are responsible for the services and addons they choose to add. The app and dev do not support piracy.
+
 
 ## Support
 
