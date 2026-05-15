@@ -17,15 +17,6 @@
 
 Eclipse was designed to bridge Luna services with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels.
 
-## Preview
-
-<p align="center">
-  <a href="docs/media/app-preview.mov">
-    <img src="docs/media/app-preview.gif" width="320" alt="Eclipse app preview">
-  </a>
-</p>
-
-(The app isn't laggy, just GitHub gif stuff don't worry)
 ## Screenshots
 
 <table>
