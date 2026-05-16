@@ -69,9 +69,9 @@ final class PiPController: NSObject {
         pipController?.delegate = self
         pipController?.requiresLinearPlayback = false
         #if !os(tvOS)
-        pipController?.canStartPictureInPictureAutomaticallyFromInline = true
+        pipController?.canStartPictureInPictureAutomaticallyFromInline = false
         #endif
-        Logger.shared.log("[PiPController] initialized supported=\(isPictureInPictureSupported) possible=\(pipController?.isPictureInPicturePossible ?? false) autoInline=true layer={\(layerSnapshot())}", type: "MPV")
+        Logger.shared.log("[PiPController] initialized supported=\(isPictureInPictureSupported) possible=\(pipController?.isPictureInPicturePossible ?? false) autoInline=false layer={\(layerSnapshot())}", type: "MPV")
     }
 
     func startPictureInPicture() {
