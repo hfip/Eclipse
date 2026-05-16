@@ -1219,6 +1219,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sceneWillDeactivate), name: UIScene.willDeactivateNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sceneDidEnterBackground), name: UIScene.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sceneWillEnterForeground), name: UIScene.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(sceneDidActivate), name: UIScene.didActivateNotification, object: nil)
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -5196,7 +5200,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         mpvPiPStartAttemptID += 1
         let attemptID = mpvPiPStartAttemptID
-        logPictureInPicture("prepare MPV PiP source=\(source) attemptID=\(attemptID)")
+        let appState: String
+        switch UIApplication.shared.applicationState {
+        case .active: appState = "active"
+        case .inactive: appState = "inactive"
+        case .background: appState = "background"
+        @unknown default: appState = "unknown"
+        }
+        logPictureInPicture("prepare MPV PiP source=\(source) attemptID=\(attemptID) appState=\(appState) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) ready=\(playbackDidStart)")
         rendererPreparePictureInPictureStart()
         attemptMPVPictureInPictureStart(source: source, attemptID: attemptID, attempt: 0)
     }
@@ -6659,7 +6670,14 @@ extension PlayerViewController: PiPControllerDelegate {
     }
 
     private func attemptMPVAppExitPictureInPictureStart(source: String) {
-        guard !isVLCPlayer, mpvRenderer != nil else { return }
+        guard !isVLCPlayer else {
+            logPictureInPicture("app-exit auto PiP skipped source=\(source): VLC renderer active")
+            return
+        }
+        guard mpvRenderer != nil else {
+            logPictureInPicture("app-exit auto PiP skipped source=\(source): MPV renderer missing")
+            return
+        }
         guard let pip = pipController else {
             logPictureInPicture("app-exit auto PiP skipped source=\(source): controller missing")
             return
@@ -6670,6 +6688,13 @@ extension PlayerViewController: PiPControllerDelegate {
         let active = pip.isPictureInPictureActive
         let supported = pip.isPictureInPictureSupported
         let possible = pip.isPictureInPicturePossible
+        let appState: String
+        switch UIApplication.shared.applicationState {
+        case .active: appState = "active"
+        case .inactive: appState = "inactive"
+        case .background: appState = "background"
+        @unknown default: appState = "unknown"
+        }
 
         let shouldStart = isRunning
             && !isClosing
@@ -6697,7 +6722,7 @@ extension PlayerViewController: PiPControllerDelegate {
             skipReason = "unknown"
         }
 
-        logPictureInPicture("MPV app-exit auto PiP check source=\(source) shouldStart=\(shouldStart) skipReason=\(skipReason) active=\(active) possible=\(possible) supported=\(supported) paused=\(paused) ready=\(playbackReady) loading=\(isRendererLoading) requested=\(mpvAppExitPiPStartRequested)")
+        logPictureInPicture("MPV app-exit auto PiP check source=\(source) shouldStart=\(shouldStart) skipReason=\(skipReason) appState=\(appState) active=\(active) possible=\(possible) supported=\(supported) paused=\(paused) ready=\(playbackReady) loading=\(isRendererLoading) requested=\(mpvAppExitPiPStartRequested)")
 
         guard shouldStart else { return }
         guard !mpvAppExitPiPStartRequested else {
@@ -6707,6 +6732,18 @@ extension PlayerViewController: PiPControllerDelegate {
 
         mpvAppExitPiPStartRequested = true
         startMPVPictureInPictureWhenPossible(source: source)
+    }
+
+    @objc private func sceneWillDeactivate() {
+        DispatchQueue.main.async { [weak self] in
+            self?.attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
+        }
+    }
+
+    @objc private func sceneDidEnterBackground() {
+        DispatchQueue.main.async { [weak self] in
+            self?.attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
+        }
     }
     
     @objc private func appDidEnterBackground() {
@@ -6781,11 +6818,39 @@ extension PlayerViewController: PiPControllerDelegate {
         }
     }
 
+    private func restoreMPVForegroundIfNeeded(source: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.vlcRenderer == nil else { return }
+            guard let pip = self.pipController else { return }
+            self.mpvPiPStartAttemptID += 1
+            self.mpvAppExitPiPStartRequested = false
+            if pip.isPictureInPictureActive {
+                self.logMPV("\(source): stopping MPV PiP for foreground return")
+                pip.stopPictureInPicture()
+            } else {
+                self.logMPV("\(source): PiP inactive; restoring MPV foreground render path")
+                self.rendererFinishPictureInPicture()
+            }
+        }
+    }
+
+    @objc private func sceneWillEnterForeground() {
+        restoreMPVForegroundIfNeeded(source: "scene-will-enter-foreground")
+    }
+
     @objc private func appDidBecomeActive() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.vlcRenderer == nil else { return }
             self.logMPV("appDidBecomeActive foreground render recovery")
             self.rendererResumeForegroundRendering(reason: "app-did-become-active")
+        }
+    }
+
+    @objc private func sceneDidActivate() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.vlcRenderer == nil else { return }
+            self.logMPV("sceneDidActivate foreground render recovery")
+            self.rendererResumeForegroundRendering(reason: "scene-did-activate")
         }
     }
 }

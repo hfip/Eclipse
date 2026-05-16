@@ -78,6 +78,7 @@ import Darwin
 private typealias MPVOpenGLGetProcAddress = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
 
 private let lunaMPVOpenGLESHandle = dlopen("/System/Library/Frameworks/OpenGLES.framework/OpenGLES", RTLD_LAZY)
+private let lunaGLBGRA = GLenum(0x80E1)
 
 private let lunaMPVGetOpenGLProcAddress: MPVOpenGLGetProcAddress = { _, name in
     guard let name else { return nil }
@@ -122,28 +123,23 @@ private final class MPVForegroundDisplayLinkTarget: NSObject {
 
 private final class MPVPiPBridge {
     private let displayLayer: AVSampleBufferDisplayLayer
-    private let renderQueue = DispatchQueue(label: "mpv.pip.sample-buffer.render", qos: .userInitiated)
-    private let renderQueueKey = DispatchSpecificKey<Void>()
     private var pixelBufferPool: CVPixelBufferPool?
     private var pixelBufferPoolAuxAttributes: CFDictionary?
     private var formatDescription: CMVideoFormatDescription?
+    private var textureCache: CVOpenGLESTextureCache?
     private var poolWidth = 0
     private var poolHeight = 0
     private var didFlushForFormatChange = false
-    private var dimensionsArray = [Int32](repeating: 0, count: 2)
-    private var renderParams = [mpv_render_param](repeating: mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil), count: 5)
-    private let bgraFormatCString: [CChar] = Array("bgra\0".utf8CString)
     private let maxBufferedFrames = 4
     private var lastLoggedRenderSize: CGSize = .zero
     private var enqueuedFrameCount = 0
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
-        renderQueue.setSpecific(key: renderQueueKey, value: ())
     }
 
     func reset(removingDisplayedImage: Bool) {
-        renderQueue.async { [weak self] in
+        let resetOnMain = { [weak self] in
             guard let self else { return }
             self.pixelBufferPool = nil
             self.pixelBufferPoolAuxAttributes = nil
@@ -152,26 +148,25 @@ private final class MPVPiPBridge {
             self.poolHeight = 0
             self.didFlushForFormatChange = false
             self.lastLoggedRenderSize = .zero
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.enqueuedFrameCount = 0
-                self.displayLayer.controlTimebase = nil
-                if #available(iOS 18.0, *) {
-                    self.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: removingDisplayedImage, completionHandler: nil)
-                } else if removingDisplayedImage {
-                    self.displayLayer.flushAndRemoveImage()
-                } else {
-                    self.displayLayer.flush()
-                }
+            self.enqueuedFrameCount = 0
+            if let textureCache = self.textureCache {
+                CVOpenGLESTextureCacheFlush(textureCache, 0)
+                self.textureCache = nil
+            }
+            self.displayLayer.controlTimebase = nil
+            if #available(iOS 18.0, *) {
+                self.displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: removingDisplayedImage, completionHandler: nil)
+            } else if removingDisplayedImage {
+                self.displayLayer.flushAndRemoveImage()
+            } else {
+                self.displayLayer.flush()
             }
         }
-    }
-
-    func waitForPendingRenders() {
-        if DispatchQueue.getSpecific(key: renderQueueKey) != nil {
-            return
+        if Thread.isMainThread {
+            resetOnMain()
+        } else {
+            DispatchQueue.main.async(execute: resetOnMain)
         }
-        renderQueue.sync { }
     }
 
     func clearPrimedFrameState() {
@@ -193,25 +188,41 @@ private final class MPVPiPBridge {
         return result
     }
 
-    func render(context: OpaquePointer, videoSize: CGSize) {
-        renderQueue.async { [weak self] in
-            self?.renderOnQueue(context: context, videoSize: videoSize)
+    func renderOpenGL(
+        context: OpaquePointer,
+        glContext: EAGLContext,
+        videoSize: CGSize,
+        render: @escaping (inout LunaMPVOpenGLFBO, inout Int32) -> Int32
+    ) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.renderOpenGL(context: context, glContext: glContext, videoSize: videoSize, render: render)
+            }
+            return
         }
+        renderOpenGLOnMain(context: context, glContext: glContext, videoSize: videoSize, render: render)
     }
 
-    private func renderOnQueue(context: OpaquePointer, videoSize: CGSize) {
+    private func renderOpenGLOnMain(
+        context: OpaquePointer,
+        glContext: EAGLContext,
+        videoSize: CGSize,
+        render: (inout LunaMPVOpenGLFBO, inout Int32) -> Int32
+    ) {
         guard let targetSize = targetRenderSize(for: videoSize) else { return }
         let width = Int(targetSize.width)
         let height = Int(targetSize.height)
         guard width > 0, height > 0 else { return }
         if lastLoggedRenderSize != targetSize {
             lastLoggedRenderSize = targetSize
-            Logger.shared.log("[MPVPiPBridge] render target size=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height))", type: "MPV")
+            Logger.shared.log("[MPVPiPBridge] OpenGL render target size=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height))", type: "MPV")
         }
 
         if poolWidth != width || poolHeight != height {
             recreatePixelBufferPool(width: width, height: height)
         }
+
+        guard let cache = ensureTextureCache(glContext: glContext) else { return }
 
         var pixelBuffer: CVPixelBuffer?
         var status: CVReturn = kCVReturnError
@@ -230,6 +241,7 @@ private final class MPVPiPBridge {
                 kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue!,
                 kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!,
                 kCVPixelBufferMetalCompatibilityKey: kCFBooleanTrue!,
+                kCVPixelBufferOpenGLESCompatibilityKey: kCFBooleanTrue!,
                 kCVPixelBufferWidthKey: width,
                 kCVPixelBufferHeightKey: height,
                 kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA
@@ -238,39 +250,84 @@ private final class MPVPiPBridge {
         }
 
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            Logger.shared.log("[MPVPiPBridge] failed to allocate pixel buffer status=\(status)", type: "MPV")
+            Logger.shared.log("[MPVPiPBridge] failed to allocate OpenGL pixel buffer status=\(status)", type: "MPV")
             return
         }
 
-        CVPixelBufferLockBaseAddress(buffer, [])
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
-            CVPixelBufferUnlockBaseAddress(buffer, [])
+        var texture: CVOpenGLESTexture?
+        let textureStatus = CVOpenGLESTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault,
+            cache,
+            buffer,
+            nil,
+            GLenum(GL_TEXTURE_2D),
+            GLint(GL_RGBA),
+            GLsizei(width),
+            GLsizei(height),
+            lunaGLBGRA,
+            GLenum(GL_UNSIGNED_BYTE),
+            0,
+            &texture
+        )
+
+        guard textureStatus == kCVReturnSuccess, let texture else {
+            Logger.shared.log("[MPVPiPBridge] failed to create OpenGL texture status=\(textureStatus)", type: "MPV")
             return
         }
 
-        dimensionsArray[0] = Int32(width)
-        dimensionsArray[1] = Int32(height)
-        let stride = Int32(CVPixelBufferGetBytesPerRow(buffer))
+        EAGLContext.setCurrent(glContext)
+        let textureTarget = CVOpenGLESTextureGetTarget(texture)
+        let textureName = CVOpenGLESTextureGetName(texture)
+        glBindTexture(textureTarget, textureName)
+        glTexParameteri(textureTarget, GLenum(GL_TEXTURE_MIN_FILTER), GLint(GL_LINEAR))
+        glTexParameteri(textureTarget, GLenum(GL_TEXTURE_MAG_FILTER), GLint(GL_LINEAR))
+        glTexParameteri(textureTarget, GLenum(GL_TEXTURE_WRAP_S), GLint(GL_CLAMP_TO_EDGE))
+        glTexParameteri(textureTarget, GLenum(GL_TEXTURE_WRAP_T), GLint(GL_CLAMP_TO_EDGE))
 
-        dimensionsArray.withUnsafeMutableBufferPointer { dimsPointer in
-            bgraFormatCString.withUnsafeBufferPointer { formatPointer in
-                withUnsafePointer(to: stride) { stridePointer in
-                    renderParams[0] = mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: UnsafeMutableRawPointer(dimsPointer.baseAddress))
-                    renderParams[1] = mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT, data: UnsafeMutableRawPointer(mutating: formatPointer.baseAddress))
-                    renderParams[2] = mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: UnsafeMutableRawPointer(mutating: stridePointer))
-                    renderParams[3] = mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: baseAddress)
-                    renderParams[4] = mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
-                    let result = renderParams.withUnsafeMutableBufferPointer { buffer -> Int32 in
-                        guard let baseAddress = buffer.baseAddress else { return -1 }
-                        return mpv_render_context_render(context, baseAddress)
-                    }
-                    if result < 0 {
-                        Logger.shared.log("[MPVPiPBridge] mpv software PiP render failed \(result)", type: "MPV")
-                    }
-                }
+        var previousFramebuffer: GLint = 0
+        glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &previousFramebuffer)
+        var previousViewport = [GLint](repeating: 0, count: 4)
+        previousViewport.withUnsafeMutableBufferPointer { pointer in
+            if let baseAddress = pointer.baseAddress {
+                glGetIntegerv(GLenum(GL_VIEWPORT), baseAddress)
             }
         }
-        CVPixelBufferUnlockBaseAddress(buffer, [])
+
+        var framebuffer = GLuint(0)
+        glGenFramebuffers(1, &framebuffer)
+        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), framebuffer)
+        glFramebufferTexture2D(GLenum(GL_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0), textureTarget, textureName, 0)
+
+        let framebufferStatus = glCheckFramebufferStatus(GLenum(GL_FRAMEBUFFER))
+        guard framebufferStatus == GLenum(GL_FRAMEBUFFER_COMPLETE) else {
+            Logger.shared.log("[MPVPiPBridge] OpenGL framebuffer incomplete status=\(framebufferStatus)", type: "MPV")
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(previousFramebuffer))
+            glDeleteFramebuffers(1, &framebuffer)
+            EAGLContext.setCurrent(nil)
+            return
+        }
+
+        glViewport(0, 0, GLsizei(width), GLsizei(height))
+        var fbo = LunaMPVOpenGLFBO(
+            fbo: Int32(framebuffer),
+            w: Int32(width),
+            h: Int32(height),
+            internal_format: Int32(GL_RGBA)
+        )
+        var flipY: Int32 = 1
+        let result = render(&fbo, &flipY)
+        glFlush()
+        glViewport(previousViewport[0], previousViewport[1], GLsizei(previousViewport[2]), GLsizei(previousViewport[3]))
+        glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(previousFramebuffer))
+        glDeleteFramebuffers(1, &framebuffer)
+        CVOpenGLESTextureCacheFlush(cache, 0)
+        EAGLContext.setCurrent(nil)
+
+        guard result >= 0 else {
+            Logger.shared.log("[MPVPiPBridge] OpenGL PiP render failed \(result)", type: "MPV")
+            return
+        }
+
         enqueue(buffer: buffer)
     }
 
@@ -295,7 +352,8 @@ private final class MPVPiPBridge {
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
             kCVPixelBufferMetalCompatibilityKey: kCFBooleanTrue!,
             kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue!,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!
+            kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!,
+            kCVPixelBufferOpenGLESCompatibilityKey: kCFBooleanTrue!
         ]
         let poolAttrs: [CFString: Any] = [
             kCVPixelBufferPoolMinimumBufferCountKey: maxBufferedFrames
@@ -346,7 +404,7 @@ private final class MPVPiPBridge {
             )
         }
 
-        DispatchQueue.main.async { [weak self] in
+        let enqueueOnMain = { [weak self] in
             guard let self else { return }
             if needsFlush {
                 if #available(iOS 18.0, *) {
@@ -383,6 +441,25 @@ private final class MPVPiPBridge {
                 Logger.shared.log("[MPVPiPBridge] enqueued sample frame count=\(self.enqueuedFrameCount) layerReady=\(self.displayLayer.isReadyForMoreMediaData)", type: "MPV")
             }
         }
+        if Thread.isMainThread {
+            enqueueOnMain()
+        } else {
+            DispatchQueue.main.async(execute: enqueueOnMain)
+        }
+    }
+
+    private func ensureTextureCache(glContext: EAGLContext) -> CVOpenGLESTextureCache? {
+        if let textureCache {
+            return textureCache
+        }
+        var cache: CVOpenGLESTextureCache?
+        let status = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, nil, glContext, nil, &cache)
+        if status == kCVReturnSuccess, let cache {
+            textureCache = cache
+            return cache
+        }
+        Logger.shared.log("[MPVPiPBridge] failed to create OpenGL texture cache status=\(status)", type: "MPV")
+        return nil
     }
 
     private func updateFormatDescriptionIfNeeded(for buffer: CVPixelBuffer) -> Bool {
@@ -451,7 +528,6 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var renderContext: OpaquePointer?
     private var currentMode: RenderMode = .openGL
     private var openGLAPIType = Array("opengl\0".utf8CString)
-    private var softwareAPIType = Array("sw\0".utf8CString)
     private var openGLRenderParams = [mpv_render_param](repeating: mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil), count: 4)
 
     private var currentPreset: PlayerPreset?
@@ -699,11 +775,10 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func prepareForPictureInPictureStart() {
         guard isRunning, currentMode != .pictureInPicture else { return }
-        logMPV("switching to capped sample-buffer PiP render path")
+        logMPV("switching to OpenGL sample-buffer PiP render path")
         rememberSelectedVideoTrack(reason: "enter-pip")
         stopForegroundDisplayLink(reason: "enter-pip")
         pipBridge.clearPrimedFrameState()
-        destroyRenderContext()
         currentMode = .pictureInPicture
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -715,31 +790,11 @@ final class MPVNativeRenderer: PlayerRenderer {
             self.displayLayer.opacity = 1.0
             self.displayLayer.zPosition = -1
         }
-        do {
-            refreshVideoState()
-            try createSoftwareRenderContext()
-            restoreSelectedVideoTrack(reason: "enter-pip")
-            startPiPRenderLoop(reason: "enter-pip")
-            requestRenderBurst(reason: "enter-pip", count: 8, interval: 0.06)
-        } catch {
-            logMPV("failed to enter PiP render mode: \(error)")
-            stopPiPRenderLoop(reason: "pip-enter-failed")
-            currentMode = .openGL
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.displayLayer.isHidden = true
-                self.displayLayer.opacity = 0.0
-                self.displayLayer.zPosition = -1
-                self.glView.isHidden = false
-            }
-            do {
-                try createOpenGLRenderContext()
-                resumeForegroundRendering(reason: "pip-enter-failed")
-            } catch {
-                logMPV("failed to recover OpenGL after PiP enter failure: \(error)")
-            }
-            delegate?.renderer(self, didFailWithError: "MPV PiP render bridge failed")
-        }
+        refreshVideoState()
+        restoreSelectedVideoTrack(reason: "enter-pip")
+        startPiPRenderLoop(reason: "enter-pip")
+        renderPiPFrame(force: true)
+        requestRenderBurst(reason: "enter-pip", count: 6, interval: 0.04)
     }
 
     func finishPictureInPicture() {
@@ -750,7 +805,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
         logMPV("restoring OpenGL render path after PiP")
         stopPiPRenderLoop(reason: "finish-pip")
-        destroyRenderContext()
         pipBridge.reset(removingDisplayedImage: true)
         currentMode = .openGL
         DispatchQueue.main.async { [weak self] in
@@ -760,20 +814,15 @@ final class MPVNativeRenderer: PlayerRenderer {
             self.displayLayer.zPosition = -1
             self.glView.isHidden = false
         }
-        do {
-            try createOpenGLRenderContext()
-            restoreSelectedVideoTrack(reason: "finish-pip")
-            refreshVideoState()
-            resumeForegroundRendering(reason: "finish-pip")
-        } catch {
-            logMPV("failed to restore OpenGL render path: \(error)")
-            delegate?.renderer(self, didFailWithError: "MPV foreground render restore failed")
-        }
+        restoreSelectedVideoTrack(reason: "finish-pip")
+        refreshVideoState()
+        resumeForegroundRendering(reason: "finish-pip")
     }
 
     func primePictureInPictureFrames(reason: String) {
         guard isRunning, currentMode == .pictureInPicture else { return }
-        requestRenderBurst(reason: "pip-prime-\(reason)", count: 6, interval: 0.06)
+        renderPiPFrame(force: true)
+        requestRenderBurst(reason: "pip-prime-\(reason)", count: 4, interval: 0.04)
     }
 
     func activatePictureInPictureLayer() {
@@ -849,41 +898,14 @@ final class MPVNativeRenderer: PlayerRenderer {
         logMPV("OpenGL render context ready")
     }
 
-    private func createSoftwareRenderContext() throws {
-        guard let handle = mpv else { return }
-        logMPV("creating software render context for PiP")
-        let status = softwareAPIType.withUnsafeMutableBufferPointer { apiPointer -> Int32 in
-            var params = [
-                mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(apiPointer.baseAddress)),
-                mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
-            ]
-            return params.withUnsafeMutableBufferPointer { buffer -> Int32 in
-                guard let baseAddress = buffer.baseAddress else { return -1 }
-                return mpv_render_context_create(&renderContext, handle, baseAddress)
-            }
-        }
-        guard status >= 0, renderContext != nil else {
-            logMPV("software render context creation failed status=\(status)")
-            throw RendererError.renderContextCreation(status)
-        }
-        installRenderUpdateCallback()
-        logMPV("software render context ready")
-    }
-
     private func destroyRenderContext() {
         guard let context = renderContext else { return }
         logMPV("destroying render context mode=\(currentMode)")
-        if currentMode == .openGL {
-            performOnMainSync {
-                EAGLContext.setCurrent(glContext)
-                mpv_render_context_set_update_callback(context, nil, nil)
-                mpv_render_context_free(context)
-                EAGLContext.setCurrent(nil)
-            }
-        } else {
-            pipBridge.waitForPendingRenders()
+        performOnMainSync {
+            EAGLContext.setCurrent(glContext)
             mpv_render_context_set_update_callback(context, nil, nil)
             mpv_render_context_free(context)
+            EAGLContext.setCurrent(nil)
         }
         renderContext = nil
         isRenderScheduled = false
@@ -1113,22 +1135,7 @@ final class MPVNativeRenderer: PlayerRenderer {
                 internal_format: Int32(GL_RGBA)
             )
             var flipY: Int32 = 1
-
-            withUnsafeMutablePointer(to: &fbo) { fboPointer in
-                withUnsafeMutablePointer(to: &flipY) { flipPointer in
-                    openGLRenderParams[0] = mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: UnsafeMutableRawPointer(fboPointer))
-                    openGLRenderParams[1] = mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: UnsafeMutableRawPointer(flipPointer))
-                    openGLRenderParams[2] = mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
-                    let result = openGLRenderParams.withUnsafeMutableBufferPointer { buffer -> Int32 in
-                        guard let baseAddress = buffer.baseAddress else { return -1 }
-                        return mpv_render_context_render(context, baseAddress)
-                    }
-                    if result < 0 {
-                        logMPV("OpenGL render failed \(result)")
-                    }
-                }
-            }
-            mpv_render_context_report_swap(context)
+            _ = renderOpenGLFrame(context: context, fbo: &fbo, flipY: &flipY, reportSwap: true)
         }
 
         if updateFlags > 0 {
@@ -1136,16 +1143,46 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
     }
 
+    private func renderOpenGLFrame(
+        context: OpaquePointer,
+        fbo: inout LunaMPVOpenGLFBO,
+        flipY: inout Int32,
+        reportSwap: Bool
+    ) -> Int32 {
+        let result = withUnsafeMutablePointer(to: &fbo) { fboPointer in
+            withUnsafeMutablePointer(to: &flipY) { flipPointer in
+                openGLRenderParams[0] = mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: UnsafeMutableRawPointer(fboPointer))
+                openGLRenderParams[1] = mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: UnsafeMutableRawPointer(flipPointer))
+                openGLRenderParams[2] = mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
+                return openGLRenderParams.withUnsafeMutableBufferPointer { buffer -> Int32 in
+                    guard let baseAddress = buffer.baseAddress else { return -1 }
+                    return mpv_render_context_render(context, baseAddress)
+                }
+            }
+        }
+        if result < 0 {
+            logMPV("OpenGL render failed \(result)")
+        } else if reportSwap {
+            mpv_render_context_report_swap(context)
+        }
+        return result
+    }
+
     private func renderPiPFrame(force: Bool = false) {
         guard isRunning, !isStopping, currentMode == .pictureInPicture, let context = renderContext else { return }
         lastPiPRenderTime = CACurrentMediaTime()
+        EAGLContext.setCurrent(glContext)
         let updateFlags = UInt32(mpv_render_context_update(context))
+        EAGLContext.setCurrent(nil)
         let shouldForceRender = force || forcedPiPRenderCount > 0
         if shouldForceRender {
             forcedPiPRenderCount = max(0, forcedPiPRenderCount - 1)
         }
         if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
-            pipBridge.render(context: context, videoSize: currentPiPRenderSize())
+            pipBridge.renderOpenGL(context: context, glContext: glContext, videoSize: currentPiPRenderSize()) { [weak self] fbo, flipY in
+                guard let self else { return -1 }
+                return self.renderOpenGLFrame(context: context, fbo: &fbo, flipY: &flipY, reportSwap: true)
+            }
         }
         if updateFlags > 0 {
             scheduleRender()
