@@ -10,6 +10,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let playerDidClose = Notification.Name("playerDidClose")
+    static let lunaScenePhaseDidChange = Notification.Name("lunaScenePhaseDidChange")
 }
 
 // MARK: - iPad Scaling Utilities

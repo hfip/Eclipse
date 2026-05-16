@@ -117,11 +117,13 @@ struct ContentView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.86), value: showingSettings)
         .task { await runBackgroundAutoChecks() }
         .onChange(of: scenePhase) { newPhase in
+            publishScenePhase(newPhase)
             if newPhase == .active {
                 Task { await runBackgroundAutoChecks() }
             }
         }
         .onAppear {
+            publishScenePhase(scenePhase)
             presentUpdateAlertIfNeeded()
         }
         .onChange(of: githubReleaseShowAlertPending) { pending in
@@ -249,7 +251,26 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
     }
-    
+
+    private func publishScenePhase(_ phase: ScenePhase) {
+        let phaseName: String
+        switch phase {
+        case .active:
+            phaseName = "active"
+        case .inactive:
+            phaseName = "inactive"
+        case .background:
+            phaseName = "background"
+        @unknown default:
+            phaseName = "unknown"
+        }
+        NotificationCenter.default.post(
+            name: .lunaScenePhaseDidChange,
+            object: nil,
+            userInfo: ["phase": phaseName]
+        )
+    }
+
     private var olderTabView: some View {
         TabView(selection: $selectedTab) {
             HomeView()

@@ -810,6 +810,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         renderer.applySubtitleStyle(style)
     }
+
+    private func currentSubtitleStyle(visible: Bool? = nil) -> SubtitleStyle {
+        SubtitleStyle(
+            foregroundColor: subtitleModel.foregroundColor,
+            strokeColor: subtitleModel.strokeColor,
+            strokeWidth: subtitleModel.strokeWidth,
+            fontSize: subtitleModel.fontSize,
+            isVisible: visible ?? subtitleModel.isVisible
+        )
+    }
     
     private func rendererIsPausedState() -> Bool {
         renderer.isPausedState
@@ -1223,6 +1233,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         NotificationCenter.default.addObserver(self, selector: #selector(sceneDidEnterBackground), name: UIScene.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(sceneWillEnterForeground), name: UIScene.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(sceneDidActivate), name: UIScene.didActivateNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appScenePhaseDidChange(_:)), name: .lunaScenePhaseDidChange, object: nil)
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -2526,13 +2537,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateCurrentSubtitleAppearance() {
-        rendererApplySubtitleStyle(SubtitleStyle(
-            foregroundColor: subtitleModel.foregroundColor,
-            strokeColor: subtitleModel.strokeColor,
-            strokeWidth: subtitleModel.strokeWidth,
-            fontSize: subtitleModel.fontSize,
-            isVisible: subtitleModel.isVisible
-        ))
+        rendererApplySubtitleStyle(currentSubtitleStyle())
 
         if isVLCCustomSubtitleOverlayEnabled {
             updateVLCSubtitleOverlay(for: cachedPosition)
@@ -3855,6 +3860,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     }
                     userSelectedSubtitleTrack = true
                     setSubtitleVisible(true, persist: false)
+                    rendererApplySubtitleStyle(currentSubtitleStyle(visible: true))
                     vlcSubtitleSelection = .embedded(trackId: selectedEmbeddedTrack.0)
                     Logger.shared.log("[PlayerVC.Subtitles] default selected embedded track id=\(selectedEmbeddedTrack.0) name=\(selectedEmbeddedTrack.1)", type: "Player")
                 } else if let selectedExternalTrack = preferredDefaultSubtitleTrack(from: externalTracks, preferredLang: preferredLang) {
@@ -3874,6 +3880,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     }
                     userSelectedSubtitleTrack = true
                     setSubtitleVisible(true, persist: false)
+                    rendererApplySubtitleStyle(currentSubtitleStyle(visible: true))
                     vlcSubtitleSelection = .embedded(trackId: fallbackEmbeddedTrack.0)
                     Logger.shared.log("[PlayerVC.Subtitles] default selected fallback MPV/native track id=\(fallbackEmbeddedTrack.0) name=\(fallbackEmbeddedTrack.1)", type: "Player")
                 } else if let fallbackExternalTrack = fallbackDefaultSubtitleTrack(from: externalTracks) {
@@ -3971,13 +3978,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     self.subtitleEntries.removeAll()
                     self.updateVLCSubtitleOverlay(for: self.cachedPosition)
                     self.rendererSetSubtitleTrack(id: id)
-                    self.rendererApplySubtitleStyle(SubtitleStyle(
-                        foregroundColor: self.subtitleModel.foregroundColor,
-                        strokeColor: self.subtitleModel.strokeColor,
-                        strokeWidth: self.subtitleModel.strokeWidth,
-                        fontSize: self.subtitleModel.fontSize,
-                        isVisible: self.subtitleModel.isVisible
-                    ))
+                    self.rendererApplySubtitleStyle(self.currentSubtitleStyle())
                     self.updateSubtitleButtonAppearance()
                     self.subtitleMenuDebounceTimer?.invalidate()
                     self.subtitleMenuDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
@@ -4340,13 +4341,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             applyVLCSubtitleModeSettingIfNeeded()
             applyVLCSubtitleOverlayPositionSetting()
         } else {
-            rendererApplySubtitleStyle(SubtitleStyle(
-                foregroundColor: subtitleModel.foregroundColor,
-                strokeColor: subtitleModel.strokeColor,
-                strokeWidth: subtitleModel.strokeWidth,
-                fontSize: subtitleModel.fontSize,
-                isVisible: subtitleModel.isVisible
-            ))
+            rendererApplySubtitleStyle(currentSubtitleStyle())
         }
         vlcRenderer?.handlePictureInPictureSettingChanged()
         updatePiPButtonVisibility()
@@ -4447,6 +4442,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 }
             } else {
                 rendererLoadExternalSubtitles(urls: urls, names: names)
+                rendererApplySubtitleStyle(currentSubtitleStyle(visible: enableByDefault))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.updateSubtitleTracksMenuWhenReady()
                 }
@@ -4461,6 +4457,38 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("No subtitle URLs to load", type: "Info")
         }
     }
+
+    private func currentExternalSubtitleName() -> String? {
+        guard currentSubtitleIndex < subtitleURLs.count else { return nil }
+        if currentSubtitleIndex < subtitleNames.count {
+            return subtitleNames[currentSubtitleIndex]
+        }
+        return "Subtitle \(currentSubtitleIndex + 1)"
+    }
+
+    private func fallbackCurrentSubtitleToRenderer(reason: String) {
+        guard currentSubtitleIndex < subtitleURLs.count else { return }
+        let urlString = subtitleURLs[currentSubtitleIndex]
+        let subtitleName = currentExternalSubtitleName()
+        Logger.shared.log("[PlayerVC.Subtitles] falling back to renderer subtitle path reason=\(reason) index=\(currentSubtitleIndex) renderer=\(isVLCPlayer ? "VLC" : "MPV")", type: "Player")
+
+        subtitleEntries.removeAll()
+        updateVLCSubtitleOverlay(for: cachedPosition)
+        rendererLoadExternalSubtitles(urls: [urlString], names: subtitleName.map { [$0] }, enforce: true)
+        rendererApplySubtitleStyle(currentSubtitleStyle(visible: true))
+
+        if isVLCPlayer {
+            vlcExternalSubtitlesLoadedNatively = true
+            vlcExternalSubtitlePriorityDeadline = Date().addingTimeInterval(1.2)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.updateSubtitleTracksMenuWhenReady()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.updateSubtitleTracksMenuWhenReady()
+        }
+    }
     
     private func loadCurrentSubtitle() {
         guard currentSubtitleIndex < subtitleURLs.count else { return }
@@ -4470,6 +4498,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if !isVLCPlayer {
             let subtitleName = currentSubtitleIndex < subtitleNames.count ? subtitleNames[currentSubtitleIndex] : nil
             rendererLoadExternalSubtitles(urls: [urlString], names: subtitleName.map { [$0] }, enforce: true)
+            rendererApplySubtitleStyle(currentSubtitleStyle(visible: true))
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.updateSubtitleTracksMenuWhenReady()
             }
@@ -4485,11 +4514,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     let data = try Data(contentsOf: url)
                     guard let subtitleContent = String(data: data, encoding: .utf8) else {
                         Logger.shared.log("Failed to decode local subtitle data as UTF-8", type: "Error")
+                        DispatchQueue.main.async { [weak self] in
+                            self?.fallbackCurrentSubtitleToRenderer(reason: "local-decode-failed")
+                        }
                         return
                     }
                     self.parseAndDisplaySubtitles(subtitleContent)
                 } catch {
                     Logger.shared.log("Failed to read local subtitle file: \(error.localizedDescription)", type: "Error")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.fallbackCurrentSubtitleToRenderer(reason: "local-read-failed")
+                    }
                 }
             }
             return
@@ -4534,6 +4569,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 
                 if let error = error {
                     Logger.shared.log("Failed to download subtitles: \(error.localizedDescription)", type: "Error")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.fallbackCurrentSubtitleToRenderer(reason: "download-error")
+                    }
                     return
                 }
                 
@@ -4541,12 +4579,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     Logger.shared.log("Subtitle download response: \(httpResponse.statusCode)", type: "Info")
                     if httpResponse.statusCode != 200 {
                         Logger.shared.log("Subtitle download failed with status \(httpResponse.statusCode)", type: "Error")
+                        DispatchQueue.main.async { [weak self] in
+                            self?.fallbackCurrentSubtitleToRenderer(reason: "http-\(httpResponse.statusCode)")
+                        }
                         return
                     }
                 }
                 
                 guard let data = data, let subtitleContent = String(data: data, encoding: .utf8) else {
                     Logger.shared.log("Failed to parse subtitle data (size: \(data?.count ?? 0) bytes)", type: "Error")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.fallbackCurrentSubtitleToRenderer(reason: "download-decode-failed")
+                    }
                     return
                 }
                 
@@ -4562,9 +4606,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func parseAndDisplaySubtitles(_ content: String) {
+        let entries = SubtitleLoader.parseSubtitles(from: content, fontSize: subtitleModel.fontSize, foregroundColor: subtitleModel.foregroundColor)
+
         if !isVLCPlayer {
-            subtitleEntries = SubtitleLoader.parseSubtitles(from: content, fontSize: subtitleModel.fontSize, foregroundColor: subtitleModel.foregroundColor)
-            Logger.shared.log("Loaded \(subtitleEntries.count) subtitle entries", type: "Info")
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.subtitleEntries = entries
+                Logger.shared.log("Loaded \(entries.count) MPV subtitle overlay entries", type: "Info")
+                if entries.isEmpty {
+                    self.fallbackCurrentSubtitleToRenderer(reason: "mpv-overlay-parse-empty")
+                }
+            }
             return
         }
 
@@ -4575,8 +4627,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.subtitleEntries = SubtitleLoader.parseSubtitles(from: content, fontSize: self.subtitleModel.fontSize, foregroundColor: self.subtitleModel.foregroundColor)
+            self.subtitleEntries = entries
             Logger.shared.log("Loaded \(self.subtitleEntries.count) subtitle entries", type: "Info")
+            if entries.isEmpty {
+                self.fallbackCurrentSubtitleToRenderer(reason: "custom-overlay-parse-empty")
+                return
+            }
             self.updateVLCSubtitleOverlay(for: self.cachedPosition)
         }
     }
@@ -6566,13 +6622,7 @@ extension PlayerViewController: VLCRendererDelegate {
             self.subtitleModel.isVisible = true
             if trackId >= 0 {
                 self.vlcSubtitleSelection = .embedded(trackId: trackId)
-                self.rendererApplySubtitleStyle(SubtitleStyle(
-                    foregroundColor: self.subtitleModel.foregroundColor,
-                    strokeColor: self.subtitleModel.strokeColor,
-                    strokeWidth: self.subtitleModel.strokeWidth,
-                    fontSize: self.subtitleModel.fontSize,
-                    isVisible: self.subtitleModel.isVisible
-                ))
+                self.rendererApplySubtitleStyle(self.currentSubtitleStyle())
             }
             self.subtitleEntries.removeAll()
             self.updateVLCSubtitleOverlay(for: self.cachedPosition)
@@ -6664,8 +6714,42 @@ extension PlayerViewController: PiPControllerDelegate {
     func pipControllerCurrentTime(_ controller: PiPController) -> Double { return cachedPosition }
 
     @objc private func appWillResignActive() {
-        DispatchQueue.main.async { [weak self] in
-            self?.attemptMPVAppExitPictureInPictureStart(source: "will-resign-active")
+        logPictureInPicture("lifecycle notification received source=will-resign-active")
+        if Thread.isMainThread {
+            attemptMPVAppExitPictureInPictureStart(source: "will-resign-active")
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.attemptMPVAppExitPictureInPictureStart(source: "will-resign-active")
+            }
+        }
+    }
+
+    @objc private func appScenePhaseDidChange(_ notification: Notification) {
+        let phase = notification.userInfo?["phase"] as? String ?? "unknown"
+        logPictureInPicture("scenePhase notification received phase=\(phase)")
+        switch phase {
+        case "inactive":
+            if Thread.isMainThread {
+                attemptMPVAppExitPictureInPictureStart(source: "scene-phase-inactive")
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.attemptMPVAppExitPictureInPictureStart(source: "scene-phase-inactive")
+                }
+            }
+        case "background":
+            if Thread.isMainThread {
+                attemptMPVAppExitPictureInPictureStart(source: "scene-phase-background")
+                scheduleMPVBackgroundAudioFallback(source: "scene-phase-background")
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.attemptMPVAppExitPictureInPictureStart(source: "scene-phase-background")
+                    self?.scheduleMPVBackgroundAudioFallback(source: "scene-phase-background")
+                }
+            }
+        case "active":
+            restoreMPVForegroundIfNeeded(source: "scene-phase-active")
+        default:
+            break
         }
     }
 
@@ -6724,6 +6808,10 @@ extension PlayerViewController: PiPControllerDelegate {
 
         logPictureInPicture("MPV app-exit auto PiP check source=\(source) shouldStart=\(shouldStart) skipReason=\(skipReason) appState=\(appState) active=\(active) possible=\(possible) supported=\(supported) paused=\(paused) ready=\(playbackReady) loading=\(isRendererLoading) requested=\(mpvAppExitPiPStartRequested)")
 
+        if source.contains("background") || appState == "background" {
+            scheduleMPVBackgroundAudioFallback(source: source)
+        }
+
         guard shouldStart else { return }
         guard !mpvAppExitPiPStartRequested else {
             logPictureInPicture("MPV app-exit auto PiP already requested; ignoring duplicate source=\(source)")
@@ -6735,18 +6823,52 @@ extension PlayerViewController: PiPControllerDelegate {
     }
 
     @objc private func sceneWillDeactivate() {
-        DispatchQueue.main.async { [weak self] in
-            self?.attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
+        logPictureInPicture("lifecycle notification received source=scene-will-deactivate")
+        if Thread.isMainThread {
+            attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
+            }
         }
     }
 
     @objc private func sceneDidEnterBackground() {
-        DispatchQueue.main.async { [weak self] in
-            self?.attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
+        logPictureInPicture("lifecycle notification received source=scene-did-enter-background")
+        if Thread.isMainThread {
+            attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
+            scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background")
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
+                self?.scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background")
+            }
+        }
+    }
+
+    private func scheduleMPVBackgroundAudioFallback(source: String, delay: TimeInterval = 0.75, force: Bool = false) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  !self.isVLCPlayer,
+                  !self.isClosing,
+                  UIApplication.shared.applicationState == .background else {
+                return
+            }
+            let active = self.pipController?.isPictureInPictureActive ?? false
+            guard !active, !self.rendererIsPausedState() else { return }
+            if self.mpvAppExitPiPStartRequested && !force {
+                self.logPictureInPicture("MPV background fallback waiting for pending PiP source=\(source)")
+                self.scheduleMPVBackgroundAudioFallback(source: source, delay: 1.25, force: true)
+                return
+            }
+            self.logPictureInPicture("MPV background fallback pause source=\(source) active=\(active) requested=\(self.mpvAppExitPiPStartRequested)")
+            self.mpvAppExitPiPStartRequested = false
+            self.rendererPausePlayback()
         }
     }
     
     @objc private func appDidEnterBackground() {
+        logPictureInPicture("lifecycle notification received source=did-enter-background")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.logVLCUIViewSnapshot("appDidEnterBackground async start")
@@ -6781,6 +6903,7 @@ extension PlayerViewController: PiPControllerDelegate {
             }
 
             self.attemptMPVAppExitPictureInPictureStart(source: "did-enter-background")
+            self.scheduleMPVBackgroundAudioFallback(source: "did-enter-background")
         }
     }
     
