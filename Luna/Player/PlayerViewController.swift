@@ -849,6 +849,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererPreparePictureInPictureStart() {
+        logPictureInPicture("renderer prepare call hasMPVRenderer=\(mpvRenderer != nil)")
         mpvRenderer?.prepareForPictureInPictureStart()
     }
 
@@ -857,15 +858,50 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererPrimePictureInPictureFrames(reason: String) {
+        logPictureInPicture("renderer prime call reason=\(reason) hasMPVRenderer=\(mpvRenderer != nil)")
         mpvRenderer?.primePictureInPictureFrames(reason: reason)
     }
 
     private func rendererActivatePictureInPictureLayer() {
+        logPictureInPicture("renderer activate layer call hasMPVRenderer=\(mpvRenderer != nil)")
         mpvRenderer?.activatePictureInPictureLayer()
     }
 
     private func rendererIsPictureInPicturePrimed() -> Bool {
         mpvRenderer?.isPictureInPicturePrimed() ?? false
+    }
+
+    @discardableResult
+    private func prepareMPVPictureInPictureRenderer(source: String, activateLayer: Bool) -> Bool {
+        let active = pipController?.isPictureInPictureActive ?? false
+        let possible = pipController?.isPictureInPicturePossible ?? false
+        logPictureInPicture("renderer prepare begin source=\(source) active=\(active) possible=\(possible) activateLayer=\(activateLayer)")
+        prepareMPVRenderedSubtitlesForPictureInPicture(source: source)
+        rendererPreparePictureInPictureStart()
+        rendererPrimePictureInPictureFrames(reason: source)
+        if activateLayer {
+            rendererActivatePictureInPictureLayer()
+        }
+        pipController?.updatePlaybackState()
+        let primed = rendererIsPictureInPicturePrimed()
+        logPictureInPicture("renderer prepare end source=\(source) primed=\(primed) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+        return primed
+    }
+
+    private func scheduleMPVPictureInPictureRendererWatchdog(source: String, attemptID: Int? = nil, delay: TimeInterval = 0.35) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  let pip = self.pipController,
+                  pip.isPictureInPictureActive else { return }
+            if let attemptID, attemptID != self.mpvPiPStartAttemptID { return }
+            let primed = self.rendererIsPictureInPicturePrimed()
+            self.logPictureInPicture("renderer watchdog source=\(source) delay=\(String(format: "%.2f", delay)) primed=\(primed) active=\(pip.isPictureInPictureActive) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
+            if primed {
+                self.rendererActivatePictureInPictureLayer()
+            } else {
+                _ = self.prepareMPVPictureInPictureRenderer(source: "\(source)-watchdog", activateLayer: true)
+            }
+        }
     }
 
     private func rendererResumeForegroundRendering(reason: String) {
@@ -5286,7 +5322,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logPictureInPicture("start ignored source=\(source): PiP already active")
             return
         }
-        prepareMPVRenderedSubtitlesForPictureInPicture(source: source)
         mpvPiPStartAttemptID += 1
         let attemptID = mpvPiPStartAttemptID
         let appState: String
@@ -5296,8 +5331,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         case .background: appState = "background"
         @unknown default: appState = "unknown"
         }
-        logPictureInPicture("prepare MPV PiP source=\(source) attemptID=\(attemptID) appState=\(appState) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) ready=\(playbackDidStart) subs={\(subtitlePictureInPictureDebugSnapshot())} renderer={\(rendererPictureInPictureDebugSnapshot())}")
-        rendererPreparePictureInPictureStart()
+        logPictureInPicture("prepare MPV PiP begin source=\(source) attemptID=\(attemptID) appState=\(appState) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) ready=\(playbackDidStart)")
+        let primed = prepareMPVPictureInPictureRenderer(source: source, activateLayer: false)
+        logPictureInPicture("prepare MPV PiP end source=\(source) attemptID=\(attemptID) primed=\(primed) subs={\(subtitlePictureInPictureDebugSnapshot())}")
         attemptMPVPictureInPictureStart(source: source, attemptID: attemptID, attempt: 0)
     }
 
@@ -5314,6 +5350,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logPictureInPicture("starting MPV PiP source=\(source) attempt=\(attempt)")
             rendererActivatePictureInPictureLayer()
             pip.startPictureInPicture()
+            scheduleMPVPictureInPictureRendererWatchdog(source: source, attemptID: attemptID)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self, weak pip] in
                 guard let self,
                       attemptID == self.mpvPiPStartAttemptID,
@@ -6690,15 +6727,22 @@ extension PlayerViewController: VLCRendererDelegate {
 // MARK: - PiP Support
 extension PlayerViewController: PiPControllerDelegate {
     func pipController(_ controller: PiPController, willStartPictureInPicture: Bool) {
-        logPictureInPicture("delegate willStart possible=\(controller.isPictureInPicturePossible) subs={\(subtitlePictureInPictureDebugSnapshot())} renderer={\(rendererPictureInPictureDebugSnapshot())}")
-        prepareMPVRenderedSubtitlesForPictureInPicture(source: "delegate-willStart")
-        rendererPreparePictureInPictureStart()
-        rendererActivatePictureInPictureLayer()
-        pipController?.updatePlaybackState()
+        logPictureInPicture("delegate willStart possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive)")
+        let primed = prepareMPVPictureInPictureRenderer(source: "delegate-willStart", activateLayer: true)
+        logPictureInPicture("delegate willStart prepared primed=\(primed) subs={\(subtitlePictureInPictureDebugSnapshot())}")
     }
     func pipController(_ controller: PiPController, didStartPictureInPicture: Bool) {
-        logPictureInPicture("delegate didStart success=\(didStartPictureInPicture) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive) renderer={\(rendererPictureInPictureDebugSnapshot())}")
-        if !didStartPictureInPicture {
+        let primed = rendererIsPictureInPicturePrimed()
+        logPictureInPicture("delegate didStart success=\(didStartPictureInPicture) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive) primed=\(primed) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+        if didStartPictureInPicture {
+            if primed {
+                rendererActivatePictureInPictureLayer()
+            } else {
+                logPictureInPicture("delegate didStart found unprimed renderer; forcing PiP renderer prepare")
+                _ = prepareMPVPictureInPictureRenderer(source: "delegate-didStart-unprimed", activateLayer: true)
+            }
+            scheduleMPVPictureInPictureRendererWatchdog(source: "delegate-didStart")
+        } else {
             mpvPiPStartAttemptID += 1
             mpvAppExitPiPStartRequested = false
             rendererFinishPictureInPicture()
