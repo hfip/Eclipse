@@ -79,6 +79,7 @@ private typealias MPVOpenGLGetProcAddress = @convention(c) (UnsafeMutableRawPoin
 
 private let lunaMPVOpenGLESHandle = dlopen("/System/Library/Frameworks/OpenGLES.framework/OpenGLES", RTLD_LAZY)
 private let lunaGLBGRA = GLenum(0x80E1)
+private let lunaMPVPiPOpenGLFlipY: Int32 = 0
 
 private let lunaMPVGetOpenGLProcAddress: MPVOpenGLGetProcAddress = { _, name in
     guard let name else { return nil }
@@ -266,9 +267,9 @@ private final class MPVPiPBridge {
         lastRenderTimestamp = CACurrentMediaTime()
         if lastLoggedRenderSize != targetSize {
             lastLoggedRenderSize = targetSize
-            Logger.shared.log("[MPVPiPBridge] OpenGL render target size=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height))", type: "MPV")
+            Logger.shared.log("[MPVPiPBridge] OpenGL render target size=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height)) flipY=\(lunaMPVPiPOpenGLFlipY)", type: "MPV")
         } else if renderAttemptCount <= 3 || renderAttemptCount % 60 == 0 {
-            Logger.shared.log("[MPVPiPBridge] OpenGL render attempt count=\(renderAttemptCount) target=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height))", type: "MPV")
+            Logger.shared.log("[MPVPiPBridge] OpenGL render attempt count=\(renderAttemptCount) target=\(width)x\(height) source=\(String(format: "%.0fx%.0f", videoSize.width, videoSize.height)) flipY=\(lunaMPVPiPOpenGLFlipY)", type: "MPV")
         }
 
         if poolWidth != width || poolHeight != height {
@@ -370,7 +371,7 @@ private final class MPVPiPBridge {
             h: Int32(height),
             internal_format: Int32(GL_RGBA)
         )
-        var flipY: Int32 = 1
+        var flipY = lunaMPVPiPOpenGLFlipY
         let renderResult = render(&fbo, &flipY)
         glFlush()
         glViewport(previousViewport[0], previousViewport[1], GLsizei(previousViewport[2]), GLsizei(previousViewport[3]))
