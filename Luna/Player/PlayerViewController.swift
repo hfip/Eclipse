@@ -70,8 +70,24 @@ struct PlaybackFailureReport {
 }
 
 final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate {
+    private struct PlayerOverlayMenuAction {
+        let title: String
+        let imageName: String?
+        let isSelected: Bool
+        let isEnabled: Bool
+        let handler: () -> Void
+    }
+
+    private struct PlayerOverlayMenuSection {
+        let title: String?
+        let actions: [PlayerOverlayMenuAction]
+    }
+
     private let playerLogId = UUID().uuidString.prefix(8)
     private let trackerManager = TrackerManager.shared
+    private var overlayMenuHandlers: [Int: () -> Void] = [:]
+    private var nextOverlayMenuHandlerID = 1
+    private var overlayMenuKind: String?
 
     private let videoContainer: UIView = {
         let v = UIView()
@@ -157,6 +173,58 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         label.isHidden = true
         label.isUserInteractionEnabled = false
         return label
+    }()
+
+    private lazy var overlayMenuDismissView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .clear
+        view.alpha = 0.0
+        view.isHidden = true
+        view.isUserInteractionEnabled = true
+        let tap = UITapGestureRecognizer(target: self, action: #selector(overlayMenuDismissTapped))
+        view.addGestureRecognizer(tap)
+        return view
+    }()
+
+    private let overlayMenuPanelView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.88)
+        view.layer.cornerRadius = 8
+        view.layer.borderWidth = 1
+        view.layer.borderColor = UIColor.white.withAlphaComponent(0.12).cgColor
+        view.clipsToBounds = true
+        view.alpha = 0.0
+        view.isHidden = true
+        view.isUserInteractionEnabled = true
+        return view
+    }()
+
+    private let overlayMenuTitleLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.numberOfLines = 1
+        return label
+    }()
+
+    private let overlayMenuScrollView: UIScrollView = {
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.backgroundColor = .clear
+        return scrollView
+    }()
+
+    private let overlayMenuStackView: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 4
+        return stack
     }()
     
     private lazy var errorBanner: UIView = {
@@ -1483,12 +1551,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         configureSeekButtons()
 
         if !isVLCPlayer {
-            subtitleButton.showsMenuAsPrimaryAction = true
+            subtitleButton.showsMenuAsPrimaryAction = false
+            speedButton.showsMenuAsPrimaryAction = false
+            audioButton.showsMenuAsPrimaryAction = false
             updateSubtitleTracksMenu()
         } else {
             // Ensure subtitle control appears with other buttons immediately on VLC,
             // even before track discovery finishes.
             subtitleButton.showsMenuAsPrimaryAction = true
+            speedButton.showsMenuAsPrimaryAction = true
+            audioButton.showsMenuAsPrimaryAction = true
             updateSubtitleTracksMenu()
             updateEpisodeBrowserButtonVisibility()
         }
@@ -2022,6 +2094,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         view.addSubview(errorBanner)
         videoContainer.addSubview(centerPlayPauseButton)
         videoContainer.addSubview(progressContainer)
+        videoContainer.addSubview(overlayMenuDismissView)
+        videoContainer.addSubview(overlayMenuPanelView)
+        overlayMenuPanelView.addSubview(overlayMenuTitleLabel)
+        overlayMenuPanelView.addSubview(overlayMenuScrollView)
+        overlayMenuScrollView.addSubview(overlayMenuStackView)
         videoContainer.addSubview(closeButton)
         videoContainer.addSubview(pipButton)
         videoContainer.addSubview(playerTitleLabel)
@@ -2073,6 +2150,31 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             controlsOverlayView.leadingAnchor.constraint(equalTo: videoContainer.leadingAnchor),
             controlsOverlayView.trailingAnchor.constraint(equalTo: videoContainer.trailingAnchor),
             controlsOverlayView.bottomAnchor.constraint(equalTo: videoContainer.bottomAnchor),
+
+            overlayMenuDismissView.topAnchor.constraint(equalTo: videoContainer.topAnchor),
+            overlayMenuDismissView.leadingAnchor.constraint(equalTo: videoContainer.leadingAnchor),
+            overlayMenuDismissView.trailingAnchor.constraint(equalTo: videoContainer.trailingAnchor),
+            overlayMenuDismissView.bottomAnchor.constraint(equalTo: videoContainer.bottomAnchor),
+
+            overlayMenuPanelView.trailingAnchor.constraint(equalTo: progressContainer.trailingAnchor),
+            overlayMenuPanelView.bottomAnchor.constraint(equalTo: progressContainer.topAnchor, constant: -48),
+            overlayMenuPanelView.widthAnchor.constraint(equalToConstant: 280),
+            overlayMenuPanelView.heightAnchor.constraint(equalToConstant: 240),
+
+            overlayMenuTitleLabel.topAnchor.constraint(equalTo: overlayMenuPanelView.topAnchor, constant: 10),
+            overlayMenuTitleLabel.leadingAnchor.constraint(equalTo: overlayMenuPanelView.leadingAnchor, constant: 12),
+            overlayMenuTitleLabel.trailingAnchor.constraint(equalTo: overlayMenuPanelView.trailingAnchor, constant: -12),
+
+            overlayMenuScrollView.topAnchor.constraint(equalTo: overlayMenuTitleLabel.bottomAnchor, constant: 8),
+            overlayMenuScrollView.leadingAnchor.constraint(equalTo: overlayMenuPanelView.leadingAnchor, constant: 8),
+            overlayMenuScrollView.trailingAnchor.constraint(equalTo: overlayMenuPanelView.trailingAnchor, constant: -8),
+            overlayMenuScrollView.bottomAnchor.constraint(equalTo: overlayMenuPanelView.bottomAnchor, constant: -8),
+
+            overlayMenuStackView.topAnchor.constraint(equalTo: overlayMenuScrollView.contentLayoutGuide.topAnchor),
+            overlayMenuStackView.leadingAnchor.constraint(equalTo: overlayMenuScrollView.contentLayoutGuide.leadingAnchor),
+            overlayMenuStackView.trailingAnchor.constraint(equalTo: overlayMenuScrollView.contentLayoutGuide.trailingAnchor),
+            overlayMenuStackView.bottomAnchor.constraint(equalTo: overlayMenuScrollView.contentLayoutGuide.bottomAnchor),
+            overlayMenuStackView.widthAnchor.constraint(equalTo: overlayMenuScrollView.frameLayoutGuide.widthAnchor)
         ])
         
         NSLayoutConstraint.activate([
@@ -2383,6 +2485,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if supportsSharedPlayerControls {
             subtitleButton.addTarget(self, action: #selector(subtitleButtonTapped), for: .touchUpInside)
             episodeBrowserButton.addTarget(self, action: #selector(episodeBrowserButtonTapped), for: .touchUpInside)
+            speedButton.addTarget(self, action: #selector(speedButtonTapped), for: .touchUpInside)
+            audioButton.addTarget(self, action: #selector(audioButtonTapped), for: .touchUpInside)
         }
         
         // Ensure shared player buttons stay interactive above renderer views.
@@ -2991,6 +3095,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func refreshActiveSubtitleMenu() {
         updateSubtitleTracksMenu()
+        if overlayMenuKind == "subtitles" {
+            showMPVSubtitleMenu()
+        }
     }
     
     private func updateSubtitleButtonAppearance() {
@@ -3252,6 +3359,171 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         nextEpisodeButton.configuration?.subtitle = nil
         nextEpisodeButton.configuration?.image = UIImage(systemName: "forward.end.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
 #endif
+    }
+
+    private var usesOverlayPlayerMenus: Bool {
+        !isVLCPlayer && supportsSharedPlayerControls
+    }
+
+    private func makeOverlayAction(
+        title: String,
+        imageName: String? = nil,
+        isSelected: Bool = false,
+        isEnabled: Bool = true,
+        handler: @escaping () -> Void
+    ) -> PlayerOverlayMenuAction {
+        PlayerOverlayMenuAction(title: title, imageName: imageName, isSelected: isSelected, isEnabled: isEnabled, handler: handler)
+    }
+
+    private func showOverlayMenu(title: String, kind: String, sections: [PlayerOverlayMenuSection]) {
+        guard usesOverlayPlayerMenus else { return }
+        overlayMenuKind = kind
+        overlayMenuHandlers.removeAll()
+        overlayMenuStackView.arrangedSubviews.forEach { view in
+            overlayMenuStackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        overlayMenuTitleLabel.text = title
+
+        for section in sections {
+            if let title = section.title, !title.isEmpty {
+                let label = UILabel()
+                label.text = title
+                label.textColor = UIColor.white.withAlphaComponent(0.65)
+                label.font = .systemFont(ofSize: 11, weight: .semibold)
+                label.numberOfLines = 1
+                overlayMenuStackView.addArrangedSubview(label)
+            }
+            for action in section.actions {
+                let button = UIButton(type: .system)
+                button.contentHorizontalAlignment = .leading
+                button.titleLabel?.font = .systemFont(ofSize: 13, weight: action.isSelected ? .bold : .medium)
+                let prefix = action.isSelected ? "✓ " : "  "
+                button.setTitle(prefix + action.title, for: .normal)
+                button.setTitleColor(action.isEnabled ? .white : UIColor.white.withAlphaComponent(0.38), for: .normal)
+                if let imageName = action.imageName {
+                    button.setImage(UIImage(systemName: imageName), for: .normal)
+                    button.tintColor = action.isEnabled ? .white : UIColor.white.withAlphaComponent(0.38)
+                    button.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 8)
+                }
+                button.backgroundColor = action.isSelected ? UIColor.white.withAlphaComponent(0.18) : UIColor.white.withAlphaComponent(0.07)
+                button.layer.cornerRadius = 6
+                button.clipsToBounds = true
+                button.isEnabled = action.isEnabled
+                let handlerID = nextOverlayMenuHandlerID
+                nextOverlayMenuHandlerID += 1
+                overlayMenuHandlers[handlerID] = action.handler
+                button.tag = handlerID
+                button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+                button.addTarget(self, action: #selector(overlayMenuActionTapped(_:)), for: .touchUpInside)
+                overlayMenuStackView.addArrangedSubview(button)
+            }
+        }
+
+        overlayMenuDismissView.isHidden = false
+        overlayMenuPanelView.isHidden = false
+        videoContainer.bringSubviewToFront(overlayMenuDismissView)
+        videoContainer.bringSubviewToFront(overlayMenuPanelView)
+        overlayMenuScrollView.setContentOffset(.zero, animated: false)
+        controlsHideWorkItem?.cancel()
+        UIView.animate(withDuration: 0.14) {
+            self.overlayMenuDismissView.alpha = 1.0
+            self.overlayMenuPanelView.alpha = 1.0
+        }
+    }
+
+    private func hideOverlayMenu(animated: Bool = true) {
+        guard !overlayMenuPanelView.isHidden else { return }
+        overlayMenuKind = nil
+        let finish = {
+            self.overlayMenuDismissView.isHidden = true
+            self.overlayMenuPanelView.isHidden = true
+            self.overlayMenuHandlers.removeAll()
+        }
+        if animated {
+            UIView.animate(withDuration: 0.12) {
+                self.overlayMenuDismissView.alpha = 0.0
+                self.overlayMenuPanelView.alpha = 0.0
+            } completion: { _ in finish() }
+        } else {
+            overlayMenuDismissView.alpha = 0.0
+            overlayMenuPanelView.alpha = 0.0
+            finish()
+        }
+    }
+
+    @objc private func overlayMenuDismissTapped() {
+        hideOverlayMenu()
+        showControlsTemporarily()
+    }
+
+    @objc private func overlayMenuActionTapped(_ sender: UIButton) {
+        overlayMenuHandlers[sender.tag]?()
+    }
+
+    @objc private func speedButtonTapped() {
+        guard usesOverlayPlayerMenus else { return }
+        showMPVSpeedMenu()
+    }
+
+    private func showMPVSpeedMenu() {
+        let currentSpeed = rendererGetSpeed()
+        let speeds: [(String, Double)] = [
+            ("0.25x", 0.25),
+            ("0.5x", 0.5),
+            ("0.75x", 0.75),
+            ("1.0x", 1.0),
+            ("1.25x", 1.25),
+            ("1.5x", 1.5),
+            ("1.75x", 1.75),
+            ("2.0x", 2.0)
+        ]
+        let actions = speeds.map { name, speed in
+            makeOverlayAction(title: name, imageName: "hare.fill", isSelected: abs(currentSpeed - speed) < 0.01) { [weak self] in
+                guard let self else { return }
+                self.rendererSetSpeed(speed)
+                self.speedIndicatorLabel.text = String(format: "%.2fx", speed)
+                UIView.animate(withDuration: 0.16) {
+                    self.speedIndicatorLabel.alpha = 1.0
+                } completion: { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                        UIView.animate(withDuration: 0.16) {
+                            self?.speedIndicatorLabel.alpha = 0.0
+                        }
+                    }
+                }
+                self.hideOverlayMenu()
+                self.updateSpeedMenu()
+                self.showControlsTemporarily()
+            }
+        }
+        showOverlayMenu(title: "Playback Speed", kind: "speed", sections: [PlayerOverlayMenuSection(title: nil, actions: actions)])
+    }
+
+    @objc private func audioButtonTapped() {
+        guard usesOverlayPlayerMenus else { return }
+        showMPVAudioMenu()
+    }
+
+    private func showMPVAudioMenu() {
+        let detailedTracks = rendererGetAudioTracksDetailed()
+        let currentAudioTrackId = rendererGetCurrentAudioTrackId()
+        let actions: [PlayerOverlayMenuAction]
+        if detailedTracks.isEmpty {
+            actions = [makeOverlayAction(title: "No audio tracks available", isEnabled: false) {}]
+        } else {
+            actions = detailedTracks.map { id, name, _ in
+                makeOverlayAction(title: name, imageName: "speaker.wave.2", isSelected: id == currentAudioTrackId) { [weak self] in
+                    guard let self else { return }
+                    self.userSelectedAudioTrack = true
+                    self.rendererSetAudioTrack(id: id)
+                    self.updateAudioTracksMenu()
+                    self.hideOverlayMenu()
+                    self.showControlsTemporarily()
+                }
+            }
+        }
+        showOverlayMenu(title: "Audio Tracks", kind: "audio", sections: [PlayerOverlayMenuSection(title: nil, actions: actions)])
     }
     
     private func updateSpeedMenu() {
@@ -4248,6 +4520,201 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     #endif
+
+    private func showMPVSubtitleMenu() {
+        updateSubtitleTracksMenu()
+
+        let externalTracks: [(Int, String)] = isVLCCustomSubtitleOverlayEnabled
+            ? subtitleURLs.enumerated().map { index, _ in
+                let name = index < subtitleNames.count ? subtitleNames[index] : "Subtitle \(index + 1)"
+                return (index, name)
+            }
+            : []
+        let nativeSubtitleTracks = rendererGetSubtitleTrackDescriptors()
+            .filter { $0.id >= 0 && !isDisabledTrackName($0.name) }
+        let embeddedTracks = nativeSubtitleTracks.map { ($0.id, $0.name) }
+
+        var sections: [PlayerOverlayMenuSection] = []
+        var trackActions: [PlayerOverlayMenuAction] = [
+            makeOverlayAction(title: "Disable Subtitles", imageName: "xmark", isSelected: !subtitleModel.isVisible) { [weak self] in
+                guard let self else { return }
+                self.subtitleModel.isVisible = false
+                self.userSelectedSubtitleTrack = true
+                self.rendererDisableSubtitles()
+                self.subtitleEntries.removeAll()
+                self.vlcSubtitleSelection = .none
+                self.updateVLCSubtitleOverlay(for: self.cachedPosition)
+                self.updateSubtitleButtonAppearance()
+                self.updateSubtitleTracksMenu()
+                self.showMPVSubtitleMenu()
+                Logger.shared.log("[PlayerVC.Subtitles] user disabled subtitles from overlay menu", type: "Player")
+            }
+        ]
+
+        if externalTracks.isEmpty && embeddedTracks.isEmpty {
+            trackActions.append(makeOverlayAction(title: "No subtitles in stream", isEnabled: false) {})
+        } else {
+            trackActions.append(contentsOf: externalTracks.map { id, name in
+                let selected: Bool = {
+                    guard subtitleModel.isVisible, case .external(let selectedIndex) = vlcSubtitleSelection else { return false }
+                    return selectedIndex == id
+                }()
+                return makeOverlayAction(title: name, imageName: "captions.bubble", isSelected: selected) { [weak self] in
+                    guard let self else { return }
+                    self.subtitleModel.isVisible = true
+                    self.userSelectedSubtitleTrack = true
+                    self.currentSubtitleIndex = id
+                    self.vlcSubtitleSelection = .external(index: id)
+                    self.loadCurrentSubtitle()
+                    self.rendererDisableSubtitles()
+                    self.updateVLCSubtitleOverlay(for: self.cachedPosition)
+                    self.updateSubtitleButtonAppearance()
+                    self.updateSubtitleTracksMenu()
+                    self.showMPVSubtitleMenu()
+                    Logger.shared.log("[PlayerVC.Subtitles] user selected external subtitle index=\(id) name=\(name)", type: "Player")
+                }
+            })
+
+            trackActions.append(contentsOf: nativeSubtitleTracks.map { track in
+                let blocksMPVDefault = !canAutoSelectNativeSubtitleTrack(track)
+                let selected: Bool = {
+                    guard subtitleModel.isVisible, case .embedded(let selectedTrackId) = vlcSubtitleSelection else { return false }
+                    return selectedTrackId == track.id
+                }()
+                let title = blocksMPVDefault ? "\(track.name) [\(subtitleBitmapCodecLabel(track.codec))]" : track.name
+                return makeOverlayAction(
+                    title: title,
+                    imageName: blocksMPVDefault ? "exclamationmark.triangle" : "captions.bubble",
+                    isSelected: selected,
+                    isEnabled: !blocksMPVDefault
+                ) { [weak self] in
+                    guard let self else { return }
+                    self.subtitleModel.isVisible = true
+                    self.userSelectedSubtitleTrack = true
+                    self.vlcSubtitleSelection = .embedded(trackId: track.id)
+                    self.subtitleEntries.removeAll()
+                    self.updateVLCSubtitleOverlay(for: self.cachedPosition)
+                    self.rendererSetSubtitleTrack(id: track.id)
+                    self.rendererApplySubtitleStyle(self.currentSubtitleStyle())
+                    self.updateSubtitleButtonAppearance()
+                    self.updateSubtitleTracksMenu()
+                    self.showMPVSubtitleMenu()
+                    Logger.shared.log("[PlayerVC.Subtitles] user selected embedded subtitle id=\(track.id) name=\(track.name)", type: "Player")
+                }
+            })
+        }
+        sections.append(PlayerOverlayMenuSection(title: "Select Track", actions: trackActions))
+
+        if isVLCOpenSubtitlesEnabled {
+            sections.append(PlayerOverlayMenuSection(title: "OpenSubtitles", actions: openSubtitlesOverlayActions()))
+        }
+
+        if Settings.shared.enableVLCSubtitleEditMenu {
+            sections.append(contentsOf: subtitleAppearanceOverlaySections())
+        }
+
+        showOverlayMenu(title: "Subtitles", kind: "subtitles", sections: sections)
+    }
+
+    private func openSubtitlesOverlayActions() -> [PlayerOverlayMenuAction] {
+        if openSubtitlesFetchInProgress {
+            return [makeOverlayAction(title: "Searching OpenSubtitles...", imageName: "hourglass", isEnabled: false) {}]
+        }
+        if openSubtitlesResults.isEmpty {
+            if openSubtitlesSearchAttempted {
+                return [
+                    makeOverlayAction(title: "No OpenSubtitles results", imageName: "captions.bubble", isEnabled: false) {},
+                    makeOverlayAction(title: "Refresh OpenSubtitles", imageName: "arrow.clockwise") { [weak self] in
+                        self?.fetchOpenSubtitles(autoSelect: false, reason: "manual-refresh-empty", forceRefresh: true)
+                        self?.hideOverlayMenu()
+                    }
+                ]
+            }
+            return [
+                makeOverlayAction(title: "Search OpenSubtitles", imageName: "magnifyingglass") { [weak self] in
+                    self?.fetchOpenSubtitles(autoSelect: false, reason: "manual-menu")
+                    self?.hideOverlayMenu()
+                }
+            ]
+        }
+
+        var actions: [PlayerOverlayMenuAction] = [
+            makeOverlayAction(title: "Refresh OpenSubtitles", imageName: "arrow.clockwise") { [weak self] in
+                self?.fetchOpenSubtitles(autoSelect: false, reason: "manual-refresh", forceRefresh: true)
+                self?.hideOverlayMenu()
+            }
+        ]
+        actions.append(contentsOf: openSubtitlesResults.prefix(20).map { subtitle in
+            makeOverlayAction(title: openSubtitleDisplayName(subtitle), imageName: "captions.bubble") { [weak self] in
+                self?.loadOpenSubtitle(subtitle, userSelected: true)
+                self?.hideOverlayMenu()
+            }
+        })
+        return actions
+    }
+
+    private func subtitleAppearanceOverlaySections() -> [PlayerOverlayMenuSection] {
+        let foregroundColors: [(String, UIColor)] = [
+            ("White", .white),
+            ("Yellow", .yellow),
+            ("Cyan", .cyan),
+            ("Green", .green),
+            ("Magenta", .magenta)
+        ]
+        let strokeColors: [(String, UIColor)] = [
+            ("Black", .black),
+            ("Dark Gray", .darkGray),
+            ("White", .white),
+            ("None", .clear)
+        ]
+        let strokeWidths: [(String, CGFloat)] = [
+            ("None", 0.0),
+            ("Thin", 0.5),
+            ("Normal", 1.0),
+            ("Medium", 1.5),
+            ("Thick", 2.0)
+        ]
+        let fontSizes: [(String, CGFloat)] = [
+            ("Very Small", 20.0),
+            ("Small", 24.0),
+            ("Medium", 30.0),
+            ("Large", 34.0),
+            ("Extra Large", 38.0),
+            ("Huge", 42.0),
+            ("Extra Huge", 46.0)
+        ]
+
+        return [
+            PlayerOverlayMenuSection(title: "Text Color", actions: foregroundColors.map { name, color in
+                makeOverlayAction(title: name, imageName: "paintpalette", isSelected: subtitleModel.foregroundColor == color) { [weak self] in
+                    self?.subtitleModel.foregroundColor = color
+                    self?.updateCurrentSubtitleAppearance()
+                    self?.showMPVSubtitleMenu()
+                }
+            }),
+            PlayerOverlayMenuSection(title: "Stroke Color", actions: strokeColors.map { name, color in
+                makeOverlayAction(title: name, imageName: "pencil.tip", isSelected: subtitleModel.strokeColor == color) { [weak self] in
+                    self?.subtitleModel.strokeColor = color
+                    self?.updateCurrentSubtitleAppearance()
+                    self?.showMPVSubtitleMenu()
+                }
+            }),
+            PlayerOverlayMenuSection(title: "Stroke Width", actions: strokeWidths.map { name, width in
+                makeOverlayAction(title: name, imageName: "lineweight", isSelected: subtitleModel.strokeWidth == width) { [weak self] in
+                    self?.subtitleModel.strokeWidth = width
+                    self?.updateCurrentSubtitleAppearance()
+                    self?.showMPVSubtitleMenu()
+                }
+            }),
+            PlayerOverlayMenuSection(title: "Font Size", actions: fontSizes.map { name, size in
+                makeOverlayAction(title: name, imageName: "textformat.size", isSelected: subtitleModel.fontSize == size) { [weak self] in
+                    self?.subtitleModel.fontSize = size
+                    self?.updateCurrentSubtitleAppearance()
+                    self?.showMPVSubtitleMenu()
+                }
+            })
+        ]
+    }
     
     private func updateSubtitleTracksMenu() {
         let useCustomExternalOverlay = isVLCCustomSubtitleOverlayEnabled
@@ -4271,8 +4738,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // Always show the subtitle button so the user can view the menu even when empty
         subtitleButton.isHidden = false
 
-        // Use menu-only behavior for both VLC and MPV so the UI looks consistent
-        subtitleButton.showsMenuAsPrimaryAction = true
+        // MPV uses an in-player overlay to avoid native UIMenu/OpenGL contention.
+        subtitleButton.showsMenuAsPrimaryAction = !usesOverlayPlayerMenus
 
         if restoreRequestedEmbeddedSubtitleTrackIfNeeded(from: embeddedTracks) {
             updateSubtitleButtonAppearance()
@@ -5131,6 +5598,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     @objc private func subtitleButtonTapped() {
+        if usesOverlayPlayerMenus {
+            showMPVSubtitleMenu()
+            return
+        }
+
         // Menu-first UI (VLC + MPV). When menu is primary, do not show action sheets.
         if subtitleButton.showsMenuAsPrimaryAction {
             return
@@ -5439,6 +5911,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         // Ensure controls sit above the video layer/view
         videoContainer.bringSubviewToFront(controlsOverlayView)
+        videoContainer.bringSubviewToFront(overlayMenuDismissView)
+        videoContainer.bringSubviewToFront(overlayMenuPanelView)
         videoContainer.bringSubviewToFront(centerPlayPauseButton)
         videoContainer.bringSubviewToFront(progressContainer)
         videoContainer.bringSubviewToFront(closeButton)
@@ -5505,6 +5979,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func hideControls() {
         controlsHideWorkItem?.cancel()
         controlsVisible = false
+        hideOverlayMenu(animated: false)
 #if !os(tvOS)
         isBrightnessControlActive = false
         isVolumeControlActive = false
@@ -5598,6 +6073,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if candidate === progressContainer
                 || candidate === brightnessContainer
                 || candidate === volumeContainer
+                || candidate === overlayMenuDismissView
+                || candidate === overlayMenuPanelView
                 || candidate === errorBanner {
                 return true
             }
