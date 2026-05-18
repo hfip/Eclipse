@@ -126,6 +126,15 @@ class Settings: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "playerPerformanceOverlayEnabled") }
     }
 
+    var mpvForegroundFPS: Int {
+        get {
+            UserDefaults.standard.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
+        }
+        set {
+            UserDefaults.standard.set(newValue == 60 ? 60 : 30, forKey: "mpvForegroundFPS")
+        }
+    }
+
     var enableVLCSubtitleEditMenu: Bool {
         get {
             UserDefaults.standard.object(forKey: "enableVLCSubtitleEditMenu") as? Bool ?? true

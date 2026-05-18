@@ -718,9 +718,10 @@ final class MPVNativeRenderer: PlayerRenderer {
         let screen = UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen }
             .first ?? UIScreen.main
-        let maxFPS = max(1, min(screen.maximumFramesPerSecond, 60))
-        self.foregroundFramesPerSecond = maxFPS
-        self.foregroundFrameInterval = 1.0 / CFTimeInterval(maxFPS)
+        let configuredFPS = Settings.shared.mpvForegroundFPS
+        let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
+        self.foregroundFramesPerSecond = targetFPS
+        self.foregroundFrameInterval = 1.0 / CFTimeInterval(targetFPS)
 
         glView.renderer = self
         glView.backgroundColor = .black

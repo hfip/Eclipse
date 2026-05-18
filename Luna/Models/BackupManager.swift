@@ -48,6 +48,7 @@ struct BackupData: Codable {
     var vlcOpenSubtitlesEnabled: Bool = false
     var vlcOpenSubtitlesAutoFallbackEnabled: Bool = true
     var playerPerformanceOverlayEnabled: Bool = false
+    var mpvForegroundFPS: Int = 30
 
     // Subtitle Styling
     var subtitleForegroundColor: Data?
@@ -118,7 +119,7 @@ struct BackupData: Codable {
         case version, createdDate
         case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
-        case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcPiPEnabled, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled
+        case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcPiPEnabled, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
         case showKanzen, kanzenAutoMode, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode
@@ -172,6 +173,7 @@ struct BackupData: Codable {
         vlcOpenSubtitlesEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesEnabled) ?? false
         vlcOpenSubtitlesAutoFallbackEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesAutoFallbackEnabled) ?? true
         playerPerformanceOverlayEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerPerformanceOverlayEnabled) ?? false
+        mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(try container.decodeIfPresent(Int.self, forKey: .mpvForegroundFPS) ?? 30)
 
         // Subtitle styling
         subtitleForegroundColor = try Self.decodeColorData(from: container, forKey: .subtitleForegroundColor)
@@ -314,6 +316,7 @@ struct BackupData: Codable {
         try container.encode(vlcOpenSubtitlesEnabled, forKey: .vlcOpenSubtitlesEnabled)
         try container.encode(vlcOpenSubtitlesAutoFallbackEnabled, forKey: .vlcOpenSubtitlesAutoFallbackEnabled)
         try container.encode(playerPerformanceOverlayEnabled, forKey: .playerPerformanceOverlayEnabled)
+        try container.encode(mpvForegroundFPS, forKey: .mpvForegroundFPS)
 
         // Subtitle styling
         try container.encodeIfPresent(subtitleForegroundColor, forKey: .subtitleForegroundColor)
@@ -400,6 +403,7 @@ struct BackupData: Codable {
         vlcOpenSubtitlesEnabled: Bool = false,
         vlcOpenSubtitlesAutoFallbackEnabled: Bool = true,
         playerPerformanceOverlayEnabled: Bool = false,
+        mpvForegroundFPS: Int = 30,
 
         // Subtitle styling
         subtitleForegroundColor: Data? = nil,
@@ -483,6 +487,7 @@ struct BackupData: Codable {
         self.vlcOpenSubtitlesEnabled = vlcOpenSubtitlesEnabled
         self.vlcOpenSubtitlesAutoFallbackEnabled = vlcOpenSubtitlesAutoFallbackEnabled
         self.playerPerformanceOverlayEnabled = playerPerformanceOverlayEnabled
+        self.mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(mpvForegroundFPS)
 
         self.subtitleForegroundColor = subtitleForegroundColor
         self.subtitleStrokeColor = subtitleStrokeColor
@@ -546,6 +551,10 @@ struct BackupData: Codable {
             let halfStepValue = (finiteValue * 2).rounded() / 2
             return max(0.5, min(10, halfStepValue))
         }
+    }
+
+    private static func sanitizedMPVForegroundFPS(_ value: Int) -> Int {
+        value == 60 ? 60 : 30
     }
 
 }
@@ -734,6 +743,7 @@ class BackupManager {
         let vlcOpenSubtitlesEnabled = userDefaults.bool(forKey: "vlcOpenSubtitlesEnabled")
         let vlcOpenSubtitlesAutoFallbackEnabled = userDefaults.object(forKey: "vlcOpenSubtitlesAutoFallbackEnabled") == nil ? true : userDefaults.bool(forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
         let playerPerformanceOverlayEnabled = userDefaults.bool(forKey: "playerPerformanceOverlayEnabled")
+        let mpvForegroundFPS = userDefaults.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
 
         // Subtitle styling
         let subtitleForegroundColor = userDefaults.data(forKey: "subtitles_foregroundColor")
@@ -892,6 +902,7 @@ class BackupManager {
             vlcOpenSubtitlesEnabled: vlcOpenSubtitlesEnabled,
             vlcOpenSubtitlesAutoFallbackEnabled: vlcOpenSubtitlesAutoFallbackEnabled,
             playerPerformanceOverlayEnabled: playerPerformanceOverlayEnabled,
+            mpvForegroundFPS: mpvForegroundFPS,
 
             subtitleForegroundColor: subtitleForegroundColor,
             subtitleStrokeColor: subtitleStrokeColor,
@@ -1025,6 +1036,8 @@ class BackupManager {
         let vlcOpenSubtitlesEnabled = json["vlcOpenSubtitlesEnabled"] as? Bool ?? false
         let vlcOpenSubtitlesAutoFallbackEnabled = json["vlcOpenSubtitlesAutoFallbackEnabled"] as? Bool ?? true
         let playerPerformanceOverlayEnabled = json["playerPerformanceOverlayEnabled"] as? Bool ?? false
+        let mpvForegroundFPSRaw = json["mpvForegroundFPS"] as? Int ?? (json["mpvForegroundFPS"] as? Double).map(Int.init) ?? 30
+        let mpvForegroundFPS = mpvForegroundFPSRaw == 60 ? 60 : 30
 
         // Subtitle styling
         let subtitleForegroundColor = BackupData.backupColorData(from: json["subtitleForegroundColor"])
@@ -1225,6 +1238,7 @@ class BackupManager {
             vlcOpenSubtitlesEnabled: vlcOpenSubtitlesEnabled,
             vlcOpenSubtitlesAutoFallbackEnabled: vlcOpenSubtitlesAutoFallbackEnabled,
             playerPerformanceOverlayEnabled: playerPerformanceOverlayEnabled,
+            mpvForegroundFPS: mpvForegroundFPS,
             subtitleForegroundColor: subtitleForegroundColor,
             subtitleStrokeColor: subtitleStrokeColor,
             subtitleStrokeWidth: subtitleStrokeWidth,
@@ -1314,6 +1328,7 @@ class BackupManager {
         userDefaults.set(backup.vlcOpenSubtitlesEnabled, forKey: "vlcOpenSubtitlesEnabled")
         userDefaults.set(backup.vlcOpenSubtitlesAutoFallbackEnabled, forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
         userDefaults.set(backup.playerPerformanceOverlayEnabled, forKey: "playerPerformanceOverlayEnabled")
+        userDefaults.set(backup.mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS")
 
         // Subtitle styling
         if let fgColor = backup.subtitleForegroundColor {

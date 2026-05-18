@@ -158,6 +158,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(playerPerformanceOverlayEnabled, forKey: "playerPerformanceOverlayEnabled") }
     }
 
+    @Published var mpvForegroundFPS: Int {
+        didSet { UserDefaults.standard.set(mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS") }
+    }
+
     init() {
         let savedDefaultSpeed = UserDefaults.standard.double(forKey: "defaultPlaybackSpeed")
         self.defaultPlaybackSpeed = savedDefaultSpeed > 0 ? savedDefaultSpeed : 1.0
@@ -248,6 +252,8 @@ final class PlayerSettingsStore: ObservableObject {
         }
 
         self.playerPerformanceOverlayEnabled = UserDefaults.standard.bool(forKey: "playerPerformanceOverlayEnabled")
+
+        self.mpvForegroundFPS = UserDefaults.standard.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
     }
 }
 
@@ -262,6 +268,7 @@ struct PlayerSettingsView: View {
     @State private var subtitleVerticalOffset: Double = -6.0
     private let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     private let doubleTapSeekOptions: [Double] = [5, 10, 15, 20, 30, 45, 60]
+    private let mpvForegroundFPSOptions: [Int] = [30, 60]
     
     var body: some View {
         List {
@@ -592,6 +599,34 @@ struct PlayerSettingsView: View {
                         }
                     } label: {
                         Label("Subtitle Appearance", systemImage: "textformat.size")
+                    }
+
+                    if store.inAppPlayer == .mpv {
+                        DisclosureGroup {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Inline Frame Rate")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+
+                                    Text("Most media will look normal in 30 fps, but in the rare case of 60fps media, switch this to 60 fps.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                }
+
+                                Spacer()
+
+                                Picker("", selection: $store.mpvForegroundFPS) {
+                                    ForEach(mpvForegroundFPSOptions, id: \.self) { fps in
+                                        Text("\(fps) fps").tag(fps)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                            }
+                        } label: {
+                            Label("MPV Rendering", systemImage: "display")
+                        }
                     }
 
                     DisclosureGroup {
