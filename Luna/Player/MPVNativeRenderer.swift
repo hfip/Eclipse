@@ -1305,6 +1305,9 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func scheduleOpenGLRender() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
+            if self.foregroundDisplayLink != nil, self.forcedOpenGLRenderCount == 0 {
+                return
+            }
             guard !self.isRenderScheduled else { return }
             self.isRenderScheduled = true
             let now = CACurrentMediaTime()

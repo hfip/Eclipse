@@ -1514,7 +1514,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return UserDefaults.standard.bool(forKey: "vlcVolumeGestureEnabled")
     }
     private var isPerformanceOverlayEnabled: Bool {
-        return UserDefaults.standard.bool(forKey: playerPerformanceOverlayKey)
+        return false
     }
     
     private var originalSpeed: Double = 1.0
@@ -1550,7 +1550,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     #endif
         configureSeekButtons()
 
-        if !isVLCPlayer {
+        if usesOverlayPlayerMenus {
             subtitleButton.showsMenuAsPrimaryAction = false
             speedButton.showsMenuAsPrimaryAction = false
             audioButton.showsMenuAsPrimaryAction = false
@@ -3362,7 +3362,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var usesOverlayPlayerMenus: Bool {
-        !isVLCPlayer && supportsSharedPlayerControls
+        false
     }
 
     private func makeOverlayAction(
@@ -4738,7 +4738,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // Always show the subtitle button so the user can view the menu even when empty
         subtitleButton.isHidden = false
 
-        // MPV uses an in-player overlay to avoid native UIMenu/OpenGL contention.
         subtitleButton.showsMenuAsPrimaryAction = !usesOverlayPlayerMenus
 
         if restoreRequestedEmbeddedSubtitleTrackIfNeeded(from: embeddedTracks) {

@@ -762,16 +762,6 @@ struct PlayerSettingsView: View {
 
                     DisclosureGroup {
                         settingsToggleRow(
-                            title: "Performance Overlay",
-                            detail: "Show live CPU, memory, thermal, playback, renderer, and PiP frame counters over the in-app player.",
-                            binding: $store.playerPerformanceOverlayEnabled
-                        )
-                    } label: {
-                        Label("Debugger", systemImage: "speedometer")
-                    }
-
-                    DisclosureGroup {
-                        settingsToggleRow(
                             title: "AniSkip",
                             detail: "Fetch skip segments from AniSkip for anime content.",
                             binding: $store.aniSkipEnabled
