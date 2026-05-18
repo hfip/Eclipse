@@ -667,7 +667,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var currentMode: RenderMode = .openGL
     private var openGLAPIType = Array("opengl\0".utf8CString)
     private var openGLRenderParams = [mpv_render_param](repeating: mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil), count: 4)
-    private var blockForTargetTime: Int32 = 0
+    private var blockForTargetTime: Int32 = 1
 
     private var currentPreset: PlayerPreset?
     private var currentURL: URL?
@@ -789,7 +789,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "demuxer-max-bytes", value: "80M")
         setOption(name: "demuxer-readahead-secs", value: "10")
         setOption(name: "video-sync", value: "audio")
-        setOption(name: "video-timing-offset", value: "0")
+        setOption(name: "video-timing-offset", value: "0.015")
         setOption(name: "framedrop", value: "vo")
         setOption(name: "interpolation", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")
@@ -1060,6 +1060,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         let recoveryDuration = min(2.0, max(0.4, duration))
         logMPV("foreground UI render assist begin reason=\(reason) duration=\(String(format: "%.1f", recoveryDuration))s")
 
+        blockForTargetTime = 0
         if let handle = mpv {
             mpv_wakeup(handle)
         }
@@ -1079,6 +1080,18 @@ final class MPVNativeRenderer: PlayerRenderer {
                 }
                 self.scheduleRender(force: true)
             }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + recoveryDuration) { [weak self] in
+            guard let self,
+                  self.isRunning,
+                  !self.isStopping,
+                  self.currentMode == .openGL,
+                  generation == self.foregroundUIRecoveryGeneration else {
+                return
+            }
+            self.blockForTargetTime = 1
+            self.logMPV("foreground UI render assist end reason=\(reason)")
         }
     }
 
@@ -1341,9 +1354,6 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func scheduleOpenGLRender() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
-            if self.foregroundDisplayLink != nil, self.forcedOpenGLRenderCount == 0 {
-                return
-            }
             guard !self.isRenderScheduled else { return }
             self.isRenderScheduled = true
             let now = CACurrentMediaTime()
