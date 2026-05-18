@@ -687,6 +687,9 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastPiPRenderTime: CFTimeInterval = 0
     private let foregroundFrameInterval: CFTimeInterval
     private let foregroundFramesPerSecond: Int
+    private let foregroundInteractionFrameInterval: CFTimeInterval = 1.0 / 12.0
+    private var foregroundUIInteractionThrottleUntil: CFTimeInterval = 0
+    private var lastForegroundInteractionLogTime: CFTimeInterval = 0
     private let pipFrameInterval: CFTimeInterval = 1.0 / 24.0
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
     private var loadGeneration = 0
@@ -1262,7 +1265,31 @@ final class MPVNativeRenderer: PlayerRenderer {
             return
         }
         guard !isPaused || isLoading || forcedOpenGLRenderCount > 0 else { return }
+        let now = CACurrentMediaTime()
+        let runLoopMode = RunLoop.current.currentMode?.rawValue ?? ""
+        let isTrackingRunLoop = runLoopMode.contains("Tracking")
+        let isControlInteraction = isTrackingRunLoop || now < foregroundUIInteractionThrottleUntil
+        if isControlInteraction, forcedOpenGLRenderCount == 0 {
+            let interval = max(foregroundFrameInterval, foregroundInteractionFrameInterval)
+            guard now - lastForegroundRenderTime >= interval else { return }
+            if now - lastForegroundInteractionLogTime >= 2.0 {
+                lastForegroundInteractionLogTime = now
+                logMPV("foreground render throttled during UI interaction mode=\(runLoopMode.isEmpty ? "unknown" : runLoopMode) interval=\(String(format: "%.3f", interval))")
+            }
+        }
         glView.display()
+    }
+
+    func beginForegroundUIInteraction(reason: String, duration: CFTimeInterval = 6.0) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
+            let now = CACurrentMediaTime()
+            self.foregroundUIInteractionThrottleUntil = max(self.foregroundUIInteractionThrottleUntil, now + duration)
+            if now - self.lastForegroundInteractionLogTime >= 1.0 {
+                self.lastForegroundInteractionLogTime = now
+                self.logMPV("foreground UI interaction throttle armed reason=\(reason) duration=\(String(format: "%.1f", duration))s")
+            }
+        }
     }
 
     private func scheduleRender(force: Bool = false) {
