@@ -32,11 +32,35 @@ struct PlaybackLaunchContext {
     let sourceKind: PlaybackSourceKind
     let autoMode: Bool
     let streamURL: String
-    let streamName: String? = nil
+    let streamName: String?
     let headers: [String: String]
     let subtitles: [String]
     let subtitleNames: [String]?
     let retryCount: Int
+
+    init(
+        sourceId: String,
+        sourceName: String,
+        sourceKind: PlaybackSourceKind,
+        autoMode: Bool,
+        streamURL: String,
+        streamName: String? = nil,
+        headers: [String: String],
+        subtitles: [String],
+        subtitleNames: [String]?,
+        retryCount: Int
+    ) {
+        self.sourceId = sourceId
+        self.sourceName = sourceName
+        self.sourceKind = sourceKind
+        self.autoMode = autoMode
+        self.streamURL = streamURL
+        self.streamName = streamName
+        self.headers = headers
+        self.subtitles = subtitles
+        self.subtitleNames = subtitleNames
+        self.retryCount = retryCount
+    }
 }
 
 struct PlaybackFailureReport {
