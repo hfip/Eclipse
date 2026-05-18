@@ -849,6 +849,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             logMPV("rendererSetSubtitleTrack id=\(id) userSelected=\(userSelectedSubtitleTrack) selection=\(vlcSubtitleSelection)")
         }
+        lastRequestedEmbeddedSubtitleTrackId = id
         renderer.setSubtitleTrack(id: id)
     }
     
@@ -862,6 +863,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             logMPV("rendererDisableSubtitles currentSelection=\(vlcSubtitleSelection)")
         }
+        lastRequestedEmbeddedSubtitleTrackId = nil
         renderer.disableSubtitles()
     }
     
@@ -1066,6 +1068,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var vlcSubtitleSelection: VLCSubtitleSelection = .none
+    private var lastRequestedEmbeddedSubtitleTrackId: Int?
     private var openSubtitlesResults: [StremioSubtitle] = []
     private var openSubtitlesFetchTask: Task<Void, Never>?
     private var openSubtitlesFetchInProgress = false
@@ -1596,6 +1599,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         userSelectedAudioTrack = false
         userSelectedSubtitleTrack = false
+        lastRequestedEmbeddedSubtitleTrackId = nil
         if !isLocalProxyURL(url) {
             vlcProxyFallbackTried = false
             mpvTransportBridgeFallbackTried = false
@@ -4163,6 +4167,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // Use menu-only behavior for both VLC and MPV so the UI looks consistent
         subtitleButton.showsMenuAsPrimaryAction = true
 
+        if restoreRequestedEmbeddedSubtitleTrackIfNeeded(from: embeddedTracks) {
+            updateSubtitleButtonAppearance()
+        }
+
         // Apply subtitle defaults while the user has not manually selected a track.
         if !userSelectedSubtitleTrack {
             let settings = Settings.shared
@@ -4326,6 +4334,24 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         let subtitleMenu = UIMenu(title: "Subtitles", image: UIImage(systemName: "captions.bubble"), children: menuChildren)
         subtitleButton.menu = subtitleMenu
+    }
+
+    private func restoreRequestedEmbeddedSubtitleTrackIfNeeded(from embeddedTracks: [(Int, String)]) -> Bool {
+        guard !isVLCPlayer,
+              userSelectedSubtitleTrack,
+              let requestedTrackId = lastRequestedEmbeddedSubtitleTrackId,
+              let track = embeddedTracks.first(where: { $0.0 == requestedTrackId }),
+              rendererGetCurrentSubtitleTrackId() != requestedTrackId else {
+            return false
+        }
+
+        subtitleEntries.removeAll()
+        vlcSubtitleSelection = .embedded(trackId: requestedTrackId)
+        setSubtitleVisible(true, persist: false)
+        rendererSetSubtitleTrack(id: requestedTrackId)
+        rendererApplySubtitleStyle(currentSubtitleStyle(visible: true))
+        Logger.shared.log("[PlayerVC.Subtitles] restored embedded track id=\(requestedTrackId) name=\(track.1) after MPV track refresh", type: "Player")
+        return true
     }
 
     private func isDisabledTrackName(_ name: String) -> Bool {

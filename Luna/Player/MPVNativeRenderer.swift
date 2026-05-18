@@ -864,6 +864,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "hwdec-image-format", value: "nv12")
         setOption(name: "vd-lavc-dr", value: "no")
         setOption(name: "vd-lavc-software-fallback", value: "yes")
+        setOption(name: "hwdec-software-fallback", value: "yes")
         setOption(name: "sws-allow-zimg", value: "yes")
         setOption(name: "demuxer-thread", value: "yes")
         setOption(name: "cache", value: "yes")
@@ -1813,7 +1814,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     private func shouldPreferSoftwareDecodeForOpenGL(url: URL) -> Bool {
         guard activeRenderBackend == .openGL else { return false }
-        let text = (url.absoluteString.removingPercentEncoding ?? url.absoluteString).lowercased()
+        let text = openGLRiskInspectionText(for: url)
         let riskyTokens = [
             "10bit",
             "10-bit",
@@ -1825,6 +1826,46 @@ final class MPVNativeRenderer: PlayerRenderer {
             "p016"
         ]
         return riskyTokens.contains { text.contains($0) }
+    }
+
+    private func openGLRiskInspectionText(for url: URL) -> String {
+        var candidates = [
+            url.absoluteString,
+            url.lastPathComponent
+        ]
+
+        if let decodedProxyTarget = decodedProxyTargetURLString(from: url) {
+            candidates.append(decodedProxyTarget)
+        }
+
+        return candidates
+            .map { ($0.removingPercentEncoding ?? $0).lowercased() }
+            .joined(separator: " ")
+    }
+
+    private func decodedProxyTargetURLString(from url: URL) -> String? {
+        guard let host = url.host,
+              host == "127.0.0.1" || host == "localhost",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let encodedTarget = components.queryItems?.first(where: { $0.name == "url" })?.value else {
+            return nil
+        }
+
+        var normalizedTarget = encodedTarget
+            .replacingOccurrences(of: " ", with: "+")
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while normalizedTarget.count % 4 != 0 {
+            normalizedTarget.append("=")
+        }
+
+        guard let data = Data(base64Encoded: normalizedTarget),
+              let decoded = String(data: data, encoding: .utf8),
+              !decoded.isEmpty else {
+            return nil
+        }
+
+        return decoded
     }
 
     private func isOpenGLRiskyVideoPixelFormat(_ value: String) -> Bool {
@@ -1920,11 +1961,13 @@ final class MPVNativeRenderer: PlayerRenderer {
         setProperty(name: "sws-allow-zimg", value: "yes")
         setProperty(name: "vd-lavc-dr", value: "no")
         setProperty(name: "vd-lavc-software-fallback", value: "yes")
+        setProperty(name: "hwdec-software-fallback", value: "yes")
 
         if forceSoftwareDecodeForCurrentItem {
             setProperty(name: "hwdec", value: "no")
-            setProperty(name: "vf", value: "format=fmt=yuv420p")
-            logMPVCrashProbe("configured iOS OpenGL software video path reason=10bit-or-p010-risk target=\(describe(url: url)) vf=format=fmt=yuv420p")
+            setProperty(name: "dither-depth", value: "8")
+            setProperty(name: "vf", value: "scale,format=fmt=rgba")
+            logMPVCrashProbe("configured iOS OpenGL software video path reason=10bit-or-p010-risk target=\(describe(url: url)) hwdec=no dither=8 vf=scale,format=fmt=rgba")
         } else {
             setProperty(name: "hwdec", value: "videotoolbox-copy")
             setProperty(name: "hwdec-image-format", value: "nv12")
@@ -2122,12 +2165,14 @@ final class MPVNativeRenderer: PlayerRenderer {
             ?? getStringProperty(handle: handle, name: "video-params/format")
             ?? "nil"
         let hwPixelFormat = getStringProperty(handle: handle, name: "video-params/hw-pixelformat") ?? "nil"
+        let videoFilter = getStringProperty(handle: handle, name: "vf") ?? "nil"
+        let hwdecImageFormat = getStringProperty(handle: handle, name: "hwdec-image-format") ?? "nil"
         let fps = getStringProperty(handle: handle, name: "estimated-vf-fps")
             ?? getStringProperty(handle: handle, name: "container-fps")
             ?? "nil"
         let voDrops = getStringProperty(handle: handle, name: "vo-drop-frame-count") ?? "nil"
         let decoderDrops = getStringProperty(handle: handle, name: "decoder-frame-drop-count") ?? "nil"
-        logMPVCrashProbe("diagnostics values reason=\(reason) backend=\(activeRenderBackend.rawValue) requestedBackend=\(requestedRenderBackend.rawValue) codecV=\(videoCodec) codecA=\(audioCodec) hwdec=\(hwdec) videoFormat=\(videoFormat) pixelFormat=\(pixelFormat) hwPixelFormat=\(hwPixelFormat) fps=\(fps) voDrops=\(voDrops) decoderDrops=\(decoderDrops)")
+        logMPVCrashProbe("diagnostics values reason=\(reason) backend=\(activeRenderBackend.rawValue) requestedBackend=\(requestedRenderBackend.rawValue) codecV=\(videoCodec) codecA=\(audioCodec) hwdec=\(hwdec) hwdecImage=\(hwdecImageFormat) videoFormat=\(videoFormat) pixelFormat=\(pixelFormat) hwPixelFormat=\(hwPixelFormat) vf=\(videoFilter) fps=\(fps) voDrops=\(voDrops) decoderDrops=\(decoderDrops)")
     }
 
     private func describe(url: URL) -> String {
