@@ -11,7 +11,6 @@ import Libmpv
 import AVFoundation
 import CoreMedia
 import CoreVideo
-import QuartzCore
 
 protocol PlayerRenderer: AnyObject {
     var isPausedState: Bool { get }
@@ -100,128 +99,11 @@ private struct LunaMPVOpenGLFBO {
     var internal_format: Int32
 }
 
-private final class MPVOpenGLView: UIView {
+private final class MPVOpenGLView: GLKView {
     weak var renderer: MPVNativeRenderer?
-    private let context: EAGLContext
-    private let drawableLock = NSLock()
-    private var drawableNeedsRebuild = true
-    private var framebuffer = GLuint(0)
-    private var colorRenderbuffer = GLuint(0)
-    private(set) var drawableWidth = 0
-    private(set) var drawableHeight = 0
 
-    override class var layerClass: AnyClass {
-        CAEAGLLayer.self
-    }
-
-    private var eaglLayer: CAEAGLLayer {
-        layer as! CAEAGLLayer
-    }
-
-    init(frame: CGRect, context: EAGLContext) {
-        self.context = context
-        super.init(frame: frame)
-        isOpaque = true
-        backgroundColor = .black
-        isUserInteractionEnabled = false
-        contentScaleFactor = UIScreen.main.scale
-        eaglLayer.isOpaque = true
-        eaglLayer.contentsScale = contentScaleFactor
-        eaglLayer.drawableProperties = [
-            kEAGLDrawablePropertyRetainedBacking: false,
-            kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8
-        ]
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        markDrawableNeedsRebuild()
-        renderer?.openGLViewDidLayout()
-    }
-
-    func markDrawableNeedsRebuild() {
-        drawableLock.lock()
-        drawableNeedsRebuild = true
-        drawableLock.unlock()
-    }
-
-    private func consumeDrawableNeedsRebuild() -> Bool {
-        drawableLock.lock()
-        let needsRebuild = drawableNeedsRebuild
-        drawableNeedsRebuild = false
-        drawableLock.unlock()
-        return needsRebuild
-    }
-
-    func prepareDrawable() -> Bool {
-        EAGLContext.setCurrent(context)
-        let needsRebuild = consumeDrawableNeedsRebuild()
-        if framebuffer == 0 || colorRenderbuffer == 0 || needsRebuild {
-            deleteDrawable()
-
-            glGenFramebuffers(1, &framebuffer)
-            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), framebuffer)
-
-            glGenRenderbuffers(1, &colorRenderbuffer)
-            glBindRenderbuffer(GLenum(GL_RENDERBUFFER), colorRenderbuffer)
-            guard context.renderbufferStorage(Int(GL_RENDERBUFFER), from: eaglLayer) else {
-                deleteDrawable()
-                return false
-            }
-
-            glFramebufferRenderbuffer(
-                GLenum(GL_FRAMEBUFFER),
-                GLenum(GL_COLOR_ATTACHMENT0),
-                GLenum(GL_RENDERBUFFER),
-                colorRenderbuffer
-            )
-
-            var width = GLint(0)
-            var height = GLint(0)
-            glGetRenderbufferParameteriv(GLenum(GL_RENDERBUFFER), GLenum(GL_RENDERBUFFER_WIDTH), &width)
-            glGetRenderbufferParameteriv(GLenum(GL_RENDERBUFFER), GLenum(GL_RENDERBUFFER_HEIGHT), &height)
-            drawableWidth = Int(width)
-            drawableHeight = Int(height)
-
-            let status = glCheckFramebufferStatus(GLenum(GL_FRAMEBUFFER))
-            guard status == GLenum(GL_FRAMEBUFFER_COMPLETE), drawableWidth > 0, drawableHeight > 0 else {
-                deleteDrawable()
-                return false
-            }
-        } else {
-            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), framebuffer)
-            glBindRenderbuffer(GLenum(GL_RENDERBUFFER), colorRenderbuffer)
-        }
-        return drawableWidth > 0 && drawableHeight > 0
-    }
-
-    func currentFramebuffer() -> GLuint {
-        framebuffer
-    }
-
-    func presentDrawable() {
-        glBindRenderbuffer(GLenum(GL_RENDERBUFFER), colorRenderbuffer)
-        context.presentRenderbuffer(Int(GL_RENDERBUFFER))
-    }
-
-    func deleteDrawable() {
-        EAGLContext.setCurrent(context)
-        if framebuffer != 0 {
-            var fbo = framebuffer
-            glDeleteFramebuffers(1, &fbo)
-            framebuffer = 0
-        }
-        if colorRenderbuffer != 0 {
-            var renderbuffer = colorRenderbuffer
-            glDeleteRenderbuffers(1, &renderbuffer)
-            colorRenderbuffer = 0
-        }
-        drawableWidth = 0
-        drawableHeight = 0
+    override func draw(_ rect: CGRect) {
+        renderer?.drawOpenGLFrame()
     }
 }
 
@@ -774,8 +656,6 @@ final class MPVNativeRenderer: PlayerRenderer {
     private let glView: MPVOpenGLView
     private let pipBridge: MPVPiPBridge
     private let eventQueue = DispatchQueue(label: "mpv.native.events", qos: .utility)
-    private let renderQueue = DispatchQueue(label: "mpv.native.foreground-render", qos: .userInteractive)
-    private let renderQueueKey = DispatchSpecificKey<Bool>()
     private let stateQueue = DispatchQueue(label: "mpv.native.state", attributes: .concurrent)
     private let eventQueueGroup = DispatchGroup()
     private var foregroundDisplayLink: CADisplayLink?
@@ -819,6 +699,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var selectedVideoTrackID: Int?
     private var pipTransitionID = 0
     private var pipRenderRequestCount = 0
+    private var foregroundUIRecoveryGeneration = 0
 
     weak var delegate: MPVNativeRendererDelegate?
 
@@ -838,18 +719,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         Logger.shared.log("[MPVNativeRenderer] \(message)", type: "MPVCrashProbe")
     }
 
-    private func performOnRenderQueueSync(_ block: () -> Void) {
-        if DispatchQueue.getSpecific(key: renderQueueKey) == true {
-            block()
-        } else {
-            renderQueue.sync(execute: block)
-        }
-    }
-
-    private func performOnRenderQueueAsync(_ block: @escaping () -> Void) {
-        renderQueue.async(execute: block)
-    }
-
     init(displayLayer: AVSampleBufferDisplayLayer) {
         guard let context = EAGLContext(api: .openGLES3) ?? EAGLContext(api: .openGLES2) else {
             fatalError("Unable to create EAGL context for MPV")
@@ -867,9 +736,16 @@ final class MPVNativeRenderer: PlayerRenderer {
         let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
         self.foregroundFramesPerSecond = targetFPS
         self.foregroundFrameInterval = 1.0 / CFTimeInterval(targetFPS)
-        self.renderQueue.setSpecific(key: renderQueueKey, value: true)
 
         glView.renderer = self
+        glView.backgroundColor = .black
+        glView.isOpaque = true
+        glView.enableSetNeedsDisplay = false
+        glView.drawableColorFormat = .RGBA8888
+        glView.drawableDepthFormat = .format24
+        glView.drawableStencilFormat = .format8
+        glView.drawableMultisample = .multisampleNone
+        glView.isUserInteractionEnabled = false
 
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
@@ -883,11 +759,6 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func getRenderingView() -> UIView {
         glView
-    }
-
-    fileprivate func openGLViewDidLayout() {
-        guard isRunning, !isStopping, currentMode == .openGL else { return }
-        scheduleRender(force: true)
     }
 
     func start() throws {
@@ -1168,12 +1039,66 @@ final class MPVNativeRenderer: PlayerRenderer {
             self.displayLayer.zPosition = -1
             self.glView.isHidden = false
             self.glView.setNeedsLayout()
-            self.glView.markDrawableNeedsRebuild()
+            EAGLContext.setCurrent(self.glContext)
+            self.glView.deleteDrawable()
+            EAGLContext.setCurrent(nil)
+            self.glView.setNeedsDisplay()
+            self.glView.display()
         }
         if let handle = mpv {
             mpv_wakeup(handle)
         }
         requestRenderBurst(reason: reason, count: 6, interval: 0.08)
+    }
+
+    func beginForegroundUIStallRecovery(reason: String, duration: TimeInterval = 8.0) {
+        guard isRunning, !isStopping, currentMode == .openGL else { return }
+        foregroundUIRecoveryGeneration += 1
+        let generation = foregroundUIRecoveryGeneration
+        let recoveryDuration = max(1.0, duration)
+        logMPV("foreground UI recovery begin reason=\(reason) duration=\(String(format: "%.1f", recoveryDuration))s")
+
+        // UIKit menus can block GLKView presentation long enough for audio to
+        // run ahead. During that window, let mpv drop both VO and decoder
+        // frames when late so it can catch back up without changing the stable
+        // foreground renderer.
+        setProperty(name: "framedrop", value: "decoder+vo")
+        if let handle = mpv {
+            mpv_wakeup(handle)
+        }
+        requestRenderBurst(reason: "ui-recovery-\(reason)", count: 4, interval: 0.08)
+
+        for delay in [0.5, 1.2, 2.4, 4.0, 6.0] where delay < recoveryDuration {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      self.isRunning,
+                      !self.isStopping,
+                      self.currentMode == .openGL,
+                      generation == self.foregroundUIRecoveryGeneration else {
+                    return
+                }
+                if let handle = self.mpv {
+                    mpv_wakeup(handle)
+                }
+                self.scheduleRender(force: true)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + recoveryDuration) { [weak self] in
+            guard let self,
+                  self.isRunning,
+                  !self.isStopping,
+                  self.currentMode == .openGL,
+                  generation == self.foregroundUIRecoveryGeneration else {
+                return
+            }
+            self.setProperty(name: "framedrop", value: "vo")
+            if !self.isPaused, let handle = self.mpv {
+                self.logMPV("foreground UI recovery resync reason=\(reason)")
+                self.command(handle, ["seek", "0", "relative", "exact"])
+            }
+            self.requestRenderBurst(reason: "ui-recovery-end-\(reason)", count: 4, interval: 0.06)
+        }
     }
 
     private func scheduleForegroundRestoreChecks(reason: String) {
@@ -1216,7 +1141,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         guard let handle = mpv else { return }
         logMPV("creating OpenGL render context")
         var status: Int32 = 0
-        performOnRenderQueueSync {
+        performOnMainSync {
             EAGLContext.setCurrent(glContext)
             var initParams = LunaMPVOpenGLInitParams(get_proc_address: lunaMPVGetOpenGLProcAddress, get_proc_address_ctx: nil)
             status = openGLAPIType.withUnsafeMutableBufferPointer { apiPointer in
@@ -1246,7 +1171,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         guard let context = renderContext else { return }
         logMPV("destroying render context mode=\(currentMode)")
         pipBridge.waitForPendingRenders()
-        performOnRenderQueueSync {
+        performOnMainSync {
             EAGLContext.setCurrent(glContext)
             mpv_render_context_set_update_callback(context, nil, nil)
             mpv_render_context_free(context)
@@ -1320,25 +1245,18 @@ final class MPVNativeRenderer: PlayerRenderer {
             link.add(to: .main, forMode: .common)
             self.foregroundDisplayLinkTarget = target
             self.foregroundDisplayLink = link
-            self.logMPV("foreground display link started reason=\(reason) fps=\(self.foregroundFramesPerSecond) renderQueue=enabled")
+            self.logMPV("foreground display link started reason=\(reason) fps=\(self.foregroundFramesPerSecond)")
         }
     }
 
     private func stopForegroundDisplayLink(reason: String) {
-        let stopDisplayLink = { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             guard let self, let link = self.foregroundDisplayLink else { return }
             link.invalidate()
             self.foregroundDisplayLink = nil
             self.foregroundDisplayLinkTarget = nil
+            self.isRenderScheduled = false
             self.logMPV("foreground display link stopped reason=\(reason)")
-        }
-        if Thread.isMainThread {
-            stopDisplayLink()
-        } else {
-            DispatchQueue.main.sync(execute: stopDisplayLink)
-        }
-        performOnRenderQueueSync {
-            isRenderScheduled = false
         }
     }
 
@@ -1399,23 +1317,13 @@ final class MPVNativeRenderer: PlayerRenderer {
             return
         }
         guard !isPaused || isLoading || forcedOpenGLRenderCount > 0 else { return }
-        enqueueForegroundRender(reason: "display-link")
-    }
-
-    private func enqueueForegroundRender(reason: String) {
-        performOnRenderQueueAsync { [weak self] in
-            guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
-            guard !self.isRenderScheduled else { return }
-            self.isRenderScheduled = true
-            self.drawOpenGLFrame()
-            self.isRenderScheduled = false
-        }
+        glView.display()
     }
 
     private func scheduleRender(force: Bool = false) {
         guard isRunning, !isStopping else { return }
         if force {
-            let applyForce = { [weak self] in
+            DispatchQueue.main.async { [weak self] in
                 guard let self, self.isRunning, !self.isStopping else { return }
                 switch self.currentMode {
                 case .openGL:
@@ -1424,15 +1332,6 @@ final class MPVNativeRenderer: PlayerRenderer {
                     self.forcedPiPRenderCount = max(self.forcedPiPRenderCount, 1)
                 }
                 self.scheduleRender()
-            }
-            if currentMode == .openGL {
-                performOnRenderQueueAsync {
-                    applyForce()
-                }
-            } else {
-                DispatchQueue.main.async {
-                    applyForce()
-                }
             }
             return
         }
@@ -1459,7 +1358,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     private func scheduleOpenGLRender() {
-        performOnRenderQueueAsync { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
             if self.foregroundDisplayLink != nil, self.forcedOpenGLRenderCount == 0 {
                 return
@@ -1468,14 +1367,14 @@ final class MPVNativeRenderer: PlayerRenderer {
             self.isRenderScheduled = true
             let now = CACurrentMediaTime()
             let delay = max(0, self.foregroundFrameInterval - (now - self.lastForegroundRenderTime))
-            self.renderQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self else { return }
                 guard self.isRunning, !self.isStopping, self.currentMode == .openGL else {
                     self.isRenderScheduled = false
                     return
                 }
                 self.isRenderScheduled = false
-                self.drawOpenGLFrame()
+                self.glView.display()
             }
         }
     }
@@ -1501,14 +1400,11 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     fileprivate func drawOpenGLFrame() {
         guard isRunning, !isStopping, currentMode == .openGL, let context = renderContext else { return }
-        guard glView.prepareDrawable() else {
-            EAGLContext.setCurrent(nil)
-            return
-        }
-        defer { EAGLContext.setCurrent(nil) }
+        guard glView.bounds.width > 0, glView.bounds.height > 0 else { return }
 
         lastForegroundRenderTime = CACurrentMediaTime()
         EAGLContext.setCurrent(glContext)
+        glView.bindDrawable()
 
         let updateFlags = UInt32(mpv_render_context_update(context))
         let shouldForceRender = forcedOpenGLRenderCount > 0
@@ -1516,20 +1412,18 @@ final class MPVNativeRenderer: PlayerRenderer {
             forcedOpenGLRenderCount -= 1
         }
         if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
+            var framebuffer: GLint = 0
+            glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &framebuffer)
             glViewport(0, 0, GLsizei(glView.drawableWidth), GLsizei(glView.drawableHeight))
 
             var fbo = LunaMPVOpenGLFBO(
-                fbo: Int32(glView.currentFramebuffer()),
+                fbo: Int32(framebuffer),
                 w: Int32(glView.drawableWidth),
                 h: Int32(glView.drawableHeight),
                 internal_format: Int32(GL_RGBA)
             )
             var flipY: Int32 = 1
-            let result = renderOpenGLFrame(context: context, fbo: &fbo, flipY: &flipY, reportSwap: false)
-            if result >= 0 {
-                glView.presentDrawable()
-                mpv_render_context_report_swap(context)
-            }
+            _ = renderOpenGLFrame(context: context, fbo: &fbo, flipY: &flipY, reportSwap: true)
         }
 
         if updateFlags > 0 {

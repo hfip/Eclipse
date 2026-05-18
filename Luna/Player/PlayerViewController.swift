@@ -2484,9 +2484,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
         if supportsSharedPlayerControls {
             subtitleButton.addTarget(self, action: #selector(subtitleButtonTapped), for: .touchUpInside)
+            subtitleButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .touchDown)
             episodeBrowserButton.addTarget(self, action: #selector(episodeBrowserButtonTapped), for: .touchUpInside)
             speedButton.addTarget(self, action: #selector(speedButtonTapped), for: .touchUpInside)
+            speedButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .touchDown)
             audioButton.addTarget(self, action: #selector(audioButtonTapped), for: .touchUpInside)
+            audioButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .touchDown)
         }
         
         // Ensure shared player buttons stay interactive above renderer views.
@@ -3363,6 +3366,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private var usesOverlayPlayerMenus: Bool {
         false
+    }
+
+    @objc private func playerMenuButtonTouchDown(_ sender: UIButton) {
+        guard let mpvRenderer else { return }
+        let reason: String
+        if sender === speedButton {
+            reason = "speed-menu"
+        } else if sender === audioButton {
+            reason = "audio-menu"
+        } else if sender === subtitleButton {
+            reason = "subtitle-menu"
+        } else {
+            reason = "player-menu"
+        }
+        mpvRenderer.beginForegroundUIStallRecovery(reason: reason)
     }
 
     private func makeOverlayAction(
