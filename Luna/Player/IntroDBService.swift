@@ -78,7 +78,7 @@ final class IntroDBService {
         let decoded = try JSONDecoder().decode(IntroDBResponse.self, from: data)
 
         var segments: [SkipSegment] = []
-        let maxDuration = episodeDuration > 0 ? episodeDuration : Double.greatestFiniteMagnitude
+        let maxDuration = episodeDuration.isFinite && episodeDuration > 0 ? episodeDuration : nil
 
         // Parse intro segments
         if let intros = decoded.intro {
@@ -118,7 +118,7 @@ final class IntroDBService {
 
         Logger.shared.log(
             "IntroDBService: Found \(segments.count) skip segments for tmdbId=\(tmdbId): "
-            + segments.map { "\($0.type.rawValue) \(Int($0.startTime))-\(Int($0.endTime))s" }.joined(separator: ", "),
+            + segments.map { "\($0.type.rawValue) \(formatSeconds($0.startTime))-\(formatSeconds($0.endTime))s" }.joined(separator: ", "),
             type: "IntroDB"
         )
 
@@ -126,14 +126,29 @@ final class IntroDBService {
     }
 
     /// Converts an IntroDB segment (milliseconds, nullable) into a SkipSegment (seconds).
-    private func parseSegment(_ seg: IntroDBSegment, type: SkipType, maxDuration: Double) -> SkipSegment? {
+    private func parseSegment(_ seg: IntroDBSegment, type: SkipType, maxDuration: Double?) -> SkipSegment? {
         let startSec = seg.start_ms.map { Double($0) / 1000.0 } ?? 0
-        let endSec = seg.end_ms.map { Double($0) / 1000.0 } ?? maxDuration
+        guard startSec.isFinite else { return nil }
+
+        let endSec: Double
+        if let rawEnd = seg.end_ms {
+            endSec = Double(rawEnd) / 1000.0
+        } else if let maxDuration {
+            endSec = maxDuration
+        } else {
+            return nil
+        }
+        guard endSec.isFinite else { return nil }
 
         let clampedStart = max(0, startSec)
-        let clampedEnd = min(maxDuration, endSec)
+        let clampedEnd = maxDuration.map { min($0, endSec) } ?? endSec
         guard clampedEnd > clampedStart else { return nil }
 
         return SkipSegment(startTime: clampedStart, endTime: clampedEnd, type: type)
+    }
+
+    private func formatSeconds(_ value: Double) -> String {
+        guard value.isFinite else { return "nil" }
+        return "\(Int(value.rounded()))"
     }
 }

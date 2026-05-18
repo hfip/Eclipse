@@ -31,7 +31,12 @@ struct SkipSegment {
     let type: SkipType
 
     /// Unique key used to track whether this segment has already been auto-skipped.
-    var uniqueKey: String { "\(type.rawValue)_\(Int(startTime))" }
+    var uniqueKey: String {
+        guard startTime.isFinite, startTime >= 0, startTime <= Double(Int.max) else {
+            return "\(type.rawValue)_unknown"
+        }
+        return "\(type.rawValue)_\(Int(startTime))"
+    }
 }
 
 // MARK: - AniSkip API Response Models
@@ -76,7 +81,8 @@ final class AniSkipService {
     ///   - episodeDuration: The total duration in seconds (used for better matching).
     /// - Returns: Array of skip segments (intro, outro, recap).
     func fetchSkipTimes(anilistId: Int, episodeNumber: Int, episodeDuration: Double) async throws -> [SkipSegment] {
-        let durationParam = episodeDuration > 0 ? "&episodeLength=\(Int(episodeDuration))" : ""
+        let durationIsUsable = episodeDuration.isFinite && episodeDuration > 0
+        let durationParam = durationIsUsable ? "&episodeLength=\(Int(episodeDuration))" : ""
         let urlString = "\(baseURL)/skip-times/\(anilistId)/\(episodeNumber)?types[]=op&types[]=ed&types[]=recap&types[]=mixed-op&types[]=mixed-ed\(durationParam)"
 
         guard let url = URL(string: urlString) else {
@@ -84,7 +90,7 @@ final class AniSkipService {
             return []
         }
 
-        Logger.shared.log("AniSkipService: Fetching skip times for anilistId=\(anilistId) ep=\(episodeNumber) duration=\(Int(episodeDuration))", type: "AniSkip")
+        Logger.shared.log("AniSkipService: Fetching skip times for anilistId=\(anilistId) ep=\(episodeNumber) duration=\(formatSeconds(episodeDuration))", type: "AniSkip")
 
         let (data, response) = try await session.data(from: url)
 
@@ -118,8 +124,9 @@ final class AniSkipService {
                 return nil
             }
 
+            guard result.interval.startTime.isFinite, result.interval.endTime.isFinite else { return nil }
             let start = max(0, result.interval.startTime)
-            let end = min(episodeDuration > 0 ? episodeDuration : Double.greatestFiniteMagnitude, result.interval.endTime)
+            let end = durationIsUsable ? min(episodeDuration, result.interval.endTime) : result.interval.endTime
             guard end > start else { return nil }
 
             return SkipSegment(startTime: start, endTime: end, type: skipType)
@@ -127,10 +134,15 @@ final class AniSkipService {
 
         Logger.shared.log(
             "AniSkipService: Found \(segments.count) skip segments for anilistId=\(anilistId) ep=\(episodeNumber): "
-            + segments.map { "\($0.type.rawValue) \(Int($0.startTime))-\(Int($0.endTime))s" }.joined(separator: ", "),
+            + segments.map { "\($0.type.rawValue) \(formatSeconds($0.startTime))-\(formatSeconds($0.endTime))s" }.joined(separator: ", "),
             type: "AniSkip"
         )
 
         return segments
+    }
+
+    private func formatSeconds(_ value: Double) -> String {
+        guard value.isFinite else { return "nil" }
+        return "\(Int(value.rounded()))"
     }
 }

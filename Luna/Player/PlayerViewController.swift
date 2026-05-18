@@ -701,6 +701,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererSeek(to seconds: Double) {
+        guard seconds.isFinite else {
+            Logger.shared.log("PlayerViewController: ignored absolute seek with invalid target=\(secondsText(seconds))", type: "Player")
+            return
+        }
         if vlcRenderer != nil {
             logVLCUI("rendererSeek(to:) target=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)", type: "Progress")
         } else {
@@ -710,6 +714,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func rendererSeek(by seconds: Double) {
+        guard seconds.isFinite else {
+            Logger.shared.log("PlayerViewController: ignored relative seek with invalid delta=\(secondsText(seconds))", type: "Player")
+            return
+        }
         if vlcRenderer != nil {
             logVLCUI("rendererSeek(by:) delta=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)", type: "Progress")
         } else {
@@ -1403,9 +1411,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         volumeTopConstraint?.constant = isPortrait ? 62 : 12
 
         let availableWidth = max(videoContainer.bounds.width, view.bounds.width)
-        let compactLimit = max(220, availableWidth - 32)
-        let landscapeLimit = min(420, max(260, availableWidth * 0.44))
-        nextEpisodeButtonMaxWidthConstraint?.constant = isPortrait ? min(320, compactLimit) : landscapeLimit
+        let compactLimit = max(240, availableWidth - 32)
+        let landscapeLimit = min(480, max(300, availableWidth * 0.52))
+        nextEpisodeButtonMaxWidthConstraint?.constant = isPortrait ? min(360, compactLimit) : landscapeLimit
     }
 #endif
     
@@ -1996,7 +2004,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         ])
 #endif
         if supportsSharedPlayerControls {
-            let nextEpisodeButtonMaxWidth = nextEpisodeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 420)
+            let nextEpisodeButtonMaxWidth = nextEpisodeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 460)
             nextEpisodeButtonMaxWidth.priority = .required
             nextEpisodeButtonMaxWidthConstraint = nextEpisodeButtonMaxWidth
 
@@ -3450,6 +3458,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         // Find if current position is inside any skip segment
         let activeSegment = skipSegments.first { seg in
+            guard seg.startTime.isFinite, seg.endTime.isFinite else { return false }
             position >= seg.startTime && position <= seg.endTime
         }
 
@@ -3458,7 +3467,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let autoSkipEnabled = UserDefaults.standard.bool(forKey: "aniSkipAutoSkip")
             if autoSkipEnabled, !autoSkippedSegments.contains(seg.uniqueKey) {
                 autoSkippedSegments.insert(seg.uniqueKey)
-                Logger.shared.log("SkipData: Auto-skipping \(seg.type.rawValue) from \(Int(seg.startTime))s to \(Int(seg.endTime))s", type: "Skip")
+                Logger.shared.log("SkipData: Auto-skipping \(seg.type.rawValue) from \(secondsText(seg.startTime))s to \(secondsText(seg.endTime))s", type: "Skip")
                 rendererSeek(to: seg.endTime + 1.0)
                 return
             }
@@ -3557,11 +3566,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         config.baseBackgroundColor = UIColor.black.withAlphaComponent(0.58)
         config.baseForegroundColor = UIColor.white
         config.imagePlacement = .leading
-        config.imagePadding = 8
+        config.imagePadding = 10
         config.image = isSameArtwork ? (nextEpisodeArtworkImage ?? placeholderImage) : placeholderImage
         config.title = "\(item.displayCode)  \(item.displayTitle)"
         config.subtitle = "Next Episode"
-        config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 14)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 14)
         config.titleLineBreakMode = .byTruncatingTail
         config.subtitleLineBreakMode = .byTruncatingTail
         nextEpisodeButton.configuration = config
@@ -3630,10 +3639,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func makeNextEpisodeArtworkImage(from rawImage: UIImage) -> UIImage {
-        let targetSize = CGSize(width: 58, height: 34)
         guard rawImage.size.width > 0, rawImage.size.height > 0 else {
             return rawImage.withRenderingMode(.alwaysOriginal)
         }
+
+        let aspectRatio = rawImage.size.width / rawImage.size.height
+        let targetSize = aspectRatio < 0.85
+            ? CGSize(width: 48, height: 68)
+            : CGSize(width: 84, height: 48)
 
         let scale = max(targetSize.width / rawImage.size.width, targetSize.height / rawImage.size.height)
         let drawSize = CGSize(width: rawImage.size.width * scale, height: rawImage.size.height * scale)
@@ -3648,7 +3661,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         format.scale = UIScreen.main.scale
         let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
         return renderer.image { _ in
-            UIBezierPath(roundedRect: CGRect(origin: .zero, size: targetSize), cornerRadius: 6).addClip()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: targetSize), cornerRadius: 7).addClip()
             rawImage.draw(in: drawRect)
         }.withRenderingMode(.alwaysOriginal)
     }
@@ -3696,7 +3709,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     @objc private func skipButtonTapped() {
         guard let seg = currentActiveSkipSegment else { return }
-        Logger.shared.log("SkipData: User tapped skip for \(seg.type.rawValue) → seeking to \(Int(seg.endTime + 1))s", type: "Skip")
+        guard seg.endTime.isFinite else {
+            Logger.shared.log("SkipData: Ignored skip tap for \(seg.type.rawValue); invalid end=\(secondsText(seg.endTime))", type: "Skip")
+            currentActiveSkipSegment = nil
+            hideSkipButton()
+            return
+        }
+        Logger.shared.log("SkipData: User tapped skip for \(seg.type.rawValue) -> seeking to \(secondsText(seg.endTime + 1))s", type: "Skip")
         autoSkippedSegments.insert(seg.uniqueKey)
         rendererSeek(to: seg.endTime + 1.0)
         currentActiveSkipSegment = nil
@@ -3751,7 +3770,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     @objc private func skip85sButtonTapped() {
         let currentPosition = cachedPosition
         let targetPosition = currentPosition + 85.0
-        Logger.shared.log("Skip85s: User tapped skip 85s at \(Int(currentPosition))s → seeking to \(Int(targetPosition))s", type: "Skip")
+        Logger.shared.log("Skip85s: User tapped skip 85s at \(secondsText(currentPosition))s -> seeking to \(secondsText(targetPosition))s", type: "Skip")
         rendererSeek(to: targetPosition)
     }
 

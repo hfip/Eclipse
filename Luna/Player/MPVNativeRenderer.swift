@@ -766,7 +766,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "profile", value: "fast")
         setOption(name: "hwdec", value: "videotoolbox-copy")
         setOption(name: "vd-lavc-dr", value: "no")
-        setOption(name: "vd-lavc-software-fallback", value: "no")
+        setOption(name: "vd-lavc-software-fallback", value: "yes")
         setOption(name: "demuxer-thread", value: "yes")
         setOption(name: "cache", value: "yes")
         setOption(name: "demuxer-max-bytes", value: "80M")
@@ -796,7 +796,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             observeProperties()
             installWakeupHandler()
             ensureAudioSessionActive()
-            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=no")
+            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=yes")
             scheduleRender()
         } catch {
             logMPV("start failed after mpv_initialize: \(error)")
