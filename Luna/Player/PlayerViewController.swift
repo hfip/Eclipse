@@ -628,6 +628,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var nextEpisodeButtonMaxWidthConstraint: NSLayoutConstraint?
 #endif
     
+    private struct SubtitleTrackDescriptor {
+        let id: Int
+        let name: String
+        let codec: String
+        let isExternalNativeTrack: Bool
+    }
+
     // MARK: - Renderer Wrapper Methods
     // These methods keep PlayerViewController on the shared PlayerRenderer surface.
     
@@ -762,6 +769,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     private func rendererGetSubtitleTracks() -> [(Int, String)] {
         renderer.getSubtitleTracks()
+    }
+
+    private func rendererGetSubtitleTrackDescriptors() -> [SubtitleTrackDescriptor] {
+        if let mpvRenderer {
+            return mpvRenderer.getSubtitleTracksDetailed().map {
+                SubtitleTrackDescriptor(id: $0.0, name: $0.1, codec: $0.2, isExternalNativeTrack: $0.3)
+            }
+        }
+
+        return rendererGetSubtitleTracks().map {
+            SubtitleTrackDescriptor(id: $0.0, name: $0.1, codec: "", isExternalNativeTrack: false)
+        }
     }
     
     private func rendererSetSubtitleTrack(id: Int) {
@@ -975,6 +994,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var vlcExternalSubtitlesLoadedNatively = false
     private var vlcExternalSubtitlePriorityDeadline: Date?
     private var lastKnownVLCCustomSubtitleOverlayEnabled: Bool?
+    private var lastSkippedMPVBitmapSubtitleSummary = ""
 
     private enum VLCSubtitleSelection {
         case none
@@ -1475,6 +1495,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         openSubtitlesSearchAttempted = false
         openSubtitlesFallbackAttempted = false
         openSubtitlesLoadedURLs.removeAll()
+        lastSkippedMPVBitmapSubtitleSummary = ""
         vlcExternalSubtitlePriorityDeadline = nil
         defaultPlaybackSpeedApplied = false
         cachedPosition = 0
@@ -4063,11 +4084,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
             : []
         let canReadNativeTracks = !isVLCPlayer || canMutateVLCSubtitleTracks
-        let embeddedTracks = canReadNativeTracks
-            ? rendererGetSubtitleTracks().filter { $0.0 >= 0 && !isDisabledTrackName($0.1) }
+        let nativeSubtitleTracks = canReadNativeTracks
+            ? rendererGetSubtitleTrackDescriptors().filter { $0.id >= 0 && !isDisabledTrackName($0.name) }
             : []
+        let embeddedTracks = nativeSubtitleTracks.map { ($0.id, $0.name) }
+        let autoSelectableNativeTracks = nativeSubtitleTracks.filter { canAutoSelectNativeSubtitleTrack($0) }
+        let autoSelectableEmbeddedTracks = autoSelectableNativeTracks.map { ($0.id, $0.name) }
+        logSkippedMPVBitmapSubtitleTracksIfNeeded(nativeSubtitleTracks.filter { !canAutoSelectNativeSubtitleTrack($0) })
 
-        Logger.shared.log("PlayerViewController: subtitle tracks external=\(externalTracks.count) embedded=\(embeddedTracks.count) userSelected=\(userSelectedSubtitleTrack) renderer=\(vlcRenderer != nil ? "VLC" : "MPV")", type: "Player")
+        Logger.shared.log("PlayerViewController: subtitle tracks external=\(externalTracks.count) embedded=\(embeddedTracks.count) autoSelectableNative=\(autoSelectableEmbeddedTracks.count) userSelected=\(userSelectedSubtitleTrack) renderer=\(vlcRenderer != nil ? "VLC" : "MPV")", type: "Player")
 
         // Always show the subtitle button so the user can view the menu even when empty
         subtitleButton.isHidden = false
@@ -4080,7 +4105,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let settings = Settings.shared
             if settings.enableSubtitlesByDefault {
                 let preferredLang = settings.defaultSubtitleLanguage
-                if let selectedEmbeddedTrack = preferredDefaultSubtitleTrack(from: embeddedTracks, preferredLang: preferredLang) {
+                if let selectedEmbeddedTrack = preferredDefaultSubtitleTrack(from: autoSelectableEmbeddedTracks, preferredLang: preferredLang) {
                     if rendererGetCurrentSubtitleTrackId() != selectedEmbeddedTrack.0 {
                         rendererSetSubtitleTrack(id: selectedEmbeddedTrack.0)
                     }
@@ -4100,7 +4125,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     Logger.shared.log("[PlayerVC.Subtitles] default selected external track index=\(selectedExternalTrack.0)", type: "Player")
                 } else if maybeUseOpenSubtitlesFallback(preferredLang: preferredLang) {
                     Logger.shared.log("[PlayerVC.Subtitles] OpenSubtitles fallback requested for preferredLang=\(preferredLang)", type: "Player")
-                } else if !isVLCPlayer, let fallbackEmbeddedTrack = fallbackDefaultSubtitleTrack(from: embeddedTracks) {
+                } else if !isVLCPlayer, let fallbackEmbeddedTrack = fallbackDefaultSubtitleTrack(from: autoSelectableEmbeddedTracks) {
                     if rendererGetCurrentSubtitleTrackId() != fallbackEmbeddedTrack.0 {
                         rendererSetSubtitleTrack(id: fallbackEmbeddedTrack.0)
                     }
@@ -4185,10 +4210,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 }
             }
 
-            let embeddedSubtitleActions = embeddedTracks.map { (id, name) in
+            let embeddedSubtitleActions = nativeSubtitleTracks.map { track in
+                let id = track.id
+                let name = track.name
+                let blocksMPVDefault = !canAutoSelectNativeSubtitleTrack(track)
                 UIAction(
-                    title: name,
-                    image: UIImage(systemName: "captions.bubble"),
+                    title: blocksMPVDefault ? "\(name) [\(subtitleBitmapCodecLabel(track.codec))]" : name,
+                    image: UIImage(systemName: blocksMPVDefault ? "exclamationmark.triangle" : "captions.bubble"),
+                    attributes: blocksMPVDefault ? .disabled : [],
                     state: subtitleModel.isVisible && {
                         if case .embedded(let selectedTrackId) = self.vlcSubtitleSelection {
                             return selectedTrackId == id
@@ -4239,6 +4268,45 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func isDisabledTrackName(_ name: String) -> Bool {
         let lower = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return lower.contains("disable") || lower.contains("off") || lower.contains("none")
+    }
+
+    private func canAutoSelectNativeSubtitleTrack(_ track: SubtitleTrackDescriptor) -> Bool {
+        guard mpvRenderer != nil else { return true }
+        return !isMPVBitmapSubtitleTrack(track)
+    }
+
+    private func isMPVBitmapSubtitleTrack(_ track: SubtitleTrackDescriptor) -> Bool {
+        isBitmapSubtitleCodec(track.codec)
+    }
+
+    private func isBitmapSubtitleCodec(_ codec: String) -> Bool {
+        let lower = codec.lowercased()
+        return lower.contains("pgs")
+            || lower.contains("hdmv")
+            || lower.contains("dvd")
+            || lower.contains("vobsub")
+            || lower.contains("dvb")
+            || lower.contains("xsub")
+    }
+
+    private func subtitleBitmapCodecLabel(_ codec: String) -> String {
+        let lower = codec.lowercased()
+        if lower.contains("pgs") || lower.contains("hdmv") { return "PGS" }
+        if lower.contains("dvd") || lower.contains("vobsub") { return "VobSub" }
+        if lower.contains("dvb") { return "DVB" }
+        if lower.contains("xsub") { return "XSUB" }
+        return "Bitmap"
+    }
+
+    private func logSkippedMPVBitmapSubtitleTracksIfNeeded(_ tracks: [SubtitleTrackDescriptor]) {
+        guard mpvRenderer != nil else { return }
+        let summary = tracks
+            .map { "#\($0.id):\($0.codec.isEmpty ? "unknown" : $0.codec):\($0.name)" }
+            .joined(separator: "|")
+        guard summary != lastSkippedMPVBitmapSubtitleSummary else { return }
+        lastSkippedMPVBitmapSubtitleSummary = summary
+        guard !summary.isEmpty else { return }
+        Logger.shared.log("[PlayerVC.Subtitles] skipping MPV bitmap subtitle tracks for default/manual selection: \(summary)", type: "Player")
     }
 
     private func preferredDefaultSubtitleTrack(from tracks: [(Int, String)], preferredLang: String) -> (Int, String)? {

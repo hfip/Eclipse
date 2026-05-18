@@ -139,6 +139,7 @@ final class ProgressManager: ObservableObject {
     private let debounceInterval: TimeInterval = 2.0
     private var debounceTask: Task<Void, Never>?
     private let accessQueue = DispatchQueue(label: "com.luna.progress-manager", attributes: .concurrent)
+    private var durationShrinkWarningKeys: Set<String> = []
 
     private static let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     @Published private(set) var movieProgressList: [MovieProgressEntry] = []
@@ -279,7 +280,10 @@ final class ProgressManager: ObservableObject {
         if previousDuration.isFinite, previousDuration > 0 {
             let shrinkTolerance = max(2.0, previousDuration * 0.005)
             if totalDuration + shrinkTolerance < previousDuration {
-                Logger.shared.log("Ignoring shorter reported duration for \(label): previous=\(previousDuration), reported=\(totalDuration)", type: "Warning")
+                let warningKey = "\(label)|\(Int(previousDuration.rounded()))|\(Int(totalDuration.rounded()))"
+                if durationShrinkWarningKeys.insert(warningKey).inserted {
+                    Logger.shared.log("Ignoring shorter reported duration for \(label): previous=\(previousDuration), reported=\(totalDuration)", type: "Warning")
+                }
             }
             resolvedDuration = max(resolvedDuration, previousDuration)
         }

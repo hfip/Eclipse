@@ -767,7 +767,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             throw RendererError.mpvCreationFailed
         }
         mpv = handle
-        logMPVCrashProbe("diagnostics marker version=mpv-ios-fbo-rgba8")
+        logMPVCrashProbe("diagnostics marker version=mpv-ios-fbo-rgba8-sid-no")
 
         setOption(name: "terminal", value: "no")
         setOption(name: "msg-level", value: "all=warn,cplayer=v,ffmpeg=v,demux=v,stream=v")
@@ -786,6 +786,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "video-sync", value: "audio")
         setOption(name: "framedrop", value: "vo")
         setOption(name: "interpolation", value: "no")
+        setOption(name: "sid", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")
         setOption(name: "subs-fallback", value: "yes")
         setOption(name: "sub-ass-override", value: "yes")
@@ -890,8 +891,10 @@ final class MPVNativeRenderer: PlayerRenderer {
 
         apply(commands: preset.commands, on: handle)
         command(handle, ["stop"])
+        setProperty(name: "sid", value: "no")
         updateHTTPHeaders(headers)
         applySubtitleStyle(lastAppliedSubtitleStyle)
+        setProperty(name: "sid", value: "no")
 
         let target = url.isFileURL ? url.path : url.absoluteString
         let loadStatus = command(handle, ["loadfile", target, "replace"])
@@ -2153,6 +2156,12 @@ final class MPVNativeRenderer: PlayerRenderer {
             .map { ($0.id, $0.title) }
     }
 
+    func getSubtitleTracksDetailed() -> [(Int, String, String, Bool)] {
+        fetchTrackList()
+            .filter { $0.type == "sub" }
+            .map { ($0.id, $0.title, $0.codec, $0.external) }
+    }
+
     func getCurrentSubtitleTrackId() -> Int {
         let id = getTrackIdProperty("sid")
         if id >= 0 { return id }
@@ -2279,6 +2288,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func getCurrentAudioTrackId() -> Int { -1 }
     func setAudioTrack(id: Int) { }
     func getSubtitleTracks() -> [(Int, String)] { [] }
+    func getSubtitleTracksDetailed() -> [(Int, String, String, Bool)] { [] }
     func getCurrentSubtitleTrackId() -> Int { -1 }
     func setSubtitleTrack(id: Int) { }
     func disableSubtitles() { }
