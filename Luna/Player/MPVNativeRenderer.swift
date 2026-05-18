@@ -644,6 +644,10 @@ final class MPVNativeRenderer: PlayerRenderer {
         let type: String
         let title: String
         let lang: String
+        let codec: String
+        let external: Bool
+        let defaultTrack: Bool
+        let forced: Bool
         let selected: Bool
     }
 
@@ -690,6 +694,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastProgressLogBucket = -1
     private var lastDurationLogValue: Double = -1
     private var lastTrackSummary = ""
+    private var lastPlaybackDiagnosticsBucket = -1
     private var lastPlaybackErrorMessage: String?
     private var selectedVideoTrackID: Int?
     private var pipTransitionID = 0
@@ -703,6 +708,10 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     private func logMPV(_ message: String) {
         Logger.shared.log("[MPVNativeRenderer] \(message)", type: "MPV")
+    }
+
+    private func logMPVCrashProbe(_ message: String) {
+        Logger.shared.log("[MPVNativeRenderer] \(message)", type: "MPVCrashProbe")
     }
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
@@ -1471,6 +1480,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
         logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
         logTrackSummaryIfChanged(reason: "file-loaded")
+        logPlaybackDiagnostics(reason: "file-loaded")
         startForegroundDisplayLink(reason: "file-loaded")
         if let initialSeek = pendingInitialSeek {
             logMPV("applying pending initial seek \(String(format: "%.2f", initialSeek))s")
@@ -1560,6 +1570,9 @@ final class MPVNativeRenderer: PlayerRenderer {
                 if bucket != lastProgressLogBucket {
                     lastProgressLogBucket = bucket
                     logMPV("progress position=\(String(format: "%.2f", cachedPosition)) duration=\(String(format: "%.2f", cachedDuration)) loading=\(isLoading) ready=\(isReadyToSeek) paused=\(isPaused)")
+                    if shouldLogPlaybackDiagnostics(for: bucket) {
+                        logPlaybackDiagnostics(reason: "progress-\(bucket * 10)s")
+                    }
                 }
                 publishProgress()
             }
@@ -1815,7 +1828,16 @@ final class MPVNativeRenderer: PlayerRenderer {
         let selectedSubtitle = tracks.first(where: { $0.type == "sub" && $0.selected })?.id ?? -1
         let preview = tracks.prefix(8).map { track -> String in
             let selected = track.selected ? "*" : ""
-            return "\(track.type)#\(track.id)\(selected):\(track.title)"
+            let codec = track.codec.isEmpty ? "unknown" : track.codec
+            let flags = [
+                track.external ? "external" : nil,
+                track.defaultTrack ? "default" : nil,
+                track.forced ? "forced" : nil
+            ]
+            .compactMap { $0 }
+            .joined(separator: ",")
+            let flagText = flags.isEmpty ? "" : "[\(flags)]"
+            return "\(track.type)#\(track.id)\(selected):\(track.title){\(codec)}\(flagText)"
         }.joined(separator: "|")
         let summary = "video=\(videoCount) selectedVideo=\(selectedVideo ?? -1) audio=\(audioCount) selectedAudio=\(selectedAudio) subs=\(subtitleCount) selectedSub=\(selectedSubtitle) preview=\(preview)"
         guard summary != lastTrackSummary else { return }
@@ -1824,6 +1846,31 @@ final class MPVNativeRenderer: PlayerRenderer {
         if currentMode == .pictureInPicture, selectedVideo == nil {
             restoreSelectedVideoTrack(reason: "track-list-\(reason)")
         }
+    }
+
+    private func shouldLogPlaybackDiagnostics(for progressBucket: Int) -> Bool {
+        guard progressBucket != lastPlaybackDiagnosticsBucket else { return false }
+        if progressBucket <= 6 { return true }
+        return progressBucket % 3 == 0
+    }
+
+    private func logPlaybackDiagnostics(reason: String) {
+        lastPlaybackDiagnosticsBucket = Int(cachedPosition / 10.0)
+        let size = currentVideoSize()
+        logMPVCrashProbe("diagnostics checkpoint reason=\(reason) gen=\(loadGeneration) mode=\(currentMode) pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) loading=\(isLoading) ready=\(isReadyToSeek) paused=\(isPaused) running=\(isRunning) stopping=\(isStopping) video=\(String(format: "%.0fx%.0f", size.width, size.height)) lastTracks={\(shortText(lastTrackSummary, limit: 260))}")
+        guard let handle = mpv else {
+            logMPVCrashProbe("diagnostics values reason=\(reason) skipped: mpv handle nil")
+            return
+        }
+        let videoCodec = getStringProperty(handle: handle, name: "video-codec") ?? "nil"
+        let audioCodec = getStringProperty(handle: handle, name: "audio-codec") ?? "nil"
+        let hwdec = getStringProperty(handle: handle, name: "hwdec-current") ?? "nil"
+        let fps = getStringProperty(handle: handle, name: "estimated-vf-fps")
+            ?? getStringProperty(handle: handle, name: "container-fps")
+            ?? "nil"
+        let voDrops = getStringProperty(handle: handle, name: "vo-drop-frame-count") ?? "nil"
+        let decoderDrops = getStringProperty(handle: handle, name: "decoder-frame-drop-count") ?? "nil"
+        logMPVCrashProbe("diagnostics values reason=\(reason) codecV=\(videoCodec) codecA=\(audioCodec) hwdec=\(hwdec) fps=\(fps) voDrops=\(voDrops) decoderDrops=\(decoderDrops)")
     }
 
     private func describe(url: URL) -> String {
@@ -1909,6 +1956,10 @@ final class MPVNativeRenderer: PlayerRenderer {
             var type = ""
             var title = ""
             var lang = ""
+            var codec = ""
+            var external = false
+            var defaultTrack = false
+            var forced = false
             var selected = false
 
             for entryIndex in 0..<Int(map.pointee.num) {
@@ -1933,6 +1984,22 @@ final class MPVNativeRenderer: PlayerRenderer {
                     if value.format == MPV_FORMAT_STRING, let cString = value.u.string {
                         lang = String(cString: cString)
                     }
+                case "codec":
+                    if value.format == MPV_FORMAT_STRING, let cString = value.u.string {
+                        codec = String(cString: cString)
+                    }
+                case "external":
+                    if value.format == MPV_FORMAT_FLAG {
+                        external = value.u.flag != 0
+                    }
+                case "default":
+                    if value.format == MPV_FORMAT_FLAG {
+                        defaultTrack = value.u.flag != 0
+                    }
+                case "forced":
+                    if value.format == MPV_FORMAT_FLAG {
+                        forced = value.u.flag != 0
+                    }
                 case "selected":
                     if value.format == MPV_FORMAT_FLAG {
                         selected = value.u.flag != 0
@@ -1943,7 +2010,17 @@ final class MPVNativeRenderer: PlayerRenderer {
             }
 
             guard id >= 0, !type.isEmpty else { continue }
-            tracks.append(MPVTrackInfo(id: id, type: type, title: displayTitle(title: title, lang: lang, fallbackId: id), lang: lang, selected: selected))
+            tracks.append(MPVTrackInfo(
+                id: id,
+                type: type,
+                title: displayTitle(title: title, lang: lang, fallbackId: id),
+                lang: lang,
+                codec: codec,
+                external: external,
+                defaultTrack: defaultTrack,
+                forced: forced,
+                selected: selected
+            ))
         }
 
         return tracks

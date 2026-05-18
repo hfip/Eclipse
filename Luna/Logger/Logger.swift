@@ -59,6 +59,8 @@ class Logger: @unchecked Sendable {
         switch trimmed.lowercased() {
         case "crashprobe", "matching", "animatch", "animap", "tmdbmatch", "mediamatch":
             return "Matching"
+        case "mpvcrashprobe":
+            return "MPV"
         default:
             return trimmed
         }
@@ -69,7 +71,7 @@ class Logger: @unchecked Sendable {
         let entry = LogEntry(message: normalizedMessage, type: type, timestamp: Date())
 
         // Crash diagnostics must survive hard crashes immediately.
-        if type == "CrashProbe" {
+        if Self.isCrashDiagnosticType(type) {
             appendToDisk(entry)
 
             queue.async(flags: .barrier) {
@@ -370,6 +372,10 @@ class Logger: @unchecked Sendable {
     }
 
     private func shouldBypassNoisySuppression(_ entry: LogEntry) -> Bool {
+        if Self.isCrashDiagnosticType(entry.type) {
+            return true
+        }
+
         let category = Self.displayCategory(for: entry.type).lowercased()
         let message = entry.message.lowercased()
 
@@ -402,6 +408,15 @@ class Logger: @unchecked Sendable {
             || message.contains("http error")
             || message.contains("failed")
             || (message.contains("mpv[") && (message.contains(" error:") || message.contains(" warn:")))
+    }
+
+    private static func isCrashDiagnosticType(_ type: String) -> Bool {
+        switch type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "crashprobe", "mpvcrashprobe":
+            return true
+        default:
+            return false
+        }
     }
 
     private func appendToDisk(_ entry: LogEntry) {
