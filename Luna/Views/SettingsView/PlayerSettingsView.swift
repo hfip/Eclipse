@@ -82,6 +82,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(inAppPlayer.rawValue, forKey: "inAppPlayer") }
     }
 
+    @Published var smartInAppPlayerChoosingEnabled: Bool {
+        didSet { UserDefaults.standard.set(smartInAppPlayerChoosingEnabled, forKey: "smartInAppPlayerChoosingEnabled") }
+    }
+
     @Published var preferDownloadedMedia: Bool {
         didSet { UserDefaults.standard.set(preferDownloadedMedia, forKey: "preferDownloadedMedia") }
     }
@@ -180,6 +184,7 @@ final class PlayerSettingsStore: ObservableObject {
         
         let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.vlc.rawValue
         self.inAppPlayer = InAppPlayer(rawValue: inAppRaw) ?? .vlc
+        self.smartInAppPlayerChoosingEnabled = UserDefaults.standard.bool(forKey: "smartInAppPlayerChoosingEnabled")
 
         self.preferDownloadedMedia = UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
 
@@ -380,6 +385,24 @@ struct PlayerSettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Smart Player Choosing")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("When MPV is selected, automatically use VLC for higher quality streams or risky downloaded files that MPV's current OpenGL path may not handle cleanly.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $store.smartInAppPlayerChoosingEnabled)
+                        .tint(accentColorManager.currentAccentColor)
                 }
 
                 HStack {

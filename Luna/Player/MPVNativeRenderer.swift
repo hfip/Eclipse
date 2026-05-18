@@ -751,6 +751,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var selectedVideoTrackID: Int?
     private var pipTransitionID = 0
     private var pipRenderRequestCount = 0
+    private var forceSoftwareDecodeForCurrentItem = false
 
     weak var delegate: MPVNativeRendererDelegate?
 
@@ -759,7 +760,8 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     var supportsBitmapSubtitleTracks: Bool {
-        activeRenderBackend == .metal && MPVRenderBackendSupport.metalBitmapSubtitlesValidated
+        activeRenderBackend == .openGL
+            || (activeRenderBackend == .metal && MPVRenderBackendSupport.metalBitmapSubtitlesValidated)
     }
 
     private func logMPV(_ message: String) {
@@ -962,6 +964,12 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]? = nil) {
+        let isSameMedia = currentURL == url
+        if !isSameMedia {
+            forceSoftwareDecodeForCurrentItem = shouldPreferSoftwareDecodeForOpenGL(url: url)
+        } else if shouldPreferSoftwareDecodeForOpenGL(url: url) {
+            forceSoftwareDecodeForCurrentItem = true
+        }
         currentPreset = preset
         currentURL = url
         currentHeaders = headers
@@ -990,7 +998,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         apply(commands: preset.commands, on: handle)
         command(handle, ["stop"])
         if activeRenderBackend == .openGL {
-            applyIOSOpenGLVideoStabilityOptions()
+            applyIOSOpenGLVideoStabilityOptions(for: url)
         }
         setProperty(name: "sid", value: "no")
         updateHTTPHeaders(headers)
@@ -1634,6 +1642,9 @@ final class MPVNativeRenderer: PlayerRenderer {
         logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
         logTrackSummaryIfChanged(reason: "file-loaded")
         logPlaybackDiagnostics(reason: "file-loaded")
+        if reloadOpenGLItemWithSoftwareDecodeIfNeeded(reason: "file-loaded") {
+            return
+        }
         startForegroundDisplayLink(reason: "file-loaded")
         if let initialSeek = pendingInitialSeek {
             logMPV("applying pending initial seek \(String(format: "%.2f", initialSeek))s")
@@ -1800,6 +1811,65 @@ final class MPVNativeRenderer: PlayerRenderer {
         stateQueue.sync { videoSize }
     }
 
+    private func shouldPreferSoftwareDecodeForOpenGL(url: URL) -> Bool {
+        guard activeRenderBackend == .openGL else { return false }
+        let text = (url.absoluteString.removingPercentEncoding ?? url.absoluteString).lowercased()
+        let riskyTokens = [
+            "10bit",
+            "10-bit",
+            "10 bit",
+            "main10",
+            "hi10",
+            "hi10p",
+            "p010",
+            "p016"
+        ]
+        return riskyTokens.contains { text.contains($0) }
+    }
+
+    private func isOpenGLRiskyVideoPixelFormat(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        return lower.contains("p010")
+            || lower.contains("p016")
+            || lower.contains("yuv420p10")
+            || lower.contains("yuv420p12")
+            || lower.contains("yuv422p10")
+            || lower.contains("yuv422p12")
+            || lower.contains("yuv444p10")
+            || lower.contains("yuv444p12")
+    }
+
+    private func currentVideoPixelFormatDescription(handle: OpaquePointer) -> String {
+        getStringProperty(handle: handle, name: "video-params/pixelformat")
+            ?? getStringProperty(handle: handle, name: "video-params/format")
+            ?? "nil"
+    }
+
+    private func reloadOpenGLItemWithSoftwareDecodeIfNeeded(reason: String) -> Bool {
+        guard activeRenderBackend == .openGL,
+              !forceSoftwareDecodeForCurrentItem,
+              let handle = mpv,
+              let url = currentURL,
+              let preset = currentPreset else {
+            return false
+        }
+
+        let pixelFormat = currentVideoPixelFormatDescription(handle: handle)
+        let videoFormat = getStringProperty(handle: handle, name: "video-format") ?? "nil"
+        guard isOpenGLRiskyVideoPixelFormat(pixelFormat) || isOpenGLRiskyVideoPixelFormat(videoFormat) else {
+            return false
+        }
+
+        forceSoftwareDecodeForCurrentItem = true
+        let headers = currentHeaders
+        logMPVCrashProbe("detected risky iOS OpenGL pixel format reason=\(reason) videoFormat=\(videoFormat) pixelFormat=\(pixelFormat); reloading with software decode")
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.load(url: url, with: preset, headers: headers)
+        }
+        return true
+    }
+
     private func ensureAudioSessionActive() {
         do {
             let session = AVAudioSession.sharedInstance()
@@ -1846,11 +1916,21 @@ final class MPVNativeRenderer: PlayerRenderer {
         }
     }
 
-    private func applyIOSOpenGLVideoStabilityOptions() {
-        setProperty(name: "hwdec-image-format", value: "nv12")
+    private func applyIOSOpenGLVideoStabilityOptions(for url: URL) {
         setProperty(name: "sws-allow-zimg", value: "yes")
-        setProperty(name: "vf", value: "format=fmt=nv12")
-        logMPVCrashProbe("configured iOS OpenGL stability video path hwdecImage=nv12 vf=format=fmt=nv12")
+        setProperty(name: "vd-lavc-dr", value: "no")
+        setProperty(name: "vd-lavc-software-fallback", value: "yes")
+
+        if forceSoftwareDecodeForCurrentItem {
+            setProperty(name: "hwdec", value: "no")
+            setProperty(name: "vf", value: "format=fmt=yuv420p")
+            logMPVCrashProbe("configured iOS OpenGL software video path reason=10bit-or-p010-risk target=\(describe(url: url)) vf=format=fmt=yuv420p")
+        } else {
+            setProperty(name: "hwdec", value: "videotoolbox-copy")
+            setProperty(name: "hwdec-image-format", value: "nv12")
+            setProperty(name: "vf", value: "format=fmt=nv12")
+            logMPVCrashProbe("configured iOS OpenGL stability video path hwdec=videotoolbox-copy hwdecImage=nv12 vf=format=fmt=nv12")
+        }
     }
 
     private func clearProperty(name: String) {

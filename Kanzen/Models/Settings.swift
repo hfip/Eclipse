@@ -242,6 +242,11 @@ class Settings: ObservableObject {
         }
     }
 
+    var smartInAppPlayerChoosingEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "smartInAppPlayerChoosingEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "smartInAppPlayerChoosingEnabled") }
+    }
+
     var enableVLCSubtitleEditMenu: Bool {
         get {
             UserDefaults.standard.object(forKey: "enableVLCSubtitleEditMenu") as? Bool ?? true

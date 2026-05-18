@@ -446,10 +446,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private let brightnessLevelKey = "mpvBrightnessLevel"
     
     private lazy var renderer: PlayerRenderer = {
-        // Select renderer based on Settings
-        let playerChoice = Settings.shared.playerChoice
+        let requestedPlayerChoice = Settings.shared.playerChoice
+        let smartChoice = smartInAppPlayerChoice(requested: requestedPlayerChoice)
+        let playerChoice = smartChoice.choice
         
         if playerChoice == .vlc {
+            if let reason = smartChoice.reason {
+                Logger.shared.log("[PlayerVC.SmartPlayer] using VLC instead of MPV reason=\(reason)", type: "Player")
+            }
             let r = VLCRenderer(displayLayer: displayLayer)
             r.delegate = self
             return r
@@ -467,6 +471,62 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     private var vlcRenderer: VLCRenderer? {
         return renderer as? VLCRenderer
+    }
+
+    private func smartInAppPlayerChoice(requested: Settings.PlayerChoice) -> (choice: Settings.PlayerChoice, reason: String?) {
+        guard requested == .mpv, Settings.shared.smartInAppPlayerChoosingEnabled else {
+            return (requested, nil)
+        }
+
+        guard let reason = smartPlayerVLCFallbackReason() else {
+            return (requested, nil)
+        }
+
+        return (.vlc, reason)
+    }
+
+    private func smartPlayerVLCFallbackReason() -> String? {
+        let candidates = [
+            initialURL?.absoluteString,
+            initialURL?.lastPathComponent,
+            playbackLaunchContext?.streamURL,
+            playerTitleOverride
+        ]
+        let mediaText = candidates
+            .compactMap { $0 }
+            .map { ($0.removingPercentEncoding ?? $0).lowercased() }
+            .joined(separator: " ")
+
+        guard !mediaText.isEmpty else { return nil }
+
+        let riskyTokens: [(token: String, reason: String)] = [
+            ("10bit", "10-bit video"),
+            ("10-bit", "10-bit video"),
+            ("10 bit", "10-bit video"),
+            ("main10", "10-bit video"),
+            ("hi10", "10-bit video"),
+            ("hi10p", "10-bit video"),
+            ("p010", "10-bit/P010 video"),
+            ("p016", "10-bit/P016 video"),
+            ("2160p", "4K stream"),
+            ("4k", "4K stream"),
+            ("uhd", "UHD stream"),
+            ("remux", "remux stream"),
+            ("dolbyvision", "Dolby Vision stream"),
+            ("dolby vision", "Dolby Vision stream"),
+            ("dovi", "Dolby Vision stream"),
+            ("hdr10", "HDR stream"),
+            ("hdr", "HDR stream")
+        ]
+
+        guard let matched = riskyTokens.first(where: { mediaText.contains($0.token) }) else {
+            return nil
+        }
+
+        if initialURL?.isFileURL == true {
+            return "downloaded/local \(matched.reason)"
+        }
+        return matched.reason
     }
 
     private var isVLCPlayer: Bool {
