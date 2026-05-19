@@ -2575,12 +2575,14 @@ final class MPVKitMetalRenderer: PlayerRenderer {
     }
 
     func prepareForPictureInPictureStart() {
+        recoverDisplayLayerIfNeeded(reason: "prepare-pip")
         displayLayer.isHidden = false
         displayLayer.opacity = 1.0
         sampleRenderer.primeFrames(reason: "enter-pip", count: 8)
     }
 
     func finishPictureInPicture() {
+        recoverDisplayLayerIfNeeded(reason: "finish-pip")
         displayLayer.isHidden = false
         displayLayer.opacity = 1.0
         displayLayer.zPosition = 0
@@ -2592,6 +2594,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
     }
 
     func activatePictureInPictureLayer() {
+        recoverDisplayLayerIfNeeded(reason: "activate-pip")
         displayLayer.isHidden = false
         displayLayer.opacity = 1.0
         displayLayer.zPosition = 1
@@ -2604,6 +2607,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
 
     func resumeForegroundRendering(reason: String) {
         _ = reason
+        recoverDisplayLayerIfNeeded(reason: "foreground")
         displayLayer.isHidden = false
         displayLayer.opacity = 1.0
         displayLayer.zPosition = 0
@@ -2617,6 +2621,19 @@ final class MPVKitMetalRenderer: PlayerRenderer {
 
     func beginForegroundUIStallRecovery(reason: String) {
         sampleRenderer.primeFrames(reason: reason, count: 2)
+    }
+
+    private func recoverDisplayLayerIfNeeded(reason: String) {
+        guard displayLayer.status == .failed else { return }
+        let nsError = displayLayer.error.map { $0 as NSError }
+        let errorText = nsError.map { "\($0.domain)#\($0.code)" } ?? "nil"
+        Logger.shared.log("[MPVKitMetalRenderer] recovering failed sample-buffer layer reason=\(reason) error=\(errorText)", type: "MPV")
+        displayLayer.controlTimebase = nil
+        if #available(iOS 18.0, *) {
+            displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: false, completionHandler: nil)
+        } else {
+            displayLayer.flush()
+        }
     }
 
     private func handleSampleBufferState(_ state: MPVMetalSampleBufferRendererState) {

@@ -596,6 +596,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
     }
 
+    private var mpvRendererName: String {
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+        if metalMPVRenderer != nil { return "metal-sample-buffer" }
+#endif
+        if mpvRenderer != nil { return "opengl" }
+        return "none"
+    }
+
     private var vlcRenderer: VLCRenderer? {
         return renderer as? VLCRenderer
     }
@@ -1186,7 +1194,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererPreparePictureInPictureStart() {
-        logPictureInPicture("renderer prepare call hasMPVRenderer=\(isMPVRenderer)")
+        logPictureInPicture("renderer prepare call renderer=\(mpvRendererName) hasMPVRenderer=\(isMPVRenderer)")
         mpvRenderer?.prepareForPictureInPictureStart()
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
         metalMPVRenderer?.prepareForPictureInPictureStart()
@@ -1201,7 +1209,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererPrimePictureInPictureFrames(reason: String) {
-        logPictureInPicture("renderer prime call reason=\(reason) hasMPVRenderer=\(isMPVRenderer)")
+        logPictureInPicture("renderer prime call reason=\(reason) renderer=\(mpvRendererName) hasMPVRenderer=\(isMPVRenderer)")
         mpvRenderer?.primePictureInPictureFrames(reason: reason)
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
         metalMPVRenderer?.primePictureInPictureFrames(reason: reason)
@@ -1209,7 +1217,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererActivatePictureInPictureLayer() {
-        logPictureInPicture("renderer activate layer call hasMPVRenderer=\(isMPVRenderer)")
+        logPictureInPicture("renderer activate layer call renderer=\(mpvRendererName) hasMPVRenderer=\(isMPVRenderer)")
         mpvRenderer?.activatePictureInPictureLayer()
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
         metalMPVRenderer?.activatePictureInPictureLayer()
@@ -7997,6 +8005,19 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func sceneWillDeactivate() {
         logPictureInPicture("lifecycle notification received source=scene-will-deactivate")
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+        if metalMPVRenderer != nil {
+            logPictureInPicture("scene-will-deactivate delaying Metal sample-buffer PiP start until later lifecycle signal")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+                guard let self,
+                      self.metalMPVRenderer != nil,
+                      self.pipController?.isPictureInPictureActive != true,
+                      !self.mpvAppExitPiPStartRequested else { return }
+                self.attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate-delayed-metal")
+            }
+            return
+        }
+#endif
         if Thread.isMainThread {
             attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
         } else {
