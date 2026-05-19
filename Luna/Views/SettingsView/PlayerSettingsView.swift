@@ -54,7 +54,7 @@ enum InAppPlayer: String, CaseIterable, Identifiable {
         case .vlc:
             return rawValue
         case .mpv:
-            return "MPV"
+            return "MPV (Beta, Unstable)"
         case .normal:
             return "Normal AVPlayer (Not recommended)"
         }
@@ -408,7 +408,7 @@ struct PlayerSettingsView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
 
-                        Text("Automatically uses VLC for risky 10-bit, HDR, remux, 4K, Dolby Vision, or AV1 media that MPV may crash or heat on. If VLC is selected, clearly safe videos use MPV instead so PiP stays available. Turning this off can make MPV open risky media and can keep VLC on safe media without PiP.")
+                        Text("When MPV is selected, automatically uses VLC for risky 10-bit, HDR, remux, 4K, Dolby Vision, or AV1 media that MPV may crash or heat on. VLC selections stay on VLC. Turning this off can make MPV open risky media.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.leading)
@@ -440,7 +440,7 @@ struct PlayerSettingsView: View {
             }
             
             if store.inAppPlayer == .vlc || store.inAppPlayer == .mpv {
-                Section(header: Text(store.inAppPlayer == .mpv ? "MPV Player" : "VLC Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
+                Section(header: Text(store.inAppPlayer == .mpv ? "MPV Player (Beta, Unstable)" : "VLC Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
                     DisclosureGroup {
                         settingsToggleRow(
                             title: "Enable Subtitles by Default",

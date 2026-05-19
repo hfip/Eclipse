@@ -662,9 +662,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 return (.vlc, riskReason)
             }
         case .vlc:
-            if classification.riskReason == nil, let safeReason = classification.safeReason {
-                return (.mpv, safeReason)
-            }
+            return (requested, nil)
         }
 
         return (requested, nil)
