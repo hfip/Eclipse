@@ -30,6 +30,43 @@ enum MPVRenderBackend: String, CaseIterable, Identifiable {
     static let defaultBackend: MPVRenderBackend = .openGL
 }
 
+enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
+    case auto = "auto"
+    case balanced = "balanced"
+    case lowHeat = "lowHeat"
+    case sharp = "sharp"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .auto:
+            return "Auto (Let Eclipse decide for your device)"
+        case .balanced:
+            return "Balanced"
+        case .lowHeat:
+            return "Low Heat"
+        case .sharp:
+            return "Sharp"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .auto:
+            return "Adjusts Metal sample-buffer quality from the stream or downloaded file risk and the device's current capability."
+        case .balanced:
+            return "Renders up to 720p sample buffers, then lets iOS scale to the screen."
+        case .lowHeat:
+            return "Renders up to 576p sample buffers to reduce heat on risky files or warm devices."
+        case .sharp:
+            return "Renders up to 1080p sample buffers for a cleaner image at higher power cost."
+        }
+    }
+
+    static let defaultProfile: MPVMetalQualityProfile = .auto
+}
+
 struct MPVRenderBackendSupport {
     static let bundledMPVKitVersion = "0.41.0"
     static let bundledMPVKitRevision = "63ef1aac838094280be929b049aaaabdf16bf2fb"
@@ -52,6 +89,13 @@ struct MPVRenderBackendSupport {
     #else
     static let metalBitmapSubtitlesValidated = false
     #endif
+    static let metalBitmapSubtitlesAllowed = true
+
+    #if LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+    static let metalLiveQualityReconfigurationAvailable = true
+    #else
+    static let metalLiveQualityReconfigurationAvailable = false
+    #endif
 
     static var metalSampleBufferPictureInPictureAvailable: Bool {
         bundledMPVKitSupportsMoltenVKInlineRendering
@@ -70,7 +114,9 @@ struct MPVRenderBackendSupport {
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
             "forkMetalSampleBufferPiP=\(forkExposesMetalSampleBufferPictureInPicture)",
             "lunaMetalPiP=\(lunaImplementsMetalSampleBufferPictureInPicture)",
-            "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)"
+            "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
+            "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
+            "liveQuality=\(metalLiveQualityReconfigurationAvailable)"
         ].joined(separator: " ")
     }
 
@@ -239,6 +285,17 @@ class Settings: ObservableObject {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "mpvRenderBackend")
+        }
+    }
+
+    var mpvMetalQualityProfile: MPVMetalQualityProfile {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile")
+                ?? MPVMetalQualityProfile.defaultProfile.rawValue
+            return MPVMetalQualityProfile(rawValue: raw) ?? .defaultProfile
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "mpvMetalQualityProfile")
         }
     }
 

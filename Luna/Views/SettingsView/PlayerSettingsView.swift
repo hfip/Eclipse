@@ -174,6 +174,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvRenderBackend.rawValue, forKey: "mpvRenderBackend") }
     }
 
+    @Published var mpvMetalQualityProfile: MPVMetalQualityProfile {
+        didSet { UserDefaults.standard.set(mpvMetalQualityProfile.rawValue, forKey: "mpvMetalQualityProfile") }
+    }
+
     init() {
         let savedDefaultSpeed = UserDefaults.standard.double(forKey: "defaultPlaybackSpeed")
         self.defaultPlaybackSpeed = savedDefaultSpeed > 0 ? savedDefaultSpeed : 1.0
@@ -275,6 +279,8 @@ final class PlayerSettingsStore: ObservableObject {
         self.mpvForegroundFPS = UserDefaults.standard.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let backendRaw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
         self.mpvRenderBackend = MPVRenderBackend(rawValue: backendRaw) ?? .defaultBackend
+        let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
+        self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
     }
 }
 
@@ -403,7 +409,7 @@ struct PlayerSettingsView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
 
-                        Text("Automatically uses VLC for risky 10-bit, HDR, remux, or bitmap-subtitle media that MPV may crash or heat on. If VLC is selected, clearly safe videos use MPV instead so PiP stays available. Turning this off can make MPV open risky media and can keep VLC on safe media without PiP.")
+                        Text("Automatically uses VLC for risky 10-bit, HDR, remux, 4K, Dolby Vision, or AV1 media that MPV may crash or heat on. If VLC is selected, clearly safe videos use MPV instead so PiP stays available. Turning this off can make MPV open risky media and can keep VLC on safe media without PiP.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.leading)
@@ -669,6 +675,28 @@ struct PlayerSettingsView: View {
                                     }
                                     .pickerStyle(.menu)
                                 }
+
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Metal Quality")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+
+                                        Text(store.mpvMetalQualityProfile.settingsDescription)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .multilineTextAlignment(.leading)
+                                    }
+
+                                    Spacer()
+
+                                    Picker("", selection: $store.mpvMetalQualityProfile) {
+                                        ForEach(MPVMetalQualityProfile.allCases) { profile in
+                                            Text(profile.displayName).tag(profile)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
                             }
 
                             HStack {
@@ -692,6 +720,12 @@ struct PlayerSettingsView: View {
                                 }
                                 .pickerStyle(.menu)
                             }
+
+                            settingsToggleRow(
+                                title: "Performance Overlay",
+                                detail: "Show CPU, thermal state, and GPU availability while playing.",
+                                binding: $store.playerPerformanceOverlayEnabled
+                            )
                         } label: {
                             Label("MPV Rendering", systemImage: "display")
                         }

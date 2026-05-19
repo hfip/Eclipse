@@ -281,6 +281,34 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         return container
     }()
+
+    private let playerNoticeBanner: UIView = {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = UIColor.black.withAlphaComponent(0.72)
+        container.layer.cornerRadius = 8
+        container.clipsToBounds = true
+        container.alpha = 0.0
+        container.isHidden = true
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.numberOfLines = 2
+        label.textAlignment = .center
+        label.tag = 117
+
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8)
+        ])
+
+        return container
+    }()
     
     private let closeButton: UIButton = {
         let b = UIButton(type: .system)
@@ -558,8 +586,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
             let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable)
             if effectiveBackend == .metal {
-                Logger.shared.log("[PlayerVC.MPV] using Metal sample-buffer renderer \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
-                let r = MPVKitMetalRenderer(displayLayer: displayLayer)
+                let qualityProfile = metalSampleBufferQualityProfile()
+                Logger.shared.log("[PlayerVC.MPV] using Metal sample-buffer renderer \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+                let r = MPVKitMetalRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
                 r.delegate = self
                 return r
             }
@@ -637,6 +666,130 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+    private func metalSampleBufferQualityProfile() -> MPVMetalSampleBufferQualityProfile {
+        let requestedProfile = Settings.shared.mpvMetalQualityProfile
+        let classification = smartPlayerMediaClassification()
+        let device = metalDeviceCapabilitySummary()
+
+        switch requestedProfile {
+        case .sharp:
+            return .sharp(reason: "manual sharp; \(device.reason)")
+        case .balanced:
+            return .balanced(reason: "manual balanced; \(device.reason)")
+        case .lowHeat:
+            return .lowHeat(reason: "manual low heat; \(device.reason)")
+        case .auto:
+            if device.isThermallyConstrained {
+                return .lowHeat(reason: "auto thermal=\(device.thermalState); \(device.reason)")
+            }
+
+            if let riskReason = classification.riskReason {
+                if device.isConstrained {
+                    return .lowHeat(reason: "auto risky \(riskReason); \(device.reason)")
+                }
+                return .balanced(reason: "auto risky \(riskReason); \(device.reason)")
+            }
+
+            if device.isConstrained {
+                let safeText = classification.safeReason ?? "no risky stream markers"
+                return .balanced(reason: "auto constrained \(safeText); \(device.reason)")
+            }
+
+            let safeText = classification.safeReason ?? "no risky stream markers"
+            return .sharp(reason: "auto \(safeText); \(device.reason)")
+        }
+    }
+
+    private func metalDeviceCapabilitySummary() -> (isConstrained: Bool, isThermallyConstrained: Bool, reason: String, thermalState: String) {
+        let processInfo = ProcessInfo.processInfo
+        let screen = currentPlaybackScreen()
+        let memoryGB = Double(processInfo.physicalMemory) / 1_073_741_824.0
+        let processorCount = processInfo.processorCount
+        let maximumFPS = screen.maximumFramesPerSecond
+        let longestPixelSide = max(screen.nativeBounds.width, screen.nativeBounds.height)
+        let thermalState = metalThermalStateName(processInfo.thermalState)
+        let isThermallyConstrained = processInfo.thermalState == .serious || processInfo.thermalState == .critical
+        let lowMemory = processInfo.physicalMemory > 0 && memoryGB <= 3.25
+        let lowCPU = processorCount > 0 && processorCount <= 4
+        let smallStandardDisplay = UIDevice.current.userInterfaceIdiom == .phone && maximumFPS <= 60 && longestPixelSide <= 1800
+        let isConstrained = isThermallyConstrained || lowMemory || lowCPU || smallStandardDisplay
+        let reason = String(
+            format: "device=%@ memory=%.1fGB cores=%d screenMaxFPS=%d longestPixels=%.0f thermal=%@",
+            UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone",
+            memoryGB,
+            processorCount,
+            maximumFPS,
+            longestPixelSide,
+            thermalState
+        )
+        return (
+            isConstrained: isConstrained,
+            isThermallyConstrained: isThermallyConstrained,
+            reason: reason,
+            thermalState: thermalState
+        )
+    }
+
+    private func currentPlaybackScreen() -> UIScreen {
+        if let screen = view.window?.windowScene?.screen {
+            return screen
+        }
+        return UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.screen }
+            .first ?? UIScreen.main
+    }
+
+    private func metalThermalStateName(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal:
+            return "nominal"
+        case .fair:
+            return "fair"
+        case .serious:
+            return "serious"
+        case .critical:
+            return "critical"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+#if LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+    private func startMetalThermalQualityMonitoringIfNeeded() {
+        guard Settings.shared.mpvMetalQualityProfile == .auto, metalMPVRenderer != nil else { return }
+        evaluateMetalThermalQuality(reason: "startup")
+        metalThermalQualityTimer?.invalidate()
+        let timer = Timer(timeInterval: 8.0, repeats: true) { [weak self] _ in
+            self?.evaluateMetalThermalQuality(reason: "timer")
+        }
+        metalThermalQualityTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @objc private func metalThermalStateDidChange() {
+        evaluateMetalThermalQuality(reason: "thermal-notification")
+    }
+
+    private func evaluateMetalThermalQuality(reason: String) {
+        guard Settings.shared.mpvMetalQualityProfile == .auto,
+              let metalMPVRenderer else { return }
+        let resolvedProfile = metalSampleBufferQualityProfile()
+        guard metalMPVRenderer.updateSampleBufferQualityProfile(resolvedProfile) else { return }
+        Logger.shared.log("[PlayerVC.MPV] Auto Metal quality changed reason=\(reason) \(resolvedProfile.logDescription)", type: "MPV")
+
+        let thermalState = ProcessInfo.processInfo.thermalState
+        if thermalState == .serious || thermalState == .critical {
+            let now = CACurrentMediaTime()
+            if now - lastMetalThermalNoticeAt > 20 {
+                lastMetalThermalNoticeAt = now
+                showPlayerNotice("Eclipse detected bad thermal state, protecting device")
+            }
+        }
+    }
+#endif
+#endif
+
     private func smartPlayerMediaClassification() -> (riskReason: String?, safeReason: String?) {
         let candidates = [
             initialURL?.absoluteString,
@@ -686,12 +839,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ("hdr10+", "HDR stream"),
             ("hdr10", "HDR stream"),
             ("hdr", "HDR stream"),
-            ("av1", "AV1 stream"),
-            ("pgs", "bitmap subtitle stream"),
-            ("hdmv", "bitmap subtitle stream"),
-            ("vobsub", "bitmap subtitle stream"),
-            ("dvbsub", "bitmap subtitle stream"),
-            ("xsub", "bitmap subtitle stream")
+            ("av1", "AV1 stream")
         ]
 
         if let matched = riskyTokens.first(where: { smartPlayerText(normalizedMediaText, paddedMediaText: paddedMediaText, contains: $0.token) }) {
@@ -1599,7 +1747,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return UserDefaults.standard.bool(forKey: "vlcVolumeGestureEnabled")
     }
     private var isPerformanceOverlayEnabled: Bool {
-        return false
+        return UserDefaults.standard.bool(forKey: playerPerformanceOverlayKey)
     }
     
     private var originalSpeed: Double = 1.0
@@ -1610,6 +1758,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var pendingSeekTime: Double?
     private var defaultPlaybackSpeedApplied = false
     private var performanceOverlayTimer: Timer?
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+    private var metalThermalQualityTimer: Timer?
+    private var lastMetalThermalNoticeAt: CFTimeInterval = 0
+#endif
+    private var playerNoticeDismissWorkItem: DispatchWorkItem?
     private var lastCPUProcessTime: TimeInterval?
     private var lastCPUWallTime: CFTimeInterval?
     private var lastCPUUsagePercent: Double?
@@ -1678,11 +1831,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         updateProgressHostingController()
         updateSpeedMenu()
         updatePerformanceOverlayVisibility()
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+        startMetalThermalQualityMonitoringIfNeeded()
+#endif
         
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+        NotificationCenter.default.addObserver(self, selector: #selector(metalThermalStateDidChange), name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
+#endif
         NotificationCenter.default.addObserver(self, selector: #selector(sceneWillDeactivate), name: UIScene.willDeactivateNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(sceneDidEnterBackground), name: UIScene.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(sceneWillEnterForeground), name: UIScene.willEnterForegroundNotification, object: nil)
@@ -1693,6 +1852,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         view.bringSubviewToFront(errorBanner)
+        view.bringSubviewToFront(playerNoticeBanner)
         logVLCUIViewSnapshot("viewDidAppear")
     }
     
@@ -1772,6 +1932,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         audioMenuDebounceTimer?.invalidate()
         subtitleMenuDebounceTimer?.invalidate()
         performanceOverlayTimer?.invalidate()
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+        metalThermalQualityTimer?.invalidate()
+#endif
+        playerNoticeDismissWorkItem?.cancel()
         playbackStartupWorkItem?.cancel()
 #if !os(tvOS)
         outputVolumeObservation?.invalidate()
@@ -2191,6 +2355,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         videoContainer.addSubview(controlsOverlayView)
         videoContainer.addSubview(loadingIndicator)
         view.addSubview(errorBanner)
+        view.addSubview(playerNoticeBanner)
         videoContainer.addSubview(centerPlayPauseButton)
         videoContainer.addSubview(progressContainer)
         videoContainer.addSubview(overlayMenuDismissView)
@@ -2281,6 +2446,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             errorBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             errorBanner.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.92),
             errorBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+
+            playerNoticeBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            playerNoticeBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            playerNoticeBanner.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.78),
+            playerNoticeBanner.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
             
             centerPlayPauseButton.centerXAnchor.constraint(equalTo: videoContainer.centerXAnchor),
             centerPlayPauseButton.centerYAnchor.constraint(equalTo: videoContainer.centerYAnchor),
@@ -2484,18 +2654,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func updatePerformanceOverlayText() {
         guard supportsSharedPlayerControls, isPerformanceOverlayEnabled else { return }
-        let pipState = rendererIsPictureInPictureActive() ? "PiP" : "Inline"
-        let playState = rendererIsPausedState() ? "Paused" : "Playing"
-        let header = "\(isVLCPlayer ? "VLC" : "MPV") \(pipState) \(playState)"
-        let progress = "pos \(secondsText(cachedPosition))/\(secondsText(cachedDuration))"
-        performanceOverlayLabel.text = "\(header)\n\(systemPerformanceOverlayLine())\n\(progress)\n\(renderer.performanceOverlaySnapshot())"
+        performanceOverlayLabel.text = systemPerformanceOverlayText()
         videoContainer.bringSubviewToFront(performanceOverlayLabel)
     }
 
-    private func systemPerformanceOverlayLine() -> String {
+    private func systemPerformanceOverlayText() -> String {
         let cpuText = processCPUUsagePercent().map { String(format: "%.0f%%", $0) } ?? "n/a"
-        let memoryText = processMemoryFootprintBytes().map(formatByteCount) ?? "n/a"
-        return "CPU \(cpuText) mem \(memoryText) thermal \(thermalStateText())"
+        return "CPU \(cpuText)\nThermal \(thermalStateText())\nGPU \(gpuPerformanceOverlayText())"
     }
 
     private func thermalStateText() -> String {
@@ -2508,22 +2673,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
-    private func formatByteCount(_ bytes: UInt64) -> String {
-        let megabytes = Double(bytes) / 1_048_576.0
-        if megabytes >= 1024 {
-            return String(format: "%.2fGB", megabytes / 1024.0)
-        }
-        return String(format: "%.0fMB", megabytes)
-    }
-
-    private func processMemoryFootprintBytes() -> UInt64? {
-#if canImport(Darwin)
-        var usage = rusage()
-        guard getrusage(RUSAGE_SELF, &usage) == 0, usage.ru_maxrss > 0 else { return nil }
-        return UInt64(usage.ru_maxrss)
-#else
-        return nil
-#endif
+    private func gpuPerformanceOverlayText() -> String {
+        // iOS does not expose public per-app GPU utilization.
+        return "n/a"
     }
 
     private func processCPUUsagePercent() -> Double? {
@@ -5098,24 +5250,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func canAutoSelectNativeSubtitleTrack(_ track: SubtitleTrackDescriptor) -> Bool {
-        if let mpvRenderer {
-            if mpvRenderer.supportsBitmapSubtitleTracks { return true }
-            return !isMPVBitmapSubtitleTrack(track)
-        }
-#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if let metalMPVRenderer {
-            if metalMPVRenderer.supportsBitmapSubtitleTracks { return true }
-            return !isMPVBitmapSubtitleTrack(track)
-        }
-#endif
+        _ = track
         return true
     }
 
     private func shouldLogSkippedMPVBitmapSubtitleTracks() -> Bool {
-        if mpvRenderer != nil { return true }
-#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if metalMPVRenderer != nil { return true }
-#endif
         return false
     }
 
@@ -6024,6 +6163,31 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 self.errorBanner.alpha = 1.0
                 self.errorBanner.transform = CGAffineTransform(translationX: 0, y: 4)
             }, completion: nil)
+        }
+    }
+
+    private func showPlayerNotice(_ message: String, duration: TimeInterval = 3.8) {
+        DispatchQueue.main.async {
+            guard let label = self.playerNoticeBanner.viewWithTag(117) as? UILabel else { return }
+            self.playerNoticeDismissWorkItem?.cancel()
+            label.text = message
+            self.playerNoticeBanner.isHidden = false
+            self.view.bringSubviewToFront(self.playerNoticeBanner)
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut]) {
+                self.playerNoticeBanner.alpha = 1.0
+                self.playerNoticeBanner.transform = .identity
+            }
+
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn]) {
+                    self.playerNoticeBanner.alpha = 0.0
+                } completion: { _ in
+                    self.playerNoticeBanner.isHidden = true
+                }
+            }
+            self.playerNoticeDismissWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: workItem)
         }
     }
     

@@ -2359,6 +2359,50 @@ private func performOnMainSync(_ block: () -> Void) {
 }
 
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+struct MPVMetalSampleBufferQualityProfile: Equatable {
+    let name: String
+    let maximumFrameSize: CGSize
+    let preferredPiPFramesPerSecond: Int
+    let reason: String
+
+    var logDescription: String {
+        let sizeText = "\(Int(maximumFrameSize.width))x\(Int(maximumFrameSize.height))"
+        return "profile=\(name) maxFrame=\(sizeText) pipCap=\(preferredPiPFramesPerSecond) reason=\(reason)"
+    }
+
+    func hasSameRenderSettings(as other: MPVMetalSampleBufferQualityProfile) -> Bool {
+        maximumFrameSize == other.maximumFrameSize
+            && preferredPiPFramesPerSecond == other.preferredPiPFramesPerSecond
+    }
+
+    static func sharp(reason: String) -> MPVMetalSampleBufferQualityProfile {
+        MPVMetalSampleBufferQualityProfile(
+            name: "Sharp",
+            maximumFrameSize: CGSize(width: 1920, height: 1080),
+            preferredPiPFramesPerSecond: 30,
+            reason: reason
+        )
+    }
+
+    static func balanced(reason: String) -> MPVMetalSampleBufferQualityProfile {
+        MPVMetalSampleBufferQualityProfile(
+            name: "Balanced",
+            maximumFrameSize: CGSize(width: 1280, height: 720),
+            preferredPiPFramesPerSecond: 30,
+            reason: reason
+        )
+    }
+
+    static func lowHeat(reason: String) -> MPVMetalSampleBufferQualityProfile {
+        MPVMetalSampleBufferQualityProfile(
+            name: "Low Heat",
+            maximumFrameSize: CGSize(width: 1024, height: 576),
+            preferredPiPFramesPerSecond: 24,
+            reason: reason
+        )
+    }
+}
+
 final class MPVKitMetalRenderer: PlayerRenderer {
     enum RendererError: Error {
         case sampleBufferUnavailable
@@ -2372,6 +2416,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
 
     private let displayLayer: AVSampleBufferDisplayLayer
     private let sampleRenderer: MPVMetalSampleBufferRenderer
+    private var qualityProfile: MPVMetalSampleBufferQualityProfile
     private let placeholderView = UIView(frame: .zero)
     private var currentPreset: PlayerPreset?
     private var currentURL: URL?
@@ -2382,24 +2427,27 @@ final class MPVKitMetalRenderer: PlayerRenderer {
     private var isPaused = true
     private var isReadyToSeek = false
     private var isLoading = false
+    private var positionUpdateTimer: Timer?
+    private var lastPositionUpdateAt: CFTimeInterval = 0
+    private let positionUpdateInterval: CFTimeInterval = 0.5
 
     var isPausedState: Bool { isPaused }
     var supportsBitmapSubtitleTracks: Bool {
-        MPVRenderBackendSupport.metalBitmapSubtitlesValidated
+        MPVRenderBackendSupport.metalBitmapSubtitlesAllowed
     }
 
-    init(displayLayer: AVSampleBufferDisplayLayer) {
+    init(displayLayer: AVSampleBufferDisplayLayer, qualityProfile: MPVMetalSampleBufferQualityProfile) {
         self.displayLayer = displayLayer
+        self.qualityProfile = qualityProfile
         let screen = UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen }
             .first ?? UIScreen.main
-        let configuredFPS = Settings.shared.mpvForegroundFPS
-        let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
-        let options = MPVMetalSampleBufferRendererOptions(
-            preferredFramesPerSecond: targetFPS,
-            preferredPiPFramesPerSecond: min(targetFPS, 30)
-        )
+        let configuration = Self.sampleBufferConfiguration(for: qualityProfile, screen: screen)
+        let targetFPS = configuration.targetFPS
+        let pipFramesPerSecond = configuration.pipFramesPerSecond
+        let options = configuration.options
         self.sampleRenderer = MPVMetalSampleBufferRenderer(displayLayer: displayLayer, options: options)
+        Logger.shared.log("[MPVKitMetalRenderer] configured sample-buffer fps=\(targetFPS) pipFPS=\(pipFramesPerSecond) \(qualityProfile.logDescription)", type: "MPV")
         placeholderView.backgroundColor = .clear
         placeholderView.isUserInteractionEnabled = false
         displayLayer.videoGravity = .resizeAspect
@@ -2417,12 +2465,6 @@ final class MPVKitMetalRenderer: PlayerRenderer {
                 self?.handleSampleBufferState(state)
             }
         }
-        sampleRenderer.onFrame = { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.delegate?.renderer(self, didUpdatePosition: self.sampleRenderer.currentTime, duration: self.sampleRenderer.duration)
-            }
-        }
         sampleRenderer.onError = { [weak self] message in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -2431,13 +2473,16 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         }
         try sampleRenderer.start()
         isRunning = true
+        startPositionUpdateTimer()
     }
 
     func stop() {
         sampleRenderer.stop()
+        stopPositionUpdateTimer()
         isRunning = false
         isReadyToSeek = false
         isLoading = false
+        lastPositionUpdateAt = 0
     }
 
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]?) {
@@ -2448,10 +2493,6 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         isLoading = true
         delegate?.renderer(self, didChangeLoading: true)
         sampleRenderer.load(url, headers: headers)
-        if let pendingInitialSeek {
-            sampleRenderer.seek(to: pendingInitialSeek)
-            self.pendingInitialSeek = nil
-        }
         sampleRenderer.play()
     }
 
@@ -2469,23 +2510,46 @@ final class MPVKitMetalRenderer: PlayerRenderer {
 
     func prepareInitialSeek(to seconds: Double?) {
         pendingInitialSeek = seconds.map { max(0, $0) }
+        if isReadyToSeek {
+            applyPendingInitialSeekIfNeeded(reason: "prepare-ready")
+        }
     }
 
     func performanceOverlaySnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "MPV metal-sample-buffer \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
+        return "MPV metal-sample-buffer \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
     }
+
+#if LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+    @discardableResult
+    func updateSampleBufferQualityProfile(_ newProfile: MPVMetalSampleBufferQualityProfile) -> Bool {
+        guard !qualityProfile.hasSameRenderSettings(as: newProfile) else {
+            qualityProfile = newProfile
+            return false
+        }
+        let screen = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.screen }
+            .first ?? UIScreen.main
+        let configuration = Self.sampleBufferConfiguration(for: newProfile, screen: screen)
+        qualityProfile = newProfile
+        sampleRenderer.updateOptions(configuration.options)
+        Logger.shared.log("[MPVKitMetalRenderer] live sample-buffer profile update fps=\(configuration.targetFPS) pipFPS=\(configuration.pipFramesPerSecond) \(newProfile.logDescription)", type: "MPV")
+        return true
+    }
+#endif
 
     func play() {
         isPaused = false
         sampleRenderer.play()
         delegate?.renderer(self, didChangePause: false)
+        emitPositionUpdate(force: true)
     }
 
     func pausePlayback() {
         isPaused = true
         sampleRenderer.pause()
         delegate?.renderer(self, didChangePause: true)
+        emitPositionUpdate(force: true)
     }
 
     func togglePause() {
@@ -2494,10 +2558,12 @@ final class MPVKitMetalRenderer: PlayerRenderer {
 
     func seek(to seconds: Double) {
         sampleRenderer.seek(to: seconds)
+        emitPositionUpdate(force: true)
     }
 
     func seek(by seconds: Double) {
         sampleRenderer.seek(by: seconds)
+        emitPositionUpdate(force: true)
     }
 
     func setSpeed(_ speed: Double) {
@@ -2620,7 +2686,22 @@ final class MPVKitMetalRenderer: PlayerRenderer {
     }
 
     func beginForegroundUIStallRecovery(reason: String) {
-        sampleRenderer.primeFrames(reason: reason, count: 2)
+        _ = reason
+    }
+
+    private static func sampleBufferConfiguration(
+        for qualityProfile: MPVMetalSampleBufferQualityProfile,
+        screen: UIScreen
+    ) -> (options: MPVMetalSampleBufferRendererOptions, targetFPS: Int, pipFramesPerSecond: Int) {
+        let configuredFPS = Settings.shared.mpvForegroundFPS
+        let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
+        let pipFramesPerSecond = min(targetFPS, qualityProfile.preferredPiPFramesPerSecond)
+        let options = MPVMetalSampleBufferRendererOptions(
+            maximumFrameSize: qualityProfile.maximumFrameSize,
+            preferredFramesPerSecond: targetFPS,
+            preferredPiPFramesPerSecond: pipFramesPerSecond
+        )
+        return (options, targetFPS, pipFramesPerSecond)
     }
 
     private func recoverDisplayLayerIfNeeded(reason: String) {
@@ -2636,6 +2717,55 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         }
     }
 
+    private func startPositionUpdateTimer() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.startPositionUpdateTimer()
+            }
+            return
+        }
+        positionUpdateTimer?.invalidate()
+        let timer = Timer(timeInterval: positionUpdateInterval, repeats: true) { [weak self] _ in
+            self?.emitPositionUpdate(force: false)
+        }
+        positionUpdateTimer = timer
+        RunLoop.main.add(timer, forMode: .default)
+        emitPositionUpdate(force: true)
+    }
+
+    private func stopPositionUpdateTimer() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.stopPositionUpdateTimer()
+            }
+            return
+        }
+        positionUpdateTimer?.invalidate()
+        positionUpdateTimer = nil
+    }
+
+    private func emitPositionUpdate(force: Bool) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.emitPositionUpdate(force: force)
+            }
+            return
+        }
+        guard isRunning else { return }
+        let now = CACurrentMediaTime()
+        guard force || now - lastPositionUpdateAt >= positionUpdateInterval else { return }
+        lastPositionUpdateAt = now
+        delegate?.renderer(self, didUpdatePosition: sampleRenderer.currentTime, duration: sampleRenderer.duration)
+    }
+
+    private func applyPendingInitialSeekIfNeeded(reason: String) {
+        guard let initialSeek = pendingInitialSeek else { return }
+        pendingInitialSeek = nil
+        Logger.shared.log("[MPVKitMetalRenderer] applying pending initial seek \(String(format: "%.2f", initialSeek))s reason=\(reason)", type: "MPV")
+        sampleRenderer.seek(to: initialSeek)
+        emitPositionUpdate(force: true)
+    }
+
     private func handleSampleBufferState(_ state: MPVMetalSampleBufferRendererState) {
         switch state {
         case .loading, .starting:
@@ -2648,6 +2778,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
             delegate?.renderer(self, didChangePause: false)
             if !isReadyToSeek {
                 isReadyToSeek = true
+                applyPendingInitialSeekIfNeeded(reason: "playing")
                 delegate?.renderer(self, didBecomeReadyToSeek: true)
             }
         case .paused:
@@ -2660,6 +2791,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
             delegate?.renderer(self, didChangeLoading: false)
             if currentURL != nil, !isReadyToSeek {
                 isReadyToSeek = true
+                applyPendingInitialSeekIfNeeded(reason: "ready")
                 delegate?.renderer(self, didBecomeReadyToSeek: true)
             }
         case .failed(let message):

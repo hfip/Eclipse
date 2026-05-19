@@ -50,6 +50,7 @@ struct BackupData: Codable {
     var playerPerformanceOverlayEnabled: Bool = false
     var mpvForegroundFPS: Int = 30
     var mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue
+    var mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue
     var smartInAppPlayerChoosingEnabled: Bool = true
 
     // Subtitle Styling
@@ -121,7 +122,7 @@ struct BackupData: Codable {
         case version, createdDate
         case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
-        case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcPiPEnabled, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, smartInAppPlayerChoosingEnabled
+        case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcPiPEnabled, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
         case showKanzen, kanzenAutoMode, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode
@@ -177,6 +178,7 @@ struct BackupData: Codable {
         playerPerformanceOverlayEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerPerformanceOverlayEnabled) ?? false
         mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(try container.decodeIfPresent(Int.self, forKey: .mpvForegroundFPS) ?? 30)
         mpvRenderBackend = Self.sanitizedMPVRenderBackend(try container.decodeIfPresent(String.self, forKey: .mpvRenderBackend))
+        mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(try container.decodeIfPresent(String.self, forKey: .mpvMetalQualityProfile))
         smartInAppPlayerChoosingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartInAppPlayerChoosingEnabled) ?? true
 
         // Subtitle styling
@@ -322,6 +324,7 @@ struct BackupData: Codable {
         try container.encode(playerPerformanceOverlayEnabled, forKey: .playerPerformanceOverlayEnabled)
         try container.encode(mpvForegroundFPS, forKey: .mpvForegroundFPS)
         try container.encode(mpvRenderBackend, forKey: .mpvRenderBackend)
+        try container.encode(mpvMetalQualityProfile, forKey: .mpvMetalQualityProfile)
         try container.encode(smartInAppPlayerChoosingEnabled, forKey: .smartInAppPlayerChoosingEnabled)
 
         // Subtitle styling
@@ -411,6 +414,7 @@ struct BackupData: Codable {
         playerPerformanceOverlayEnabled: Bool = false,
         mpvForegroundFPS: Int = 30,
         mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue,
+        mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue,
         smartInAppPlayerChoosingEnabled: Bool = true,
 
         // Subtitle styling
@@ -497,6 +501,7 @@ struct BackupData: Codable {
         self.playerPerformanceOverlayEnabled = playerPerformanceOverlayEnabled
         self.mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(mpvForegroundFPS)
         self.mpvRenderBackend = Self.sanitizedMPVRenderBackend(mpvRenderBackend)
+        self.mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(mpvMetalQualityProfile)
         self.smartInAppPlayerChoosingEnabled = smartInAppPlayerChoosingEnabled
 
         self.subtitleForegroundColor = subtitleForegroundColor
@@ -573,6 +578,14 @@ struct BackupData: Codable {
             return MPVRenderBackend.defaultBackend.rawValue
         }
         return backend.rawValue
+    }
+
+    static func sanitizedMPVMetalQualityProfile(_ value: String?) -> String {
+        guard let value,
+              let profile = MPVMetalQualityProfile(rawValue: value) else {
+            return MPVMetalQualityProfile.defaultProfile.rawValue
+        }
+        return profile.rawValue
     }
 
 }
@@ -763,6 +776,7 @@ class BackupManager {
         let playerPerformanceOverlayEnabled = userDefaults.bool(forKey: "playerPerformanceOverlayEnabled")
         let mpvForegroundFPS = userDefaults.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(userDefaults.string(forKey: "mpvRenderBackend"))
+        let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(userDefaults.string(forKey: "mpvMetalQualityProfile"))
         let smartInAppPlayerChoosingEnabled = userDefaults.object(forKey: "smartInAppPlayerChoosingEnabled") as? Bool ?? true
 
         // Subtitle styling
@@ -924,6 +938,7 @@ class BackupManager {
             playerPerformanceOverlayEnabled: playerPerformanceOverlayEnabled,
             mpvForegroundFPS: mpvForegroundFPS,
             mpvRenderBackend: mpvRenderBackend,
+            mpvMetalQualityProfile: mpvMetalQualityProfile,
             smartInAppPlayerChoosingEnabled: smartInAppPlayerChoosingEnabled,
 
             subtitleForegroundColor: subtitleForegroundColor,
@@ -1061,6 +1076,7 @@ class BackupManager {
         let mpvForegroundFPSRaw = json["mpvForegroundFPS"] as? Int ?? (json["mpvForegroundFPS"] as? Double).map(Int.init) ?? 30
         let mpvForegroundFPS = mpvForegroundFPSRaw == 60 ? 60 : 30
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(json["mpvRenderBackend"] as? String)
+        let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(json["mpvMetalQualityProfile"] as? String)
         let smartInAppPlayerChoosingEnabled = json["smartInAppPlayerChoosingEnabled"] as? Bool ?? true
 
         // Subtitle styling
@@ -1264,6 +1280,7 @@ class BackupManager {
             playerPerformanceOverlayEnabled: playerPerformanceOverlayEnabled,
             mpvForegroundFPS: mpvForegroundFPS,
             mpvRenderBackend: mpvRenderBackend,
+            mpvMetalQualityProfile: mpvMetalQualityProfile,
             smartInAppPlayerChoosingEnabled: smartInAppPlayerChoosingEnabled,
             subtitleForegroundColor: subtitleForegroundColor,
             subtitleStrokeColor: subtitleStrokeColor,
@@ -1356,6 +1373,7 @@ class BackupManager {
         userDefaults.set(backup.playerPerformanceOverlayEnabled, forKey: "playerPerformanceOverlayEnabled")
         userDefaults.set(backup.mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS")
         userDefaults.set(BackupData.sanitizedMPVRenderBackend(backup.mpvRenderBackend), forKey: "mpvRenderBackend")
+        userDefaults.set(BackupData.sanitizedMPVMetalQualityProfile(backup.mpvMetalQualityProfile), forKey: "mpvMetalQualityProfile")
         userDefaults.set(backup.smartInAppPlayerChoosingEnabled, forKey: "smartInAppPlayerChoosingEnabled")
 
         // Subtitle styling
