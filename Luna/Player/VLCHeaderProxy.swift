@@ -160,20 +160,34 @@ final class VLCHeaderProxy {
     }
 
     private func handleConnection(_ connection: NWConnection) {
-        connection.stateUpdateHandler = { state in
+        connection.stateUpdateHandler = { [weak self] state in
             if case .failed(let error) = state {
-                Logger.shared.log("VLCHeaderProxy: connection failed: \(error)", type: "Error")
+                let expectedClose = self?.isExpectedConnectionClose(error) ?? false
+                let message = expectedClose ? "VLCHeaderProxy: client connection closed: \(error)" : "VLCHeaderProxy: connection failed: \(error)"
+                Logger.shared.log(message, type: expectedClose ? "Stream" : "Error")
             }
         }
         connection.start(queue: queue)
         receiveHeaders(on: connection, buffer: Data())
     }
 
+    private func isExpectedConnectionClose(_ error: NWError) -> Bool {
+        guard case .posix(let code) = error else { return false }
+        let raw = code.rawValue
+        return raw == POSIXErrorCode.ECONNRESET.rawValue
+            || raw == POSIXErrorCode.ENOTCONN.rawValue
+            || raw == POSIXErrorCode.EPIPE.rawValue
+    }
+
     private func receiveHeaders(on connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             if let error {
-                Logger.shared.log("VLCHeaderProxy: receive error: \(error)", type: "Error")
+                let expectedClose = self.isExpectedConnectionClose(error)
+                Logger.shared.log(
+                    expectedClose ? "VLCHeaderProxy: receive closed by client: \(error)" : "VLCHeaderProxy: receive error: \(error)",
+                    type: expectedClose ? "Stream" : "Error"
+                )
                 connection.cancel()
                 return
             }
@@ -647,6 +661,7 @@ final class VLCHeaderProxy {
         private let sessionId: String
         private let connection: NWConnection
         private let callbackQueue: OperationQueue
+        private let maxUpstreamAttempts = 3
 
         private var urlSession: URLSession?
         private var task: URLSessionDataTask?
@@ -656,6 +671,7 @@ final class VLCHeaderProxy {
         private var bufferedData = Data()
         private var responseHeadersSent = false
         private var finished = false
+        private var upstreamAttempt = 0
 
         init(
             proxy: VLCHeaderProxy,
@@ -691,13 +707,64 @@ final class VLCHeaderProxy {
                 configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
                 configuration.timeoutIntervalForRequest = 30
                 configuration.timeoutIntervalForResource = 6 * 60 * 60
+                configuration.waitsForConnectivity = true
+                configuration.httpMaximumConnectionsPerHost = 12
+                configuration.networkServiceType = .responsiveData
 
                 let urlSession = URLSession(configuration: configuration, delegate: self, delegateQueue: callbackQueue)
                 self.urlSession = urlSession
-                let task = urlSession.dataTask(with: request)
-                self.task = task
-                task.resume()
+                self.startUpstreamAttempt()
             }
+        }
+
+        private func startUpstreamAttempt() {
+            guard let proxy, let urlSession, !finished else { return }
+            upstreamAttempt += 1
+            httpResponse = nil
+            mode = .stream
+            bufferedData.removeAll(keepingCapacity: false)
+
+            var attemptRequest = request
+            if upstreamAttempt > 1 {
+                attemptRequest.cachePolicy = .reloadIgnoringLocalCacheData
+                attemptRequest.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                attemptRequest.setValue("no-cache", forHTTPHeaderField: "Pragma")
+            }
+
+            let attemptRange = attemptRequest.value(forHTTPHeaderField: "Range") ?? "nil"
+            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream attempt \(upstreamAttempt)/\(maxUpstreamAttempts) range=\(attemptRange) target=\(proxy.logURLSummary(targetURL))", type: "Stream")
+            let task = urlSession.dataTask(with: attemptRequest)
+            self.task = task
+            task.resume()
+        }
+
+        private func retryUpstream(after delay: TimeInterval, error: Error) {
+            guard !finished, !responseHeadersSent else { return }
+            guard let proxy else {
+                finish()
+                return
+            }
+            Logger.shared.log("VLCHeaderProxy[\(requestId)]: retrying upstream attempt=\(upstreamAttempt + 1)/\(maxUpstreamAttempts) after=\(String(format: "%.2f", delay))s error=\(error) target=\(proxy.logURLSummary(targetURL))", type: "Stream")
+            callbackQueue.addOperation { [weak self] in
+                guard let self, !self.finished else { return }
+                Thread.sleep(forTimeInterval: delay)
+                self.startUpstreamAttempt()
+            }
+        }
+
+        private func shouldRetryUpstreamError(_ error: Error) -> Bool {
+            let nsError = error as NSError
+            guard nsError.domain == NSURLErrorDomain else { return false }
+            let retryableCodes = [
+                NSURLErrorTimedOut,
+                NSURLErrorCannotFindHost,
+                NSURLErrorCannotConnectToHost,
+                NSURLErrorDNSLookupFailed,
+                NSURLErrorNetworkConnectionLost,
+                NSURLErrorSecureConnectionFailed,
+                NSURLErrorCannotLoadFromNetwork
+            ]
+            return retryableCodes.contains(nsError.code)
         }
 
         func urlSession(
@@ -742,7 +809,11 @@ final class VLCHeaderProxy {
                 proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                     guard let self else { return }
                     if let error {
-                        Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                        let expectedClose = self.proxy?.isExpectedConnectionClose(error) ?? false
+                        Logger.shared.log(
+                            expectedClose ? "VLCHeaderProxy[\(self.requestId)]: client closed before response headers: \(error)" : "VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)",
+                            type: expectedClose ? "Stream" : "Error"
+                        )
                         completionHandler(.cancel)
                         self.finish()
                         return
@@ -802,7 +873,12 @@ final class VLCHeaderProxy {
             guard let proxy, !finished else { return }
 
             if let error {
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream error target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: "Error")
+                if !responseHeadersSent, upstreamAttempt < maxUpstreamAttempts, shouldRetryUpstreamError(error) {
+                    retryUpstream(after: min(0.25 * Double(max(upstreamAttempt, 1)), 0.75), error: error)
+                    return
+                }
+
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream error attempt=\(upstreamAttempt)/\(maxUpstreamAttempts) target=\(proxy.logURLSummary(targetURL)) error=\(error)", type: "Error")
                 if responseHeadersSent {
                     connection.cancel()
                 } else {
@@ -852,7 +928,11 @@ final class VLCHeaderProxy {
             proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                    let expectedClose = self.proxy?.isExpectedConnectionClose(error) ?? false
+                    Logger.shared.log(
+                        expectedClose ? "VLCHeaderProxy[\(self.requestId)]: client closed before response headers: \(error)" : "VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)",
+                        type: expectedClose ? "Stream" : "Error"
+                    )
                     dataTask.cancel()
                     self.finish()
                     return
@@ -881,7 +961,11 @@ final class VLCHeaderProxy {
             proxy.sendData(data, on: connection) { [weak self] error in
                 guard let self else { return }
                 if let error {
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: downstream send failed: \(error)", type: "Error")
+                    let expectedClose = proxy.isExpectedConnectionClose(error)
+                    Logger.shared.log(
+                        expectedClose ? "VLCHeaderProxy[\(self.requestId)]: downstream client closed: \(error)" : "VLCHeaderProxy[\(self.requestId)]: downstream send failed: \(error)",
+                        type: expectedClose ? "Stream" : "Error"
+                    )
                     dataTask.cancel()
                     self.finish()
                     return

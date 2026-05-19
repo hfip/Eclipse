@@ -83,6 +83,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var isRunning = false
     private var isStopping = false
     private var currentPlaybackSpeed: Double = 1.0
+    private var startupRecoveryPlayAttempts = 0
+    private var startupRecoveryReloadGeneration: Int?
 
     private var currentSubtitleStyle: SubtitleStyle = .default
     private var lastLoggedStateCode: Int?
@@ -463,6 +465,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         lastLoggedStateCode = nil
         lastProgressLogBucket = -1
         lastProgressAnomalyKey = nil
+        startupRecoveryPlayAttempts = 0
+        startupRecoveryReloadGeneration = nil
 
         // Use provided headers as-is; they're already built correctly by the caller
         // (StreamURL domain should NOT be used for headers—service baseUrl should be)
@@ -499,6 +503,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             player.play()
             self.startProgressPolling()
             self.scheduleLoadingSanityChecks()
+            self.scheduleStartupPlaybackRecoveryChecks(initialSeek: initialSeek)
             self.updatePictureInPicturePlaybackState()
             self.logVLC("load submitted play snapshot={\(self.playerSnapshot(player))}", type: "Stream")
         }
@@ -743,6 +748,79 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             self.publishPlaybackProgress(from: player)
             self.logVLC("refreshVideoOutputAfterSeek follow-up snapshot={\(self.playerSnapshot(player))}", type: "Progress")
         }
+    }
+
+    private func scheduleStartupPlaybackRecoveryChecks(initialSeek: Double?) {
+        let generation = loadGeneration
+        let targetSeek = initialSeek.map { max(0, $0) }
+        let delays: [Double] = [0.6, 1.4, 2.8, 4.8]
+        logVLC("startup recovery scheduled generation=\(generation) targetSeek=\(secondsText(targetSeek)) snapshot={\(playerSnapshot())}", type: "Stream")
+
+        for delay in delays {
+            eventQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.runStartupPlaybackRecoveryCheck(generation: generation, targetSeek: targetSeek, delay: delay)
+            }
+        }
+    }
+
+    private func runStartupPlaybackRecoveryCheck(generation: Int, targetSeek: Double?, delay: Double) {
+        guard isRunning, !isStopping, loadGeneration == generation, let player = mediaPlayer else { return }
+        if isPictureInPictureActive || isPictureInPictureStartPending { return }
+
+        let rawPosition = max(0, (player.time.value?.doubleValue ?? 0) / 1000.0)
+        let rawDuration = max(0, (player.media?.length.value?.doubleValue ?? 0) / 1000.0)
+        let duration = max(reliableDuration(from: player), rawDuration, cachedDuration)
+        let desiredPosition = max(targetSeek ?? 0, cachedPosition)
+        let active = isPlaybackActive(player)
+        let terminal = isTerminalState(player.state)
+        let pausedState = isVLCPlayerPausedState(player.state) || isPaused
+        let hasTimeline = duration >= minimumReliableDuration
+        let movedEnough = rawPosition > 0.25 || cachedPosition > 0.25
+        let stillNeedsStartupHelp = hasTimeline && !active && (terminal || pausedState)
+        let resumeLooksOptimisticOnly = hasTimeline && desiredPosition > 1 && rawPosition < 0.25 && !active
+
+        logVLC("startup recovery check delay=\(String(format: "%.2f", delay)) generation=\(generation) active=\(active) terminal=\(terminal) pausedState=\(pausedState) moved=\(movedEnough) desired=\(secondsText(desiredPosition)) raw=\(secondsText(rawPosition))/\(secondsText(rawDuration)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) attempts=\(startupRecoveryPlayAttempts) reloadGeneration=\(startupRecoveryReloadGeneration.map(String.init) ?? "nil") snapshot={\(playerSnapshot(player))}", type: "Stream")
+
+        guard stillNeedsStartupHelp || resumeLooksOptimisticOnly else { return }
+
+        if terminal, startupRecoveryReloadGeneration != generation {
+            startupRecoveryReloadGeneration = generation
+            let resume = max(desiredPosition, rawPosition, cachedPosition)
+            logVLC("startup recovery reloading terminal VLC player resume=\(secondsText(resume)) delay=\(String(format: "%.2f", delay)) snapshot={\(playerSnapshot(player))}", type: "Error")
+            reloadCurrentItemPreservingPosition(resume)
+            return
+        }
+
+        guard startupRecoveryPlayAttempts < 3 else { return }
+        startupRecoveryPlayAttempts += 1
+        ensureAudioSessionActive()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.syncRenderingViewWithPictureInPictureSetting(reason: "startup recovery", reassignPlayerDrawable: false)
+            self.mediaPlayer?.drawable = self.activeVLCView
+            self.activeVLCView.isHidden = false
+            self.activeVLCView.alpha = 1
+            self.logDrawableSnapshot("startup recovery drawable")
+        }
+        if desiredPosition > 1, duration >= minimumReliableDuration {
+            let normalized = min(max(desiredPosition / duration, 0), 1)
+            setNormalizedPosition(normalized, on: player)
+            pendingAbsoluteSeek = nil
+            cachedPosition = desiredPosition
+            logVLC("startup recovery refreshed seek normalized=\(String(format: "%.5f", normalized)) desired=\(secondsText(desiredPosition)) duration=\(secondsText(duration))", type: "Progress")
+        }
+        player.play()
+        if currentPlaybackSpeed != 1.0 {
+            player.rate = Float(currentPlaybackSpeed)
+        }
+        isPaused = false
+        startProgressPolling()
+        updatePictureInPicturePlaybackState()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.delegate?.renderer(self, didChangePause: false)
+        }
+        logVLC("startup recovery play nudge attempt=\(startupRecoveryPlayAttempts) delay=\(String(format: "%.2f", delay)) snapshot={\(playerSnapshot(player))}", type: "Stream")
     }
 
     private func reliableDuration(from player: VLCMediaPlayer) -> Double {
@@ -1340,6 +1418,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             self.delegate?.renderer(self, didChangePictureInPictureAvailability: self.isPictureInPictureAvailable)
         }
 
+        output.onDebugEvent = { [weak self] event in
+            self?.logVLC("VLC PiP sample-buffer \(event)", type: "Player")
+        }
+
         do {
             try output.attach(to: player)
             sampleBufferOutput = output
@@ -1576,6 +1658,9 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             guard let self else { return }
             self.sampleBufferOutputHasPrimedFrame = true
             self.delegate?.renderer(self, didChangePictureInPictureAvailability: self.isPictureInPictureAvailable)
+        }
+        output.onDebugEvent = { [weak self] event in
+            self?.logVLC("VLC PiP dedicated sample-buffer \(event)", type: "Player")
         }
 
         do {
