@@ -686,8 +686,9 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var forcedPiPRenderCount = 0
     private var lastForegroundRenderTime: CFTimeInterval = 0
     private var lastPiPRenderTime: CFTimeInterval = 0
-    private let foregroundFrameInterval: CFTimeInterval
     private let foregroundFramesPerSecond: Int
+    private let maximumForegroundFramesPerSecond: Int
+    private var activeForegroundFramesPerSecond: Int
     private let pipFrameInterval: CFTimeInterval = 1.0 / 24.0
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
     private var loadGeneration = 0
@@ -701,6 +702,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var pipTransitionID = 0
     private var pipRenderRequestCount = 0
     private var foregroundUIRecoveryGeneration = 0
+    private var speedSyncGeneration = 0
 
     weak var delegate: MPVNativeRendererDelegate?
 
@@ -710,6 +712,10 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     var supportsBitmapSubtitleTracks: Bool {
         true
+    }
+
+    private var activeForegroundFrameInterval: CFTimeInterval {
+        1.0 / CFTimeInterval(max(1, activeForegroundFramesPerSecond))
     }
 
     private func logMPV(_ message: String) {
@@ -736,7 +742,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         let configuredFPS = Settings.shared.mpvForegroundFPS
         let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
         self.foregroundFramesPerSecond = targetFPS
-        self.foregroundFrameInterval = 1.0 / CFTimeInterval(targetFPS)
+        self.maximumForegroundFramesPerSecond = max(targetFPS, min(screen.maximumFramesPerSecond, 60))
+        self.activeForegroundFramesPerSecond = targetFPS
 
         glView.renderer = self
         glView.backgroundColor = .black
@@ -940,7 +947,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     func performanceOverlaySnapshot() -> String {
         let size = currentVideoSize()
         let pipSummary = pipBridge.performanceSnapshot()
-        return "MPV \(currentMode) \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", cachedPosition))/\(String(format: "%.1f", cachedDuration))\nfg \(foregroundFramesPerSecond)fps target PiP 24fps target\nvideo \(String(format: "%.0fx%.0f", size.width, size.height))\n\(pipSummary)"
+        return "MPV \(currentMode) \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", cachedPosition))/\(String(format: "%.1f", cachedDuration))\nfg \(activeForegroundFramesPerSecond)fps target (base \(foregroundFramesPerSecond)) PiP 24fps target\nvideo \(String(format: "%.0fx%.0f", size.width, size.height))\n\(pipSummary)"
     }
 
     func prepareForPictureInPictureStart() {
@@ -1227,19 +1234,37 @@ final class MPVNativeRenderer: PlayerRenderer {
             guard self.foregroundDisplayLink == nil else { return }
             let target = MPVForegroundDisplayLinkTarget(renderer: self)
             let link = CADisplayLink(target: target, selector: #selector(MPVForegroundDisplayLinkTarget.displayLinkDidFire(_:)))
-            if #available(iOS 15.0, *) {
-                link.preferredFrameRateRange = CAFrameRateRange(
-                    minimum: Float(min(24, self.foregroundFramesPerSecond)),
-                    maximum: Float(self.foregroundFramesPerSecond),
-                    preferred: Float(self.foregroundFramesPerSecond)
-                )
-            } else {
-                link.preferredFramesPerSecond = self.foregroundFramesPerSecond
-            }
+            self.applyForegroundDisplayLinkFrameRate(link, fps: self.activeForegroundFramesPerSecond)
             link.add(to: .main, forMode: .common)
             self.foregroundDisplayLinkTarget = target
             self.foregroundDisplayLink = link
-            self.logMPV("foreground display link started reason=\(reason) fps=\(self.foregroundFramesPerSecond)")
+            self.logMPV("foreground display link started reason=\(reason) fps=\(self.activeForegroundFramesPerSecond) base=\(self.foregroundFramesPerSecond)")
+        }
+    }
+
+    private func applyForegroundDisplayLinkFrameRate(_ link: CADisplayLink, fps: Int) {
+        let clampedFPS = max(1, fps)
+        if #available(iOS 15.0, *) {
+            link.preferredFrameRateRange = CAFrameRateRange(
+                minimum: Float(min(24, clampedFPS)),
+                maximum: Float(clampedFPS),
+                preferred: Float(clampedFPS)
+            )
+        } else {
+            link.preferredFramesPerSecond = clampedFPS
+        }
+    }
+
+    private func setActiveForegroundFrameRate(_ fps: Int, reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let clamped = max(1, min(self.maximumForegroundFramesPerSecond, fps))
+            guard clamped != self.activeForegroundFramesPerSecond else { return }
+            self.activeForegroundFramesPerSecond = clamped
+            if let link = self.foregroundDisplayLink {
+                self.applyForegroundDisplayLinkFrameRate(link, fps: clamped)
+            }
+            self.logMPV("foreground fps target changed reason=\(reason) fps=\(clamped) base=\(self.foregroundFramesPerSecond) max=\(self.maximumForegroundFramesPerSecond)")
         }
     }
 
@@ -1357,7 +1382,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             guard !self.isRenderScheduled else { return }
             self.isRenderScheduled = true
             let now = CACurrentMediaTime()
-            let delay = max(0, self.foregroundFrameInterval - (now - self.lastForegroundRenderTime))
+            let delay = max(0, self.activeForegroundFrameInterval - (now - self.lastForegroundRenderTime))
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self else { return }
                 guard self.isRunning, !self.isStopping, self.currentMode == .openGL else {
@@ -2184,7 +2209,16 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     func setSpeed(_ speed: Double) {
-        setProperty(name: "speed", value: String(min(max(speed, 0.25), 3.0)))
+        let clampedSpeed = min(max(speed, 0.25), 3.0)
+        logMPV("setSpeed requested=\(String(format: "%.2f", speed)) clamped=\(String(format: "%.2f", clampedSpeed))")
+        setProperty(name: "speed", value: String(clampedSpeed))
+        applyForegroundCadence(forSpeed: clampedSpeed)
+        requestRenderBurst(
+            reason: "speed-\(String(format: "%.2f", clampedSpeed))",
+            count: clampedSpeed >= 1.5 ? 8 : 4,
+            interval: clampedSpeed >= 1.5 ? 0.04 : 0.06
+        )
+        scheduleHighSpeedSyncAssistIfNeeded(speed: clampedSpeed)
     }
 
     func getSpeed() -> Double {
@@ -2192,6 +2226,47 @@ final class MPVNativeRenderer: PlayerRenderer {
         var speed = Double(1.0)
         getProperty(handle: handle, name: "speed", format: MPV_FORMAT_DOUBLE, value: &speed)
         return speed
+    }
+
+    private func applyForegroundCadence(forSpeed speed: Double) {
+        guard speed > 1.25 else {
+            speedSyncGeneration += 1
+            setActiveForegroundFrameRate(foregroundFramesPerSecond, reason: "speed-normal-\(String(format: "%.2f", speed))")
+            return
+        }
+
+        let scaledFPS = Int(ceil(Double(foregroundFramesPerSecond) * min(speed, 2.0)))
+        let targetFPS = min(maximumForegroundFramesPerSecond, max(foregroundFramesPerSecond, scaledFPS))
+        setActiveForegroundFrameRate(targetFPS, reason: "speed-high-\(String(format: "%.2f", speed))")
+    }
+
+    private func scheduleHighSpeedSyncAssistIfNeeded(speed: Double) {
+        speedSyncGeneration += 1
+        let generation = speedSyncGeneration
+        guard speed >= 1.5 else { return }
+        guard currentMode == .openGL else {
+            logMPV("high-speed sync assist skipped mode=\(currentMode) speed=\(String(format: "%.2f", speed))")
+            return
+        }
+
+        logMPV("high-speed sync assist scheduled speed=\(String(format: "%.2f", speed)) generation=\(generation)")
+        for delay in [0.18, 0.65] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      self.isRunning,
+                      !self.isStopping,
+                      self.currentMode == .openGL,
+                      self.isReadyToSeek,
+                      !self.isPaused,
+                      self.speedSyncGeneration == generation,
+                      let handle = self.mpv else {
+                    return
+                }
+                self.logMPV("high-speed sync assist firing speed=\(String(format: "%.2f", speed)) delay=\(String(format: "%.2f", delay)) position=\(String(format: "%.2f", self.cachedPosition))")
+                self.command(handle, ["seek", "0", "relative", "exact"])
+                self.requestRenderBurst(reason: "speed-sync-assist", count: 4, interval: 0.04)
+            }
+        }
     }
 
     // MARK: - Tracks

@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var selectedTab: AppTab = .home
     @State private var showingSettings = false
     @State private var showingReleaseAlert = false
+    @State private var showingAniListFallbackAlert = false
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
@@ -131,6 +132,9 @@ struct ContentView: View {
                 presentUpdateAlertIfNeeded()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .animeMetadataDidSwitchToMALFallback)) { _ in
+            showingAniListFallbackAlert = true
+        }
         .alert("Update Available", isPresented: $showingReleaseAlert) {
             Button("Later", role: .cancel) {
                 consumeUpdateAlert()
@@ -148,6 +152,11 @@ struct ContentView: View {
             } else {
                 Text("A new Eclipse release (\(githubReleaseLatestVersion)) is available on GitHub.")
             }
+        }
+        .alert("AniList Unavailable", isPresented: $showingAniListFallbackAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("AniList appears to be down. Eclipse is switching to MyAnimeList fallback for anime metadata. Season and special mapping should still work, but may be less accurate until AniList recovers.")
         }
     }
 

@@ -3737,6 +3737,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let episodeNumber: Int?
         let showTitle: String?
         let isAnime: Bool
+        let mediaType: String
 
         switch info {
         case .movie(let id, _, _, let anime):
@@ -3745,12 +3746,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             episodeNumber = nil
             showTitle = nil
             isAnime = anime || isAnimeContent()
+            mediaType = "movie"
         case .episode(let showId, let s, let e, let title, _, let anime):
             tmdbId = showId
             seasonNumber = s
             episodeNumber = e
             showTitle = title
             isAnime = anime || isAnimeContent()
+            mediaType = "series"
         }
 
         Logger.shared.log("SkipData: fetchSkipData called — tmdbId=\(tmdbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1) isAnime=\(isAnime)", type: "Skip")
@@ -3777,6 +3780,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
             let aniSkipEnabled = UserDefaults.standard.object(forKey: "aniSkipEnabled") as? Bool ?? true
             let introDBEnabled = UserDefaults.standard.object(forKey: "introDBEnabled") as? Bool ?? true
+            let introDBAppEnabled = UserDefaults.standard.object(forKey: "introDBAppEnabled") as? Bool ?? true
 
             // ── Anime content: try AniSkip first (better anime coverage) ──
             if aniSkipEnabled, isAnime, let ep = episodeNumber {
@@ -3814,6 +3818,28 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 }
             }
 
+            if introDBAppEnabled, segments.isEmpty {
+                let introDBIMDbId = await self.resolveSkipDataIMDbId(tmdbId: tmdbId, type: mediaType, currentIMDbId: self.imdbId)
+                if let introDBIMDbId {
+                    do {
+                        let introDBAppSegments = try await IntroDBAppService.shared.fetchSkipTimes(
+                            imdbId: introDBIMDbId,
+                            seasonNumber: introDBSeason,
+                            episodeNumber: introDBEpisode,
+                            episodeDuration: durationAtFetch
+                        )
+                        if !introDBAppSegments.isEmpty {
+                            segments = introDBAppSegments
+                            Logger.shared.log("SkipData: IntroDB returned \(segments.count) segments", type: "Skip")
+                        }
+                    } catch {
+                        Logger.shared.log("SkipData: IntroDB fetch failed: \(error.localizedDescription)", type: "Error")
+                    }
+                } else {
+                    Logger.shared.log("SkipData: IntroDB skipped missing IMDb ID for tmdbId=\(tmdbId)", type: "Skip")
+                }
+            }
+
             if segments.isEmpty {
                 Logger.shared.log("SkipData: No skip data found from any source for tmdbId=\(tmdbId)", type: "Skip")
 #if !os(tvOS)
@@ -3844,6 +3870,22 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 }
 #endif
             }
+        }
+    }
+
+    private func resolveSkipDataIMDbId(tmdbId: Int, type: String, currentIMDbId: String?) async -> String? {
+        if let currentIMDbId = currentIMDbId?.trimmingCharacters(in: .whitespacesAndNewlines), !currentIMDbId.isEmpty {
+            return currentIMDbId
+        }
+
+        do {
+            if type == "movie" {
+                return try await TMDBService.shared.getMovieDetails(id: tmdbId).imdbId
+            }
+            return try await TMDBService.shared.getTVShowDetails(id: tmdbId).externalIds?.imdbId
+        } catch {
+            Logger.shared.log("SkipData: IMDb resolve failed tmdbId=\(tmdbId) type=\(type): \(error.localizedDescription)", type: "Skip")
+            return nil
         }
     }
 
@@ -3889,6 +3931,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         guard let finalId = anilistId else {
             Logger.shared.log("SkipData: No AniList ID found for tmdbId=\(tmdbId) — skipping AniSkip", type: "Skip")
+            return []
+        }
+        guard finalId > 0 else {
+            Logger.shared.log("SkipData: MAL fallback mediaId=\(abs(finalId)) is not an AniList ID; skipping AniSkip", type: "Skip")
             return []
         }
 

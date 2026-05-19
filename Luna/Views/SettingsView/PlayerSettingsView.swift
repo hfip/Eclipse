@@ -102,6 +102,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(introDBEnabled, forKey: "introDBEnabled") }
     }
 
+    @Published var introDBAppEnabled: Bool {
+        didSet { UserDefaults.standard.set(introDBAppEnabled, forKey: "introDBAppEnabled") }
+    }
+
     @Published var skip85sEnabled: Bool {
         didSet { UserDefaults.standard.set(skip85sEnabled, forKey: "skip85sEnabled") }
     }
@@ -200,6 +204,12 @@ final class PlayerSettingsStore: ObservableObject {
             self.introDBEnabled = true
         } else {
             self.introDBEnabled = UserDefaults.standard.bool(forKey: "introDBEnabled")
+        }
+
+        if UserDefaults.standard.object(forKey: "introDBAppEnabled") == nil {
+            self.introDBAppEnabled = true
+        } else {
+            self.introDBAppEnabled = UserDefaults.standard.bool(forKey: "introDBAppEnabled")
         }
 
         self.skip85sEnabled = UserDefaults.standard.bool(forKey: "skip85sEnabled")
@@ -771,6 +781,12 @@ struct PlayerSettingsView: View {
                             title: "TheIntroDB",
                             detail: "Fetch skip segments from TheIntroDB for all content.",
                             binding: $store.introDBEnabled
+                        )
+
+                        settingsToggleRow(
+                            title: "IntroDB",
+                            detail: "Fetch skip segments from introdb.app using IMDb IDs when other skip sources return nothing.",
+                            binding: $store.introDBAppEnabled
                         )
 
                         settingsToggleRow(

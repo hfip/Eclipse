@@ -1,5 +1,260 @@
 ﻿import Foundation
 
+import Network
+
+enum AnimeMetadataSource: String, Codable {
+    case anilistLive
+    case anilistCache
+    case malFallback
+}
+
+enum AnimeExternalID: Hashable, Codable {
+    case anilist(Int)
+    case mal(Int)
+}
+
+enum AnimeProviderFailureReason: String {
+    case offline
+    case anilistUnavailable
+    case anilistRateLimited
+    case malUnavailable
+    case unknown
+}
+
+extension Notification.Name {
+    static let animeMetadataDidSwitchToMALFallback = Notification.Name("animeMetadataDidSwitchToMALFallback")
+}
+
+final class AnimeProviderHealthCenter {
+    static let shared = AnimeProviderHealthCenter()
+
+    private let monitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "anime.provider.network")
+    private let lock = NSLock()
+    private var networkReachable = true
+    private var anilistUnavailableUntil: Date?
+    private var sentFallbackPrompt = false
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            self?.lock.lock()
+            self?.networkReachable = path.status == .satisfied
+            self?.lock.unlock()
+        }
+        monitor.start(queue: monitorQueue)
+    }
+
+    var isAniListTemporarilyUnavailable: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let until = anilistUnavailableUntil else { return false }
+        return until > Date()
+    }
+
+    @discardableResult
+    func recordAniListFailure(_ error: Error) -> AnimeProviderFailureReason {
+        let reason = classifyAniListFailure(error)
+        switch reason {
+        case .offline:
+            Logger.shared.log("AnimeMetadata: AniList failure classified as offline: \(error.localizedDescription)", type: "AniList")
+        case .anilistRateLimited:
+            markAniListUnavailable(seconds: 90)
+            Logger.shared.log("AnimeMetadata: AniList rate limited, fallback allowed: \(error.localizedDescription)", type: "AniList")
+        case .anilistUnavailable:
+            markAniListUnavailable(seconds: 180)
+            Logger.shared.log("AnimeMetadata: AniList unavailable, fallback allowed: \(error.localizedDescription)", type: "AniList")
+        case .malUnavailable, .unknown:
+            Logger.shared.log("AnimeMetadata: AniList failure left as unknown: \(error.localizedDescription)", type: "AniList")
+        }
+        return reason
+    }
+
+    func recordAniListSuccess() {
+        lock.lock()
+        anilistUnavailableUntil = nil
+        lock.unlock()
+    }
+
+    func recordMALFailure(_ error: Error) {
+        Logger.shared.log("AnimeMetadata: MAL fallback failed: \(error.localizedDescription)", type: "AniList")
+    }
+
+    func notifyMALFallbackIfNeeded(reason: String) {
+        lock.lock()
+        guard !sentFallbackPrompt else {
+            lock.unlock()
+            return
+        }
+        sentFallbackPrompt = true
+        lock.unlock()
+
+        Logger.shared.log("AnimeMetadata: presenting MAL fallback notice reason=\(reason)", type: "AniList")
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .animeMetadataDidSwitchToMALFallback, object: nil)
+        }
+    }
+
+    private func markAniListUnavailable(seconds: TimeInterval) {
+        lock.lock()
+        anilistUnavailableUntil = Date().addingTimeInterval(seconds)
+        lock.unlock()
+    }
+
+    private func classifyAniListFailure(_ error: Error) -> AnimeProviderFailureReason {
+        let nsError = error as NSError
+        if let urlCode = urlErrorCode(from: error) {
+            switch urlCode {
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
+                return .offline
+            case .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return currentNetworkReachable() ? .anilistUnavailable : .offline
+            default:
+                break
+            }
+        }
+
+        if nsError.domain == "AniList" {
+            if nsError.code == 429 { return .anilistRateLimited }
+            if nsError.code >= 500 || nsError.code == -1 {
+                return currentNetworkReachable() ? .anilistUnavailable : .offline
+            }
+            if nsError.code == NSURLErrorNotConnectedToInternet { return .offline }
+        }
+
+        return currentNetworkReachable() ? .anilistUnavailable : .offline
+    }
+
+    private func currentNetworkReachable() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return networkReachable
+    }
+
+    private func urlErrorCode(from error: Error) -> URLError.Code? {
+        if let urlError = error as? URLError {
+            return urlError.code
+        }
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return nil }
+        return URLError.Code(rawValue: nsError.code)
+    }
+}
+
+actor AnimeIdentityCache {
+    static let shared = AnimeIdentityCache()
+
+    private struct CachedDetails: Codable {
+        let value: AniListAnimeWithSeasons
+        let storedAt: TimeInterval
+    }
+
+    private let detailsKey = "anime.metadata.details.cache.v1"
+    private let maxAge: TimeInterval = 60 * 60 * 24 * 45
+    private var details: [String: CachedDetails]
+
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: detailsKey),
+           let decoded = try? JSONDecoder().decode([String: CachedDetails].self, from: data) {
+            details = decoded
+        } else {
+            details = [:]
+        }
+    }
+
+    func cachedDetails(tmdbShowId: Int, title: String) -> AniListAnimeWithSeasons? {
+        let keys = detailKeys(tmdbShowId: tmdbShowId, title: title)
+        let now = Date().timeIntervalSince1970
+        for key in keys {
+            guard let cached = details[key], now - cached.storedAt <= maxAge else { continue }
+            Logger.shared.log("AnimeMetadataCache: details cache hit key=\(key)", type: "AniList")
+            return cached.value
+        }
+        return nil
+    }
+
+    func storeAniListDetails(_ value: AniListAnimeWithSeasons, tmdbShowId: Int, title: String) {
+        let cached = CachedDetails(value: value, storedAt: Date().timeIntervalSince1970)
+        for key in detailKeys(tmdbShowId: tmdbShowId, title: title) {
+            details[key] = cached
+        }
+        persist()
+    }
+
+    private func detailKeys(tmdbShowId: Int, title: String) -> [String] {
+        var keys = ["tmdb:\(tmdbShowId)"]
+        let titleKey = normalize(title)
+        if !titleKey.isEmpty {
+            keys.append("title:\(titleKey)")
+        }
+        return keys
+    }
+
+    private func normalize(_ value: String) -> String {
+        value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+    }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(details) else { return }
+        UserDefaults.standard.set(data, forKey: detailsKey)
+    }
+}
+
+final class AnimeMetadataService {
+    static let shared = AnimeMetadataService()
+
+    private let aniListService = AniListService.shared
+
+    private init() {}
+
+    func fetchAllAnimeCatalogs(
+        limit: Int = 20,
+        tmdbService: TMDBService
+    ) async throws -> [AniListService.AniListCatalogKind: [TMDBSearchResult]] {
+        try await aniListService.fetchAllAnimeCatalogs(limit: limit, tmdbService: tmdbService)
+    }
+
+    func fetchAiringSchedule(daysAhead: Int = 7, perPage: Int = 50) async throws -> [AniListAiringScheduleEntry] {
+        try await aniListService.fetchAiringSchedule(daysAhead: daysAhead, perPage: perPage)
+    }
+
+    func fetchAnimeDetailsWithEpisodes(
+        title: String,
+        tmdbShowId: Int,
+        tmdbService: TMDBService,
+        tmdbShowPoster: String?,
+        token: String?
+    ) async throws -> AniListAnimeWithSeasons {
+        try await aniListService.fetchAnimeDetailsWithEpisodes(
+            title: title,
+            tmdbShowId: tmdbShowId,
+            tmdbService: tmdbService,
+            tmdbShowPoster: tmdbShowPoster,
+            token: token
+        )
+    }
+
+    func fetchSpecialSearchEntries(
+        tmdbShowId: Int,
+        fallbackPosterURL: String?,
+        baseAniListIds: [Int] = [],
+        tmdbService: TMDBService
+    ) async -> [AniListSpecialSearchEntry] {
+        await aniListService.fetchSpecialSearchEntries(
+            tmdbShowId: tmdbShowId,
+            fallbackPosterURL: fallbackPosterURL,
+            baseAniListIds: baseAniListIds,
+            tmdbService: tmdbService
+        )
+    }
+
+    func fetchParentTitleCandidates(
+        forMediaId mediaId: Int,
+        maxDepth: Int = 3
+    ) async -> [(englishTitle: String?, romajiTitle: String?, nativeTitle: String?)] {
+        await aniListService.fetchParentTitleCandidates(forMediaId: mediaId, maxDepth: maxDepth)
+    }
+}
+
 /// Ensures AniList API calls are spaced out and adapts to AniList response headers.
 /// Uses a slot-reservation pattern: each caller claims a future time slot BEFORE sleeping,
 /// so concurrent callers queue up instead of bunching together.
@@ -229,6 +484,27 @@ final class AniListService {
         limit: Int = 20,
         tmdbService: TMDBService
     ) async throws -> [AniListCatalogKind: [TMDBSearchResult]] {
+        do {
+            let result = try await fetchAllAnimeCatalogsFromAniList(limit: limit, tmdbService: tmdbService)
+            AnimeProviderHealthCenter.shared.recordAniListSuccess()
+            return result
+        } catch {
+            let reason = AnimeProviderHealthCenter.shared.recordAniListFailure(error)
+            guard reason != .offline else { throw error }
+            AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "catalogs-\(reason.rawValue)")
+            do {
+                return try await MALMetadataService.shared.fetchAllAnimeCatalogs(limit: limit, tmdbService: tmdbService)
+            } catch {
+                AnimeProviderHealthCenter.shared.recordMALFailure(error)
+                throw error
+            }
+        }
+    }
+
+    private func fetchAllAnimeCatalogsFromAniList(
+        limit: Int = 20,
+        tmdbService: TMDBService
+    ) async throws -> [AniListCatalogKind: [TMDBSearchResult]] {
         // Single aliased query fetches all 5 catalogs at once (1 API call instead of 5)
         let query = """
         query {
@@ -388,6 +664,24 @@ final class AniListService {
 
     /// Fetch upcoming airing episodes for the next `daysAhead` days (default 7).
     func fetchAiringSchedule(daysAhead: Int = 7, perPage: Int = 50) async throws -> [AniListAiringScheduleEntry] {
+        do {
+            let result = try await fetchAiringScheduleFromAniList(daysAhead: daysAhead, perPage: perPage)
+            AnimeProviderHealthCenter.shared.recordAniListSuccess()
+            return result
+        } catch {
+            let reason = AnimeProviderHealthCenter.shared.recordAniListFailure(error)
+            guard reason != .offline else { throw error }
+            AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "schedule-\(reason.rawValue)")
+            do {
+                return try await MALMetadataService.shared.fetchAiringSchedule(daysAhead: daysAhead, perPage: perPage)
+            } catch {
+                AnimeProviderHealthCenter.shared.recordMALFailure(error)
+                throw error
+            }
+        }
+    }
+
+    private func fetchAiringScheduleFromAniList(daysAhead: Int = 7, perPage: Int = 50) async throws -> [AniListAiringScheduleEntry] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
 
@@ -483,6 +777,48 @@ final class AniListService {
     /// Fetch full anime details with seasons and episodes from AniList + TMDB
     /// Uses AniList for season structure and sequels, TMDB for episode details
     func fetchAnimeDetailsWithEpisodes(
+        title: String,
+        tmdbShowId: Int,
+        tmdbService: TMDBService,
+        tmdbShowPoster: String?,
+        token: String?
+    ) async throws -> AniListAnimeWithSeasons {
+        do {
+            let result = try await fetchAnimeDetailsWithEpisodesFromAniList(
+                title: title,
+                tmdbShowId: tmdbShowId,
+                tmdbService: tmdbService,
+                tmdbShowPoster: tmdbShowPoster,
+                token: token
+            )
+            AnimeProviderHealthCenter.shared.recordAniListSuccess()
+            await AnimeIdentityCache.shared.storeAniListDetails(result, tmdbShowId: tmdbShowId, title: title)
+            return result
+        } catch {
+            let reason = AnimeProviderHealthCenter.shared.recordAniListFailure(error)
+            if let cached = await AnimeIdentityCache.shared.cachedDetails(tmdbShowId: tmdbShowId, title: title) {
+                if reason != .offline {
+                    AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "details-cache-\(reason.rawValue)")
+                }
+                return cached
+            }
+            guard reason != .offline else { throw error }
+            AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "details-\(reason.rawValue)")
+            do {
+                return try await MALMetadataService.shared.fetchAnimeDetailsWithEpisodes(
+                    title: title,
+                    tmdbShowId: tmdbShowId,
+                    tmdbService: tmdbService,
+                    tmdbShowPoster: tmdbShowPoster
+                )
+            } catch {
+                AnimeProviderHealthCenter.shared.recordMALFailure(error)
+                throw error
+            }
+        }
+    }
+
+    private func fetchAnimeDetailsWithEpisodesFromAniList(
         title: String,
         tmdbShowId: Int,
         tmdbService: TMDBService,
@@ -1054,6 +1390,37 @@ final class AniListService {
     }
 
     func fetchSpecialSearchEntries(
+        tmdbShowId: Int,
+        fallbackPosterURL: String?,
+        baseAniListIds: [Int] = [],
+        tmdbService: TMDBService
+    ) async -> [AniListSpecialSearchEntry] {
+        let entries = await fetchSpecialSearchEntriesFromAniList(
+            tmdbShowId: tmdbShowId,
+            fallbackPosterURL: fallbackPosterURL,
+            baseAniListIds: baseAniListIds,
+            tmdbService: tmdbService
+        )
+
+        guard entries.isEmpty || AnimeProviderHealthCenter.shared.isAniListTemporarilyUnavailable else {
+            return entries
+        }
+
+        let malEntries = await MALMetadataService.shared.fetchSpecialSearchEntries(
+            tmdbShowId: tmdbShowId,
+            fallbackPosterURL: fallbackPosterURL,
+            tmdbService: tmdbService
+        )
+        guard !malEntries.isEmpty else { return entries }
+        if AnimeProviderHealthCenter.shared.isAniListTemporarilyUnavailable {
+            AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "specials")
+        }
+        let existingIds = Set(entries.map(\.id))
+        return (entries + malEntries.filter { !existingIds.contains($0.id) })
+            .sorted { $0.isOrderedBeforeSpecialEntry($1) }
+    }
+
+    private func fetchSpecialSearchEntriesFromAniList(
         tmdbShowId: Int,
         fallbackPosterURL: String?,
         baseAniListIds: [Int] = [],
@@ -1665,6 +2032,10 @@ final class AniListService {
     /// Returns title candidates for each ancestor, ordered from closest to furthest parent.
     /// Used as a fallback when a sequel/season doesn't have its own TMDB entry.
     func fetchParentTitleCandidates(forMediaId mediaId: Int, maxDepth: Int = 3) async -> [(englishTitle: String?, romajiTitle: String?, nativeTitle: String?)] {
+        if mediaId < 0 {
+            return await MALMetadataService.shared.fetchParentTitleCandidates(forMalMediaId: mediaId, maxDepth: maxDepth)
+        }
+
         var visited = Set<Int>([mediaId])
         var currentId = mediaId
         var results: [(englishTitle: String?, romajiTitle: String?, nativeTitle: String?)] = []
@@ -2056,12 +2427,32 @@ final class AniListService {
         
         var lastError: Error?
         for attempt in 0..<maxRetries {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await URLSession.shared.data(for: request)
+            } catch {
+                lastError = error
+                if attempt < maxRetries - 1, shouldRetryAniListTransportError(error) {
+                    let delay = min(Double(attempt + 1) * 1.5, 5)
+                    Logger.shared.log("AniList transport error, retry \(attempt + 1)/\(maxRetries) after \(delay)s: \(error.localizedDescription)", type: "AniList")
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+                throw error
+            }
             
             if let httpResponse = response as? HTTPURLResponse {
                 await AniListRateLimiter.shared.recordResponse(httpResponse)
 
                 if httpResponse.statusCode == 200 {
+                    if let graphQLError = graphQLErrorMessage(from: data) {
+                        throw NSError(
+                            domain: "AniList",
+                            code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "AniList returned an invalid GraphQL response: \(graphQLError)"]
+                        )
+                    }
                     return data
                 }
                 
@@ -2086,6 +2477,21 @@ final class AniListService {
         }
         
         throw lastError ?? NSError(domain: "AniList", code: 429, userInfo: [NSLocalizedDescriptionKey: "AniList rate limited after \(maxRetries) retries"])
+    }
+
+    private func shouldRetryAniListTransportError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return [.timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .networkConnectionLost].contains(urlError.code)
+        }
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        return [
+            NSURLErrorTimedOut,
+            NSURLErrorCannotFindHost,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorDNSLookupFailed,
+            NSURLErrorNetworkConnectionLost
+        ].contains(nsError.code)
     }
 
     private func graphQLErrorMessage(from data: Data) -> String? {
@@ -2151,6 +2557,7 @@ final class AniListService {
                     }
                 }
             } catch {
+                AnimeProviderHealthCenter.shared.recordAniListFailure(error)
                 Logger.shared.log("AniListService: Import batch fetch failed for \(chunk.count) nodes: \(error.localizedDescription)", type: "AniList")
             }
 
@@ -2233,6 +2640,7 @@ final class AniListService {
             }
             return result
         } catch {
+            AnimeProviderHealthCenter.shared.recordAniListFailure(error)
             Logger.shared.log("AniListService: Batch fetch failed for \(ids.count) nodes: \(error.localizedDescription)", type: "AniList")
             return [:]
         }
@@ -2297,7 +2705,7 @@ protocol AniListEpisodeProtocol {
     var seasonNumber: Int { get }
 }
 
-struct AniListEpisode: AniListEpisodeProtocol {
+struct AniListEpisode: AniListEpisodeProtocol, Codable {
     let number: Int                // AniList local episode number (1-12 per season) - used for search
     let title: String
     let description: String?
@@ -2309,7 +2717,7 @@ struct AniListEpisode: AniListEpisodeProtocol {
     let tmdbEpisodeNumber: Int?    // Original TMDB episode number (before AniList restructuring)
 }
 
-struct AniListAiringScheduleEntry: Identifiable {
+struct AniListAiringScheduleEntry: Identifiable, Codable {
     let id: Int
     let mediaId: Int
     let title: String
@@ -2322,7 +2730,7 @@ struct AniListAiringScheduleEntry: Identifiable {
     let format: String?
 }
 
-struct AniListSeasonWithPoster {
+struct AniListSeasonWithPoster: Codable {
     let seasonNumber: Int
     let anilistId: Int             // AniList anime ID for this specific season
     let title: String              // Full AniList title for this season (e.g., "SPYÃ—FAMILY Season 2")
@@ -2333,7 +2741,7 @@ struct AniListSeasonWithPoster {
     let posterUrl: String?
 }
 
-struct AniListSpecialSearchEntry: Identifiable {
+struct AniListSpecialSearchEntry: Identifiable, Codable {
     let id: Int
     let title: String
     let englishTitle: String?
@@ -2435,7 +2843,7 @@ struct AniListSpecialSearchEntry: Identifiable {
     }
 }
 
-struct AniListAnimeWithSeasons {
+struct AniListAnimeWithSeasons: Codable {
     let id: Int
     let title: String
     let seasons: [AniListSeasonWithPoster]
@@ -2618,6 +3026,744 @@ enum AniListTitlePicker {
             if seen.contains(finalValue) { return nil }
             seen.insert(finalValue)
             return finalValue
+        }
+    }
+}
+
+private final class MALMetadataService {
+    static let shared = MALMetadataService()
+
+    private let apiBase = URL(string: "https://api.myanimelist.net/v2")!
+    private let detailFields = [
+        "id", "title", "main_picture", "alternative_titles", "start_date", "end_date",
+        "synopsis", "mean", "rank", "popularity", "num_list_users", "media_type",
+        "status", "genres", "num_episodes", "start_season", "broadcast", "source",
+        "average_episode_duration", "rating", "related_anime"
+    ].joined(separator: ",")
+
+    private init() {}
+
+    private var clientID: String {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "MALClientID") as? String ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.contains("$(") ? "" : trimmed
+    }
+
+    func fetchAllAnimeCatalogs(
+        limit: Int,
+        tmdbService: TMDBService
+    ) async throws -> [AniListService.AniListCatalogKind: [TMDBSearchResult]] {
+        async let trending = fetchRankingCatalog(type: "airing", limit: limit, tmdbService: tmdbService)
+        async let popular = fetchRankingCatalog(type: "bypopularity", limit: limit, tmdbService: tmdbService)
+        async let topRated = fetchRankingCatalog(type: "all", limit: limit, tmdbService: tmdbService)
+        async let airing = fetchRankingCatalog(type: "airing", limit: limit, tmdbService: tmdbService)
+        async let upcoming = fetchRankingCatalog(type: "upcoming", limit: limit, tmdbService: tmdbService)
+
+        return [
+            .trending: try await trending,
+            .popular: try await popular,
+            .topRated: try await topRated,
+            .airing: try await airing,
+            .upcoming: try await upcoming
+        ]
+    }
+
+    func fetchAiringSchedule(daysAhead: Int, perPage: Int) async throws -> [AniListAiringScheduleEntry] {
+        let current = malSeason(for: Date())
+        let next = nextSeason(after: current)
+        let currentAnime = (try? await fetchSeasonAnime(year: current.year, season: current.season, limit: perPage)) ?? []
+        let nextAnime = (try? await fetchSeasonAnime(year: next.year, season: next.season, limit: perPage)) ?? []
+        let all = Array((currentAnime + nextAnime).prefix(perPage * 2))
+
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .day, value: max(daysAhead, 1) + 1, to: start) ?? start
+
+        return all.compactMap { detail in
+            guard let airingAt = estimatedNextAiringDate(for: detail, start: start, end: end) else { return nil }
+            let episode = estimatedNextEpisode(for: detail, airingAt: airingAt)
+            return AniListAiringScheduleEntry(
+                id: malProviderId(detail.id),
+                mediaId: malProviderId(detail.id),
+                title: displayTitle(for: detail),
+                airingAt: airingAt,
+                episode: episode,
+                coverImage: detail.mainPicture?.large ?? detail.mainPicture?.medium,
+                englishTitle: detail.alternativeTitles?.en,
+                romajiTitle: detail.title,
+                nativeTitle: detail.alternativeTitles?.ja,
+                format: aniListFormat(from: detail.mediaType)
+            )
+        }
+        .sorted { $0.airingAt < $1.airingAt }
+    }
+
+    func fetchAnimeDetailsWithEpisodes(
+        title: String,
+        tmdbShowId: Int,
+        tmdbService: TMDBService,
+        tmdbShowPoster: String?
+    ) async throws -> AniListAnimeWithSeasons {
+        let tvShowDetail = try? await tmdbService.getTVShowWithSeasons(id: tmdbShowId)
+        let candidates = try await searchCandidates(title: title, tmdbShowId: tmdbShowId, tmdbShow: tvShowDetail, tmdbService: tmdbService)
+        guard let root = pickBestMALMatch(from: candidates, tmdbShow: tvShowDetail) else {
+            throw NSError(domain: "MALMetadata", code: 404, userInfo: [NSLocalizedDescriptionKey: "MAL did not return a usable anime match for \(title)"])
+        }
+
+        var collected: [MALAnimeDetails] = []
+        var queue: [MALAnimeDetails] = [root]
+        var seen = Set<Int>([root.id])
+
+        func append(_ detail: MALAnimeDetails) {
+            collected.append(detail)
+        }
+        append(root)
+
+        while !queue.isEmpty && collected.count < 12 {
+            let current = queue.removeFirst()
+            for relation in current.relatedAnime ?? [] {
+                guard isNormalSeasonRelation(relation.relationType) else { continue }
+                let id = relation.node.id
+                guard seen.insert(id).inserted else { continue }
+                guard let detail = try? await fetchAnimeDetails(id: id), isNormalSeasonCandidate(detail) else { continue }
+                append(detail)
+                queue.append(detail)
+            }
+        }
+
+        if let tmdbTotal = tvShowDetail?.numberOfEpisodes, tmdbTotal > 0 {
+            let total = collected.reduce(0) { $0 + max($1.numEpisodes ?? 0, 0) }
+            if total < Int(Double(tmdbTotal) * 0.75) {
+                let orphans = await orphanCandidates(root: root, title: title, tmdbShow: tvShowDetail)
+                for orphan in orphans where !seen.contains(orphan.id) && collected.count < 12 {
+                    seen.insert(orphan.id)
+                    collected.append(orphan)
+                }
+            }
+
+            let newTotal = collected.reduce(0) { $0 + max($1.numEpisodes ?? 0, 0) }
+            if newTotal > Int(Double(tmdbTotal) * 1.25), let rootIndex = collected.firstIndex(where: { $0.id == root.id }) {
+                collected = pruneMALSeasons(collected, rootIndex: rootIndex, tmdbEpisodeBudget: Int(Double(tmdbTotal) * 1.25))
+            }
+        }
+
+        collected.sort { lhs, rhs in
+            let lhsDate = sortableDate(for: lhs) ?? "9999-99-99"
+            let rhsDate = sortableDate(for: rhs) ?? "9999-99-99"
+            if lhsDate != rhsDate { return lhsDate < rhsDate }
+            return lhs.id < rhs.id
+        }
+
+        let tmdbEpisodesByAbsolute = await fetchTMDBEpisodesByAbsolute(tmdbShowId: tmdbShowId, tvShowDetail: tvShowDetail, tmdbService: tmdbService)
+        var currentAbsoluteEpisode = 1
+        var seasonNumber = 1
+        var seasons: [AniListSeasonWithPoster] = []
+
+        for detail in collected {
+            let episodeCount = resolvedEpisodeCount(for: detail, currentAbsoluteEpisode: currentAbsoluteEpisode, tmdbEpisodesByAbsolute: tmdbEpisodesByAbsolute)
+            let seasonTitle = displayTitle(for: detail)
+            let episodes = (0..<episodeCount).map { offset -> AniListEpisode in
+                let absolute = currentAbsoluteEpisode + offset
+                let local = offset + 1
+                if let tmdbEpisode = tmdbEpisodesByAbsolute[absolute] {
+                    return AniListEpisode(
+                        number: local,
+                        title: tmdbEpisode.name,
+                        description: tmdbEpisode.overview,
+                        seasonNumber: seasonNumber,
+                        stillPath: tmdbEpisode.stillPath,
+                        airDate: tmdbEpisode.airDate,
+                        runtime: tmdbEpisode.runtime,
+                        tmdbSeasonNumber: tmdbEpisode.seasonNumber,
+                        tmdbEpisodeNumber: tmdbEpisode.episodeNumber
+                    )
+                }
+                return AniListEpisode(
+                    number: local,
+                    title: "Episode \(local)",
+                    description: nil,
+                    seasonNumber: seasonNumber,
+                    stillPath: nil,
+                    airDate: nil,
+                    runtime: nil,
+                    tmdbSeasonNumber: nil,
+                    tmdbEpisodeNumber: nil
+                )
+            }
+
+            seasons.append(AniListSeasonWithPoster(
+                seasonNumber: seasonNumber,
+                anilistId: malProviderId(detail.id),
+                title: seasonTitle,
+                englishTitle: detail.alternativeTitles?.en,
+                romajiTitle: detail.title,
+                nativeTitle: detail.alternativeTitles?.ja,
+                episodes: episodes,
+                posterUrl: detail.mainPicture?.large ?? detail.mainPicture?.medium ?? tmdbShowPoster
+            ))
+
+            currentAbsoluteEpisode += episodeCount
+            seasonNumber += 1
+        }
+
+        let totalEpisodes = seasons.reduce(0) { $0 + $1.episodes.count }
+        Logger.shared.log("MALMetadata: built fallback structure title='\(displayTitle(for: root))' seasons=\(seasons.count) episodes=\(totalEpisodes)", type: "AniList")
+        return AniListAnimeWithSeasons(
+            id: malProviderId(root.id),
+            title: displayTitle(for: root),
+            seasons: seasons,
+            totalEpisodes: totalEpisodes,
+            status: root.status?.uppercased() ?? "UNKNOWN"
+        )
+    }
+
+    func fetchSpecialSearchEntries(
+        tmdbShowId: Int,
+        fallbackPosterURL: String?,
+        tmdbService: TMDBService
+    ) async -> [AniListSpecialSearchEntry] {
+        guard let show = try? await tmdbService.getTVShowWithSeasons(id: tmdbShowId),
+              let candidates = try? await searchCandidates(title: show.name, tmdbShowId: tmdbShowId, tmdbShow: show, tmdbService: tmdbService),
+              let root = candidates.first else {
+            return []
+        }
+
+        let related = root.relatedAnime ?? []
+        var results: [AniListSpecialSearchEntry] = []
+        for relation in related where isSpecialRelation(relation.relationType) {
+            guard let detail = try? await fetchAnimeDetails(id: relation.node.id), isSpecialCandidate(detail) else { continue }
+            let episodeCount = max(detail.numEpisodes ?? 1, 1)
+            let title = displayTitle(for: detail)
+            let episodes = (1...episodeCount).map { number in
+                AniListEpisode(
+                    number: number,
+                    title: episodeCount == 1 ? title : "Episode \(number)",
+                    description: nil,
+                    seasonNumber: 0,
+                    stillPath: nil,
+                    airDate: nil,
+                    runtime: nil,
+                    tmdbSeasonNumber: nil,
+                    tmdbEpisodeNumber: nil
+                )
+            }
+            results.append(AniListSpecialSearchEntry(
+                id: malProviderId(detail.id),
+                title: title,
+                englishTitle: detail.alternativeTitles?.en,
+                romajiTitle: detail.title,
+                nativeTitle: detail.alternativeTitles?.ja,
+                format: aniListFormat(from: detail.mediaType),
+                episodeCount: episodeCount,
+                posterUrl: detail.mainPicture?.large ?? detail.mainPicture?.medium ?? fallbackPosterURL,
+                tmdbSeasonNumber: nil,
+                tvdbSeasonNumber: nil,
+                episodeOffset: nil,
+                imdbId: nil,
+                releaseDate: detail.startDate,
+                episodes: episodes
+            ))
+        }
+        return results.sorted { $0.isOrderedBeforeSpecialEntry($1) }
+    }
+
+    func fetchParentTitleCandidates(forMalMediaId mediaId: Int, maxDepth: Int) async -> [(englishTitle: String?, romajiTitle: String?, nativeTitle: String?)] {
+        var currentId = abs(mediaId)
+        var visited = Set<Int>([currentId])
+        var results: [(englishTitle: String?, romajiTitle: String?, nativeTitle: String?)] = []
+
+        for _ in 0..<maxDepth {
+            guard let detail = try? await fetchAnimeDetails(id: currentId) else { break }
+            let parent = (detail.relatedAnime ?? [])
+                .filter { ["prequel", "parent_story", "main_story", "full_story"].contains($0.relationType.lowercased()) }
+                .first { !visited.contains($0.node.id) }
+            guard let parent else { break }
+            visited.insert(parent.node.id)
+            results.append((parent.node.title, parent.node.title, nil))
+            currentId = parent.node.id
+        }
+
+        return results
+    }
+
+    private func fetchRankingCatalog(type: String, limit: Int, tmdbService: TMDBService) async throws -> [TMDBSearchResult] {
+        let details = try await fetchRanking(type: type, limit: limit)
+        let mapped = await mapMALAnimeToTMDB(details, tmdbService: tmdbService)
+        return details.compactMap { mapped[$0.id] }
+    }
+
+    private func searchCandidates(
+        title: String,
+        tmdbShowId: Int,
+        tmdbShow: TMDBTVShowWithSeasons?,
+        tmdbService: TMDBService
+    ) async throws -> [MALAnimeDetails] {
+        var candidates = [title, tmdbShow?.name, tmdbShow?.originalName]
+        if let alternatives = try? await tmdbService.getTVShowAlternativeTitles(id: tmdbShowId) {
+            candidates.append(contentsOf: alternatives.results.map(\.title))
+        }
+
+        var seenQueries = Set<String>()
+        var seenIds = Set<Int>()
+        var details: [MALAnimeDetails] = []
+        for candidate in candidates.compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) }) where !candidate.isEmpty {
+            let key = normalized(candidate)
+            guard seenQueries.insert(key).inserted else { continue }
+            let nodes = (try? await searchAnime(query: candidate, limit: 8)) ?? []
+            for node in nodes where seenIds.insert(node.id).inserted {
+                if let detail = try? await fetchAnimeDetails(id: node.id) {
+                    details.append(detail)
+                }
+            }
+            if details.count >= 12 { break }
+        }
+        return details
+    }
+
+    private func orphanCandidates(root: MALAnimeDetails, title: String, tmdbShow: TMDBTVShowWithSeasons?) async -> [MALAnimeDetails] {
+        let rootKey = normalized(displayTitle(for: root))
+        let rootPrefix = String(rootKey.prefix(min(rootKey.count, 12)))
+        let searchTitles = [title, root.title, root.alternativeTitles?.en].compactMap { $0 }
+        var seenIds = Set<Int>([root.id])
+        var candidates: [MALAnimeDetails] = []
+
+        for title in searchTitles {
+            guard let nodes = try? await searchAnime(query: title, limit: 20) else { continue }
+            for node in nodes where seenIds.insert(node.id).inserted {
+                guard let detail = try? await fetchAnimeDetails(id: node.id), isNormalSeasonCandidate(detail) else { continue }
+                let candidateKey = normalized(displayTitle(for: detail))
+                guard candidateKey.hasPrefix(rootPrefix) || rootKey.hasPrefix(String(candidateKey.prefix(min(candidateKey.count, 12)))) else { continue }
+                candidates.append(detail)
+            }
+        }
+
+        let lastKnownYear = root.startSeason?.year ?? root.startDate.flatMap { Int(String($0.prefix(4))) } ?? 0
+        return candidates
+            .filter { ($0.startSeason?.year ?? $0.startDate.flatMap { Int(String($0.prefix(4))) } ?? Int.max) >= lastKnownYear }
+            .sorted { (sortableDate(for: $0) ?? "9999") < (sortableDate(for: $1) ?? "9999") }
+    }
+
+    private func fetchRanking(type: String, limit: Int) async throws -> [MALAnimeDetails] {
+        var components = URLComponents(url: apiBase.appendingPathComponent("anime/ranking"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "ranking_type", value: type),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "fields", value: detailFields)
+        ]
+        let response: MALListResponse = try await fetch(components.url!)
+        return response.data.map(\.node)
+    }
+
+    private func fetchSeasonAnime(year: Int, season: String, limit: Int) async throws -> [MALAnimeDetails] {
+        var components = URLComponents(url: apiBase.appendingPathComponent("anime/season/\(year)/\(season)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "sort", value: "anime_num_list_users"),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "fields", value: detailFields)
+        ]
+        let response: MALListResponse = try await fetch(components.url!)
+        return response.data.map(\.node)
+    }
+
+    private func searchAnime(query: String, limit: Int) async throws -> [MALAnimeNode] {
+        var components = URLComponents(url: apiBase.appendingPathComponent("anime"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "fields", value: "id,title,main_picture,alternative_titles,media_type,num_episodes,start_season,start_date")
+        ]
+        let response: MALSearchResponse = try await fetch(components.url!)
+        return response.data.map(\.node)
+    }
+
+    private func fetchAnimeDetails(id: Int) async throws -> MALAnimeDetails {
+        var components = URLComponents(url: apiBase.appendingPathComponent("anime/\(id)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "fields", value: detailFields)]
+        return try await fetch(components.url!)
+    }
+
+    private func fetch<T: Decodable>(_ url: URL) async throws -> T {
+        guard !clientID.isEmpty else {
+            throw NSError(domain: "MALMetadata", code: -2, userInfo: [NSLocalizedDescriptionKey: "MAL_CLIENT_ID is not configured."])
+        }
+        var request = URLRequest(url: url)
+        request.setValue(clientID, forHTTPHeaderField: "X-MAL-CLIENT-ID")
+        request.timeoutInterval = 20
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            throw NSError(domain: "MALMetadata", code: status, userInfo: [NSLocalizedDescriptionKey: "MAL request failed (\(status))"])
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func mapMALAnimeToTMDB(_ animeList: [MALAnimeDetails], tmdbService: TMDBService) async -> [Int: TMDBSearchResult] {
+        await withTaskGroup(of: (Int, TMDBSearchResult?).self) { group in
+            for anime in animeList {
+                group.addTask {
+                    let isMovie = self.aniListFormat(from: anime.mediaType) == "MOVIE"
+                    let candidates = self.titleCandidates(for: anime)
+                    let expectedYear = anime.startSeason?.year ?? anime.startDate.flatMap { Int(String($0.prefix(4))) }
+                    for candidate in candidates {
+                        if isMovie,
+                           let movies = try? await tmdbService.searchMovies(query: candidate),
+                           let best = self.bestMovieMatch(results: movies, candidate: candidate, expectedYear: expectedYear) {
+                            return (anime.id, best.asSearchResult)
+                        }
+                        if let shows = try? await tmdbService.searchTVShows(query: candidate),
+                           let best = self.bestTVMatch(results: shows, candidate: candidate, expectedYear: expectedYear) {
+                            return (anime.id, best.asSearchResult)
+                        }
+                    }
+                    return (anime.id, nil)
+                }
+            }
+
+            var result: [Int: TMDBSearchResult] = [:]
+            for await (id, match) in group {
+                if let match {
+                    result[id] = match
+                }
+            }
+            return result
+        }
+    }
+
+    private func bestTVMatch(results: [TMDBTVShow], candidate: String, expectedYear: Int?) -> TMDBTVShow? {
+        let key = normalized(candidate)
+        return results.min { lhs, rhs in
+            matchScore(title: lhs.name, year: lhs.firstAirDate, isAnimation: lhs.genreIds?.contains(16) == true, popularity: lhs.popularity, key: key, expectedYear: expectedYear)
+                > matchScore(title: rhs.name, year: rhs.firstAirDate, isAnimation: rhs.genreIds?.contains(16) == true, popularity: rhs.popularity, key: key, expectedYear: expectedYear)
+        }
+    }
+
+    private func bestMovieMatch(results: [TMDBMovie], candidate: String, expectedYear: Int?) -> TMDBMovie? {
+        let key = normalized(candidate)
+        return results.min { lhs, rhs in
+            matchScore(title: lhs.title, year: lhs.releaseDate, isAnimation: lhs.genreIds?.contains(16) == true, popularity: lhs.popularity, key: key, expectedYear: expectedYear)
+                > matchScore(title: rhs.title, year: rhs.releaseDate, isAnimation: rhs.genreIds?.contains(16) == true, popularity: rhs.popularity, key: key, expectedYear: expectedYear)
+        }
+    }
+
+    private func matchScore(title: String, year: String?, isAnimation: Bool, popularity: Double, key: String, expectedYear: Int?) -> Double {
+        let titleKey = normalized(title)
+        var score = 0.0
+        if titleKey == key { score += 100 }
+        if titleKey.contains(key) || key.contains(titleKey) { score += 40 }
+        if isAnimation { score += 20 }
+        if let expectedYear, let actualYear = year.flatMap({ Int(String($0.prefix(4))) }) {
+            score += max(0, 15 - Double(abs(actualYear - expectedYear) * 3))
+        }
+        score += min(popularity / 100.0, 10)
+        return score
+    }
+
+    private func pickBestMALMatch(from candidates: [MALAnimeDetails], tmdbShow: TMDBTVShowWithSeasons?) -> MALAnimeDetails? {
+        guard let tmdbShow else {
+            return candidates
+                .filter(isNormalSeasonCandidate)
+                .max { ($0.numEpisodes ?? 0) < ($1.numEpisodes ?? 0) } ?? candidates.first
+        }
+
+        let tmdbYear = tmdbShow.firstAirDate.flatMap { Int(String($0.prefix(4))) }
+        let tmdbEpisodes = tmdbShow.numberOfEpisodes
+        let tmdbTitle = normalized(tmdbShow.name)
+        let pool = candidates.filter(isNormalSeasonCandidate)
+        return (pool.isEmpty ? candidates : pool).max { lhs, rhs in
+            malMatchScore(lhs, tmdbTitle: tmdbTitle, tmdbYear: tmdbYear, tmdbEpisodes: tmdbEpisodes)
+                < malMatchScore(rhs, tmdbTitle: tmdbTitle, tmdbYear: tmdbYear, tmdbEpisodes: tmdbEpisodes)
+        }
+    }
+
+    private func malMatchScore(_ anime: MALAnimeDetails, tmdbTitle: String, tmdbYear: Int?, tmdbEpisodes: Int?) -> Int {
+        let titles = titleCandidates(for: anime).map(normalized)
+        var score = 0
+        if titles.contains(tmdbTitle) { score += 100 }
+        if titles.contains(where: { $0.contains(tmdbTitle) || tmdbTitle.contains($0) }) { score += 35 }
+        if let tmdbYear, let year = anime.startSeason?.year ?? anime.startDate.flatMap({ Int(String($0.prefix(4))) }) {
+            score += max(0, 18 - abs(year - tmdbYear) * 4)
+        }
+        if let tmdbEpisodes, let episodes = anime.numEpisodes, episodes > 0 {
+            score += max(0, 20 - abs(episodes - tmdbEpisodes))
+        }
+        if ["TV", "TV_SHORT", "ONA"].contains(aniListFormat(from: anime.mediaType)) {
+            score += 10
+        }
+        return score
+    }
+
+    private func pruneMALSeasons(_ seasons: [MALAnimeDetails], rootIndex: Int, tmdbEpisodeBudget: Int) -> [MALAnimeDetails] {
+        guard seasons.indices.contains(rootIndex) else { return seasons }
+        var keepStart = rootIndex
+        var keepEnd = rootIndex
+        var total = seasons[rootIndex].numEpisodes ?? 0
+        var canExpandLeft = true
+        var canExpandRight = true
+        while canExpandLeft || canExpandRight {
+            if canExpandLeft && keepStart > 0 {
+                let eps = seasons[keepStart - 1].numEpisodes ?? 0
+                if total + eps <= tmdbEpisodeBudget { keepStart -= 1; total += eps } else { canExpandLeft = false }
+            } else {
+                canExpandLeft = false
+            }
+            if canExpandRight && keepEnd < seasons.count - 1 {
+                let eps = seasons[keepEnd + 1].numEpisodes ?? 0
+                if total + eps <= tmdbEpisodeBudget { keepEnd += 1; total += eps } else { canExpandRight = false }
+            } else {
+                canExpandRight = false
+            }
+        }
+        return Array(seasons[keepStart...keepEnd])
+    }
+
+    private func fetchTMDBEpisodesByAbsolute(tmdbShowId: Int, tvShowDetail: TMDBTVShowWithSeasons?, tmdbService: TMDBService) async -> [Int: TMDBEpisode] {
+        var byAbsolute: [Int: TMDBEpisode] = [:]
+        let seasonNumbers = tvShowDetail?.seasons.filter { $0.seasonNumber > 0 }.map(\.seasonNumber).sorted() ?? Array(1...12)
+        var absolute = 1
+        for seasonNumber in seasonNumbers {
+            guard let detail = try? await tmdbService.getSeasonDetails(tvShowId: tmdbShowId, seasonNumber: seasonNumber),
+                  !detail.episodes.isEmpty else {
+                if tvShowDetail == nil { break }
+                continue
+            }
+            for episode in detail.episodes.sorted(by: { $0.episodeNumber < $1.episodeNumber }) {
+                byAbsolute[absolute] = episode
+                absolute += 1
+            }
+        }
+        return byAbsolute
+    }
+
+    private func resolvedEpisodeCount(for detail: MALAnimeDetails, currentAbsoluteEpisode: Int, tmdbEpisodesByAbsolute: [Int: TMDBEpisode]) -> Int {
+        if let count = detail.numEpisodes, count > 0 { return count }
+        let remaining = max(0, tmdbEpisodesByAbsolute.count - currentAbsoluteEpisode + 1)
+        return remaining > 0 ? remaining : 12
+    }
+
+    private func isNormalSeasonRelation(_ relationType: String) -> Bool {
+        ["sequel", "prequel", "parent_story", "main_story", "full_story"].contains(relationType.lowercased())
+    }
+
+    private func isSpecialRelation(_ relationType: String) -> Bool {
+        ["side_story", "spin_off", "other", "summary", "alternative_version"].contains(relationType.lowercased())
+    }
+
+    private func isNormalSeasonCandidate(_ detail: MALAnimeDetails) -> Bool {
+        let format = aniListFormat(from: detail.mediaType)
+        guard ["TV", "TV_SHORT", "ONA"].contains(format) else { return false }
+        let text = titleCandidates(for: detail).joined(separator: " ").lowercased()
+        return !["recap", "summary", "music", "trailer", "pv", "cm"].contains { text.contains($0) }
+    }
+
+    private func isSpecialCandidate(_ detail: MALAnimeDetails) -> Bool {
+        let format = aniListFormat(from: detail.mediaType)
+        if ["SPECIAL", "OVA", "ONA", "MOVIE"].contains(format) { return true }
+        let text = titleCandidates(for: detail).joined(separator: " ").lowercased()
+        return ["special", "ova", "oad", "ona", "side story", "movie"].contains { text.contains($0) }
+    }
+
+    private func titleCandidates(for detail: MALAnimeDetails) -> [String] {
+        var seen = Set<String>()
+        let ordered = [
+            detail.alternativeTitles?.en,
+            detail.title,
+            detail.alternativeTitles?.ja
+        ] + (detail.alternativeTitles?.synonyms ?? [])
+        return ordered.compactMap { raw in
+            let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !value.isEmpty else { return nil }
+            let key = value.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return value
+        }
+    }
+
+    private func displayTitle(for detail: MALAnimeDetails) -> String {
+        detail.alternativeTitles?.en?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? detail.alternativeTitles!.en!
+            : detail.title
+    }
+
+    private func estimatedNextAiringDate(for detail: MALAnimeDetails, start: Date, end: Date) -> Date? {
+        guard detail.status == "currently_airing" else { return nil }
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        let weekday = weekdayNumber(from: detail.broadcast?.dayOfTheWeek) ?? calendar.component(.weekday, from: start)
+        var candidate = start
+        for _ in 0..<8 {
+            if calendar.component(.weekday, from: candidate) == weekday {
+                let timeParts = (detail.broadcast?.startTime ?? "20:00").split(separator: ":").compactMap { Int($0) }
+                var components = calendar.dateComponents([.year, .month, .day], from: candidate)
+                components.hour = timeParts.first ?? 20
+                components.minute = timeParts.dropFirst().first ?? 0
+                if let date = calendar.date(from: components), date >= start, date < end {
+                    return date
+                }
+            }
+            candidate = calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+        }
+        return nil
+    }
+
+    private func estimatedNextEpisode(for detail: MALAnimeDetails, airingAt: Date) -> Int {
+        guard let startDate = detail.startDate,
+              let start = MALMetadataService.dateFormatter.date(from: startDate) else {
+            return 1
+        }
+        let weeks = max(0, Calendar.current.dateComponents([.weekOfYear], from: start, to: airingAt).weekOfYear ?? 0)
+        let maxEpisodes = detail.numEpisodes ?? Int.max
+        return min(max(weeks + 1, 1), maxEpisodes)
+    }
+
+    private func weekdayNumber(from value: String?) -> Int? {
+        switch value?.lowercased() {
+        case "sunday": return 1
+        case "monday": return 2
+        case "tuesday": return 3
+        case "wednesday": return 4
+        case "thursday": return 5
+        case "friday": return 6
+        case "saturday": return 7
+        default: return nil
+        }
+    }
+
+    private func malSeason(for date: Date) -> (year: Int, season: String) {
+        let components = Calendar.current.dateComponents([.year, .month], from: date)
+        let month = components.month ?? 1
+        let season: String
+        switch month {
+        case 1...3: season = "winter"
+        case 4...6: season = "spring"
+        case 7...9: season = "summer"
+        default: season = "fall"
+        }
+        return (components.year ?? 2026, season)
+    }
+
+    private func nextSeason(after current: (year: Int, season: String)) -> (year: Int, season: String) {
+        switch current.season {
+        case "winter": return (current.year, "spring")
+        case "spring": return (current.year, "summer")
+        case "summer": return (current.year, "fall")
+        default: return (current.year + 1, "winter")
+        }
+    }
+
+    private func sortableDate(for detail: MALAnimeDetails) -> String? {
+        detail.startDate ?? detail.startSeason.map { String(format: "%04d-%02d-01", $0.year, month(forMALSeason: $0.season)) }
+    }
+
+    private func month(forMALSeason season: String) -> Int {
+        switch season.lowercased() {
+        case "winter": return 1
+        case "spring": return 4
+        case "summer": return 7
+        case "fall": return 10
+        default: return 1
+        }
+    }
+
+    private func aniListFormat(from malMediaType: String?) -> String {
+        switch malMediaType?.lowercased() {
+        case "tv": return "TV"
+        case "ova": return "OVA"
+        case "movie": return "MOVIE"
+        case "special", "tv_special": return "SPECIAL"
+        case "ona": return "ONA"
+        default: return "TV"
+        }
+    }
+
+    private func malProviderId(_ malId: Int) -> Int {
+        -abs(malId)
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private struct MALSearchResponse: Decodable {
+        let data: [Entry]
+        struct Entry: Decodable { let node: MALAnimeNode }
+    }
+
+    private struct MALListResponse: Decodable {
+        let data: [Entry]
+        struct Entry: Decodable { let node: MALAnimeDetails }
+    }
+
+    private struct MALAnimeNode: Decodable {
+        let id: Int
+        let title: String
+    }
+
+    private struct MALAnimeDetails: Decodable {
+        let id: Int
+        let title: String
+        let mainPicture: MALPicture?
+        let alternativeTitles: MALAlternativeTitles?
+        let startDate: String?
+        let mediaType: String?
+        let status: String?
+        let numEpisodes: Int?
+        let startSeason: MALStartSeason?
+        let broadcast: MALBroadcast?
+        let relatedAnime: [MALRelatedAnime]?
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, status, broadcast
+            case mainPicture = "main_picture"
+            case alternativeTitles = "alternative_titles"
+            case startDate = "start_date"
+            case mediaType = "media_type"
+            case numEpisodes = "num_episodes"
+            case startSeason = "start_season"
+            case relatedAnime = "related_anime"
+        }
+    }
+
+    private struct MALPicture: Decodable {
+        let medium: String?
+        let large: String?
+    }
+
+    private struct MALAlternativeTitles: Decodable {
+        let synonyms: [String]?
+        let en: String?
+        let ja: String?
+    }
+
+    private struct MALStartSeason: Decodable {
+        let year: Int
+        let season: String
+    }
+
+    private struct MALBroadcast: Decodable {
+        let dayOfTheWeek: String?
+        let startTime: String?
+
+        enum CodingKeys: String, CodingKey {
+            case dayOfTheWeek = "day_of_the_week"
+            case startTime = "start_time"
+        }
+    }
+
+    private struct MALRelatedAnime: Decodable {
+        let node: MALAnimeNode
+        let relationType: String
+
+        enum CodingKeys: String, CodingKey {
+            case node
+            case relationType = "relation_type"
         }
     }
 }

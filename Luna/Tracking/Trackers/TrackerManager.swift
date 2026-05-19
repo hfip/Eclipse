@@ -1003,6 +1003,10 @@ final class TrackerManager: NSObject, ObservableObject {
     // MARK: - Sync Methods
 
     func cacheAniListId(tmdbId: Int, anilistId: Int) {
+        guard anilistId > 0 else {
+            Logger.shared.log("Skipping TMDB \(tmdbId) AniList cache for provider-safe fallback id \(anilistId)", type: "Tracker")
+            return
+        }
         anilistIdCacheQueue.sync {
             anilistIdCache[tmdbId] = anilistId
         }
@@ -1018,6 +1022,10 @@ final class TrackerManager: NSObject, ObservableObject {
     
     // Season-specific AniList ID caching for anime with multiple entries
     func cacheAniListSeasonId(tmdbId: Int, seasonNumber: Int, anilistId: Int) {
+        guard anilistId > 0 else {
+            Logger.shared.log("Skipping TMDB \(tmdbId) S\(seasonNumber) AniList season cache for provider-safe fallback id \(anilistId)", type: "Tracker")
+            return
+        }
         let key = "\(tmdbId)_\(seasonNumber)"
         anilistSeasonIdCacheQueue.sync {
             anilistSeasonIdCache[key] = anilistId
@@ -1432,7 +1440,10 @@ final class TrackerManager: NSObject, ObservableObject {
             return
         }
 
-        let canSyncAnimeTrackers = isAnime || playbackContext?.anilistMediaId != nil
+        let playbackProviderId = playbackContext?.anilistMediaId
+        let playbackAniListMediaId = playbackProviderId.flatMap { $0 > 0 ? $0 : nil }
+        let playbackMALMediaId = playbackProviderId.flatMap { $0 < 0 ? abs($0) : nil }
+        let canSyncAnimeTrackers = isAnime || playbackAniListMediaId != nil || playbackMALMediaId != nil
         Logger.shared.log("Starting watch sync for TMDB \(showId) S\(seasonNumber)E\(episodeNumber) \(Int(progress))% across \(connectedAccounts.count) account(s)", type: "Tracker")     
 
         Task {
@@ -1445,7 +1456,7 @@ final class TrackerManager: NSObject, ObservableObject {
                         continue
                     }
                     if let playbackContext,
-                       let anilistMediaId = playbackContext.anilistMediaId {
+                       let anilistMediaId = playbackAniListMediaId {
                         await syncToAniListMediaId(
                             account: account,
                             anilistId: anilistMediaId,
@@ -1454,6 +1465,8 @@ final class TrackerManager: NSObject, ObservableObject {
                             episodeNumber: playbackContext.localEpisodeNumber,
                             progress: progress
                         )
+                    } else if let malMediaId = playbackMALMediaId {
+                        Logger.shared.log("Skipping direct AniList watch sync for MAL fallback mediaId=\(malMediaId)", type: "Tracker")
                     } else {
                         await syncToAniList(account: account, showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: progress)
                     }
@@ -1463,7 +1476,15 @@ final class TrackerManager: NSObject, ObservableObject {
                         continue
                     }
                     if let playbackContext,
-                       let anilistMediaId = playbackContext.anilistMediaId {
+                       let malMediaId = playbackMALMediaId {
+                        await syncToMyAnimeList(
+                            account: account,
+                            malId: malMediaId,
+                            episodeNumber: playbackContext.localEpisodeNumber,
+                            progress: progress
+                        )
+                    } else if let playbackContext,
+                              let anilistMediaId = playbackAniListMediaId {
                         await syncToMyAnimeList(
                             account: account,
                             anilistId: anilistMediaId,
@@ -1598,6 +1619,17 @@ final class TrackerManager: NSObject, ObservableObject {
 
         let totalEpisodes = await getAniListEpisodeCount(mediaId: anilistId)
         let status = ((totalEpisodes ?? 0) > 0 && episodeNumber >= (totalEpisodes ?? 0)) ? "completed" : "watching"
+        await saveMALAnimeProgress(account: account, malId: malId, watchedEpisodes: episodeNumber, status: status)
+    }
+
+    private func syncToMyAnimeList(account: TrackerAccount, malId: Int, episodeNumber: Int, progress: Double) async {
+        let malProgress = progress <= 1.0 ? progress * 100.0 : progress
+        guard malProgress >= 85 else {
+            Logger.shared.log("Skipping MAL anime sync below watched threshold for MAL \(malId) E\(episodeNumber)", type: "Tracker")
+            return
+        }
+
+        let status = malProgress >= 95 ? "completed" : "watching"
         await saveMALAnimeProgress(account: account, malId: malId, watchedEpisodes: episodeNumber, status: status)
     }
 
