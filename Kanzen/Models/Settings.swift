@@ -32,7 +32,7 @@ enum MPVRenderBackend: String, CaseIterable, Identifiable {
 
 struct MPVRenderBackendSupport {
     static let bundledMPVKitVersion = "0.41.0"
-    static let bundledMPVKitRevision = "613c0ccc3acf70e136aaff880a9b5fe8fdfaf5b8"
+    static let bundledMPVKitRevision = "63ef1aac838094280be929b049aaaabdf16bf2fb"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
 
     #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP
@@ -76,14 +76,14 @@ struct MPVRenderBackendSupport {
 
     static var settingsDescription: String {
         if metalIsFullySupported {
-            return "Applies to the next player session. Metal is available in this build; switch back to OpenGL if a stream misbehaves."
+            return "Applies to the next player session. Metal sample-buffer playback is experimental in this build; switch back to OpenGL if a stream misbehaves."
         }
         return "Applies to the next player session. OpenGL is active in this build; Metal is remembered but falls back until the MPVKit fork exposes full sample-buffer PiP."
     }
 
     static var settingsStatusLine: String {
         if metalIsFullySupported {
-            return "Metal backend: available"
+            return "Metal backend: experimental sample-buffer PiP available"
         }
         return "Metal backend: waiting for MPVKit fork sample-buffer PiP"
     }

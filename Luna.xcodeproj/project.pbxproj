@@ -1368,6 +1368,7 @@
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1423,6 +1424,7 @@
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1455,10 +1457,10 @@
 /* Begin XCRemoteSwiftPackageReference section */
 		136C25C42EFE950300E37A6E /* XCRemoteSwiftPackageReference "MPVKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/mpvkit/MPVKit";
+			repositoryURL = "https://github.com/Soupy-dev/MPVKit";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.41.0;
+				kind = revision;
+				revision = 63ef1aac838094280be929b049aaaabdf16bf2fb;
 			};
 		};
 		13A46CFB2EF5943400423BC6 /* XCRemoteSwiftPackageReference "FakeWebKit" */ = {

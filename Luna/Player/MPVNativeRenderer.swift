@@ -2,8 +2,9 @@
 //  MPVNativeRenderer.swift
 //  Luna
 //
-//  GPU-first libmpv renderer for iOS. Normal playback renders through
-//  libmpv's OpenGL render API; the sample-buffer path is reserved for PiP.
+//  GPU-first libmpv renderers for iOS. OpenGL remains the stable fallback;
+//  the experimental MPVKit fork can drive inline playback and PiP through
+//  AVSampleBufferDisplayLayer.
 //
 
 import UIKit
@@ -2389,7 +2390,16 @@ final class MPVKitMetalRenderer: PlayerRenderer {
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
-        self.sampleRenderer = MPVMetalSampleBufferRenderer(displayLayer: displayLayer)
+        let screen = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.screen }
+            .first ?? UIScreen.main
+        let configuredFPS = Settings.shared.mpvForegroundFPS
+        let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
+        let options = MPVMetalSampleBufferRendererOptions(
+            preferredFramesPerSecond: targetFPS,
+            preferredPiPFramesPerSecond: min(targetFPS, 30)
+        )
+        self.sampleRenderer = MPVMetalSampleBufferRenderer(displayLayer: displayLayer, options: options)
         placeholderView.backgroundColor = .clear
         placeholderView.isUserInteractionEnabled = false
         displayLayer.videoGravity = .resizeAspect
