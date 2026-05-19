@@ -107,7 +107,6 @@ Eclipse ships as an app shell and media manager. It does not provide hosted medi
 
 Users are responsible for the services and addons they choose to add. The app and developer do not support piracy.
 
-Eclipse is a modified fork of Luna, originally developed at `https://github.com/cranci1/Luna`. Eclipse is not affiliated with the original Luna project.
 
 ## Build Configuration
 
