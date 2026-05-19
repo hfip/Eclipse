@@ -1724,16 +1724,6 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             self?.logVLC("VLC PiP dedicated sample-buffer \(event)", type: "Player")
         }
 
-        do {
-            pipPlayer.drawable = nil
-            try output.attach(to: pipPlayer)
-        } catch {
-            logVLC("failed to attach dedicated VLCKitSPM sample-buffer PiP output: \(error); keeping drawable player active", type: "Error")
-            output.detach()
-            isPictureInPictureStartPending = false
-            return false
-        }
-
         let media = makeMedia(url: url, preset: preset, headers: currentHeaders)
         pictureInPictureMedia = media
         pictureInPictureMediaPlayer = pipPlayer
@@ -1743,6 +1733,21 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
         pipPlayer.media = media
         pipPlayer.rate = Float(currentPlaybackSpeed)
+        pipPlayer.drawable = nil
+
+        do {
+            try output.attach(to: pipPlayer)
+            logVLC("VLC PiP dedicated sample-buffer callbacks attached after media assignment", type: "Player")
+        } catch {
+            logVLC("failed to attach dedicated VLCKitSPM sample-buffer PiP output after media assignment: \(error); keeping drawable player active", type: "Error")
+            output.detach()
+            pictureInPictureMediaPlayer = nil
+            pictureInPictureMedia = nil
+            nativePiPController = nil
+            isPictureInPictureStartPending = false
+            return false
+        }
+
         ensureAudioSessionActive()
 
         DispatchQueue.main.async { [weak self] in

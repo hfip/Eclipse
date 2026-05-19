@@ -1133,20 +1133,33 @@ struct ContinueWatchingCard: View {
     private func presentResolvedPlayback(_ request: PlayerResolvedPlaybackRequest) {
         showingSearchResults = false
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            Task { @MainActor in
-                self.presentResolvedPlaybackAfterSheetDismissal(request)
-            }
-        }
+        dismissContinueWatchingSheetAndPresent(request)
     }
 
     @MainActor
-    private func presentResolvedPlaybackAfterSheetDismissal(_ request: PlayerResolvedPlaybackRequest) {
-        guard let presenter = topmostPresentationController() else {
+    private func dismissContinueWatchingSheetAndPresent(_ request: PlayerResolvedPlaybackRequest, attempt: Int = 0) {
+        guard let presenter = rootPresentationController() else {
             Logger.shared.log("ContinueWatchingCard: unable to present resolved playback; no presenter", type: "Player")
             return
         }
 
+        if let presented = presenter.presentedViewController, attempt < 3 {
+            Logger.shared.log("ContinueWatchingCard: dismissing services sheet before resolved playback attempt=\(attempt) presented=\(type(of: presented))", type: "Player")
+            presenter.dismiss(animated: true) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    Task { @MainActor in
+                        self.dismissContinueWatchingSheetAndPresent(request, attempt: attempt + 1)
+                    }
+                }
+            }
+            return
+        }
+
+        presentResolvedPlaybackAfterSheetDismissal(request, presenter: presenter)
+    }
+
+    @MainActor
+    private func presentResolvedPlaybackAfterSheetDismissal(_ request: PlayerResolvedPlaybackRequest, presenter: UIViewController) {
         let externalRaw = UserDefaults.standard.string(forKey: "externalPlayer") ?? ExternalPlayer.none.rawValue
         let external = ExternalPlayer(rawValue: externalRaw) ?? .none
         if let scheme = external.schemeURL(for: request.url.absoluteString),
@@ -1211,13 +1224,13 @@ struct ContinueWatchingCard: View {
     }
 
     @MainActor
-    private func topmostPresentationController() -> UIViewController? {
+    private func rootPresentationController() -> UIViewController? {
         let windowScene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }
             ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         let window = windowScene?.windows.first { $0.isKeyWindow } ?? windowScene?.windows.first
-        return window?.rootViewController?.topmostViewController()
+        return window?.rootViewController
     }
 
     private func markAsWatched() {
