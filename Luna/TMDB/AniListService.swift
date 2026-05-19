@@ -33,6 +33,8 @@ final class AnimeProviderHealthCenter {
     private let lock = NSLock()
     private var networkReachable = true
     private var anilistUnavailableUntil: Date?
+    private var consecutiveAniListUnavailableFailures = 0
+    private var firstAniListUnavailableFailureAt: Date?
     private var sentFallbackPrompt = false
 
     private init() {
@@ -56,14 +58,20 @@ final class AnimeProviderHealthCenter {
         let reason = classifyAniListFailure(error)
         switch reason {
         case .offline:
+            resetAniListUnavailableFailures()
             Logger.shared.log("AnimeMetadata: AniList failure classified as offline: \(error.localizedDescription)", type: "AniList")
         case .anilistRateLimited:
-            markAniListUnavailable(seconds: 90)
+            resetAniListUnavailableFailures()
             Logger.shared.log("AnimeMetadata: AniList rate limited, fallback allowed: \(error.localizedDescription)", type: "AniList")
         case .anilistUnavailable:
-            markAniListUnavailable(seconds: 180)
-            Logger.shared.log("AnimeMetadata: AniList unavailable, fallback allowed: \(error.localizedDescription)", type: "AniList")
+            if noteAniListUnavailableFailure() {
+                markAniListUnavailable(seconds: 180)
+                Logger.shared.log("AnimeMetadata: AniList unavailable confirmed, fallback allowed: \(error.localizedDescription)", type: "AniList")
+            } else {
+                Logger.shared.log("AnimeMetadata: AniList unavailable suspected, fallback allowed without popup: \(error.localizedDescription)", type: "AniList")
+            }
         case .malUnavailable, .unknown:
+            resetAniListUnavailableFailures()
             Logger.shared.log("AnimeMetadata: AniList failure left as unknown: \(error.localizedDescription)", type: "AniList")
         }
         return reason
@@ -72,6 +80,8 @@ final class AnimeProviderHealthCenter {
     func recordAniListSuccess() {
         lock.lock()
         anilistUnavailableUntil = nil
+        consecutiveAniListUnavailableFailures = 0
+        firstAniListUnavailableFailureAt = nil
         lock.unlock()
     }
 
@@ -81,6 +91,12 @@ final class AnimeProviderHealthCenter {
 
     func notifyMALFallbackIfNeeded(reason: String) {
         lock.lock()
+        let isConfirmedUnavailable = anilistUnavailableUntil.map { $0 > Date() } ?? false
+        guard isConfirmedUnavailable else {
+            lock.unlock()
+            Logger.shared.log("AnimeMetadata: skipped MAL fallback notice reason=\(reason) because AniList outage is not confirmed", type: "AniList")
+            return
+        }
         guard !sentFallbackPrompt else {
             lock.unlock()
             return
@@ -100,14 +116,49 @@ final class AnimeProviderHealthCenter {
         lock.unlock()
     }
 
+    private func resetAniListUnavailableFailures() {
+        lock.lock()
+        consecutiveAniListUnavailableFailures = 0
+        firstAniListUnavailableFailureAt = nil
+        lock.unlock()
+    }
+
+    private func noteAniListUnavailableFailure() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let now = Date()
+        if let first = firstAniListUnavailableFailureAt, now.timeIntervalSince(first) <= 90 {
+            consecutiveAniListUnavailableFailures += 1
+        } else {
+            firstAniListUnavailableFailureAt = now
+            consecutiveAniListUnavailableFailures = 1
+        }
+
+        return consecutiveAniListUnavailableFailures >= 2
+    }
+
+    func shouldUseMALFallback(for reason: AnimeProviderFailureReason) -> Bool {
+        switch reason {
+        case .anilistUnavailable, .anilistRateLimited:
+            return true
+        case .offline, .malUnavailable, .unknown:
+            return false
+        }
+    }
+
     private func classifyAniListFailure(_ error: Error) -> AnimeProviderFailureReason {
         let nsError = error as NSError
         if let urlCode = urlErrorCode(from: error) {
             switch urlCode {
-            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
+            case .notConnectedToInternet, .dataNotAllowed:
                 return .offline
+            case .networkConnectionLost:
+                return currentNetworkReachable() ? .unknown : .offline
             case .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
                 return currentNetworkReachable() ? .anilistUnavailable : .offline
+            case .cancelled:
+                return .unknown
             default:
                 break
             }
@@ -115,13 +166,14 @@ final class AnimeProviderHealthCenter {
 
         if nsError.domain == "AniList" {
             if nsError.code == 429 { return .anilistRateLimited }
-            if nsError.code >= 500 || nsError.code == -1 {
+            if nsError.code >= 500 {
                 return currentNetworkReachable() ? .anilistUnavailable : .offline
             }
             if nsError.code == NSURLErrorNotConnectedToInternet { return .offline }
+            return .unknown
         }
 
-        return currentNetworkReachable() ? .anilistUnavailable : .offline
+        return currentNetworkReachable() ? .unknown : .offline
     }
 
     private func currentNetworkReachable() -> Bool {
@@ -490,7 +542,7 @@ final class AniListService {
             return result
         } catch {
             let reason = AnimeProviderHealthCenter.shared.recordAniListFailure(error)
-            guard reason != .offline else { throw error }
+            guard AnimeProviderHealthCenter.shared.shouldUseMALFallback(for: reason) else { throw error }
             AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "catalogs-\(reason.rawValue)")
             do {
                 return try await MALMetadataService.shared.fetchAllAnimeCatalogs(limit: limit, tmdbService: tmdbService)
@@ -670,7 +722,7 @@ final class AniListService {
             return result
         } catch {
             let reason = AnimeProviderHealthCenter.shared.recordAniListFailure(error)
-            guard reason != .offline else { throw error }
+            guard AnimeProviderHealthCenter.shared.shouldUseMALFallback(for: reason) else { throw error }
             AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "schedule-\(reason.rawValue)")
             do {
                 return try await MALMetadataService.shared.fetchAiringSchedule(daysAhead: daysAhead, perPage: perPage)
@@ -797,12 +849,12 @@ final class AniListService {
         } catch {
             let reason = AnimeProviderHealthCenter.shared.recordAniListFailure(error)
             if let cached = await AnimeIdentityCache.shared.cachedDetails(tmdbShowId: tmdbShowId, title: title) {
-                if reason != .offline {
+                if AnimeProviderHealthCenter.shared.shouldUseMALFallback(for: reason) {
                     AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "details-cache-\(reason.rawValue)")
                 }
                 return cached
             }
-            guard reason != .offline else { throw error }
+            guard AnimeProviderHealthCenter.shared.shouldUseMALFallback(for: reason) else { throw error }
             AnimeProviderHealthCenter.shared.notifyMALFallbackIfNeeded(reason: "details-\(reason.rawValue)")
             do {
                 return try await MALMetadataService.shared.fetchAnimeDetailsWithEpisodes(
