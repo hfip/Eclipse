@@ -12,6 +12,148 @@ enum Appearance: String, CaseIterable, Identifiable {
     var id: String { self.rawValue }
 }
 
+enum MediaDetailElement: String, CaseIterable, Identifiable {
+    case actions
+    case overview
+    case details
+    case cast
+    case ratingNotes
+    case episodes
+
+    var id: String { rawValue }
+
+    static let orderStorageKey = "mediaDetailElementOrder"
+    static let hiddenStorageKey = "mediaDetailHiddenElements"
+    static let legacyShowCastStorageKey = "showCastSection"
+
+    static let defaultOrder: [MediaDetailElement] = [
+        .overview,
+        .actions,
+        .details,
+        .cast,
+        .ratingNotes,
+        .episodes
+    ]
+
+    var displayName: String {
+        switch self {
+        case .actions:
+            return "Actions"
+        case .overview:
+            return "Overview"
+        case .details:
+            return "Details"
+        case .cast:
+            return "Cast"
+        case .ratingNotes:
+            return "Rating & Notes"
+        case .episodes:
+            return "Episodes"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .actions:
+            return "Play, download, save, and collection controls."
+        case .overview:
+            return "Synopsis text for the title."
+        case .details:
+            return "Runtime, genres, dates, status, and ratings."
+        case .cast:
+            return "Principal cast list."
+        case .ratingNotes:
+            return "Your star rating, notes, and tracker sync shortcuts."
+        case .episodes:
+            return "Seasons, specials, and episode list for series."
+        }
+    }
+
+    var appliesToMovies: Bool {
+        self != .episodes
+    }
+
+    var appliesToSeries: Bool {
+        true
+    }
+
+    static var defaultOrderRawValue: String {
+        rawValue(for: defaultOrder)
+    }
+
+    static func rawValue(for elements: [MediaDetailElement]) -> String {
+        elements.map(\.rawValue).joined(separator: ",")
+    }
+
+    static func rawValue(for hiddenElements: Set<MediaDetailElement>) -> String {
+        defaultOrder
+            .filter { hiddenElements.contains($0) }
+            .map(\.rawValue)
+            .joined(separator: ",")
+    }
+
+    static func orderedElements(from rawValue: String?) -> [MediaDetailElement] {
+        var result: [MediaDetailElement] = []
+        let rawItems = rawValue?
+            .split(separator: ",")
+            .map { String($0) } ?? []
+
+        for rawItem in rawItems {
+            guard let element = MediaDetailElement(rawValue: rawItem),
+                  !result.contains(element) else { continue }
+            result.append(element)
+        }
+
+        for element in defaultOrder where !result.contains(element) {
+            result.append(element)
+        }
+
+        return result
+    }
+
+    static func orderedElements(defaults: UserDefaults = .standard) -> [MediaDetailElement] {
+        orderedElements(from: defaults.string(forKey: orderStorageKey))
+    }
+
+    static func hiddenElements(from rawValue: String?, legacyShowCastSection: Bool = true) -> Set<MediaDetailElement> {
+        var hidden = Set(
+            (rawValue ?? "")
+                .split(separator: ",")
+                .compactMap { MediaDetailElement(rawValue: String($0)) }
+        )
+
+        if (rawValue ?? "").isEmpty, !legacyShowCastSection {
+            hidden.insert(.cast)
+        }
+
+        return hidden
+    }
+
+    static func hiddenElements(defaults: UserDefaults = .standard) -> Set<MediaDetailElement> {
+        hiddenElements(
+            from: defaults.string(forKey: hiddenStorageKey),
+            legacyShowCastSection: defaults.object(forKey: legacyShowCastStorageKey) as? Bool ?? true
+        )
+    }
+
+    static func isVisible(
+        _ element: MediaDetailElement,
+        hiddenRawValue: String?,
+        legacyShowCastSection: Bool = true
+    ) -> Bool {
+        !hiddenElements(from: hiddenRawValue, legacyShowCastSection: legacyShowCastSection).contains(element)
+    }
+
+    static func saveOrder(_ elements: [MediaDetailElement], defaults: UserDefaults = .standard) {
+        defaults.set(rawValue(for: elements), forKey: orderStorageKey)
+    }
+
+    static func saveHiddenElements(_ hiddenElements: Set<MediaDetailElement>, defaults: UserDefaults = .standard) {
+        defaults.set(rawValue(for: hiddenElements), forKey: hiddenStorageKey)
+        defaults.set(!hiddenElements.contains(.cast), forKey: legacyShowCastStorageKey)
+    }
+}
+
 enum MPVRenderBackend: String, CaseIterable, Identifiable {
     case openGL = "opengl"
     case metal = "metal"

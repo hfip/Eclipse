@@ -1927,8 +1927,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let availableWidth = max(videoContainer.bounds.width, view.bounds.width)
         let compactLimit = max(240, availableWidth - 32)
-        let landscapeLimit = min(480, max(300, availableWidth * 0.52))
-        nextEpisodeButtonMaxWidthConstraint?.constant = isPortrait ? min(360, compactLimit) : landscapeLimit
+        let landscapeLimit = min(560, max(340, availableWidth * 0.58))
+        nextEpisodeButtonMaxWidthConstraint?.constant = isPortrait ? min(420, compactLimit) : landscapeLimit
     }
 #endif
     
@@ -2575,7 +2575,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         ])
 #endif
         if supportsSharedPlayerControls {
-            let nextEpisodeButtonMaxWidth = nextEpisodeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 460)
+            let nextEpisodeButtonMaxWidth = nextEpisodeButton.widthAnchor.constraint(lessThanOrEqualToConstant: 560)
             nextEpisodeButtonMaxWidth.priority = .required
             nextEpisodeButtonMaxWidthConstraint = nextEpisodeButtonMaxWidth
 
@@ -4446,8 +4446,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let aspectRatio = rawImage.size.width / rawImage.size.height
         let targetSize = aspectRatio < 0.85
-            ? CGSize(width: 48, height: 68)
-            : CGSize(width: 84, height: 48)
+            ? CGSize(width: 54, height: 76)
+            : CGSize(width: 96, height: 54)
 
         let scale = max(targetSize.width / rawImage.size.width, targetSize.height / rawImage.size.height)
         let drawSize = CGSize(width: rawImage.size.width * scale, height: rawImage.size.height * scale)

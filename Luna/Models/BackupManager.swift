@@ -67,6 +67,8 @@ struct BackupData: Codable {
     var seasonMenu: Bool = false
     var horizontalEpisodeList: Bool = false
     var useClassicScheduleUI: Bool = false
+    var mediaDetailElementOrder: String = MediaDetailElement.defaultOrderRawValue
+    var mediaDetailHiddenElements: String = ""
     var mediaColumnsPortrait: Int = 3
     var mediaColumnsLandscape: Int = 5
 
@@ -124,7 +126,7 @@ struct BackupData: Codable {
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
         case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcPiPEnabled, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, kanzenAutoMode, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaColumnsPortrait, mediaColumnsLandscape
+        case showKanzen, kanzenAutoMode, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold
@@ -194,6 +196,8 @@ struct BackupData: Codable {
         seasonMenu = try container.decodeIfPresent(Bool.self, forKey: .seasonMenu) ?? false
         horizontalEpisodeList = try container.decodeIfPresent(Bool.self, forKey: .horizontalEpisodeList) ?? false
         useClassicScheduleUI = try container.decodeIfPresent(Bool.self, forKey: .useClassicScheduleUI) ?? false
+        mediaDetailElementOrder = Self.sanitizedMediaDetailElementOrder(try container.decodeIfPresent(String.self, forKey: .mediaDetailElementOrder))
+        mediaDetailHiddenElements = Self.sanitizedMediaDetailHiddenElements(try container.decodeIfPresent(String.self, forKey: .mediaDetailHiddenElements))
         mediaColumnsPortrait = try container.decodeIfPresent(Int.self, forKey: .mediaColumnsPortrait) ?? 3
         mediaColumnsLandscape = try container.decodeIfPresent(Int.self, forKey: .mediaColumnsLandscape) ?? 5
 
@@ -340,6 +344,8 @@ struct BackupData: Codable {
         try container.encode(seasonMenu, forKey: .seasonMenu)
         try container.encode(horizontalEpisodeList, forKey: .horizontalEpisodeList)
         try container.encode(useClassicScheduleUI, forKey: .useClassicScheduleUI)
+        try container.encode(mediaDetailElementOrder, forKey: .mediaDetailElementOrder)
+        try container.encode(mediaDetailHiddenElements, forKey: .mediaDetailHiddenElements)
         try container.encode(mediaColumnsPortrait, forKey: .mediaColumnsPortrait)
         try container.encode(mediaColumnsLandscape, forKey: .mediaColumnsLandscape)
 
@@ -430,6 +436,8 @@ struct BackupData: Codable {
         seasonMenu: Bool = false,
         horizontalEpisodeList: Bool = false,
         useClassicScheduleUI: Bool = false,
+        mediaDetailElementOrder: String = MediaDetailElement.defaultOrderRawValue,
+        mediaDetailHiddenElements: String = "",
         mediaColumnsPortrait: Int = 3,
         mediaColumnsLandscape: Int = 5,
 
@@ -515,6 +523,8 @@ struct BackupData: Codable {
         self.seasonMenu = seasonMenu
         self.horizontalEpisodeList = horizontalEpisodeList
         self.useClassicScheduleUI = useClassicScheduleUI
+        self.mediaDetailElementOrder = Self.sanitizedMediaDetailElementOrder(mediaDetailElementOrder)
+        self.mediaDetailHiddenElements = Self.sanitizedMediaDetailHiddenElements(mediaDetailHiddenElements)
         self.mediaColumnsPortrait = mediaColumnsPortrait
         self.mediaColumnsLandscape = mediaColumnsLandscape
 
@@ -585,6 +595,14 @@ struct BackupData: Codable {
             return MPVMetalQualityProfile.defaultProfile.rawValue
         }
         return profile.rawValue
+    }
+
+    static func sanitizedMediaDetailElementOrder(_ value: String?) -> String {
+        MediaDetailElement.rawValue(for: MediaDetailElement.orderedElements(from: value))
+    }
+
+    static func sanitizedMediaDetailHiddenElements(_ value: String?) -> String {
+        MediaDetailElement.rawValue(for: MediaDetailElement.hiddenElements(from: value, legacyShowCastSection: true))
     }
 
 }
@@ -795,6 +813,8 @@ class BackupManager {
         let seasonMenu = userDefaults.bool(forKey: "seasonMenu")
         let horizontalEpisodeList = userDefaults.bool(forKey: "horizontalEpisodeList")
         let useClassicScheduleUI = userDefaults.bool(forKey: "useClassicScheduleUI")
+        let mediaDetailElementOrder = BackupData.sanitizedMediaDetailElementOrder(userDefaults.string(forKey: MediaDetailElement.orderStorageKey))
+        let mediaDetailHiddenElements = MediaDetailElement.rawValue(for: MediaDetailElement.hiddenElements(defaults: userDefaults))
         let mediaColumnsPortrait = userDefaults.object(forKey: "mediaColumnsPortrait") != nil ? userDefaults.integer(forKey: "mediaColumnsPortrait") : 3
         let mediaColumnsLandscape = userDefaults.object(forKey: "mediaColumnsLandscape") != nil ? userDefaults.integer(forKey: "mediaColumnsLandscape") : 5
 
@@ -952,6 +972,8 @@ class BackupManager {
             seasonMenu: seasonMenu,
             horizontalEpisodeList: horizontalEpisodeList,
             useClassicScheduleUI: useClassicScheduleUI,
+            mediaDetailElementOrder: mediaDetailElementOrder,
+            mediaDetailHiddenElements: mediaDetailHiddenElements,
             mediaColumnsPortrait: mediaColumnsPortrait,
             mediaColumnsLandscape: mediaColumnsLandscape,
 
@@ -1092,6 +1114,8 @@ class BackupManager {
         let seasonMenu = json["seasonMenu"] as? Bool ?? false
         let horizontalEpisodeList = json["horizontalEpisodeList"] as? Bool ?? false
         let useClassicScheduleUI = json["useClassicScheduleUI"] as? Bool ?? false
+        let mediaDetailElementOrder = BackupData.sanitizedMediaDetailElementOrder(json["mediaDetailElementOrder"] as? String)
+        let mediaDetailHiddenElements = BackupData.sanitizedMediaDetailHiddenElements(json["mediaDetailHiddenElements"] as? String)
         let mediaColumnsPortrait = json["mediaColumnsPortrait"] as? Int ?? 3
         let mediaColumnsLandscape = json["mediaColumnsLandscape"] as? Int ?? 5
 
@@ -1292,6 +1316,8 @@ class BackupManager {
             seasonMenu: seasonMenu,
             horizontalEpisodeList: horizontalEpisodeList,
             useClassicScheduleUI: useClassicScheduleUI,
+            mediaDetailElementOrder: mediaDetailElementOrder,
+            mediaDetailHiddenElements: mediaDetailHiddenElements,
             mediaColumnsPortrait: mediaColumnsPortrait,
             mediaColumnsLandscape: mediaColumnsLandscape,
             readingMode: readingMode,
@@ -1392,6 +1418,10 @@ class BackupManager {
         userDefaults.set(backup.seasonMenu, forKey: "seasonMenu")
         userDefaults.set(backup.horizontalEpisodeList, forKey: "horizontalEpisodeList")
         userDefaults.set(backup.useClassicScheduleUI, forKey: "useClassicScheduleUI")
+        let restoredMediaDetailHiddenElements = BackupData.sanitizedMediaDetailHiddenElements(backup.mediaDetailHiddenElements)
+        userDefaults.set(BackupData.sanitizedMediaDetailElementOrder(backup.mediaDetailElementOrder), forKey: MediaDetailElement.orderStorageKey)
+        userDefaults.set(restoredMediaDetailHiddenElements, forKey: MediaDetailElement.hiddenStorageKey)
+        userDefaults.set(!MediaDetailElement.hiddenElements(from: restoredMediaDetailHiddenElements, legacyShowCastSection: true).contains(.cast), forKey: MediaDetailElement.legacyShowCastStorageKey)
         userDefaults.set(backup.mediaColumnsPortrait, forKey: "mediaColumnsPortrait")
         userDefaults.set(backup.mediaColumnsLandscape, forKey: "mediaColumnsLandscape")
 

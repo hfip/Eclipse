@@ -13,6 +13,29 @@ enum AnimeExternalID: Hashable, Codable {
     case mal(Int)
 }
 
+enum AnimeMetadataRatingSource: String, Codable, Equatable {
+    case myAnimeList
+    case aniList
+    case tmdb
+
+    var label: String {
+        switch self {
+        case .myAnimeList: return "MAL"
+        case .aniList: return "AniList"
+        case .tmdb: return "TMDB"
+        }
+    }
+}
+
+struct AnimeMetadataRating: Codable, Equatable {
+    let value: Double
+    let source: AnimeMetadataRatingSource
+
+    var displayText: String {
+        "\(String(format: "%.1f/10", value)) (\(source.label))"
+    }
+}
+
 enum AnimeProviderFailureReason: String {
     case offline
     case anilistUnavailable
@@ -870,6 +893,68 @@ final class AniListService {
         }
     }
 
+    func preferredAnimeRating(
+        title: String,
+        tmdbShowId: Int,
+        tmdbShowDetail: TMDBTVShowWithSeasons,
+        tmdbService: TMDBService,
+        animeData: AniListAnimeWithSeasons?
+    ) async -> AnimeMetadataRating? {
+        if let existing = animeData?.rating, existing.source == .myAnimeList {
+            Logger.shared.log("AnimeRating: using MAL rating from metadata value=\(String(format: "%.1f", existing.value)) tmdbId=\(tmdbShowId)", type: "AniList")
+            return existing
+        }
+
+        if let malId = animeData?.malId {
+            do {
+                if let rating = try await MALMetadataService.shared.fetchAnimeRating(id: malId) {
+                    Logger.shared.log("AnimeRating: using MAL rating by id=\(malId) value=\(String(format: "%.1f", rating.value)) tmdbId=\(tmdbShowId)", type: "AniList")
+                    return rating
+                }
+            } catch {
+                Logger.shared.log("AnimeRating: MAL rating by id failed malId=\(malId) tmdbId=\(tmdbShowId) error=\(error.localizedDescription)", type: "AniList")
+            }
+        }
+
+        do {
+            if let rating = try await MALMetadataService.shared.fetchAnimeRating(
+                title: title,
+                tmdbShowId: tmdbShowId,
+                tmdbShow: tmdbShowDetail,
+                tmdbService: tmdbService
+            ) {
+                Logger.shared.log("AnimeRating: using MAL rating by search value=\(String(format: "%.1f", rating.value)) tmdbId=\(tmdbShowId)", type: "AniList")
+                return rating
+            }
+        } catch {
+            Logger.shared.log("AnimeRating: MAL rating search failed tmdbId=\(tmdbShowId) error=\(error.localizedDescription)", type: "AniList")
+        }
+
+        if let existing = animeData?.rating,
+           existing.source == .aniList,
+           !AnimeProviderHealthCenter.shared.isAniListTemporarilyUnavailable {
+            Logger.shared.log("AnimeRating: using AniList rating value=\(String(format: "%.1f", existing.value)) tmdbId=\(tmdbShowId)", type: "AniList")
+            return existing
+        } else if animeData?.rating?.source == .aniList {
+            Logger.shared.log("AnimeRating: skipping AniList rating because AniList is currently marked unavailable tmdbId=\(tmdbShowId)", type: "AniList")
+        }
+
+        guard tmdbShowDetail.voteAverage > 0 else {
+            Logger.shared.log("AnimeRating: no MAL/AniList/TMDB rating available tmdbId=\(tmdbShowId)", type: "AniList")
+            return nil
+        }
+
+        let tmdbRating = AnimeMetadataRating(value: tmdbShowDetail.voteAverage, source: .tmdb)
+        Logger.shared.log("AnimeRating: using TMDB fallback value=\(String(format: "%.1f", tmdbRating.value)) tmdbId=\(tmdbShowId)", type: "AniList")
+        return tmdbRating
+    }
+
+    private func aniListRating(from averageScore: Int?) -> AnimeMetadataRating? {
+        guard let averageScore, averageScore > 0 else { return nil }
+        let value = min(max(Double(averageScore) / 10.0, 0), 10)
+        return AnimeMetadataRating(value: value, source: .aniList)
+    }
+
     private func fetchAnimeDetailsWithEpisodesFromAniList(
         title: String,
         tmdbShowId: Int,
@@ -892,6 +977,8 @@ final class AniListService {
             Page(perPage: 6) {
                 media(search: "\(title.replacingOccurrences(of: "\"", with: "\\\""))", type: ANIME, sort: POPULARITY_DESC) {
                     id
+                    idMal
+                    averageScore
                     title {
                         romaji
                         english
@@ -915,6 +1002,8 @@ final class AniListService {
                             relationType
                             node {
                                 id
+                                idMal
+                                averageScore
                                 title {
                                     romaji
                                     english
@@ -935,6 +1024,8 @@ final class AniListService {
                                         relationType
                                         node {
                                             id
+                                            idMal
+                                            averageScore
                                             title { romaji english native }
                                             episodes
                                             status
@@ -1109,6 +1200,8 @@ final class AniListService {
                     Page(perPage: 20) {
                         media(search: "\(searchTitle.replacingOccurrences(of: "\"", with: "\\\""))", type: ANIME, sort: POPULARITY_DESC) {
                             id
+                            idMal
+                            averageScore
                             title { romaji english native }
                             episodes
                             status
@@ -1429,10 +1522,12 @@ final class AniListService {
 
         let animeWithSeasons = AniListAnimeWithSeasons(
             id: anime.id,
+            malId: anime.idMal,
             title: title,
             seasons: seasons,
             totalEpisodes: totalEpisodes,
-            status: anime.status ?? "UNKNOWN"
+            status: anime.status ?? "UNKNOWN",
+            rating: aniListRating(from: anime.averageScore)
         )
         
         // Cache the result for fast back-navigation
@@ -2569,6 +2664,7 @@ final class AniListService {
         let fragment = """
             id
             idMal
+            averageScore
             title { romaji english native }
             episodes
             status
@@ -2639,6 +2735,8 @@ final class AniListService {
                     relationType
                     node {
                         id
+                        idMal
+                        averageScore
                         title { romaji english native }
                         episodes
                         status
@@ -2653,6 +2751,8 @@ final class AniListService {
                                 relationType
                                 node {
                                     id
+                                    idMal
+                                    averageScore
                                     title { romaji english native }
                                     episodes
                                     status
@@ -2897,10 +2997,12 @@ struct AniListSpecialSearchEntry: Identifiable, Codable {
 
 struct AniListAnimeWithSeasons: Codable {
     let id: Int
+    let malId: Int?
     let title: String
     let seasons: [AniListSeasonWithPoster]
     let totalEpisodes: Int
     let status: String
+    let rating: AnimeMetadataRating?
 }
 
 // MARK: - AniList Codable Models
@@ -2942,6 +3044,7 @@ struct AniListDate: Codable {
 struct AniListAnime: Codable {
     let id: Int
     let idMal: Int?
+    let averageScore: Int?
     let title: AniListTitle
     let episodes: Int?
     let status: String?
@@ -2981,6 +3084,8 @@ struct AniListAnime: Codable {
 
     struct AniListRelationNode: Codable {
         let id: Int
+        let idMal: Int?
+        let averageScore: Int?
         let title: AniListTitle
         let episodes: Int?
         let status: String?
@@ -2995,7 +3100,8 @@ struct AniListAnime: Codable {
         func asAnime() -> AniListAnime {
             return AniListAnime(
                 id: id,
-                idMal: nil,
+                idMal: idMal,
+                averageScore: averageScore,
                 title: title,
                 episodes: episodes,
                 status: status,
@@ -3262,11 +3368,36 @@ private final class MALMetadataService {
         Logger.shared.log("MALMetadata: built fallback structure title='\(displayTitle(for: root))' seasons=\(seasons.count) episodes=\(totalEpisodes)", type: "AniList")
         return AniListAnimeWithSeasons(
             id: malProviderId(root.id),
+            malId: root.id,
             title: displayTitle(for: root),
             seasons: seasons,
             totalEpisodes: totalEpisodes,
-            status: root.status?.uppercased() ?? "UNKNOWN"
+            status: root.status?.uppercased() ?? "UNKNOWN",
+            rating: rating(from: root)
         )
+    }
+
+    func fetchAnimeRating(id: Int) async throws -> AnimeMetadataRating? {
+        let detail = try await fetchAnimeDetails(id: abs(id))
+        return rating(from: detail)
+    }
+
+    func fetchAnimeRating(
+        title: String,
+        tmdbShowId: Int,
+        tmdbShow: TMDBTVShowWithSeasons,
+        tmdbService: TMDBService
+    ) async throws -> AnimeMetadataRating? {
+        let candidates = try await searchCandidates(
+            title: title,
+            tmdbShowId: tmdbShowId,
+            tmdbShow: tmdbShow,
+            tmdbService: tmdbService
+        )
+        guard let root = pickBestMALMatch(from: candidates, tmdbShow: tmdbShow) else {
+            throw NSError(domain: "MALMetadata", code: 404, userInfo: [NSLocalizedDescriptionKey: "MAL did not return a usable rating match for \(title)"])
+        }
+        return rating(from: root)
     }
 
     func fetchSpecialSearchEntries(
@@ -3636,6 +3767,11 @@ private final class MALMetadataService {
             : detail.title
     }
 
+    private func rating(from detail: MALAnimeDetails) -> AnimeMetadataRating? {
+        guard let mean = detail.mean, mean > 0 else { return nil }
+        return AnimeMetadataRating(value: min(max(mean, 0), 10), source: .myAnimeList)
+    }
+
     private func estimatedNextAiringDate(for detail: MALAnimeDetails, start: Date, end: Date) -> Date? {
         guard detail.status == "currently_airing" else { return nil }
         var calendar = Calendar.current
@@ -3763,6 +3899,7 @@ private final class MALMetadataService {
         let title: String
         let mainPicture: MALPicture?
         let alternativeTitles: MALAlternativeTitles?
+        let mean: Double?
         let startDate: String?
         let mediaType: String?
         let status: String?
@@ -3772,7 +3909,7 @@ private final class MALMetadataService {
         let relatedAnime: [MALRelatedAnime]?
 
         enum CodingKeys: String, CodingKey {
-            case id, title, status, broadcast
+            case id, title, mean, status, broadcast
             case mainPicture = "main_picture"
             case alternativeTitles = "alternative_titles"
             case startDate = "start_date"

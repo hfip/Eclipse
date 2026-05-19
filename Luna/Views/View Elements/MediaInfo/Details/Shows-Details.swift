@@ -9,6 +9,78 @@ import SwiftUI
 import Kingfisher
 import AVKit
 
+struct TVShowDetailsSection: View {
+    let tvShow: TMDBTVShowWithSeasons?
+    let ratingOverride: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let tvShow {
+                Text("Details")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.horizontal)
+                    .padding(.top)
+                    .foregroundColor(.white)
+
+                VStack(spacing: 12) {
+                    if let numberOfSeasons = tvShow.numberOfSeasons, numberOfSeasons > 0 {
+                        DetailRow(title: "Seasons", value: "\(numberOfSeasons)")
+                    }
+
+                    if let numberOfEpisodes = tvShow.numberOfEpisodes, numberOfEpisodes > 0 {
+                        DetailRow(title: "Episodes", value: "\(numberOfEpisodes)")
+                    }
+
+                    if !tvShow.genres.isEmpty {
+                        DetailRow(title: "Genres", value: tvShow.genres.map { $0.name }.joined(separator: ", "))
+                    }
+
+                    if let ratingOverride {
+                        DetailRow(title: "Rating", value: ratingOverride)
+                    } else if tvShow.voteAverage > 0 {
+                        DetailRow(title: "Rating", value: String(format: "%.1f/10", tvShow.voteAverage))
+                    }
+
+                    if let ageRating = getAgeRating(from: tvShow.contentRatings) {
+                        DetailRow(title: "Age Rating", value: ageRating)
+                    }
+
+                    if let firstAirDate = tvShow.firstAirDate, !firstAirDate.isEmpty {
+                        DetailRow(title: "First aired", value: "\(firstAirDate)")
+                    }
+
+                    if let lastAirDate = tvShow.lastAirDate, !lastAirDate.isEmpty {
+                        DetailRow(title: "Last aired", value: "\(lastAirDate)")
+                    }
+
+                    if let status = tvShow.status {
+                        DetailRow(title: "Status", value: status)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 16)
+                .applyLiquidGlassBackground(cornerRadius: 16)
+                .padding(.horizontal)
+            }
+        }
+    }
+
+    private func getAgeRating(from contentRatings: TMDBContentRatings?) -> String? {
+        guard let contentRatings else { return nil }
+
+        for rating in contentRatings.results where rating.iso31661 == "US" && !rating.rating.isEmpty {
+            return rating.rating
+        }
+
+        for rating in contentRatings.results where !rating.rating.isEmpty {
+            return rating.rating
+        }
+
+        return nil
+    }
+}
+
 struct TVShowSeasonsSection<InsertedContent: View>: View {
     let tvShow: TMDBTVShowWithSeasons?
     let isAnime: Bool
@@ -21,6 +93,8 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     var animeEpisodes: [AniListEpisode]? = nil
     var animeSeasonTitles: [Int: String]? = nil
     var animeSeasonRomajiTitles: [Int: String] = [:]
+    var showsMetadataDetails: Bool = true
+    var showsInsertedContent: Bool = true
     let tmdbService: TMDBService
     @ViewBuilder let insertedContent: () -> InsertedContent
     
@@ -127,52 +201,13 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             if let tvShow = tvShow {
                 let _ = Logger.shared.log("TVShowSeasonsSection body branch tvShow: showId=\(tvShow.id) seasons=\(tvShow.seasons.count) grouped=\(isGroupedBySeasons) menu=\(useSeasonMenu)", type: "CrashProbe")
-                Text("Details")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .padding(.horizontal)
-                    .padding(.top)
-                    .foregroundColor(.white)
-                
-                VStack(spacing: 12) {
-                    if let numberOfSeasons = tvShow.numberOfSeasons, numberOfSeasons > 0 {
-                        DetailRow(title: "Seasons", value: "\(numberOfSeasons)")
-                    }
-                    
-                    if let numberOfEpisodes = tvShow.numberOfEpisodes, numberOfEpisodes > 0 {
-                        DetailRow(title: "Episodes", value: "\(numberOfEpisodes)")
-                    }
-                    
-                    if !tvShow.genres.isEmpty {
-                        DetailRow(title: "Genres", value: tvShow.genres.map { $0.name }.joined(separator: ", "))
-                    }
-                    
-                    if tvShow.voteAverage > 0 {
-                        DetailRow(title: "Rating", value: String(format: "%.1f/10", tvShow.voteAverage))
-                    }
-                    
-                    if let ageRating = getAgeRating(from: tvShow.contentRatings) {
-                        DetailRow(title: "Age Rating", value: ageRating)
-                    }
-                    
-                    if let firstAirDate = tvShow.firstAirDate, !firstAirDate.isEmpty {
-                        DetailRow(title: "First aired", value: "\(firstAirDate)")
-                    }
-                    
-                    if let lastAirDate = tvShow.lastAirDate, !lastAirDate.isEmpty {
-                        DetailRow(title: "Last aired", value: "\(lastAirDate)")
-                    }
-                    
-                    if let status = tvShow.status {
-                        DetailRow(title: "Status", value: status)
-                    }
+                if showsMetadataDetails {
+                    TVShowDetailsSection(tvShow: tvShow)
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 16)
-                .applyLiquidGlassBackground(cornerRadius: 16)
-                .padding(.horizontal)
-                
-                insertedContent()
+
+                if showsInsertedContent {
+                    insertedContent()
+                }
                 
                 if !tvShow.seasons.isEmpty {
                     let _ = Logger.shared.log("TVShowSeasonsSection body branch seasons-present: showId=\(tvShow.id) seasons=\(tvShow.seasons.count)", type: "CrashProbe")
@@ -891,24 +926,6 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         }
 
         loadSeasonDetails(tvShowId: tvShowId, season: season)
-    }
-    
-    private func getAgeRating(from contentRatings: TMDBContentRatings?) -> String? {
-        guard let contentRatings = contentRatings else { return nil }
-        
-        for rating in contentRatings.results {
-            if rating.iso31661 == "US" && !rating.rating.isEmpty {
-                return rating.rating
-            }
-        }
-        
-        for rating in contentRatings.results {
-            if !rating.rating.isEmpty {
-                return rating.rating
-            }
-        }
-        
-        return nil
     }
     
     private func startDownloadAllSeason() {

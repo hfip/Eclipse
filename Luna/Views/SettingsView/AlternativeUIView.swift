@@ -11,13 +11,14 @@ struct AlternativeUIView: View {
     @AppStorage("seasonMenu") private var useSeasonMenu = false
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList = false
     @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
-    @AppStorage("showCastSection") private var showCastSection = true
     @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
     @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
     
     @StateObject private var accentColorManager = AccentColorManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
     @ObservedObject private var theme = LunaTheme.shared
+    @State private var mediaDetailElements = MediaDetailElement.orderedElements()
+    @State private var hiddenMediaDetailElements = MediaDetailElement.hiddenElements()
     
     var body: some View {
         List {
@@ -89,26 +90,40 @@ struct AlternativeUIView: View {
             } header: {
                 Text("Settings Theme")
             }
-            
+
             Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Show Cast Section")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("Show cast rows on media detail pages.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $showCastSection)
-                        .tint(accentColorManager.currentAccentColor)
+                ForEach(mediaDetailElements) { element in
+                    mediaDetailElementRow(element)
                 }
+                .onMove(perform: moveMediaDetailElements)
 
+                Button(action: resetMediaDetailElements) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Reset Media Detail Layout")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            Text("Restore the default order and visibility.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "arrow.counterclockwise")
+                            .foregroundColor(accentColorManager.currentAccentColor)
+                    }
+                }
+            } header: {
+                Text("Media Detail Page")
+            } footer: {
+                Text("Drag rows to change their order. Hidden rows will not appear on media detail pages. Episodes only appear for series.")
+            }
+            .environment(\.editMode, .constant(.active))
+
+            Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Alternative Season Menu")
@@ -268,6 +283,62 @@ struct AlternativeUIView: View {
         }
         .navigationTitle("Appearance")
         .lunaSettingsStyle()
+        .onAppear(perform: reloadMediaDetailElements)
+    }
+
+    private func mediaDetailElementRow(_ element: MediaDetailElement) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(element.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Text(element.settingsDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+
+                Text(hiddenMediaDetailElements.contains(element) ? "Hidden" : "Visible")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { !hiddenMediaDetailElements.contains(element) },
+                set: { setMediaDetailElement(element, visible: $0) }
+            ))
+            .labelsHidden()
+            .tint(accentColorManager.currentAccentColor)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func reloadMediaDetailElements() {
+        mediaDetailElements = MediaDetailElement.orderedElements()
+        hiddenMediaDetailElements = MediaDetailElement.hiddenElements()
+    }
+
+    private func moveMediaDetailElements(from source: IndexSet, to destination: Int) {
+        mediaDetailElements.move(fromOffsets: source, toOffset: destination)
+        MediaDetailElement.saveOrder(mediaDetailElements)
+    }
+
+    private func setMediaDetailElement(_ element: MediaDetailElement, visible: Bool) {
+        if visible {
+            hiddenMediaDetailElements.remove(element)
+        } else {
+            hiddenMediaDetailElements.insert(element)
+        }
+        MediaDetailElement.saveHiddenElements(hiddenMediaDetailElements)
+    }
+
+    private func resetMediaDetailElements() {
+        mediaDetailElements = MediaDetailElement.defaultOrder
+        hiddenMediaDetailElements = []
+        MediaDetailElement.saveOrder(mediaDetailElements)
+        MediaDetailElement.saveHiddenElements(hiddenMediaDetailElements)
     }
     
     private func colorsMatch(_ a: Color, _ b: Color) -> Bool {

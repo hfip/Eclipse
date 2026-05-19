@@ -22,6 +22,7 @@ private final class MediaDetailCacheStore {
         let romajiTitle: String?
         let logoURL: String?
         let isAnimeShow: Bool
+        let animeRating: AnimeMetadataRating?
         let anilistEpisodes: [AniListEpisode]?
         let animeSeasonTitles: [Int: String]?
         let animeSeasonRomajiTitles: [Int: String]
@@ -68,6 +69,7 @@ private final class MediaDetailCacheStore {
             romajiTitle: existing.romajiTitle,
             logoURL: existing.logoURL,
             isAnimeShow: existing.isAnimeShow,
+            animeRating: existing.animeRating,
             anilistEpisodes: existing.anilistEpisodes,
             animeSeasonTitles: existing.animeSeasonTitles,
             animeSeasonRomajiTitles: existing.animeSeasonRomajiTitles,
@@ -100,6 +102,7 @@ struct MediaDetailView: View {
     @State private var romajiTitle: String?
     @State private var logoURL: String?
     @State private var isAnimeShow = false
+    @State private var animeRating: AnimeMetadataRating?
     @State private var anilistEpisodes: [AniListEpisode]? = nil
     @State private var animeSeasonTitles: [Int: String]? = nil
     @State private var animeSeasonRomajiTitles: [Int: String] = [:]
@@ -128,7 +131,9 @@ struct MediaDetailView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("tmdbLanguage") private var selectedLanguage = "en-US"
-    @AppStorage("showCastSection") private var showCastSection = true
+    @AppStorage("mediaDetailElementOrder") private var mediaDetailElementOrder = MediaDetailElement.defaultOrderRawValue
+    @AppStorage("mediaDetailHiddenElements") private var mediaDetailHiddenElements = ""
+    @AppStorage("showCastSection") private var legacyShowCastSection = true
     private let nextEpisodeSheetPresentationDelay: TimeInterval = 1.2
 
     private var atmosphereColor: Color {
@@ -141,6 +146,19 @@ struct MediaDetailView: View {
 
     private var preferDownloadedMedia: Bool {
         UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
+    }
+
+    private var visibleMediaDetailElements: [MediaDetailElement] {
+        MediaDetailElement.orderedElements(from: mediaDetailElementOrder).filter { element in
+            guard MediaDetailElement.isVisible(
+                element,
+                hiddenRawValue: mediaDetailHiddenElements,
+                legacyShowCastSection: legacyShowCastSection
+            ) else {
+                return false
+            }
+            return searchResult.isMovie ? element.appliesToMovies : element.appliesToSeries
+        }
     }
 
     private var hasPlayableDownloadForMainButton: Bool {
@@ -542,19 +560,8 @@ struct MediaDetailView: View {
         let _ = Logger.shared.log("MediaDetailView construct contentContainer: id=\(searchResult.id) movie=\(searchResult.isMovie) cast=\(castMembers.count)", type: "CrashProbe")
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
-                synopsisSection
-                playAndBookmarkSection
-                
-                if searchResult.isMovie {
-                    MovieDetailsSection(movie: movieDetail)
-                    
-                    if showCastSection && !castMembers.isEmpty {
-                        castSection
-                    }
-                    
-                    StarRatingView(mediaId: searchResult.id, isAnime: false)
-                } else {
-                    episodesSection
+                ForEach(visibleMediaDetailElements) { element in
+                    mediaDetailElementView(element)
                 }
                 
                 Spacer(minLength: 50)
@@ -740,17 +747,42 @@ struct MediaDetailView: View {
                 animeEpisodes: anilistEpisodes,
                 animeSeasonTitles: animeSeasonTitles,
                 animeSeasonRomajiTitles: animeSeasonRomajiTitles,
+                showsMetadataDetails: false,
+                showsInsertedContent: false,
                 tmdbService: tmdbService
             ) {
-                if showCastSection && !castMembers.isEmpty {
-                    castSection
-                }
-                
-                StarRatingView(mediaId: searchResult.id, isAnime: isAnimeShow)
+                EmptyView()
             }
             .onAppear {
                 Logger.shared.log("MediaDetailView episodesSection appeared: tmdbId=\(searchResult.id) isAnime=\(isAnimeShow) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil") anilistEpisodes=\(anilistEpisodes?.count ?? 0)", type: "CrashProbe")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func mediaDetailElementView(_ element: MediaDetailElement) -> some View {
+        switch element {
+        case .actions:
+            playAndBookmarkSection
+        case .overview:
+            synopsisSection
+        case .details:
+            if searchResult.isMovie {
+                MovieDetailsSection(movie: movieDetail)
+            } else {
+                TVShowDetailsSection(
+                    tvShow: tvShowDetail,
+                    ratingOverride: isAnimeShow ? animeRating?.displayText : nil
+                )
+            }
+        case .cast:
+            if !castMembers.isEmpty {
+                castSection
+            }
+        case .ratingNotes:
+            StarRatingView(mediaId: searchResult.id, isAnime: isAnimeShow)
+        case .episodes:
+            episodesSection
         }
     }
 
@@ -1382,6 +1414,7 @@ struct MediaDetailView: View {
                 self.romajiTitle = cached.romajiTitle
                 self.logoURL = cached.logoURL
                 self.isAnimeShow = cached.isAnimeShow
+                self.animeRating = cached.animeRating
                 self.anilistEpisodes = cached.anilistEpisodes
                 self.animeSeasonTitles = cached.animeSeasonTitles
                 self.animeSeasonRomajiTitles = cached.animeSeasonRomajiTitles
@@ -1411,6 +1444,7 @@ struct MediaDetailView: View {
         errorMessage = nil
         seasonDetail = nil
         selectedEpisodeForSearch = nil
+        animeRating = nil
         animeSeasonRomajiTitles = [:]
         animeSeasonAniListIds = [:]
         animeSpecialEntries = []
@@ -1459,6 +1493,7 @@ struct MediaDetailView: View {
                             self.logoURL = logo.fullURL
                         }
                         self.castMembers = credits?.cast ?? []
+                        self.animeRating = nil
                         self.animeSpecialEntries = []
                         self.isLoadingAnimeSpecials = false
                         self.selectedSpecialEpisodeContext = nil
@@ -1474,6 +1509,7 @@ struct MediaDetailView: View {
                             romajiTitle: self.romajiTitle,
                             logoURL: self.logoURL,
                             isAnimeShow: false,
+                            animeRating: nil,
                             anilistEpisodes: nil,
                             animeSeasonTitles: nil,
                             animeSeasonRomajiTitles: [:],
@@ -1553,6 +1589,19 @@ struct MediaDetailView: View {
                         Logger.shared.log("MediaDetailView: Skipping AniList fetch — not detected as anime", type: "AniList")
                     }
                     
+                    let resolvedAnimeRating: AnimeMetadataRating?
+                    if detectedAsAnime {
+                        resolvedAnimeRating = await AniListService.shared.preferredAnimeRating(
+                            title: detail.name,
+                            tmdbShowId: detail.id,
+                            tmdbShowDetail: detail,
+                            tmdbService: tmdbService,
+                            animeData: animeData
+                        )
+                    } else {
+                        resolvedAnimeRating = nil
+                    }
+
                     Logger.shared.log("TV detail step: apply state start id=\(searchResult.id)", type: "CrashProbe")
                     if Task.isCancelled { return }
                     await MainActor.run {
@@ -1561,6 +1610,7 @@ struct MediaDetailView: View {
                         self.synopsis = detail.overview ?? ""
                         self.romajiTitle = romaji
                         self.isAnimeShow = detectedAsAnime
+                        self.animeRating = resolvedAnimeRating
                         self.castMembers = credits?.cast ?? []
                         
                         if let animeData = animeData {
@@ -1689,6 +1739,7 @@ struct MediaDetailView: View {
                             romajiTitle: self.romajiTitle,
                             logoURL: self.logoURL,
                             isAnimeShow: self.isAnimeShow,
+                            animeRating: self.animeRating,
                             anilistEpisodes: self.anilistEpisodes,
                             animeSeasonTitles: self.animeSeasonTitles,
                             animeSeasonRomajiTitles: self.animeSeasonRomajiTitles,
