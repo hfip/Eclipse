@@ -1434,7 +1434,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             guard let self else { return nil }
             return self.delegate?.renderer(self, getSubtitleForTime: request.presentationTime)
         }
-        output.onFrameEnqueued = { [weak self] in
+        output.onFirstFrameEnqueued = { [weak self] in
             guard let self else { return }
             self.sampleBufferOutputHasPrimedFrame = true
             self.showSampleBufferDisplayLayer(reason: "inline sample-buffer first frame")
@@ -1714,7 +1714,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             guard let self else { return nil }
             return self.delegate?.renderer(self, getSubtitleForTime: request.presentationTime)
         }
-        output.onFrameEnqueued = { [weak self] in
+        output.onFirstFrameEnqueued = { [weak self] in
             guard let self else { return }
             self.sampleBufferOutputHasPrimedFrame = true
             self.showSampleBufferDisplayLayer(reason: "dedicated sample-buffer first frame")

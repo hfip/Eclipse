@@ -1003,6 +1003,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var lastVLCUIProgressAnomalyKey: String?
     private var lastVLCUIProgressAnomalyLogTime: CFTimeInterval = 0
     private var lastPiPButtonVisibilityLogKey: String?
+    private var lastNativeVLCPiPAvailability: Bool?
+    private var lastNativeVLCPiPActive: Bool?
 
     private var isRendererLoading: Bool = false
     private var isClosing = false
@@ -1822,8 +1824,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("Failed to start \(rendererName) renderer: \(error)", type: "Error")
         }
 
-        pipController = PiPController(sampleBufferDisplayLayer: displayLayer)
-        pipController?.delegate = self
+        if isVLCPlayer {
+            pipController = nil
+            logVLCUI("skipping MPV PiPController for native VLC PiP path", type: "Player")
+        } else {
+            pipController = PiPController(sampleBufferDisplayLayer: displayLayer)
+            pipController?.delegate = self
+        }
         updatePiPButtonVisibility()
         
         showControlsTemporarily()
@@ -7987,8 +7994,12 @@ extension PlayerViewController: VLCRendererDelegate {
         if isClosing { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            Logger.shared.log("[PlayerVC.PiP] native VLC availability changed available=\(isAvailable) enabled=\(Settings.shared.vlcPiPEnabled) active=\(renderer.isPictureInPictureActive) paused=\(self.rendererIsPausedState())", type: "Player")
-            self.logVLCUIViewSnapshot("delegate didChangePictureInPictureAvailability")
+            let changed = self.lastNativeVLCPiPAvailability != isAvailable
+            self.lastNativeVLCPiPAvailability = isAvailable
+            if changed {
+                Logger.shared.log("[PlayerVC.PiP] native VLC availability changed available=\(isAvailable) enabled=\(Settings.shared.vlcPiPEnabled) active=\(renderer.isPictureInPictureActive) paused=\(self.rendererIsPausedState())", type: "Player")
+                self.logVLCUIViewSnapshot("delegate didChangePictureInPictureAvailability")
+            }
             self.updatePiPButtonVisibility()
         }
     }
@@ -7997,8 +8008,12 @@ extension PlayerViewController: VLCRendererDelegate {
         if isClosing { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            Logger.shared.log("[PlayerVC.PiP] native VLC active changed active=\(isActive) enabled=\(Settings.shared.vlcPiPEnabled) available=\(renderer.isPictureInPictureAvailable) paused=\(self.rendererIsPausedState())", type: "Player")
-            self.logVLCUIViewSnapshot("delegate didChangePictureInPictureActive")
+            let changed = self.lastNativeVLCPiPActive != isActive
+            self.lastNativeVLCPiPActive = isActive
+            if changed {
+                Logger.shared.log("[PlayerVC.PiP] native VLC active changed active=\(isActive) enabled=\(Settings.shared.vlcPiPEnabled) available=\(renderer.isPictureInPictureAvailable) paused=\(self.rendererIsPausedState())", type: "Player")
+                self.logVLCUIViewSnapshot("delegate didChangePictureInPictureActive")
+            }
             self.updatePiPButtonVisibility()
             renderer.updatePictureInPicturePlaybackState()
         }
