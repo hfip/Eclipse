@@ -88,6 +88,19 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var overlayMenuHandlers: [Int: () -> Void] = [:]
     private var nextOverlayMenuHandlerID = 1
     private var overlayMenuKind: String?
+    private lazy var usesOverlayPlayerMenusForSession: Bool = {
+#if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+        let requestedChoice = Settings.shared.playerChoice
+        guard smartInAppPlayerChoice(requested: requestedChoice).choice == .mpv else { return false }
+        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(
+            requested: Settings.shared.mpvRenderBackend,
+            hasMetalDevice: MPVKitMetalRenderer.isAvailable
+        )
+        return effectiveBackend == .metal
+#else
+        return false
+#endif
+    }()
 
     private let videoContainer: UIView = {
         let v = UIView()
@@ -680,24 +693,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         case .lowHeat:
             return .lowHeat(reason: "manual low heat; \(device.reason)")
         case .auto:
-            if device.isThermallyConstrained {
-                return .lowHeat(reason: "auto thermal=\(device.thermalState); \(device.reason)")
-            }
-
-            if let riskReason = classification.riskReason {
-                if device.isConstrained {
-                    return .lowHeat(reason: "auto risky \(riskReason); \(device.reason)")
-                }
-                return .balanced(reason: "auto risky \(riskReason); \(device.reason)")
-            }
-
-            if device.isConstrained {
+            switch ProcessInfo.processInfo.thermalState {
+            case .critical:
+                return .lowHeat(reason: "auto thermal=critical; \(device.reason)")
+            case .serious:
+                return .balanced(reason: "auto thermal=serious; \(device.reason)")
+            default:
                 let safeText = classification.safeReason ?? "no risky stream markers"
-                return .balanced(reason: "auto constrained \(safeText); \(device.reason)")
+                if let riskReason = classification.riskReason {
+                    return .sharp(reason: "auto starts sharp despite \(riskReason); \(device.reason)")
+                }
+                return .sharp(reason: "auto starts sharp \(safeText); \(device.reason)")
             }
-
-            let safeText = classification.safeReason ?? "no risky stream markers"
-            return .sharp(reason: "auto \(safeText); \(device.reason)")
         }
     }
 
@@ -3616,7 +3623,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var usesOverlayPlayerMenus: Bool {
-        false
+        usesOverlayPlayerMenusForSession
     }
 
     @objc private func playerMenuButtonTouchDown(_ sender: UIButton) {
@@ -3629,6 +3636,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             reason = "subtitle-menu"
         } else {
             reason = "player-menu"
+        }
+        if usesOverlayPlayerMenus {
+            Logger.shared.log("[PlayerVC.Menu] opening lightweight overlay reason=\(reason) renderer=\(mpvRendererName)", type: "MPV")
         }
         mpvRenderer?.beginForegroundUIStallRecovery(reason: reason)
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
@@ -3798,6 +3808,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateSpeedMenu() {
+        if usesOverlayPlayerMenus {
+            speedButton.menu = nil
+            return
+        }
+
         let currentSpeed = rendererGetSpeed()
         let speeds: [(String, Double)] = [
             ("0.25x", 0.25),
@@ -3893,40 +3908,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func updateAudioTracksMenu() {
         let detailedTracks = rendererGetAudioTracksDetailed()
         let tracks = detailedTracks.map { ($0.0, $0.1) }
-        var trackActions: [UIAction] = []
         
         // Always show the audio button so the user can view the menu even when empty
         audioButton.isHidden = false
 
         Logger.shared.log("PlayerViewController: audio tracks count=\(tracks.count) isAnime=\(isAnimeContent()) userSelected=\(userSelectedAudioTrack) renderer=\(vlcRenderer != nil ? "VLC" : "MPV")", type: "Player")
-        
-        if tracks.isEmpty {
-            let noTracksAction = UIAction(title: "No audio tracks available", state: .off) { _ in }
-            let audioMenu = UIMenu(title: "Audio Tracks", image: UIImage(systemName: "speaker.wave.2"), children: [noTracksAction])
-            audioButton.menu = audioMenu
-            return
-        }
 
         let currentAudioTrackId = rendererGetCurrentAudioTrackId()
-        trackActions = tracks.map { (id, name) in
-            UIAction(
-                title: name,
-                state: id == currentAudioTrackId ? .on : .off
-            ) { [weak self] _ in
-                self?.userSelectedAudioTrack = true
-                self?.rendererSetAudioTrack(id: id)
-                // Debounce menu update to avoid lag - only update after 0.3s of no selection changes
-                self?.audioMenuDebounceTimer?.invalidate()
-                self?.audioMenuDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
-                    DispatchQueue.main.async { [weak self] in
-                        self?.updateAudioTracksMenu()
-                    }
-                }
-            }
-        }
-
-        // Auto-select preferred anime audio language when applicable and user hasn't picked a track yet
-        if isAnimeContent() && !userSelectedAudioTrack {
+        let shouldAutoSelectAnimeAudio = !tracks.isEmpty && isAnimeContent() && !userSelectedAudioTrack
+        if shouldAutoSelectAnimeAudio {
             let preferredLang = Settings.shared.preferredAnimeAudioLanguage.lowercased()
             let tokens = languageTokens(for: preferredLang)
 
@@ -3953,6 +3943,35 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("PlayerViewController: Auto anime audio skipped (isAnime=false)", type: "Player")
         } else if userSelectedAudioTrack {
             Logger.shared.log("PlayerViewController: Auto anime audio skipped (user already selected)", type: "Player")
+        }
+
+        if usesOverlayPlayerMenus {
+            audioButton.menu = nil
+            return
+        }
+
+        if tracks.isEmpty {
+            let noTracksAction = UIAction(title: "No audio tracks available", state: .off) { _ in }
+            let audioMenu = UIMenu(title: "Audio Tracks", image: UIImage(systemName: "speaker.wave.2"), children: [noTracksAction])
+            audioButton.menu = audioMenu
+            return
+        }
+
+        let trackActions = tracks.map { (id, name) in
+            UIAction(
+                title: name,
+                state: id == currentAudioTrackId ? .on : .off
+            ) { [weak self] _ in
+                self?.userSelectedAudioTrack = true
+                self?.rendererSetAudioTrack(id: id)
+                // Debounce menu update to avoid lag - only update after 0.3s of no selection changes
+                self?.audioMenuDebounceTimer?.invalidate()
+                self?.audioMenuDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.updateAudioTracksMenu()
+                    }
+                }
+            }
         }
         
         let audioMenu = UIMenu(title: "Audio Tracks", image: UIImage(systemName: "speaker.wave.2"), children: trackActions)
@@ -5114,6 +5133,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 Logger.shared.log("[PlayerVC.Subtitles] defaults disabled; subtitles forced off", type: "Player")
             }
             updateSubtitleButtonAppearance()
+        }
+
+        if usesOverlayPlayerMenus {
+            subtitleButton.menu = nil
+            return
         }
         
         var trackActions: [UIAction] = []

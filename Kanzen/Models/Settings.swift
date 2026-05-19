@@ -54,7 +54,7 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Adjusts Metal sample-buffer quality from the stream or downloaded file risk and the device's current capability."
+            return "Starts Metal sample-buffer playback at 1080p and only lowers quality if iOS reports serious thermal pressure."
         case .balanced:
             return "Renders up to 720p sample buffers, then lets iOS scale to the screen."
         case .lowHeat:
@@ -69,7 +69,7 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
 
 struct MPVRenderBackendSupport {
     static let bundledMPVKitVersion = "0.41.0"
-    static let bundledMPVKitRevision = "63ef1aac838094280be929b049aaaabdf16bf2fb"
+    static let bundledMPVKitRevision = "3257830892c6b8cf44e0007aca2a4cef8064bc90"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
 
     #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP
