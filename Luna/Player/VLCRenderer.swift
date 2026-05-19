@@ -1141,22 +1141,33 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 updatePictureInPicturePlaybackState()
                 return
             }
+            let wasPaused = isPaused
+            let becameReadyToSeek = !isReadyToSeek
             isPaused = false
             isReadyToSeek = true
             clearLoadingState()
             
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.delegate?.renderer(self, didChangePause: false)
-                self.delegate?.renderer(self, didBecomeReadyToSeek: true)
+            if wasPaused || becameReadyToSeek {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if wasPaused {
+                        self.delegate?.renderer(self, didChangePause: false)
+                    }
+                    if becameReadyToSeek {
+                        self.delegate?.renderer(self, didBecomeReadyToSeek: true)
+                    }
+                }
             }
             
         } else if isVLCPlayerPausedState(state) {
+            let wasPaused = isPaused
             isPaused = true
             stopProgressPolling()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.delegate?.renderer(self, didChangePause: true)
+            if !wasPaused {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.delegate?.renderer(self, didChangePause: true)
+                }
             }
             
         } else if isLoadingState(state) {
@@ -1169,23 +1180,34 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 updatePictureInPicturePlaybackState()
                 return
             }
+            let wasLoading = isLoading
             isLoading = true
-            scheduleLoadingSanityChecks()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.delegate?.renderer(self, didChangeLoading: true)
+            if !wasLoading {
+                scheduleLoadingSanityChecks()
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.delegate?.renderer(self, didChangeLoading: true)
+                }
             }
 
         } else if recoverFromSampleBufferStartupFailureIfNeeded(player, state: state) {
             return
         } else if isTerminalState(state) {
+            let wasPaused = isPaused
+            let wasLoading = isLoading
             isPaused = true
             isLoading = false
             stopProgressPolling()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.delegate?.renderer(self, didChangePause: true)
-                self.delegate?.renderer(self, didChangeLoading: false)
+            if !wasPaused || wasLoading {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if !wasPaused {
+                        self.delegate?.renderer(self, didChangePause: true)
+                    }
+                    if wasLoading {
+                        self.delegate?.renderer(self, didChangeLoading: false)
+                    }
+                }
             }
             if isErrorState(state) {
                 DispatchQueue.main.async { [weak self] in
@@ -1415,6 +1437,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         output.onFrameEnqueued = { [weak self] in
             guard let self else { return }
             self.sampleBufferOutputHasPrimedFrame = true
+            self.showSampleBufferDisplayLayer(reason: "inline sample-buffer first frame")
             self.delegate?.renderer(self, didChangePictureInPictureAvailability: self.isPictureInPictureAvailable)
         }
 
@@ -1429,9 +1452,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             nativePiPController?.delegate = self
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.displayLayer.isHidden = false
-                self.displayLayer.opacity = 1.0
-                self.displayLayer.zPosition = 0
+                self.hideSampleBufferDisplayLayer(reason: "inline sample-buffer awaiting first frame", flush: false)
                 self.displayLayer.videoGravity = .resizeAspect
                 self.delegate?.renderer(self, didChangePictureInPictureAvailability: self.isPictureInPictureAvailable)
             }
@@ -1471,6 +1492,41 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 displayLayer.flushAndRemoveImage()
                 displayLayer.controlTimebase = nil
             }
+        }
+    }
+
+    private func showSampleBufferDisplayLayer(reason: String) {
+        let work = { [weak self] in
+            guard let self else { return }
+            self.displayLayer.isHidden = false
+            self.displayLayer.opacity = 1.0
+            self.displayLayer.zPosition = 0
+            self.displayLayer.videoGravity = .resizeAspect
+            self.logVLC("sample-buffer displayLayer shown reason=\(reason)", type: "Player")
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
+        }
+    }
+
+    private func hideSampleBufferDisplayLayer(reason: String, flush: Bool) {
+        let work = { [weak self] in
+            guard let self else { return }
+            self.displayLayer.isHidden = true
+            self.displayLayer.opacity = 0.0
+            self.displayLayer.zPosition = -1
+            if flush {
+                self.displayLayer.flushAndRemoveImage()
+                self.displayLayer.controlTimebase = nil
+            }
+            self.logVLC("sample-buffer displayLayer hidden reason=\(reason) flush=\(flush)", type: "Player")
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
         }
     }
 
@@ -1613,12 +1669,16 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             return true
         }
 
-        let started = controller.startPictureInPicture()
-        Logger.shared.log("[VLCRenderer] VLC PiP start requested result=\(started) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive)", type: "Player")
-        if !started {
-            restoreDrawableRenderingAfterSampleBuffer(reason: "sample-buffer start rejected", disableForSession: true)
+        DispatchQueue.main.async { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            self.showSampleBufferDisplayLayer(reason: "sample-buffer immediate PiP start")
+            let started = controller.startPictureInPicture()
+            Logger.shared.log("[VLCRenderer] VLC PiP start requested result=\(started) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive)", type: "Player")
+            if !started {
+                self.restoreDrawableRenderingAfterSampleBuffer(reason: "sample-buffer start rejected", disableForSession: true)
+            }
         }
-        return started
+        return true
     }
 
     @available(iOS 15.0, *)
@@ -1657,6 +1717,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         output.onFrameEnqueued = { [weak self] in
             guard let self else { return }
             self.sampleBufferOutputHasPrimedFrame = true
+            self.showSampleBufferDisplayLayer(reason: "dedicated sample-buffer first frame")
             self.delegate?.renderer(self, didChangePictureInPictureAvailability: self.isPictureInPictureAvailable)
         }
         output.onDebugEvent = { [weak self] event in
@@ -1664,6 +1725,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         }
 
         do {
+            pipPlayer.drawable = nil
             try output.attach(to: pipPlayer)
         } catch {
             logVLC("failed to attach dedicated VLCKitSPM sample-buffer PiP output: \(error); keeping drawable player active", type: "Error")
@@ -1680,15 +1742,12 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         nativePiPController?.delegate = self
 
         pipPlayer.media = media
-        pipPlayer.drawable = nil
         pipPlayer.rate = Float(currentPlaybackSpeed)
         ensureAudioSessionActive()
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.displayLayer.isHidden = false
-            self.displayLayer.opacity = 1.0
-            self.displayLayer.zPosition = 0
+            self.hideSampleBufferDisplayLayer(reason: "dedicated sample-buffer awaiting first frame", flush: false)
             self.displayLayer.videoGravity = .resizeAspect
             self.delegate?.renderer(self, didChangePictureInPictureAvailability: self.isPictureInPictureAvailable)
         }
@@ -1734,10 +1793,14 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             }
 
             if self.sampleBufferOutputHasPrimedFrame {
-                let started = controller.startPictureInPicture()
-                self.logVLC("VLC PiP delayed start attempt=\(attempt) result=\(started) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive) snapshot={\(self.playerSnapshot())} pip={\(self.pictureInPicturePlayerSnapshot())}", type: "Player")
-                if !started {
-                    self.restoreDrawableRenderingAfterSampleBuffer(reason: "sample-buffer delayed start rejected", disableForSession: true)
+                DispatchQueue.main.async { [weak self, weak controller] in
+                    guard let self, let controller else { return }
+                    self.showSampleBufferDisplayLayer(reason: "sample-buffer delayed PiP start")
+                    let started = controller.startPictureInPicture()
+                    self.logVLC("VLC PiP delayed start attempt=\(attempt) result=\(started) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive) snapshot={\(self.playerSnapshot())} pip={\(self.pictureInPicturePlayerSnapshot())}", type: "Player")
+                    if !started {
+                        self.restoreDrawableRenderingAfterSampleBuffer(reason: "sample-buffer delayed start rejected", disableForSession: true)
+                    }
                 }
                 return
             }
