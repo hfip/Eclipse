@@ -4,6 +4,7 @@
 
 import SwiftUI
 import Kingfisher
+import AVKit
 
 func homeImageDecodeSize(width: CGFloat, height: CGFloat) -> CGSize {
 #if os(iOS) || os(tvOS)
@@ -890,7 +891,12 @@ struct ContinueWatchingCard: View {
                 animeSeasonTitle: isAnimeContent ? "anime" : nil,
                 posterPath: item.posterURL,
                 imdbId: imdbId,
-                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
+                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
+                onResolvedPlaybackRequest: { request in
+                    Task { @MainActor in
+                        self.presentResolvedPlayback(request)
+                    }
+                }
             )
         }
         .contextMenu {
@@ -1121,6 +1127,97 @@ struct ContinueWatchingCard: View {
         guard let path, !path.isEmpty else { return nil }
         if path.hasPrefix("http") { return path }
         return "\(TMDBService.tmdbImageBaseURL)\(path)"
+    }
+
+    @MainActor
+    private func presentResolvedPlayback(_ request: PlayerResolvedPlaybackRequest) {
+        showingSearchResults = false
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            Task { @MainActor in
+                self.presentResolvedPlaybackAfterSheetDismissal(request)
+            }
+        }
+    }
+
+    @MainActor
+    private func presentResolvedPlaybackAfterSheetDismissal(_ request: PlayerResolvedPlaybackRequest) {
+        guard let presenter = topmostPresentationController() else {
+            Logger.shared.log("ContinueWatchingCard: unable to present resolved playback; no presenter", type: "Player")
+            return
+        }
+
+        let externalRaw = UserDefaults.standard.string(forKey: "externalPlayer") ?? ExternalPlayer.none.rawValue
+        let external = ExternalPlayer(rawValue: externalRaw) ?? .none
+        if let scheme = external.schemeURL(for: request.url.absoluteString),
+           UIApplication.shared.canOpenURL(scheme) {
+            UIApplication.shared.open(scheme, options: [:], completionHandler: nil)
+            Logger.shared.log("ContinueWatchingCard: opening resolved playback in external player", type: "Player")
+            return
+        }
+
+        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "VLC"
+        if inAppRaw == "mpv" || inAppRaw == "VLC" {
+            let pvc = PlayerViewController(
+                url: request.url,
+                preset: request.preset,
+                headers: request.headers,
+                subtitles: request.subtitles,
+                subtitleNames: request.subtitleNames,
+                mediaInfo: request.mediaInfo,
+                imdbId: request.imdbId
+            )
+            pvc.isAnimeHint = request.isAnimeHint
+            pvc.originalTMDBSeasonNumber = request.originalTMDBSeasonNumber
+            pvc.originalTMDBEpisodeNumber = request.originalTMDBEpisodeNumber
+            pvc.episodePlaybackContext = request.episodePlaybackContext
+            pvc.playbackLaunchContext = request.launchContext
+            pvc.modalPresentationStyle = .fullScreen
+            if !item.isMovie {
+                pvc.onRequestNextEpisode = { seasonNumber, nextEpisodeNumber in
+                    NotificationCenter.default.post(
+                        name: .requestNextEpisode,
+                        object: nil,
+                        userInfo: [
+                            "tmdbId": item.tmdbId,
+                            "seasonNumber": seasonNumber,
+                            "episodeNumber": nextEpisodeNumber
+                        ]
+                    )
+                }
+            }
+
+            Logger.shared.log("ContinueWatchingCard: presenting resolved \(inAppRaw) playback from stable presenter", type: "Player")
+            presenter.present(pvc, animated: true, completion: nil)
+            return
+        }
+
+        let assetOptions: [String: Any]? = {
+            guard let headers = request.headers, !headers.isEmpty else { return nil }
+            return ["AVURLAssetHTTPHeaderFieldsKey": headers]
+        }()
+        let asset = AVURLAsset(url: request.url, options: assetOptions)
+        let playerVC = NormalPlayer()
+        playerVC.player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        playerVC.mediaInfo = request.mediaInfo
+        playerVC.episodePlaybackContext = request.episodePlaybackContext
+        playerVC.playbackLaunchContext = request.launchContext
+        playerVC.modalPresentationStyle = .fullScreen
+
+        Logger.shared.log("ContinueWatchingCard: presenting resolved AVPlayer playback from stable presenter", type: "Player")
+        presenter.present(playerVC, animated: true) {
+            playerVC.playAtDefaultSpeed()
+        }
+    }
+
+    @MainActor
+    private func topmostPresentationController() -> UIViewController? {
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window = windowScene?.windows.first { $0.isKeyWindow } ?? windowScene?.windows.first
+        return window?.rootViewController?.topmostViewController()
     }
 
     private func markAsWatched() {
