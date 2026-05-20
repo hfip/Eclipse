@@ -87,6 +87,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var pendingSeekRequiresPlaybackClock = false
     private var pendingSeekDelayLogged = false
     private var needsProxyReloadAfterBackground = false
+    private var proxyResumeAttemptID = 0
     private var lifecycleObserversInstalled = false
     
     weak var delegate: VLCRendererDelegate?
@@ -274,6 +275,40 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             Logger.shared.log("VLCRenderer: Failed to activate AVAudioSession: \(error)", type: "Error")
         }
     }
+
+    private func installMediaPlayerEventObservers(for player: VLCMediaPlayer) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(mediaPlayerTimeChanged),
+            name: .lunaVLCMediaPlayerTimeChanged,
+            object: player
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(mediaPlayerStateChanged),
+            name: .lunaVLCMediaPlayerStateChanged,
+            object: player
+        )
+    }
+
+    private func removeMediaPlayerEventObservers(for player: VLCMediaPlayer) {
+        NotificationCenter.default.removeObserver(self, name: .lunaVLCMediaPlayerTimeChanged, object: player)
+        NotificationCenter.default.removeObserver(self, name: .lunaVLCMediaPlayerStateChanged, object: player)
+    }
+
+    private func replaceMediaPlayerForReload(replacing oldPlayer: VLCMediaPlayer, reason: String) -> VLCMediaPlayer {
+        let oldSnapshot = playerSnapshot(oldPlayer)
+        removeMediaPlayerEventObservers(for: oldPlayer)
+        oldPlayer.stop()
+
+        let replacement = VLCMediaPlayer()
+        replacement.drawable = activeVLCView
+        installMediaPlayerEventObservers(for: replacement)
+        mediaPlayer = replacement
+
+        logVLC("replaced VLCMediaPlayer for reload reason=\(reason) old={\(oldSnapshot)} new={\(playerSnapshot(replacement))}", type: "VLCCrashProbe")
+        return replacement
+    }
     
     /// Return the VLC view to be added to the view hierarchy
     func getRenderingView() -> UIView {
@@ -311,18 +346,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             mediaPlayer.drawable = activeVLCView
             
             // Set up event handling
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(mediaPlayerTimeChanged),
-                name: .lunaVLCMediaPlayerTimeChanged,
-                object: mediaPlayer
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(mediaPlayerStateChanged),
-                name: .lunaVLCMediaPlayerStateChanged,
-                object: mediaPlayer
-            )
+            installMediaPlayerEventObservers(for: mediaPlayer)
             
             if !lifecycleObserversInstalled {
                 NotificationCenter.default.addObserver(
@@ -379,6 +403,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         isRunning = false
         isStopping = true
         loadGeneration += 1
+        proxyResumeAttemptID += 1
         stopProgressPolling()
         delegate?.renderer(self, didChangePictureInPictureAvailability: false)
         delegate?.renderer(self, didChangePictureInPictureActive: false)
@@ -386,8 +411,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         eventQueue.async { [weak self] in
             guard let self else { return }
             if let playerToStop {
-                NotificationCenter.default.removeObserver(self, name: .lunaVLCMediaPlayerTimeChanged, object: playerToStop)
-                NotificationCenter.default.removeObserver(self, name: .lunaVLCMediaPlayerStateChanged, object: playerToStop)
+                self.removeMediaPlayerEventObservers(for: playerToStop)
             }
 
             if let playerToStop {
@@ -447,6 +471,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         currentURL = url
         currentPreset = preset
         loadGeneration += 1
+        proxyResumeAttemptID += 1
         let initialSeek = preparedInitialSeek
         preparedInitialSeek = nil
         cachedPosition = 0
@@ -478,7 +503,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         }
         
         eventQueue.async { [weak self] in
-            guard let self, let player = self.mediaPlayer else { 
+            guard let self, var player = self.mediaPlayer else {
                 Logger.shared.log("[VLCRenderer.load] ERROR: mediaPlayer is nil", type: "Error")
                 return 
             }
@@ -486,7 +511,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             var mediaURL = url
             if stopCurrentMediaBeforeLoad {
                 self.logVLC("load stopping current VLC media before replacement reason=\(refreshProxyReason ?? "reload") snapshot={\(self.playerSnapshot(player))}", type: "VLCCrashProbe")
-                player.stop()
+                player = self.replaceMediaPlayerForReload(replacing: player, reason: refreshProxyReason ?? "reload")
                 self.currentMedia = nil
                 self.lastLoggedStateCode = nil
                 self.isLoading = true
@@ -649,12 +674,16 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         guard let player = mediaPlayer else { return }
         ensureAudioSessionActive()
 
-        // If VLC's media has stopped or ended (e.g. network timeout while backgrounded),
-        // calling play() alone won't work — reload the stream and seek back.
+        // After a background pause, try the existing proxied VLC session first.
+        // Rebuild only if VLC is already terminal or the raw clock stays stuck.
         let state = player.state
         if needsProxyReloadAfterBackground, isVLCHeaderProxyURL(currentURL) {
-            Logger.shared.log("[VLCRenderer.play] Reloading proxied stream after background before resume position=\(cachedPosition)s", type: "Stream")
-            reloadAndSeekToLastPosition()
+            if isTerminalState(state), !isPlaybackActive(player) {
+                Logger.shared.log("[VLCRenderer.play] Background proxy resume found terminal state \(describeState(state)); reloading from position \(cachedPosition)s", type: "Stream")
+                reloadAndSeekToLastPosition()
+            } else {
+                softResumeProxiedStreamAfterBackground(player)
+            }
             return
         }
 
@@ -672,6 +701,81 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         updatePictureInPicturePlaybackState()
         logVLC("play submitted snapshot={\(playerSnapshot(player))}", type: "Stream")
         logDrawableSnapshot("play submitted")
+    }
+
+    private func softResumeProxiedStreamAfterBackground(_ player: VLCMediaPlayer) {
+        proxyResumeAttemptID += 1
+        let attemptID = proxyResumeAttemptID
+        let savedPosition = max(0, cachedPosition)
+        let baselineRawPosition = rawPlaybackPosition(from: player)
+
+        logVLC("background proxy soft resume begin attempt=\(attemptID) saved=\(secondsText(savedPosition)) raw=\(secondsText(baselineRawPosition)) snapshot={\(playerSnapshot(player))}", type: "Stream")
+        player.drawable = activeVLCView
+        player.play()
+        startProgressPolling()
+        if currentPlaybackSpeed != 1.0 {
+            player.rate = Float(currentPlaybackSpeed)
+        }
+        updatePictureInPicturePlaybackState()
+        logDrawableSnapshot("background proxy soft resume submitted")
+
+        scheduleProxySoftResumeCheck(
+            attemptID: attemptID,
+            player: player,
+            savedPosition: savedPosition,
+            baselineRawPosition: baselineRawPosition,
+            delay: 1.25,
+            isFinalCheck: false
+        )
+        scheduleProxySoftResumeCheck(
+            attemptID: attemptID,
+            player: player,
+            savedPosition: savedPosition,
+            baselineRawPosition: baselineRawPosition,
+            delay: 3.5,
+            isFinalCheck: true
+        )
+    }
+
+    private func scheduleProxySoftResumeCheck(
+        attemptID: Int,
+        player: VLCMediaPlayer,
+        savedPosition: Double,
+        baselineRawPosition: Double,
+        delay: TimeInterval,
+        isFinalCheck: Bool
+    ) {
+        eventQueue.asyncAfter(deadline: .now() + delay) { [weak self, weak player] in
+            guard let self,
+                  let player,
+                  self.proxyResumeAttemptID == attemptID,
+                  self.needsProxyReloadAfterBackground,
+                  self.mediaPlayer === player,
+                  self.isRunning,
+                  !self.isStopping else {
+                return
+            }
+
+            let rawPosition = self.rawPlaybackPosition(from: player)
+            let baselineMatchesResumePoint = savedPosition < 5 || baselineRawPosition >= savedPosition - 5
+            let rawAdvanced = rawPosition >= savedPosition + 0.75 || (baselineMatchesResumePoint && rawPosition >= baselineRawPosition + 0.75)
+            let terminal = self.isTerminalState(player.state) && !self.isPlaybackActive(player)
+            self.logVLC("background proxy soft resume check attempt=\(attemptID) delay=\(String(format: "%.2f", delay)) final=\(isFinalCheck) raw=\(self.secondsText(rawPosition)) baseline=\(self.secondsText(baselineRawPosition)) saved=\(self.secondsText(savedPosition)) advanced=\(rawAdvanced) terminal=\(terminal) snapshot={\(self.playerSnapshot(player))}", type: "VLCCrashProbe")
+
+            if rawAdvanced {
+                self.needsProxyReloadAfterBackground = false
+                self.logVLC("background proxy soft resume confirmed attempt=\(attemptID) raw=\(self.secondsText(rawPosition)) saved=\(self.secondsText(savedPosition))", type: "Stream")
+                return
+            }
+
+            if !isFinalCheck && !terminal {
+                return
+            }
+
+            self.needsProxyReloadAfterBackground = false
+            self.logVLC("background proxy soft resume fallback attempt=\(attemptID) reason=\(terminal ? "terminal-state" : "clock-stalled") reloading saved=\(self.secondsText(savedPosition)) snapshot={\(self.playerSnapshot(player))}", type: "VLCCrashProbe")
+            self.reloadCurrentItemPreservingPosition(savedPosition)
+        }
     }
 
     /// Reload the current media and seek back to the last known position.
@@ -695,6 +799,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         logVLC("pause requested forceSend=\(forceSendToPlayer) shouldSendPause=\(shouldSendPause) snapshot={\(playerSnapshot(player))}", type: "Stream")
         logDrawableSnapshot("pause requested")
         isPaused = true
+        proxyResumeAttemptID += 1
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.delegate?.renderer(self, didChangePause: true)
@@ -1065,7 +1170,6 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         let position = progress.position
         let duration = progress.duration
         let rawPosition = max(0, (player.time.value?.doubleValue ?? 0) / 1000.0)
-        cachedPosition = position
         if duration.isFinite, duration > 0 {
             cachedDuration = max(cachedDuration, duration)
         }
@@ -1090,6 +1194,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                     pendingSeekDelayLogged = true
                     logVLC("delaying pending seek until raw playback clock advances pending=\(secondsText(pending)) duration=\(secondsText(duration)) snapshot={\(playerSnapshot(player))}", type: "Progress")
                 }
+                cachedPosition = position
                 clearLoadingState()
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -1103,7 +1208,19 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             pendingAbsoluteSeek = nil
             pendingSeekRequiresPlaybackClock = false
             pendingSeekDelayLogged = false
+            let seekPosition = min(max(0, pending), duration)
+            cachedPosition = seekPosition
+            if isLoading && hasStartupSignal {
+                clearLoadingState()
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.delegate?.renderer(self, didUpdatePosition: seekPosition, duration: duration)
+            }
+            return
         }
+
+        cachedPosition = position
 
         // If we were marked loading but playback is progressing, clear loading state.
         if isLoading && hasStartupSignal {
@@ -1543,6 +1660,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
     private func normalizedPosition(from player: VLCMediaPlayer) -> Double {
         return min(max(Double(player.position), 0), 1)
+    }
+
+    private func rawPlaybackPosition(from player: VLCMediaPlayer) -> Double {
+        return max(0, (player.time.value?.doubleValue ?? 0) / 1000.0)
     }
 
     private func setNormalizedPosition(_ normalized: Double, on player: VLCMediaPlayer) {
