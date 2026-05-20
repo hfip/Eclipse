@@ -38,8 +38,8 @@ android {
         applicationId = "dev.soupy.eclipse.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.4"
         buildConfigField("String", "TMDB_API_KEY", buildConfigString(tmdbApiKey))
         buildConfigField("String", "ANILIST_CLIENT_ID", buildConfigString(anilistClientId))
         buildConfigField("String", "ANILIST_CLIENT_SECRET", buildConfigString(anilistClientSecret))

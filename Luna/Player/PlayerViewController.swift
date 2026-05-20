@@ -4749,7 +4749,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard let headers, !headers.isEmpty else { return (originalURL, headers) }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
-        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
+        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(
+            for: originalURL,
+            headers: proxyHeaders,
+            restartListener: true,
+            reason: "fresh-vlc-main-media"
+        ) else {
             Logger.shared.log("PlayerViewController: proactive VLC proxy URL creation failed; using direct VLC headers", type: "Stream")
             return (originalURL, headers)
         }
@@ -4818,7 +4823,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard let preset = initialPreset else { return false }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
-        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders) else {
+        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(
+            for: originalURL,
+            headers: proxyHeaders,
+            restartListener: true,
+            reason: "vlc-proxy-fallback"
+        ) else {
             return false
         }
 

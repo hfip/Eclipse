@@ -115,7 +115,46 @@ final class VLCHeaderProxy {
         }
     }
 
-    func makeProxyURL(for targetURL: URL, headers: [String: String]) -> URL? {
+    func refreshedProxyURL(from proxyURL: URL, restartListener: Bool, reason: String) -> URL? {
+        guard let components = URLComponents(url: proxyURL, resolvingAgainstBaseURL: false),
+              let host = components.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost" || host == "::1" else {
+            return nil
+        }
+
+        let pathParts = components.path.split(separator: "/")
+        guard pathParts.count >= 2, pathParts[0] == "proxy" else {
+            return nil
+        }
+
+        let sessionId = String(pathParts[1])
+        let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        guard queryItems["token"] == token,
+              let encoded = queryItems["url"],
+              let targetURL = decodeTargetURL(encoded),
+              let session = touchSession(for: sessionId) else {
+            Logger.shared.log("VLCHeaderProxy: could not refresh stale proxy URL reason=\(reason) session=\(String(sessionId.prefix(8)))", type: "Error")
+            return nil
+        }
+
+        return makeProxyURL(
+            for: targetURL,
+            headers: session.headers,
+            restartListener: restartListener,
+            reason: reason
+        )
+    }
+
+    func makeProxyURL(
+        for targetURL: URL,
+        headers: [String: String],
+        restartListener: Bool = false,
+        reason: String = "new-session"
+    ) -> URL? {
+        if restartListener {
+            restartListenerForRecovery(reason: reason)
+        }
+
         guard ensureStarted() else { return nil }
 
         var activePort = port
@@ -156,6 +195,7 @@ final class VLCHeaderProxy {
             }
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
+                guard self.listener === listener else { return }
                 switch state {
                 case .ready:
                     let readyPort = listener.port?.rawValue ?? 0
@@ -176,8 +216,8 @@ final class VLCHeaderProxy {
                     break
                 }
             }
-            listener.start(queue: queue)
             self.listener = listener
+            listener.start(queue: queue)
             let initialPort = listener.port?.rawValue ?? 0
             if initialPort > 0 {
                 self.port = initialPort
@@ -190,6 +230,15 @@ final class VLCHeaderProxy {
             Logger.shared.log("VLCHeaderProxy: failed to start listener: \(error)", type: "Error")
             return false
         }
+    }
+
+    private func restartListenerForRecovery(reason: String) {
+        guard let listener else { return }
+        let oldPort = port.map { String($0) } ?? "nil"
+        Logger.shared.log("VLCHeaderProxy: restarting listener for recovery reason=\(reason) oldPort=\(oldPort)", type: "Stream")
+        listener.cancel()
+        self.listener = nil
+        self.port = nil
     }
 
     private func handleConnection(_ connection: NWConnection) {

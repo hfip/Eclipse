@@ -125,6 +125,7 @@ struct MediaDetailView: View {
     @StateObject private var stremioManager = StremioAddonManager.shared
     @ObservedObject private var downloadManager = DownloadManager.shared
     @ObservedObject private var libraryManager = LibraryManager.shared
+    @ObservedObject private var progressManager = ProgressManager.shared
     @ObservedObject private var theme = LunaTheme.shared
     
     @Environment(\.presentationMode) var presentationMode
@@ -192,16 +193,41 @@ struct MediaDetailView: View {
 #endif
     }
 
+    private struct MainPlayEpisodeKey: Hashable {
+        let seasonNumber: Int
+        let episodeNumber: Int
+    }
+
+    private struct MainPlayEpisodeCandidate {
+        let key: MainPlayEpisodeKey
+        let episode: TMDBEpisode?
+    }
+
     private var playButtonText: String {
         if searchResult.isMovie {
             return "Play"
-        } else if selectedSpecialEpisodeContext != nil, let selectedEpisode = selectedEpisodeForSearch {
-            return "Play E\(selectedEpisode.episodeNumber)"
-        } else if let selectedEpisode = selectedEpisodeForSearch {
-            return "Play S\(selectedEpisode.seasonNumber)E\(selectedEpisode.episodeNumber)"
-        } else {
-            return "Play"
         }
+
+        if selectedSpecialEpisodeContext != nil, let selectedEpisode = selectedEpisodeForSearch {
+            return "Play \(episodeLabel(seasonNumber: selectedEpisode.seasonNumber, episodeNumber: selectedEpisode.episodeNumber, forceEpisodeOnly: true))"
+        }
+
+        if let target = resolveMainPlayEpisodeTarget() {
+            return "Play \(episodeLabel(seasonNumber: target.key.seasonNumber, episodeNumber: target.key.episodeNumber))"
+        }
+
+        if let selectedEpisode = selectedEpisodeForSearch {
+            return "Play \(episodeLabel(seasonNumber: selectedEpisode.seasonNumber, episodeNumber: selectedEpisode.episodeNumber))"
+        }
+
+        return "Play"
+    }
+
+    private func episodeLabel(seasonNumber: Int, episodeNumber: Int, forceEpisodeOnly: Bool = false) -> String {
+        if forceEpisodeOnly || isAnimeShow {
+            return "E\(episodeNumber)"
+        }
+        return "S\(seasonNumber)E\(episodeNumber)"
     }
     
     var body: some View {
@@ -1052,6 +1078,153 @@ struct MediaDetailView: View {
         isBookmarked = libraryManager.isBookmarked(searchResult)
         Logger.shared.log("MediaDetailView updateBookmarkStatus: id=\(searchResult.id) isBookmarked=\(isBookmarked)", type: "CrashProbe")
     }
+
+    private func resolveMainPlayEpisodeTarget() -> MainPlayEpisodeCandidate? {
+        let candidates = mainPlayEpisodeCandidates()
+        guard !candidates.isEmpty else { return nil }
+
+        let progressByEpisode = episodeProgressByKey()
+        let latestWatchedIndex = candidates.indices.last(where: { index in
+            guard let progress = progressByEpisode[candidates[index].key] else { return false }
+            return isWatchedForMainPlay(progress)
+        })
+
+        let inProgressIndices = candidates.indices.filter { index in
+            guard let progress = progressByEpisode[candidates[index].key] else { return false }
+            return hasResumeProgress(progress)
+        }
+
+        let eligibleInProgressIndices: [Int]
+        if let latestWatchedIndex {
+            eligibleInProgressIndices = inProgressIndices.filter { $0 > latestWatchedIndex }
+        } else {
+            eligibleInProgressIndices = inProgressIndices
+        }
+
+        if let index = eligibleInProgressIndices.last {
+            return candidates[index]
+        }
+
+        if let latestWatchedIndex {
+            let nextIndex = candidates.index(after: latestWatchedIndex)
+            if nextIndex < candidates.endIndex {
+                return candidates[nextIndex]
+            }
+        }
+
+        if let index = inProgressIndices.last {
+            return candidates[index]
+        }
+
+        return candidates.first
+    }
+
+    private func mainPlayEpisodeCandidates() -> [MainPlayEpisodeCandidate] {
+        if isAnimeShow, let anilistEpisodes, !anilistEpisodes.isEmpty {
+            return uniqueMainPlayCandidates(
+                anilistEpisodes
+                    .sorted(by: episodeSort)
+                    .map {
+                        MainPlayEpisodeCandidate(
+                            key: .init(seasonNumber: $0.seasonNumber, episodeNumber: $0.number),
+                            episode: nil
+                        )
+                    }
+            )
+        }
+
+        if let tvShowDetail {
+            let regularSeasons = tvShowDetail.seasons
+                .filter { $0.seasonNumber > 0 }
+                .sorted { $0.seasonNumber < $1.seasonNumber }
+
+            var candidates: [MainPlayEpisodeCandidate] = []
+            for season in regularSeasons {
+                if let loadedSeason = seasonDetail, loadedSeason.seasonNumber == season.seasonNumber {
+                    candidates.append(contentsOf: loadedSeason.episodes
+                        .sorted { $0.episodeNumber < $1.episodeNumber }
+                        .map {
+                            MainPlayEpisodeCandidate(
+                                key: .init(seasonNumber: $0.seasonNumber, episodeNumber: $0.episodeNumber),
+                                episode: $0
+                            )
+                        }
+                    )
+                    continue
+                }
+
+                guard season.episodeCount > 0 else { continue }
+                candidates.append(contentsOf: (1...season.episodeCount).map { episodeNumber in
+                    MainPlayEpisodeCandidate(
+                        key: .init(seasonNumber: season.seasonNumber, episodeNumber: episodeNumber),
+                        episode: nil
+                    )
+                })
+            }
+
+            if !candidates.isEmpty {
+                return uniqueMainPlayCandidates(candidates)
+            }
+        }
+
+        if let seasonDetail {
+            return uniqueMainPlayCandidates(
+                seasonDetail.episodes
+                    .sorted { $0.episodeNumber < $1.episodeNumber }
+                    .map {
+                        MainPlayEpisodeCandidate(
+                            key: .init(seasonNumber: $0.seasonNumber, episodeNumber: $0.episodeNumber),
+                            episode: $0
+                        )
+                    }
+            )
+        }
+
+        return []
+    }
+
+    private func uniqueMainPlayCandidates(_ candidates: [MainPlayEpisodeCandidate]) -> [MainPlayEpisodeCandidate] {
+        var indexesByKey: [MainPlayEpisodeKey: Int] = [:]
+        var result: [MainPlayEpisodeCandidate] = []
+
+        for candidate in candidates {
+            if let index = indexesByKey[candidate.key] {
+                if result[index].episode == nil, candidate.episode != nil {
+                    result[index] = candidate
+                }
+                continue
+            }
+
+            indexesByKey[candidate.key] = result.count
+            result.append(candidate)
+        }
+
+        return result
+    }
+
+    private func episodeProgressByKey() -> [MainPlayEpisodeKey: EpisodeProgressEntry] {
+        let publishedEntries = progressManager.episodeProgressList
+        let entries = publishedEntries.isEmpty ? progressManager.getProgressData().episodeProgress : publishedEntries
+        var result: [MainPlayEpisodeKey: EpisodeProgressEntry] = [:]
+
+        for entry in entries where entry.showId == searchResult.id {
+            let key = MainPlayEpisodeKey(seasonNumber: entry.seasonNumber, episodeNumber: entry.episodeNumber)
+            if let existing = result[key], existing.lastUpdated >= entry.lastUpdated {
+                continue
+            }
+            result[key] = entry
+        }
+
+        return result
+    }
+
+    private func isWatchedForMainPlay(_ entry: EpisodeProgressEntry) -> Bool {
+        entry.isWatched || entry.progress >= 0.85
+    }
+
+    private func hasResumeProgress(_ entry: EpisodeProgressEntry) -> Bool {
+        !isWatchedForMainPlay(entry) && (entry.currentTime > 0 || entry.progress > 0)
+    }
     
     private func searchInServices() {
         Logger.shared.log("MediaDetailView searchInServices begin: id=\(searchResult.id) isMovie=\(searchResult.isMovie) hasActiveSources=\(hasActiveSources) selectedEpisodeBefore=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") seasonDetailEpisodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
@@ -1118,9 +1291,12 @@ struct MediaDetailView: View {
 
     @MainActor
     private func resolveContinueEpisodeForMainPlay() async -> TMDBEpisode? {
-        if let latest = ProgressManager.shared.getLatestEpisodeProgress(showId: searchResult.id),
-           let episode = await episodeForPlayback(seasonNumber: latest.seasonNumber, episodeNumber: latest.episodeNumber) {
-            Logger.shared.log("MediaDetailView main play using latest progress: id=\(searchResult.id) S\(latest.seasonNumber)E\(latest.episodeNumber)", type: "Progress")
+        if let target = resolveMainPlayEpisodeTarget(),
+           let episode = target.episode ?? await episodeForPlayback(
+                seasonNumber: target.key.seasonNumber,
+                episodeNumber: target.key.episodeNumber
+           ) {
+            Logger.shared.log("MediaDetailView main play using target episode: id=\(searchResult.id) S\(target.key.seasonNumber)E\(target.key.episodeNumber)", type: "Progress")
             return episode
         }
 

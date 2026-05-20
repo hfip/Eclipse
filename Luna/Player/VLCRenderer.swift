@@ -84,6 +84,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var lastPositionRegressionLogTime: CFTimeInterval = 0
     private var pendingSeekRequiresPlaybackClock = false
     private var pendingSeekDelayLogged = false
+    private var needsProxyReloadAfterBackground = false
     
     weak var delegate: VLCRendererDelegate?
     
@@ -509,22 +510,51 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     
     func reloadCurrentItem() {
         guard let url = currentURL, let preset = currentPreset else { return }
+        let reloadURL = refreshedProxyURLForReloadIfNeeded(url, reason: "reload-current-item")
         logVLC("reloadCurrentItem snapshot={\(playerSnapshot())}", type: "Stream")
-        load(url: url, with: preset, headers: currentHeaders)
+        load(url: reloadURL, with: preset, headers: currentHeaders)
     }
 
     private func reloadCurrentItemPreservingPosition(_ position: Double) {
         guard let url = currentURL, let preset = currentPreset else { return }
         let resumePosition = max(0, position)
         let preservedDuration = cachedDuration
+        let reloadURL = refreshedProxyURLForReloadIfNeeded(url, reason: "reload-preserve-position")
         logVLC("reloadCurrentItemPreservingPosition requested=\(secondsText(position)) resume=\(secondsText(resumePosition)) preservedDuration=\(secondsText(preservedDuration)) snapshot={\(playerSnapshot())}", type: "Stream")
         preparedInitialSeek = resumePosition
         pendingAbsoluteSeek = resumePosition
-        load(url: url, with: preset, headers: currentHeaders)
+        load(url: reloadURL, with: preset, headers: currentHeaders)
         cachedPosition = resumePosition
         if preservedDuration >= minimumReliableDuration {
             cachedDuration = preservedDuration
         }
+    }
+
+    private func isVLCHeaderProxyURL(_ url: URL?) -> Bool {
+        guard let url,
+              let host = url.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost" || host == "::1" else {
+            return false
+        }
+        return url.path.localizedCaseInsensitiveContains("/proxy/")
+    }
+
+    private func refreshedProxyURLForReloadIfNeeded(_ url: URL, reason: String) -> URL {
+        guard isVLCHeaderProxyURL(url) else { return url }
+
+        if let refreshedURL = VLCHeaderProxy.shared.refreshedProxyURL(
+            from: url,
+            restartListener: true,
+            reason: reason
+        ) {
+            logVLC("refreshed VLC proxy URL for reload reason=\(reason) oldPort=\(url.port?.description ?? "nil") newPort=\(refreshedURL.port?.description ?? "nil")", type: "Stream")
+            needsProxyReloadAfterBackground = false
+            return refreshedURL
+        }
+
+        logVLC("failed to refresh VLC proxy URL for reload reason=\(reason); reusing existing URL", type: "Error")
+        needsProxyReloadAfterBackground = false
+        return url
     }
 
     private func shouldDelayPreparedSeekUntilPlaybackClock(for url: URL) -> Bool {
@@ -558,6 +588,12 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         // If VLC's media has stopped or ended (e.g. network timeout while backgrounded),
         // calling play() alone won't work — reload the stream and seek back.
         let state = player.state
+        if needsProxyReloadAfterBackground, isVLCHeaderProxyURL(currentURL) {
+            Logger.shared.log("[VLCRenderer.play] Reloading proxied stream after background before resume position=\(cachedPosition)s", type: "Stream")
+            reloadAndSeekToLastPosition()
+            return
+        }
+
         if isTerminalState(state), !isPlaybackActive(player) {
             Logger.shared.log("[VLCRenderer.play] Player in \(describeState(state)) state — reloading from position \(cachedPosition)s", type: "Stream")
             reloadAndSeekToLastPosition()
@@ -1286,6 +1322,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         logVLC("appDidEnterBackground snapshot={\(playerSnapshot())}", type: "Player")
         logDrawableSnapshot("appDidEnterBackground")
         scheduleDrawableSnapshots("appDidEnterBackground followup", delays: [0.5, 1.5])
+        if isVLCHeaderProxyURL(currentURL) {
+            needsProxyReloadAfterBackground = true
+            logVLC("marked proxied stream for reload after background snapshot={\(playerSnapshot())}", type: "Stream")
+        }
 
         Logger.shared.log("[VLCRenderer] entering background on stable VLCKitSPM path; pausing playback and keeping drawable attached", type: "Player")
         pausePlayback(forceSendToPlayer: true)
