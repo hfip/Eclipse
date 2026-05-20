@@ -859,6 +859,8 @@ final class VLCHeaderProxy {
         private var upstreamBytes = 0
         private var downstreamBytes = 0
         private var lastSlowSendLogAt: CFTimeInterval = 0
+        private var pendingDownstreamSends = 0
+        private var pendingStreamCompletionStatusCode: Int?
 
         init(
             proxy: VLCHeaderProxy,
@@ -945,16 +947,21 @@ final class VLCHeaderProxy {
                 completionHandler(.allow)
             case .stream:
                 proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
-                    guard let self else { return }
-                    if let error {
-                        Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
-                        completionHandler(.cancel)
-                        self.finish()
-                        return
-                    }
+                    self?.callbackQueue.addOperation { [weak self] in
+                        guard let self else {
+                            completionHandler(.cancel)
+                            return
+                        }
+                        if let error {
+                            Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                            completionHandler(.cancel)
+                            self.finish()
+                            return
+                        }
 
-                    self.responseHeadersSent = true
-                    completionHandler(.allow)
+                        self.responseHeadersSent = true
+                        completionHandler(.allow)
+                    }
                 }
             }
         }
@@ -1042,12 +1049,14 @@ final class VLCHeaderProxy {
                 downstreamBytes += body.count
                 Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream done status=\(http.statusCode) kind=\(proxy.requestKind(for: targetURL)) mode=\(mode.logName) activeRequests=\(proxy.activeRequestCountSnapshot()) recvBytes=\(bufferedData.count) sentBytes=\(downstreamBytes) responseBytes=\(body.count) rewritten=\(rewritten) firstByteMs=\(firstDataAt.map { String(format: "%.0f", max(0, ($0 - startedAt) * 1000.0)) } ?? "nil") totalMs=\(proxy.elapsedMilliseconds(since: startedAt)) target=\(proxy.logURLSummary(targetURL))", type: "VLCProxy")
                 proxy.sendResponse(connection, statusCode: http.statusCode, headers: headers, body: body)
+                finish()
             case .stream:
-                Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream stream complete status=\(http.statusCode) kind=\(proxy.requestKind(for: targetURL)) activeRequests=\(proxy.activeRequestCountSnapshot()) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) firstByteMs=\(firstDataAt.map { String(format: "%.0f", max(0, ($0 - startedAt) * 1000.0)) } ?? "nil") totalMs=\(proxy.elapsedMilliseconds(since: startedAt)) target=\(proxy.logURLSummary(targetURL))", type: "VLCProxy")
-                connection.cancel()
+                pendingStreamCompletionStatusCode = http.statusCode
+                if pendingDownstreamSends > 0 {
+                    Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream stream complete waiting for downstream sends pending=\(pendingDownstreamSends) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) target=\(proxy.logURLSummary(targetURL))", type: "VLCProxy")
+                }
+                finishStreamIfReady()
             }
-
-            finish()
         }
 
         private func startStreamingBufferedData(dataTask: URLSessionDataTask) {
@@ -1064,16 +1073,18 @@ final class VLCHeaderProxy {
 
             let responseHeaders = proxy.filteredResponseHeaders(from: http)
             proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
-                guard let self else { return }
-                if let error {
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
-                    dataTask.cancel()
-                    self.finish()
-                    return
-                }
+                self?.callbackQueue.addOperation { [weak self] in
+                    guard let self else { return }
+                    if let error {
+                        Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: failed to send response headers: \(error)", type: "Error")
+                        dataTask.cancel()
+                        self.finish()
+                        return
+                    }
 
-                self.responseHeadersSent = true
-                self.streamChunk(initialData, dataTask: dataTask, suspendBeforeSend: false)
+                    self.responseHeadersSent = true
+                    self.streamChunk(initialData, dataTask: dataTask, suspendBeforeSend: false)
+                }
             }
         }
 
@@ -1096,26 +1107,71 @@ final class VLCHeaderProxy {
             if suspendBeforeSend {
                 dataTask.suspend()
             }
+            pendingDownstreamSends += 1
             let sendStartedAt = CFAbsoluteTimeGetCurrent()
             proxy.sendData(data, on: connection) { [weak self] error in
-                guard let self else { return }
-                if let error {
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: downstream send failed kind=\(proxy.requestKind(for: self.targetURL)) chunkBytes=\(data.count) recvBytes=\(self.upstreamBytes) sentBytes=\(self.downstreamBytes) elapsedMs=\(proxy.elapsedMilliseconds(since: self.startedAt)): \(error)", type: "Error")
-                    dataTask.cancel()
-                    self.finish()
-                    return
-                }
-                self.downstreamBytes += data.count
-                let sendMs = (CFAbsoluteTimeGetCurrent() - sendStartedAt) * 1000.0
-                let now = CFAbsoluteTimeGetCurrent()
-                if sendMs > 250, now - self.lastSlowSendLogAt > 2.0 {
-                    self.lastSlowSendLogAt = now
-                    Logger.shared.log("VLCHeaderProxy[\(self.requestId)]: downstream slow send kind=\(proxy.requestKind(for: self.targetURL)) chunkBytes=\(data.count) sendMs=\(String(format: "%.0f", sendMs)) recvBytes=\(self.upstreamBytes) sentBytes=\(self.downstreamBytes) target=\(proxy.logURLSummary(self.targetURL))", type: "VLCProxy")
-                }
-                if !self.isFinished {
-                    dataTask.resume()
+                self?.callbackQueue.addOperation { [weak self] in
+                    guard let self else { return }
+                    self.handleStreamSendCompletion(
+                        data: data,
+                        dataTask: dataTask,
+                        sendStartedAt: sendStartedAt,
+                        error: error
+                    )
                 }
             }
+        }
+
+        private func handleStreamSendCompletion(
+            data: Data,
+            dataTask: URLSessionDataTask,
+            sendStartedAt: CFTimeInterval,
+            error: NWError?
+        ) {
+            guard let proxy else {
+                dataTask.cancel()
+                finish()
+                return
+            }
+
+            pendingDownstreamSends = max(0, pendingDownstreamSends - 1)
+            if let error {
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: downstream send failed kind=\(proxy.requestKind(for: targetURL)) chunkBytes=\(data.count) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) pending=\(pendingDownstreamSends) elapsedMs=\(proxy.elapsedMilliseconds(since: startedAt)): \(error)", type: "Error")
+                dataTask.cancel()
+                finish()
+                return
+            }
+
+            downstreamBytes += data.count
+            let sendMs = (CFAbsoluteTimeGetCurrent() - sendStartedAt) * 1000.0
+            let now = CFAbsoluteTimeGetCurrent()
+            if sendMs > 250, now - lastSlowSendLogAt > 2.0 {
+                lastSlowSendLogAt = now
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: downstream slow send kind=\(proxy.requestKind(for: targetURL)) chunkBytes=\(data.count) sendMs=\(String(format: "%.0f", sendMs)) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) pending=\(pendingDownstreamSends) target=\(proxy.logURLSummary(targetURL))", type: "VLCProxy")
+            }
+
+            if pendingStreamCompletionStatusCode == nil, !isFinished {
+                dataTask.resume()
+            }
+            finishStreamIfReady()
+        }
+
+        private func finishStreamIfReady() {
+            guard let proxy,
+                  let statusCode = pendingStreamCompletionStatusCode,
+                  pendingDownstreamSends == 0,
+                  !isFinished else {
+                return
+            }
+
+            pendingStreamCompletionStatusCode = nil
+            let missingBytes = upstreamBytes - downstreamBytes
+            if missingBytes != 0 {
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: downstream byte mismatch before close missingBytes=\(missingBytes) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) target=\(proxy.logURLSummary(targetURL))", type: "Error")
+            }
+            Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream stream complete status=\(statusCode) kind=\(proxy.requestKind(for: targetURL)) activeRequests=\(proxy.activeRequestCountSnapshot()) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) firstByteMs=\(firstDataAt.map { String(format: "%.0f", max(0, ($0 - startedAt) * 1000.0)) } ?? "nil") totalMs=\(proxy.elapsedMilliseconds(since: startedAt)) target=\(proxy.logURLSummary(targetURL))", type: "VLCProxy")
+            connection.cancel()
+            finish()
         }
 
         private var isFinished: Bool {

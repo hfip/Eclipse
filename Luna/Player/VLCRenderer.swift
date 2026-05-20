@@ -622,13 +622,16 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         guard let player = mediaPlayer else { return }
         ensureAudioSessionActive()
 
-        // After a background pause, try the existing proxied VLC session first.
-        // Rebuild only if VLC is already terminal or the raw clock stays stuck.
+        // After a background pause, give VLC fresh local proxy media in-place.
+        // Reusing the old backgrounded proxy connection can leave libVLC in a
+        // fragile post-foreground state even after the clock starts moving.
         let state = player.state
         if needsProxyReloadAfterBackground, isVLCHeaderProxyURL(currentURL) {
             if isTerminalState(state), !isPlaybackActive(player) {
                 Logger.shared.log("[VLCRenderer.play] Background proxy resume found terminal state \(describeState(state)); doing terminal-only media reload from position \(cachedPosition)s", type: "Stream")
                 reloadStoppedPlayerMediaPreservingPosition(cachedPosition, reason: "background-terminal")
+            } else if reloadForegroundProxiedMediaPreservingPosition(cachedPosition, player: player, reason: "background-resume") {
+                Logger.shared.log("[VLCRenderer.play] Background proxy resume refreshed media in-place from position \(cachedPosition)s", type: "Stream")
             } else {
                 softResumeProxiedStreamAfterBackground(player)
             }
@@ -657,6 +660,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         let savedPosition = max(0, cachedPosition)
         let baselineRawPosition = rawPlaybackPosition(from: player)
 
+        resetPlaybackClockDiagnostics(reason: "background-proxy-soft-resume", logIfEmpty: true)
         logVLC("background proxy soft resume begin attempt=\(attemptID) saved=\(secondsText(savedPosition)) raw=\(secondsText(baselineRawPosition)) snapshot={\(playerSnapshot(player))}", type: "Stream")
         player.drawable = activeVLCView
         player.play()
@@ -730,6 +734,38 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         }
     }
 
+    private func reloadForegroundProxiedMediaPreservingPosition(_ position: Double, player: VLCMediaPlayer, reason: String) -> Bool {
+        guard let url = currentURL,
+              isVLCHeaderProxyURL(url),
+              let preset = currentPreset,
+              let refreshedURL = VLCHeaderProxy.shared.refreshedProxyURL(
+                from: url,
+                restartListener: false,
+                reason: "foreground-media-reload-\(reason)"
+              ) else {
+            return false
+        }
+
+        let resumePosition = max(0, position)
+        let preservedDuration = cachedDuration
+        proxyResumeAttemptID += 1
+        let attemptID = proxyResumeAttemptID
+        resetPlaybackClockDiagnostics(reason: "foreground-proxy-media-reload-\(reason)", logIfEmpty: true)
+        needsProxyReloadAfterBackground = false
+        isPaused = false
+
+        logVLC("foreground proxy media reload begin reason=\(reason) attempt=\(attemptID) oldPort=\(url.port?.description ?? "nil") newPort=\(refreshedURL.port?.description ?? "nil") resume=\(secondsText(resumePosition)) preservedDuration=\(secondsText(preservedDuration)) safe={\(foregroundSafeSnapshot())} snapshot={\(playerSnapshot(player))}", type: "VLCCrashProbe")
+        preparedInitialSeek = resumePosition
+        pendingAbsoluteSeek = resumePosition
+        loadMedia(url: refreshedURL, with: preset, headers: currentHeaders)
+        cachedPosition = resumePosition
+        if preservedDuration >= minimumReliableDuration {
+            cachedDuration = preservedDuration
+        }
+        logVLC("foreground proxy media reload submitted reason=\(reason) attempt=\(attemptID) safe={\(foregroundSafeSnapshot())}", type: "VLCCrashProbe")
+        return true
+    }
+
     private func reloadStoppedPlayerMediaPreservingPosition(_ position: Double, reason: String) {
         guard let player = mediaPlayer,
               isTerminalState(player.state),
@@ -776,6 +812,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         isLoading = true
         isPaused = false
         needsProxyReloadAfterBackground = false
+        resetPlaybackClockDiagnostics(reason: "no-reload-recovery-\(reason)", logIfEmpty: true)
 
         let proxyRestarted: Bool
         if let currentURL, isVLCHeaderProxyURL(currentURL) {
@@ -924,6 +961,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             player?.pause()
         }
         stopProgressPolling()
+        resetPlaybackClockDiagnostics(reason: forceSendToPlayer ? "forced-pause" : "pause")
         updatePictureInPicturePlaybackState()
         logVLC("pause completed snapshot={\(playerSnapshot(player))}", type: "Stream")
         logDrawableSnapshot("pause completed")
@@ -1377,10 +1415,25 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         }
     }
 
+    private func resetPlaybackClockDiagnostics(reason: String, logIfEmpty: Bool = false) {
+        let hadSamples = lastPlaybackClockSampleHostTime != nil
+            || lastPlaybackClockSamplePosition != nil
+            || lastProgressHostTime != nil
+        lastPlaybackClockSampleHostTime = nil
+        lastPlaybackClockSamplePosition = nil
+        lastProgressHostTime = nil
+        lastSlowPlaybackClockLogTime = 0
+        lastBufferingWhileAdvancingLogTime = 0
+        lastPositionRegressionLogTime = 0
+
+        if hadSamples || logIfEmpty {
+            logVLC("reset playback clock diagnostics reason=\(reason) hadSamples=\(hadSamples) safe={\(foregroundSafeSnapshot())}", type: "VLCCrashProbe")
+        }
+    }
+
     private func logPlaybackClockDiagnosticsIfNeeded(player: VLCMediaPlayer, position: Double) {
         guard isPlaybackActive(player) else {
-            lastPlaybackClockSampleHostTime = nil
-            lastPlaybackClockSamplePosition = nil
+            resetPlaybackClockDiagnostics(reason: "playback-inactive")
             return
         }
 
@@ -1656,6 +1709,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     }
     
     @objc private func handleAppDidEnterBackground() {
+        resetPlaybackClockDiagnostics(reason: "app-did-enter-background")
         logVLC("appDidEnterBackground snapshot={\(playerSnapshot())}", type: "Player")
         logDrawableSnapshot("appDidEnterBackground")
         scheduleDrawableSnapshots("appDidEnterBackground followup", delays: [0.5, 1.5])
@@ -1674,6 +1728,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     }
     
     @objc private func handleAppWillEnterForeground() {
+        resetPlaybackClockDiagnostics(reason: "app-will-enter-foreground")
         logVLC("foreground will-enter begin safe={\(foregroundSafeSnapshot())}", type: "VLCCrashProbe")
         logForegroundSafeDrawableSnapshot("foreground will-enter begin")
         scheduleForegroundSafeDrawableSnapshots("foreground will-enter followup", delays: [0.10, 0.50, 1.50, 3.00])
@@ -1683,6 +1738,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     }
 
     @objc private func handleAppDidBecomeActive() {
+        resetPlaybackClockDiagnostics(reason: "app-did-become-active")
         logVLC("foreground did-become-active safe={\(foregroundSafeSnapshot())}", type: "VLCCrashProbe")
         logForegroundSafeDrawableSnapshot("foreground did-become-active")
         scheduleForegroundSafeDrawableSnapshots("foreground did-become-active followup", delays: [0.10, 0.75, 2.00])
