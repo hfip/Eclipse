@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(zlib)
+import zlib
+#endif
 
 class TMDBService: ObservableObject {
     static let shared = TMDBService()
@@ -54,20 +57,21 @@ class TMDBService: ObservableObject {
         let result = try await rateLimiter.execute {
             try await URLSession.shared.data(for: request)
         }
+        let responseData = Self.normalizedResponseData(result.0, endpoint: url.path)
 
         if let httpResponse = result.1 as? HTTPURLResponse,
            !(200..<300).contains(httpResponse.statusCode) {
-            let message = Self.errorMessage(from: result.0)
-            Logger.shared.log("TMDBService: HTTP \(httpResponse.statusCode) path=\(url.path) message=\(message ?? "nil") bytes=\(result.0.count)", type: "Error")
+            let message = Self.errorMessage(from: responseData)
+            Logger.shared.log("TMDBService: HTTP \(httpResponse.statusCode) path=\(url.path) message=\(message ?? "nil") bytes=\(responseData.count)", type: "Error")
             throw TMDBError.httpError(statusCode: httpResponse.statusCode, path: url.path, message: message)
         }
 
         if isMoviePath {
             let status = (result.1 as? HTTPURLResponse)?.statusCode ?? -1
-            probe("throttledData end path=\(url.path) status=\(status) bytes=\(result.0.count)")
+            probe("throttledData end path=\(url.path) status=\(status) bytes=\(responseData.count)")
         }
 
-        return result
+        return (responseData, result.1)
     }
 
     private static func errorMessage(from data: Data) -> String? {
@@ -176,6 +180,73 @@ class TMDBService: ObservableObject {
         }
 
         return "encodingHint=\(encodingHint) firstBytes=[\(hex)] textPrefix='\(String(cleanedText.prefix(180)))'"
+    }
+
+    private static func normalizedResponseData(_ data: Data, endpoint: String) -> Data {
+        if data.starts(with: [0x1f, 0x8b]) {
+            if let decompressed = inflateResponseData(data, windowBits: 15 + 16) {
+                Logger.shared.log("TMDBService: decompressed gzip response endpoint=\(endpoint) compressedBytes=\(data.count) bytes=\(decompressed.count)", type: "TMDB")
+                return decompressed
+            }
+
+            Logger.shared.log("TMDBService: gzip response decompression failed endpoint=\(endpoint) bytes=\(data.count)", type: "Error")
+            return data
+        }
+
+        if data.starts(with: [0x78, 0x01]) || data.starts(with: [0x78, 0x9c]) || data.starts(with: [0x78, 0xda]) {
+            if let decompressed = inflateResponseData(data, windowBits: 15) {
+                Logger.shared.log("TMDBService: decompressed zlib response endpoint=\(endpoint) compressedBytes=\(data.count) bytes=\(decompressed.count)", type: "TMDB")
+                return decompressed
+            }
+
+            Logger.shared.log("TMDBService: zlib response decompression failed endpoint=\(endpoint) bytes=\(data.count)", type: "Error")
+        }
+
+        return data
+    }
+
+    private static func inflateResponseData(_ data: Data, windowBits: Int32) -> Data? {
+#if canImport(zlib)
+        guard !data.isEmpty else { return data }
+
+        var stream = z_stream()
+        let initStatus = inflateInit2_(&stream, windowBits, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+        guard initStatus == Z_OK else { return nil }
+        defer { inflateEnd(&stream) }
+
+        var output = Data()
+        let chunkSize = 64 * 1024
+
+        return data.withUnsafeBytes { rawBuffer -> Data? in
+            guard let baseAddress = rawBuffer.bindMemory(to: Bytef.self).baseAddress else {
+                return nil
+            }
+
+            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: baseAddress)
+            stream.avail_in = uInt(data.count)
+
+            var status: Int32 = Z_OK
+            repeat {
+                var chunk = [UInt8](repeating: 0, count: chunkSize)
+                chunk.withUnsafeMutableBufferPointer { buffer in
+                    stream.next_out = buffer.baseAddress
+                    stream.avail_out = uInt(chunkSize)
+                    status = inflate(&stream, Z_NO_FLUSH)
+
+                    if status == Z_OK || status == Z_STREAM_END {
+                        let written = chunkSize - Int(stream.avail_out)
+                        if let baseAddress = buffer.baseAddress, written > 0 {
+                            output.append(baseAddress, count: written)
+                        }
+                    }
+                }
+            } while status == Z_OK
+
+            return status == Z_STREAM_END ? output : nil
+        }
+#else
+        return nil
+#endif
     }
     
     // MARK: - Multi Search (Movies and TV Shows)
