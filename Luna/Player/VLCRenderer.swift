@@ -598,8 +598,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         let state = player.state
         if needsProxyReloadAfterBackground, isVLCHeaderProxyURL(currentURL) {
             if isTerminalState(state), !isPlaybackActive(player) {
-                Logger.shared.log("[VLCRenderer.play] Background proxy resume found terminal state \(describeState(state)); retrying without VLC reload from position \(cachedPosition)s", type: "Stream")
-                recoverPlaybackWithoutReloading(player, savedPosition: cachedPosition, reason: "background-terminal")
+                Logger.shared.log("[VLCRenderer.play] Background proxy resume found terminal state \(describeState(state)); doing terminal-only media reload from position \(cachedPosition)s", type: "Stream")
+                reloadStoppedPlayerMediaPreservingPosition(cachedPosition, reason: "background-terminal")
             } else {
                 softResumeProxiedStreamAfterBackground(player)
             }
@@ -607,8 +607,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         }
 
         if isTerminalState(state), !isPlaybackActive(player) {
-            Logger.shared.log("[VLCRenderer.play] Player in \(describeState(state)) state; retrying without VLC reload from position \(cachedPosition)s", type: "Stream")
-            recoverPlaybackWithoutReloading(player, savedPosition: cachedPosition, reason: "terminal-play")
+            Logger.shared.log("[VLCRenderer.play] Player in \(describeState(state)) state; doing terminal-only media reload from position \(cachedPosition)s", type: "Stream")
+            reloadStoppedPlayerMediaPreservingPosition(cachedPosition, reason: "terminal-play")
             return
         }
 
@@ -692,8 +692,49 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             }
 
             self.needsProxyReloadAfterBackground = false
-            self.logVLC("background proxy soft resume fallback attempt=\(attemptID) reason=\(terminal ? "terminal-state" : "clock-stalled") retrying without VLC reload saved=\(self.secondsText(savedPosition)) snapshot={\(self.playerSnapshot(player))}", type: "VLCCrashProbe")
-            self.recoverPlaybackWithoutReloading(player, savedPosition: savedPosition, reason: terminal ? "soft-resume-terminal" : "soft-resume-clock-stalled")
+            self.logVLC("background proxy soft resume fallback attempt=\(attemptID) reason=\(terminal ? "terminal-state" : "clock-stalled") saved=\(self.secondsText(savedPosition)) snapshot={\(self.playerSnapshot(player))}", type: "VLCCrashProbe")
+            if terminal {
+                self.reloadStoppedPlayerMediaPreservingPosition(savedPosition, reason: "soft-resume-terminal")
+            } else {
+                self.recoverPlaybackWithoutReloading(player, savedPosition: savedPosition, reason: "soft-resume-clock-stalled")
+            }
+        }
+    }
+
+    private func reloadStoppedPlayerMediaPreservingPosition(_ position: Double, reason: String) {
+        guard let player = mediaPlayer,
+              isTerminalState(player.state),
+              !isPlaybackActive(player),
+              let url = currentURL,
+              let preset = currentPreset else {
+            if let player = mediaPlayer {
+                recoverPlaybackWithoutReloading(player, savedPosition: position, reason: "\(reason)-not-terminal")
+            }
+            return
+        }
+
+        let resumePosition = max(0, position)
+        let preservedDuration = cachedDuration
+        let mediaURL: URL
+        if isVLCHeaderProxyURL(url),
+           let refreshedURL = VLCHeaderProxy.shared.refreshedProxyURL(
+                from: url,
+                restartListener: true,
+                reason: "terminal-media-reload-\(reason)"
+           ) {
+            mediaURL = refreshedURL
+            logVLC("terminal-only media reload refreshed proxy reason=\(reason) oldPort=\(url.port?.description ?? "nil") newPort=\(refreshedURL.port?.description ?? "nil")", type: "VLCCrashProbe")
+        } else {
+            mediaURL = url
+        }
+
+        logVLC("terminal-only media reload begin reason=\(reason) resume=\(secondsText(resumePosition)) preservedDuration=\(secondsText(preservedDuration)) snapshot={\(playerSnapshot(player))}", type: "VLCCrashProbe")
+        preparedInitialSeek = resumePosition
+        pendingAbsoluteSeek = resumePosition
+        loadMedia(url: mediaURL, with: preset, headers: currentHeaders)
+        cachedPosition = resumePosition
+        if preservedDuration >= minimumReliableDuration {
+            cachedDuration = preservedDuration
         }
     }
 
@@ -807,7 +848,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             let terminal = self.isTerminalState(player.state) && !self.isPlaybackActive(player)
             self.logVLC("no-reload recovery check attempt=\(attemptID) delay=\(String(format: "%.2f", delay)) final=\(isFinalCheck) raw=\(self.secondsText(rawPosition)) baseline=\(self.secondsText(baselineRawPosition)) saved=\(self.secondsText(savedPosition)) advanced=\(rawAdvanced) terminal=\(terminal) snapshot={\(self.playerSnapshot(player))}", type: "VLCCrashProbe")
 
-            if rawAdvanced {
+            if rawAdvanced, !terminal {
                 self.clearLoadingState()
                 self.logVLC("no-reload recovery confirmed attempt=\(attemptID) raw=\(self.secondsText(rawPosition)) saved=\(self.secondsText(savedPosition))", type: "Stream")
                 return
@@ -819,6 +860,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
             self.isLoading = false
             self.isPaused = true
+            self.proxyResumeAttemptID += 1
             self.stopProgressPolling()
             let message = "VLC could not resume this stream after backgrounding without restarting playback."
             self.logVLC("no-reload recovery failed attempt=\(attemptID) message=\(message) snapshot={\(self.playerSnapshot(player))}", type: "Error")
@@ -897,8 +939,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         if isTerminalState(player.state), !isPlaybackActive(player), !isLoading {
             cachedPosition = clamped
             pendingAbsoluteSeek = clamped
-            logVLC("applySeek terminal player; retrying without VLC reload target=\(secondsText(clamped)) snapshot={\(playerSnapshot(player))}", type: "Progress")
-            recoverPlaybackWithoutReloading(player, savedPosition: clamped, reason: "terminal-seek")
+            logVLC("applySeek terminal player; doing terminal-only media reload target=\(secondsText(clamped)) snapshot={\(playerSnapshot(player))}", type: "Progress")
+            reloadStoppedPlayerMediaPreservingPosition(clamped, reason: "terminal-seek")
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.delegate?.renderer(self, didUpdatePosition: clamped, duration: max(duration, self.cachedDuration))

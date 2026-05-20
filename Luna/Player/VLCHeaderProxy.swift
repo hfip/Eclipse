@@ -137,6 +137,11 @@ final class VLCHeaderProxy {
         }
 
         let oldPort = port.map { String($0) } ?? "nil"
+        if listener != nil, port == UInt16(requestedPort) {
+            Logger.shared.log("VLCHeaderProxy: existing listener already matches VLC URL port reason=\(reason) port=\(requestedPort)", type: "Stream")
+            return true
+        }
+
         if let listener {
             Logger.shared.log("VLCHeaderProxy: restarting listener on existing VLC URL port reason=\(reason) oldPort=\(oldPort) targetPort=\(requestedPort)", type: "Stream")
             listener.cancel()
