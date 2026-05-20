@@ -1291,13 +1291,23 @@ struct MediaDetailView: View {
 
     @MainActor
     private func resolveContinueEpisodeForMainPlay() async -> TMDBEpisode? {
-        if let target = resolveMainPlayEpisodeTarget(),
-           let episode = target.episode ?? await episodeForPlayback(
-                seasonNumber: target.key.seasonNumber,
-                episodeNumber: target.key.episodeNumber
-           ) {
-            Logger.shared.log("MediaDetailView main play using target episode: id=\(searchResult.id) S\(target.key.seasonNumber)E\(target.key.episodeNumber)", type: "Progress")
-            return episode
+        if let target = resolveMainPlayEpisodeTarget() {
+            let episode: TMDBEpisode?
+            if let targetEpisode = target.episode {
+                episode = targetEpisode
+            } else {
+                episode = await episodeForPlayback(
+                    seasonNumber: target.key.seasonNumber,
+                    episodeNumber: target.key.episodeNumber
+                )
+            }
+
+            if let episode {
+                Logger.shared.log("MediaDetailView main play using target episode: id=\(searchResult.id) S\(target.key.seasonNumber)E\(target.key.episodeNumber)", type: "Progress")
+                return episode
+            } else {
+                Logger.shared.log("MediaDetailView main play target episode missing: id=\(searchResult.id) S\(target.key.seasonNumber)E\(target.key.episodeNumber)", type: "Progress")
+            }
         }
 
         if let first = await firstPlayableEpisode() {
