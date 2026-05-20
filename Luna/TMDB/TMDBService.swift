@@ -38,6 +38,10 @@ class TMDBService: ObservableObject {
 
     /// Throttled URL fetch — limits concurrent TMDB requests to avoid 429s
     private func throttledData(from url: URL) async throws -> (Data, URLResponse) {
+        guard !apiKey.isEmpty else {
+            throw TMDBError.missingAPIKey
+        }
+
         let isMoviePath = url.path.contains("/movie/")
         if isMoviePath {
             probe("throttledData start path=\(url.path)")
@@ -47,12 +51,34 @@ class TMDBService: ObservableObject {
             try await URLSession.shared.data(from: url)
         }
 
+        if let httpResponse = result.1 as? HTTPURLResponse,
+           !(200..<300).contains(httpResponse.statusCode) {
+            let message = Self.errorMessage(from: result.0)
+            Logger.shared.log("TMDBService: HTTP \(httpResponse.statusCode) path=\(url.path) message=\(message ?? "nil") bytes=\(result.0.count)", type: "Error")
+            throw TMDBError.httpError(statusCode: httpResponse.statusCode, path: url.path, message: message)
+        }
+
         if isMoviePath {
             let status = (result.1 as? HTTPURLResponse)?.statusCode ?? -1
             probe("throttledData end path=\(url.path) status=\(status) bytes=\(result.0.count)")
         }
 
         return result
+    }
+
+    private static func errorMessage(from data: Data) -> String? {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let message = json["status_message"] as? String {
+            return message
+        }
+
+        guard let body = String(data: data, encoding: .utf8) else { return nil }
+        let cleaned = body
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return String(cleaned.prefix(180))
     }
     
     // MARK: - Multi Search (Movies and TV Shows)
@@ -684,6 +710,7 @@ enum TMDBError: Error, LocalizedError {
     case networkError(Error)
     case decodingError
     case missingAPIKey
+    case httpError(statusCode: Int, path: String, message: String?)
     
     var errorDescription: String? {
         switch self {
@@ -695,6 +722,11 @@ enum TMDBError: Error, LocalizedError {
             return "Failed to decode response"
         case .missingAPIKey:
             return "API key is missing. Please add your TMDB API key."
+        case .httpError(let statusCode, let path, let message):
+            if let message, !message.isEmpty {
+                return "TMDB request failed (\(statusCode)) for \(path): \(message)"
+            }
+            return "TMDB request failed (\(statusCode)) for \(path)"
         }
     }
 }

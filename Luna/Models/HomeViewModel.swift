@@ -39,215 +39,167 @@ final class HomeViewModel: ObservableObject {
         errorMessage = nil
         
         Task {
-            do {
-                async let trending = tmdbService.getTrending()
-                async let popularM = tmdbService.getPopularMovies()
-                async let nowPlayingM = tmdbService.getNowPlayingMovies()
-                async let upcomingM = tmdbService.getUpcomingMovies()
-                async let popularTV = tmdbService.getPopularTVShows()
-                async let onTheAirTV = tmdbService.getOnTheAirTVShows()
-                async let airingTodayTV = tmdbService.getAiringTodayTVShows()
-                async let topRatedTV = tmdbService.getTopRatedTVShows()
-                async let topRatedM = tmdbService.getTopRatedMovies()
-                let tmdbResults = try await (
-                    trending, popularM, nowPlayingM, upcomingM, popularTV, onTheAirTV,
-                    airingTodayTV, topRatedTV, topRatedM
-                )
-                
-                // Fetch all anime catalogs in a single AniList query (1 API call instead of 5)
-                let animeCatalogs = (try? await AniListService.shared.fetchAllAnimeCatalogs(tmdbService: tmdbService)) ?? [:]
-                let trendingAnime = animeCatalogs[.trending] ?? []
-                let popularAnime = animeCatalogs[.popular] ?? []
-                let topRatedAnime = animeCatalogs[.topRated] ?? []
-                let airingAnime = animeCatalogs[.airing] ?? []
-                let upcomingAnime = animeCatalogs[.upcoming] ?? []
-                
+            async let trending: [TMDBSearchResult] = self.loadHomeCatalog("trending") {
+                try await tmdbService.getTrending()
+            }
+            async let popularM: [TMDBMovie] = self.loadHomeCatalog("popularMovies") {
+                try await tmdbService.getPopularMovies()
+            }
+            async let nowPlayingM: [TMDBMovie] = self.loadHomeCatalog("nowPlayingMovies") {
+                try await tmdbService.getNowPlayingMovies()
+            }
+            async let upcomingM: [TMDBMovie] = self.loadHomeCatalog("upcomingMovies") {
+                try await tmdbService.getUpcomingMovies()
+            }
+            async let popularTV: [TMDBTVShow] = self.loadHomeCatalog("popularTVShows") {
+                try await tmdbService.getPopularTVShows()
+            }
+            async let onTheAirTV: [TMDBTVShow] = self.loadHomeCatalog("onTheAirTV") {
+                try await tmdbService.getOnTheAirTVShows()
+            }
+            async let airingTodayTV: [TMDBTVShow] = self.loadHomeCatalog("airingTodayTV") {
+                try await tmdbService.getAiringTodayTVShows()
+            }
+            async let topRatedTV: [TMDBTVShow] = self.loadHomeCatalog("topRatedTVShows") {
+                try await tmdbService.getTopRatedTVShows()
+            }
+            async let topRatedM: [TMDBMovie] = self.loadHomeCatalog("topRatedMovies") {
+                try await tmdbService.getTopRatedMovies()
+            }
+
+            let tmdbResults = await (
+                trending, popularM, nowPlayingM, upcomingM, popularTV, onTheAirTV,
+                airingTodayTV, topRatedTV, topRatedM
+            )
+
+            // Fetch all anime catalogs in a single AniList query (1 API call instead of 5)
+            let animeCatalogs = await self.loadAnimeCatalogs(tmdbService: tmdbService)
+            let trendingAnime = animeCatalogs[.trending] ?? []
+            let popularAnime = animeCatalogs[.popular] ?? []
+            let topRatedAnime = animeCatalogs[.topRated] ?? []
+            let airingAnime = animeCatalogs[.airing] ?? []
+            let upcomingAnime = animeCatalogs[.upcoming] ?? []
+
+            let loadedCatalogs: [String: [TMDBSearchResult]] = [
+                "trending": tmdbResults.0,
+                "popularMovies": tmdbResults.1.map { self.movieSearchResult($0) },
+                "nowPlayingMovies": tmdbResults.2.map { self.movieSearchResult($0) },
+                "upcomingMovies": tmdbResults.3.map { self.movieSearchResult($0) },
+                "popularTVShows": tmdbResults.4.map { self.tvSearchResult($0) },
+                "onTheAirTV": tmdbResults.5.map { self.tvSearchResult($0) },
+                "airingTodayTV": tmdbResults.6.map { self.tvSearchResult($0) },
+                "topRatedTVShows": tmdbResults.7.map { self.tvSearchResult($0) },
+                "topRatedMovies": tmdbResults.8.map { self.movieSearchResult($0) },
+                "trendingAnime": trendingAnime,
+                "popularAnime": popularAnime,
+                "topRatedAnime": topRatedAnime,
+                "airingAnime": airingAnime,
+                "upcomingAnime": upcomingAnime
+            ]
+            let loadedCatalogCount = loadedCatalogs.values.filter { !$0.isEmpty }.count
+
+            await MainActor.run {
+                self.catalogResults = loadedCatalogs
+                self.applyHeroBannerSelection()
+                self.isLoading = false
+                self.hasLoadedContent = loadedCatalogCount > 0
+                self.errorMessage = loadedCatalogCount == 0
+                    ? "Unable to load home catalogs. Check your internet connection and API configuration, then try again."
+                    : nil
+            }
+
+            guard loadedCatalogCount > 0 else { return }
+
+            // Generate "Just For You" recommendations after catalogs are populated
+            let currentResults = await MainActor.run { self.catalogResults }
+            let forYou = await RecommendationEngine.shared.generateRecommendations(
+                catalogResults: currentResults,
+                tmdbService: tmdbService
+            )
+            if !forYou.isEmpty {
                 await MainActor.run {
-                    self.catalogResults = [
-                        "trending": tmdbResults.0,
-                        "popularMovies": tmdbResults.1.map { movie in
-                            TMDBSearchResult(
-                                id: movie.id,
-                                mediaType: "movie",
-                                title: movie.title,
-                                name: nil,
-                                overview: movie.overview,
-                                posterPath: movie.posterPath,
-                                backdropPath: movie.backdropPath,
-                                releaseDate: movie.releaseDate,
-                                firstAirDate: nil,
-                                voteAverage: movie.voteAverage,
-                                popularity: movie.popularity,
-                                adult: movie.adult,
-                                genreIds: movie.genreIds
-                            )
-                        },
-                        "nowPlayingMovies": tmdbResults.2.map { movie in
-                            TMDBSearchResult(
-                                id: movie.id,
-                                mediaType: "movie",
-                                title: movie.title,
-                                name: nil,
-                                overview: movie.overview,
-                                posterPath: movie.posterPath,
-                                backdropPath: movie.backdropPath,
-                                releaseDate: movie.releaseDate,
-                                firstAirDate: nil,
-                                voteAverage: movie.voteAverage,
-                                popularity: movie.popularity,
-                                adult: movie.adult,
-                                genreIds: movie.genreIds
-                            )
-                        },
-                        "upcomingMovies": tmdbResults.3.map { movie in
-                            TMDBSearchResult(
-                                id: movie.id,
-                                mediaType: "movie",
-                                title: movie.title,
-                                name: nil,
-                                overview: movie.overview,
-                                posterPath: movie.posterPath,
-                                backdropPath: movie.backdropPath,
-                                releaseDate: movie.releaseDate,
-                                firstAirDate: nil,
-                                voteAverage: movie.voteAverage,
-                                popularity: movie.popularity,
-                                adult: movie.adult,
-                                genreIds: movie.genreIds
-                            )
-                        },
-                        "popularTVShows": tmdbResults.4.map { show in
-                            TMDBSearchResult(
-                                id: show.id,
-                                mediaType: "tv",
-                                title: nil,
-                                name: show.name,
-                                overview: show.overview,
-                                posterPath: show.posterPath,
-                                backdropPath: show.backdropPath,
-                                releaseDate: nil,
-                                firstAirDate: show.firstAirDate,
-                                voteAverage: show.voteAverage,
-                                popularity: show.popularity,
-                                adult: nil,
-                                genreIds: show.genreIds
-                            )
-                        },
-                        "onTheAirTV": tmdbResults.5.map { show in
-                            TMDBSearchResult(
-                                id: show.id,
-                                mediaType: "tv",
-                                title: nil,
-                                name: show.name,
-                                overview: show.overview,
-                                posterPath: show.posterPath,
-                                backdropPath: show.backdropPath,
-                                releaseDate: nil,
-                                firstAirDate: show.firstAirDate,
-                                voteAverage: show.voteAverage,
-                                popularity: show.popularity,
-                                adult: nil,
-                                genreIds: show.genreIds
-                            )
-                        },
-                        "airingTodayTV": tmdbResults.6.map { show in
-                            TMDBSearchResult(
-                                id: show.id,
-                                mediaType: "tv",
-                                title: nil,
-                                name: show.name,
-                                overview: show.overview,
-                                posterPath: show.posterPath,
-                                backdropPath: show.backdropPath,
-                                releaseDate: nil,
-                                firstAirDate: show.firstAirDate,
-                                voteAverage: show.voteAverage,
-                                popularity: show.popularity,
-                                adult: nil,
-                                genreIds: show.genreIds
-                            )
-                        },
-                        "topRatedTVShows": tmdbResults.7.map { show in
-                            TMDBSearchResult(
-                                id: show.id,
-                                mediaType: "tv",
-                                title: nil,
-                                name: show.name,
-                                overview: show.overview,
-                                posterPath: show.posterPath,
-                                backdropPath: show.backdropPath,
-                                releaseDate: nil,
-                                firstAirDate: show.firstAirDate,
-                                voteAverage: show.voteAverage,
-                                popularity: show.popularity,
-                                adult: nil,
-                                genreIds: show.genreIds
-                            )
-                        },
-                        "topRatedMovies": tmdbResults.8.map { movie in
-                            TMDBSearchResult(
-                                id: movie.id,
-                                mediaType: "movie",
-                                title: movie.title,
-                                name: nil,
-                                overview: movie.overview,
-                                posterPath: movie.posterPath,
-                                backdropPath: movie.backdropPath,
-                                releaseDate: movie.releaseDate,
-                                firstAirDate: nil,
-                                voteAverage: movie.voteAverage,
-                                popularity: movie.popularity,
-                                adult: movie.adult,
-                                genreIds: movie.genreIds
-                            )
-                        },
-                        "trendingAnime": trendingAnime,
-                        "popularAnime": popularAnime,
-                        "topRatedAnime": topRatedAnime,
-                        "airingAnime": airingAnime,
-                        "upcomingAnime": upcomingAnime
-                    ]
-                    
+                    self.catalogResults["forYou"] = forYou
                     self.applyHeroBannerSelection()
-                    
-                    self.isLoading = false
-                    self.hasLoadedContent = true
-                }
-                
-                // Generate "Just For You" recommendations after catalogs are populated
-                let currentResults = await MainActor.run { self.catalogResults }
-                let forYou = await RecommendationEngine.shared.generateRecommendations(
-                    catalogResults: currentResults,
-                    tmdbService: tmdbService
-                )
-                if !forYou.isEmpty {
-                    await MainActor.run {
-                        self.catalogResults["forYou"] = forYou
-                        self.applyHeroBannerSelection()
-                    }
-                }
-                
-                // Generate "Because you watched X" catalog
-                let (bywTitle, bywResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
-                    tmdbService: tmdbService
-                )
-                if !bywResults.isEmpty {
-                    await MainActor.run {
-                        self.catalogResults["becauseYouWatched"] = bywResults
-                        self.becauseYouWatchedTitle = bywTitle
-                        self.applyHeroBannerSelection()
-                    }
-                }
-                
-                // Load widget data in secondary pass (non-blocking, progressive)
-                self.loadWidgetData(tmdbService: tmdbService, catalogManager: catalogManager)
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.isLoading = false
                 }
             }
+
+            // Generate "Because you watched X" catalog
+            let (bywTitle, bywResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
+                tmdbService: tmdbService
+            )
+            if !bywResults.isEmpty {
+                await MainActor.run {
+                    self.catalogResults["becauseYouWatched"] = bywResults
+                    self.becauseYouWatchedTitle = bywTitle
+                    self.applyHeroBannerSelection()
+                }
+            }
+
+            // Load widget data in secondary pass (non-blocking, progressive)
+            self.loadWidgetData(tmdbService: tmdbService, catalogManager: catalogManager)
         }
+    }
+
+    private func loadHomeCatalog<T>(_ id: String, fetch: () async throws -> [T]) async -> [T] {
+        do {
+            let items = try await fetch()
+            Logger.shared.log("HomeViewModel: catalog \(id) loaded count=\(items.count)", type: "TMDB")
+            return items
+        } catch {
+            Logger.shared.log("HomeViewModel: catalog \(id) failed: \(error.localizedDescription)", type: "Error")
+            return []
+        }
+    }
+
+    private func loadAnimeCatalogs(tmdbService: TMDBService) async -> [AniListService.AniListCatalogKind: [TMDBSearchResult]] {
+        do {
+            let catalogs = try await AniListService.shared.fetchAllAnimeCatalogs(tmdbService: tmdbService)
+            let loadedSummary = catalogs
+                .map { "\(String(describing: $0.key))=\($0.value.count)" }
+                .sorted()
+                .joined(separator: ",")
+            Logger.shared.log("HomeViewModel: anime catalogs loaded \(loadedSummary)", type: "AniList")
+            return catalogs
+        } catch {
+            Logger.shared.log("HomeViewModel: anime catalogs failed: \(error.localizedDescription)", type: "Error")
+            return [:]
+        }
+    }
+
+    private func movieSearchResult(_ movie: TMDBMovie) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: movie.id,
+            mediaType: "movie",
+            title: movie.title,
+            name: nil,
+            overview: movie.overview,
+            posterPath: movie.posterPath,
+            backdropPath: movie.backdropPath,
+            releaseDate: movie.releaseDate,
+            firstAirDate: nil,
+            voteAverage: movie.voteAverage,
+            popularity: movie.popularity,
+            adult: movie.adult,
+            genreIds: movie.genreIds
+        )
+    }
+
+    private func tvSearchResult(_ show: TMDBTVShow) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: show.id,
+            mediaType: "tv",
+            title: nil,
+            name: show.name,
+            overview: show.overview,
+            posterPath: show.posterPath,
+            backdropPath: show.backdropPath,
+            releaseDate: nil,
+            firstAirDate: show.firstAirDate,
+            voteAverage: show.voteAverage,
+            popularity: show.popularity,
+            adult: nil,
+            genreIds: show.genreIds
+        )
     }
 
     
