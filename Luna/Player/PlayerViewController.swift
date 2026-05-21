@@ -973,6 +973,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         btn.layer.shadowOpacity = 0.3
         btn.layer.shadowOffset = CGSize(width: 0, height: 2)
         btn.layer.shadowRadius = 4
+        btn.layer.cornerCurve = .continuous
         btn.titleLabel?.lineBreakMode = .byTruncatingTail
         btn.titleLabel?.numberOfLines = 1
         btn.setContentHuggingPriority(.required, for: .horizontal)
@@ -2194,7 +2195,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let availableWidth = max(videoContainer.bounds.width, view.bounds.width)
         let compactLimit = max(240, availableWidth - 32)
-        let landscapeLimit = min(560, max(340, availableWidth * 0.58))
+        let landscapeLimit = min(520, max(360, availableWidth * 0.48))
         nextEpisodeButtonMaxWidthConstraint?.constant = isPortrait ? min(420, compactLimit) : landscapeLimit
     }
 #endif
@@ -3959,9 +3960,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         nextEpisodeArtworkImage = nil
         nextEpisodeButtonAppearanceKey = nil
 #if !os(tvOS)
-        nextEpisodeButton.configuration?.title = "Next Episode"
-        nextEpisodeButton.configuration?.subtitle = nil
-        nextEpisodeButton.configuration?.image = UIImage(systemName: "forward.end.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        applyTextNextEpisodeButton()
 #endif
     }
 
@@ -4709,13 +4708,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         config.cornerStyle = .capsule
         config.baseBackgroundColor = UIColor.white.withAlphaComponent(0.2)
         config.baseForegroundColor = UIColor.white
+        config.background.strokeWidth = 0
+        config.titleTextAttributesTransformer = nil
+        config.subtitleTextAttributesTransformer = nil
         config.image = UIImage(systemName: "forward.end.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         config.imagePlacement = .leading
         config.imagePadding = 6
         config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 18)
         config.title = "Next Episode"
         config.subtitle = nil
+        config.titleAlignment = .automatic
         config.titleLineBreakMode = .byTruncatingTail
+        nextEpisodeButton.contentHorizontalAlignment = .center
+        nextEpisodeButton.layer.shadowOpacity = 0.3
+        nextEpisodeButton.layer.shadowOffset = CGSize(width: 0, height: 2)
+        nextEpisodeButton.layer.shadowRadius = 4
         nextEpisodeButton.configuration = config
         nextEpisodeButtonAppearanceKey = signature
     }
@@ -4724,23 +4731,43 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let imageURLs = item.artworkURLs
         let imageKey = imageURLs.joined(separator: "|")
         let isSameArtwork = nextEpisodeArtworkKey == imageKey
-        let placeholderImage = UIImage(systemName: "photo")
+        let placeholderImage = makeNextEpisodeArtworkPlaceholderImage()
         let imageReady = isSameArtwork && nextEpisodeArtworkImage != nil
         let signature = "poster|\(imageKey)|\(item.displayCode)|\(item.displayTitle)|ready=\(imageReady)"
 
         if nextEpisodeButtonAppearanceKey != signature {
             var config = nextEpisodeButton.configuration ?? UIButton.Configuration.filled()
-            config.cornerStyle = .capsule
-            config.baseBackgroundColor = UIColor.black.withAlphaComponent(0.58)
+            config.cornerStyle = .fixed
+            config.baseBackgroundColor = UIColor.black.withAlphaComponent(0.82)
             config.baseForegroundColor = UIColor.white
+            config.background.cornerRadius = 10
+            config.background.strokeColor = UIColor.white.withAlphaComponent(0.14)
+            config.background.strokeWidth = 1
             config.imagePlacement = .leading
-            config.imagePadding = 10
+            config.imagePadding = 12
             config.image = isSameArtwork ? (nextEpisodeArtworkImage ?? placeholderImage) : placeholderImage
-            config.title = "\(item.displayCode)  \(item.displayTitle)"
-            config.subtitle = "Next Episode"
-            config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 14)
+            config.title = "Up Next"
+            config.subtitle = "\(item.displayCode)  \(item.displayTitle)"
+            config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 16)
+            config.titleAlignment = .leading
             config.titleLineBreakMode = .byTruncatingTail
             config.subtitleLineBreakMode = .byTruncatingTail
+            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = UIFont.systemFont(ofSize: 11, weight: .bold)
+                outgoing.foregroundColor = UIColor.white.withAlphaComponent(0.68)
+                return outgoing
+            }
+            config.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+                outgoing.foregroundColor = UIColor.white
+                return outgoing
+            }
+            nextEpisodeButton.contentHorizontalAlignment = .leading
+            nextEpisodeButton.layer.shadowOpacity = 0.42
+            nextEpisodeButton.layer.shadowOffset = CGSize(width: 0, height: 8)
+            nextEpisodeButton.layer.shadowRadius = 14
             nextEpisodeButton.configuration = config
             nextEpisodeButtonAppearanceKey = signature
             logVLCUI("next episode poster button configured key=\(nextEpisodePreviewKey ?? "nil") artworkReady=\(imageReady) imageURLs=\(imageURLs.count)", type: "VLCCrashProbe")
@@ -4816,7 +4843,36 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var nextEpisodeArtworkDecodeSize: CGSize {
-        CGSize(width: 256, height: 96)
+        CGSize(width: 360, height: 204)
+    }
+
+    private var nextEpisodeArtworkTargetSize: CGSize {
+        CGSize(width: 160, height: 90)
+    }
+
+    private func makeNextEpisodeArtworkPlaceholderImage() -> UIImage {
+        let targetSize = nextEpisodeArtworkTargetSize
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { _ in
+            let rect = CGRect(origin: .zero, size: targetSize)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: 8)
+            UIColor(white: 1.0, alpha: 0.08).setFill()
+            path.fill()
+
+            let iconConfig = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
+            let icon = UIImage(systemName: "play.rectangle.fill", withConfiguration: iconConfig)?
+                .withTintColor(UIColor.white.withAlphaComponent(0.48), renderingMode: .alwaysOriginal)
+            let iconSize = CGSize(width: 34, height: 26)
+            let iconRect = CGRect(
+                x: (targetSize.width - iconSize.width) / 2,
+                y: (targetSize.height - iconSize.height) / 2,
+                width: iconSize.width,
+                height: iconSize.height
+            )
+            icon?.draw(in: iconRect)
+        }.withRenderingMode(.alwaysOriginal)
     }
 
     private func makeNextEpisodeArtworkSourceImage(from data: Data) -> UIImage? {
@@ -4831,7 +4887,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: 320
+            kCGImageSourceThumbnailMaxPixelSize: 480
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
             return UIImage(data: data)
@@ -4859,10 +4915,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return rawImage.withRenderingMode(.alwaysOriginal)
         }
 
-        let aspectRatio = rawImage.size.width / rawImage.size.height
-        let targetSize = aspectRatio < 0.85
-            ? CGSize(width: 108, height: 76)
-            : CGSize(width: 192, height: 54)
+        let targetSize = nextEpisodeArtworkTargetSize
 
         let scale = max(targetSize.width / rawImage.size.width, targetSize.height / rawImage.size.height)
         let drawSize = CGSize(width: rawImage.size.width * scale, height: rawImage.size.height * scale)
