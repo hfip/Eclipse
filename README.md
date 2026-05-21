@@ -98,6 +98,8 @@ Eclipse ships as an app shell and media manager. It does not provide hosted medi
 
 Users are responsible for the services and addons they choose to add. The app and developer do not support piracy.
 
+To add a service/addon, click the top right settings icon in the homescreen and then click services. Then click the top right plus icon and choose whichever type of link you copied.
+
 
 ## Build Configuration
 
