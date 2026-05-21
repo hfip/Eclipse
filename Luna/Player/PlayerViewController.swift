@@ -72,6 +72,130 @@ struct PlaybackFailureReport {
     let isSourceFailure: Bool
 }
 
+#if !os(tvOS)
+private final class NextEpisodePreviewButton: UIButton {
+    private let posterImageView = UIImageView()
+    private let upNextLabel = UILabel()
+    private let episodeTitleLabel = UILabel()
+    private var isPosterMode = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configurePosterSubviews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configurePosterSubviews()
+    }
+
+    override var intrinsicContentSize: CGSize {
+        isPosterMode ? CGSize(width: 420, height: 106) : super.intrinsicContentSize
+    }
+
+    func applyTextMode() {
+        isPosterMode = false
+        posterImageView.isHidden = true
+        upNextLabel.isHidden = true
+        episodeTitleLabel.isHidden = true
+        backgroundColor = nil
+        layer.borderWidth = 0
+        layer.cornerRadius = 0
+        layer.cornerCurve = .continuous
+
+        var config = UIButton.Configuration.filled()
+        config.cornerStyle = .capsule
+        config.baseBackgroundColor = UIColor.white.withAlphaComponent(0.2)
+        config.baseForegroundColor = UIColor.white
+        config.image = UIImage(systemName: "forward.end.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        config.imagePlacement = .leading
+        config.imagePadding = 6
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 18)
+        config.title = "Next Episode"
+        config.titleLineBreakMode = .byTruncatingTail
+        configuration = config
+        contentHorizontalAlignment = .center
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    func applyPosterMode(image: UIImage, episodeText: String) {
+        isPosterMode = true
+        configuration = nil
+        setTitle(nil, for: .normal)
+        setImage(nil, for: .normal)
+        backgroundColor = UIColor.black.withAlphaComponent(0.82)
+        layer.cornerRadius = 10
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1
+        layer.borderColor = UIColor.white.withAlphaComponent(0.14).cgColor
+
+        posterImageView.isHidden = false
+        upNextLabel.isHidden = false
+        episodeTitleLabel.isHidden = false
+        posterImageView.image = image
+        upNextLabel.text = "Up Next"
+        episodeTitleLabel.text = episodeText
+        contentHorizontalAlignment = .leading
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    func updatePosterArtwork(_ image: UIImage) {
+        guard isPosterMode else { return }
+        posterImageView.image = image
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard isPosterMode else { return }
+
+        let inset: CGFloat = 8
+        let spacing: CGFloat = 12
+        let availableHeight = max(0, bounds.height - inset * 2)
+        let artworkWidth = min(160, max(108, bounds.width * 0.42))
+        let artworkHeight = min(availableHeight, artworkWidth * 9 / 16)
+        let artworkSize = CGSize(width: artworkHeight * 16 / 9, height: artworkHeight)
+        let artworkY = (bounds.height - artworkSize.height) / 2
+        posterImageView.frame = CGRect(x: inset, y: artworkY, width: artworkSize.width, height: artworkSize.height)
+
+        let textX = posterImageView.frame.maxX + spacing
+        let textWidth = max(0, bounds.width - textX - 16)
+        let labelHeight: CGFloat = 16
+        let titleHeight = min(42, max(22, bounds.height - 48))
+        let totalTextHeight = labelHeight + 4 + titleHeight
+        let textY = max(inset, (bounds.height - totalTextHeight) / 2)
+        upNextLabel.frame = CGRect(x: textX, y: textY, width: textWidth, height: labelHeight)
+        episodeTitleLabel.frame = CGRect(x: textX, y: upNextLabel.frame.maxY + 4, width: textWidth, height: titleHeight)
+    }
+
+    private func configurePosterSubviews() {
+        posterImageView.contentMode = .scaleAspectFill
+        posterImageView.clipsToBounds = true
+        posterImageView.layer.cornerRadius = 8
+        posterImageView.layer.cornerCurve = .continuous
+        posterImageView.isUserInteractionEnabled = false
+        posterImageView.isHidden = true
+
+        upNextLabel.font = UIFont.systemFont(ofSize: 11, weight: .bold)
+        upNextLabel.textColor = UIColor.white.withAlphaComponent(0.68)
+        upNextLabel.isUserInteractionEnabled = false
+        upNextLabel.isHidden = true
+
+        episodeTitleLabel.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        episodeTitleLabel.textColor = .white
+        episodeTitleLabel.numberOfLines = 2
+        episodeTitleLabel.lineBreakMode = .byTruncatingTail
+        episodeTitleLabel.isUserInteractionEnabled = false
+        episodeTitleLabel.isHidden = true
+
+        addSubview(posterImageView)
+        addSubview(upNextLabel)
+        addSubview(episodeTitleLabel)
+    }
+}
+#endif
+
 final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate {
     private struct PlayerOverlayMenuAction {
         let title: String
@@ -956,16 +1080,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return btn
     }()
 
-    private lazy var nextEpisodeButton: UIButton = {
-        var config = UIButton.Configuration.filled()
-        config.cornerStyle = .capsule
-        config.baseBackgroundColor = UIColor.white.withAlphaComponent(0.2)
-        config.baseForegroundColor = UIColor.white
-        config.image = UIImage(systemName: "forward.end.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        config.imagePadding = 6
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 18)
-        config.title = "Next Episode"
-        let btn = UIButton(configuration: config)
+    private lazy var nextEpisodeButton: NextEpisodePreviewButton = {
+        let btn = NextEpisodePreviewButton()
+        btn.applyTextMode()
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.alpha = 0
         btn.isHidden = true
@@ -4704,26 +4821,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let signature = "text"
         guard nextEpisodeButtonAppearanceKey != signature else { return }
-        var config = nextEpisodeButton.configuration ?? UIButton.Configuration.filled()
-        config.cornerStyle = .capsule
-        config.baseBackgroundColor = UIColor.white.withAlphaComponent(0.2)
-        config.baseForegroundColor = UIColor.white
-        config.background.strokeWidth = 0
-        config.titleTextAttributesTransformer = nil
-        config.subtitleTextAttributesTransformer = nil
-        config.image = UIImage(systemName: "forward.end.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        config.imagePlacement = .leading
-        config.imagePadding = 6
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 18)
-        config.title = "Next Episode"
-        config.subtitle = nil
-        config.titleAlignment = .automatic
-        config.titleLineBreakMode = .byTruncatingTail
-        nextEpisodeButton.contentHorizontalAlignment = .center
+        nextEpisodeButton.applyTextMode()
         nextEpisodeButton.layer.shadowOpacity = 0.3
         nextEpisodeButton.layer.shadowOffset = CGSize(width: 0, height: 2)
         nextEpisodeButton.layer.shadowRadius = 4
-        nextEpisodeButton.configuration = config
         nextEpisodeButtonAppearanceKey = signature
     }
 
@@ -4736,39 +4837,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let signature = "poster|\(imageKey)|\(item.displayCode)|\(item.displayTitle)|ready=\(imageReady)"
 
         if nextEpisodeButtonAppearanceKey != signature {
-            var config = nextEpisodeButton.configuration ?? UIButton.Configuration.filled()
-            config.cornerStyle = .fixed
-            config.baseBackgroundColor = UIColor.black.withAlphaComponent(0.82)
-            config.baseForegroundColor = UIColor.white
-            config.background.cornerRadius = 10
-            config.background.strokeColor = UIColor.white.withAlphaComponent(0.14)
-            config.background.strokeWidth = 1
-            config.imagePlacement = .leading
-            config.imagePadding = 12
-            config.image = isSameArtwork ? (nextEpisodeArtworkImage ?? placeholderImage) : placeholderImage
-            config.title = "Up Next"
-            config.subtitle = "\(item.displayCode)  \(item.displayTitle)"
-            config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 16)
-            config.titleAlignment = .leading
-            config.titleLineBreakMode = .byTruncatingTail
-            config.subtitleLineBreakMode = .byTruncatingTail
-            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-                var outgoing = incoming
-                outgoing.font = UIFont.systemFont(ofSize: 11, weight: .bold)
-                outgoing.foregroundColor = UIColor.white.withAlphaComponent(0.68)
-                return outgoing
-            }
-            config.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-                var outgoing = incoming
-                outgoing.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-                outgoing.foregroundColor = UIColor.white
-                return outgoing
-            }
-            nextEpisodeButton.contentHorizontalAlignment = .leading
+            nextEpisodeButton.applyPosterMode(
+                image: isSameArtwork ? (nextEpisodeArtworkImage ?? placeholderImage) : placeholderImage,
+                episodeText: "\(item.displayCode)  \(item.displayTitle)"
+            )
             nextEpisodeButton.layer.shadowOpacity = 0.42
             nextEpisodeButton.layer.shadowOffset = CGSize(width: 0, height: 8)
             nextEpisodeButton.layer.shadowRadius = 14
-            nextEpisodeButton.configuration = config
             nextEpisodeButtonAppearanceKey = signature
             logVLCUI("next episode poster button configured key=\(nextEpisodePreviewKey ?? "nil") artworkReady=\(imageReady) imageURLs=\(imageURLs.count)", type: "VLCCrashProbe")
         }
@@ -4903,9 +4978,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let image = makeNextEpisodeArtworkImage(from: rawImage)
         nextEpisodeArtworkImage = image
 
-        var current = nextEpisodeButton.configuration ?? UIButton.Configuration.filled()
-        current.image = image
-        nextEpisodeButton.configuration = current
+        nextEpisodeButton.updatePosterArtwork(image)
         nextEpisodeButtonAppearanceKey = nil
         logVLCUI("next episode artwork applied key=\(nextEpisodePreviewKey ?? "nil") source=\(String(format: "%.0fx%.0f", rawImage.size.width, rawImage.size.height)) rendered=\(String(format: "%.0fx%.0f", image.size.width, image.size.height))", type: "VLCCrashProbe")
     }
