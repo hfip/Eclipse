@@ -199,7 +199,11 @@ class Logger: @unchecked Sendable {
             return trimmed.isEmpty || trimmed == "All" ? nil : Self.displayCategory(for: trimmed)
         }
         let logs = await getLogsAsync(category: selectedCategory)
-        let content = logs.isEmpty ? "No logs available." : logs
+        var content = logs.isEmpty ? "No logs available." : logs
+        if let crashReport = CrashReportManager.shared.latestCrashReportText(),
+           !crashReport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            content += "\n\n==== Last Native Crash Report ====\n\n\(crashReport)"
+        }
         guard let data = content.data(using: .utf8) else {
             throw ExportError.encodingFailed
         }

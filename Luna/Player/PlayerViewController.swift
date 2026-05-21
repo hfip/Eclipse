@@ -5923,6 +5923,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     @objc private func handleUserDefaultsDidChange() {
+        guard Thread.isMainThread else {
+            Logger.shared.log("[PlayerVC.Settings] UserDefaults changed off-main; dispatching player UI refresh to main", type: "CrashProbe")
+            DispatchQueue.main.async { [weak self] in
+                self?.handleUserDefaultsDidChange()
+            }
+            return
+        }
+
         guard isVLCPlayer || isMPVRenderer else { return }
         if isVLCPlaybackStartupInProgress {
             Logger.shared.log("[PlayerVC.Settings] UserDefaults changed during VLC startup; deferring subtitle/settings rebuild", type: "Player")

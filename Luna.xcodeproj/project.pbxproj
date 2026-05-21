@@ -46,6 +46,7 @@
 		F9A1B2D22F90000100A1B2D2 /* MPVHeaderProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A1B2D12F90000100A1B2D1 /* MPVHeaderProxy.swift */; };
 		F9A1B2C32F90000100A1B2C3 /* VLCHeaderProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A1B2C22F90000100A1B2C3 /* VLCHeaderProxy.swift */; };
 		BB7777972F20000001BB7797 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = BB7777982F20000001BB7798 /* VLCKitSPM */; };
+		C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */ = {isa = PBXBuildFile; productRef = C0A5A0042FD1000000C0A504 /* CrashReporter */; };
 		13A46CFD2EF5943400423BC6 /* FakeWebKit in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFC2EF5943400423BC6 /* FakeWebKit */; };
 		13A46D002EF5944C00423BC6 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFF2EF5944C00423BC6 /* Kingfisher */; };
 		13A46D032EF5945700423BC6 /* SoraCore in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46D022EF5945700423BC6 /* SoraCore */; };
@@ -118,6 +119,7 @@
 		13F072B52E4B2D9200EF90EB /* URLSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072902E4B2D9100EF90EB /* URLSession.swift */; };
 		13F072B62E4B2D9200EF90EB /* AmbientColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072922E4B2D9100EF90EB /* AmbientColor.swift */; };
 		13F072B72E4B2D9200EF90EB /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072942E4B2D9100EF90EB /* Logger.swift */; };
+		C0A5A0022FD1000000C0A502 /* CrashReportManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A5A0012FD1000000C0A501 /* CrashReportManager.swift */; };
 		13F072B82E4B2D9200EF90EB /* LevenshteinDistance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072962E4B2D9100EF90EB /* LevenshteinDistance.swift */; };
 		13F072B92E4B2D9200EF90EB /* TMDBModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072992E4B2D9200EF90EB /* TMDBModels.swift */; };
 		13F072BA2E4B2D9200EF90EB /* TMDBService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F0729A2E4B2D9200EF90EB /* TMDBService.swift */; };
@@ -297,6 +299,7 @@
 		13F072902E4B2D9100EF90EB /* URLSession.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = URLSession.swift; sourceTree = "<group>"; };
 		13F072922E4B2D9100EF90EB /* AmbientColor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AmbientColor.swift; sourceTree = "<group>"; };
 		13F072942E4B2D9100EF90EB /* Logger.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		C0A5A0012FD1000000C0A501 /* CrashReportManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CrashReportManager.swift; sourceTree = "<group>"; };
 		13F072962E4B2D9100EF90EB /* LevenshteinDistance.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LevenshteinDistance.swift; sourceTree = "<group>"; };
 		13F072992E4B2D9200EF90EB /* TMDBModels.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TMDBModels.swift; sourceTree = "<group>"; };
 		13F0729A2E4B2D9200EF90EB /* TMDBService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TMDBService.swift; sourceTree = "<group>"; };
@@ -361,6 +364,7 @@
 				13A46CFD2EF5943400423BC6 /* FakeWebKit in Frameworks */,
 				136C25C62EFE950300E37A6E /* MPVKit-GPL in Frameworks */,
 				BB7777972F20000001BB7797 /* VLCKitSPM in Frameworks */,
+				C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -812,6 +816,7 @@
 			isa = PBXGroup;
 			children = (
 				13F072942E4B2D9100EF90EB /* Logger.swift */,
+				C0A5A0012FD1000000C0A501 /* CrashReportManager.swift */,
 			);
 			path = Logger;
 			sourceTree = "<group>";
@@ -952,6 +957,7 @@
 				13A46D022EF5945700423BC6 /* SoraCore */,
 				136C25C52EFE950300E37A6E /* MPVKit-GPL */,
 				BB7777982F20000001BB7798 /* VLCKitSPM */,
+				C0A5A0042FD1000000C0A504 /* CrashReporter */,
 			);
 			productName = Sora;
 			productReference = 13F0725B2E4B2D3300EF90EB /* Luna.app */;
@@ -987,6 +993,7 @@
 				13A46D012EF5945700423BC6 /* XCRemoteSwiftPackageReference "SoraCore" */,
 				136C25C42EFE950300E37A6E /* XCRemoteSwiftPackageReference "MPVKit" */,
 				BB7777992F20000001BB7799 /* XCRemoteSwiftPackageReference "vlckit-spm" */,
+				C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */,
 			);
 			productRefGroup = 13F0725C2E4B2D3300EF90EB /* Products */;
 			projectDirPath = "";
@@ -1131,6 +1138,7 @@
 				12DF1FC22F040D6700E80375 /* AdaptiveConfirmationDialog.swift in Sources */,
 				13F072A82E4B2D9200EF90EB /* ContentView.swift in Sources */,
 				13F072B72E4B2D9200EF90EB /* Logger.swift in Sources */,
+				C0A5A0022FD1000000C0A502 /* CrashReportManager.swift in Sources */,
 				13E1EDD72ED9E65F00087629 /* favouriteManager.swift in Sources */,
 				13B2E5742E7597B9009F3271 /* JSController-NetworkFetch.swift in Sources */,
 				13F315B02EAD03F70025BD7A /* SubtitleLoader.swift in Sources */,
@@ -1495,6 +1503,14 @@
 				minimumVersion = 3.6.0;
 			};
 		};
+		C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/plcrashreporter.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.12.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1526,6 +1542,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BB7777992F20000001BB7799 /* XCRemoteSwiftPackageReference "vlckit-spm" */;
 			productName = VLCKitSPM;
+		};
+		C0A5A0042FD1000000C0A504 /* CrashReporter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */;
+			productName = CrashReporter;
 		};
 /* End XCSwiftPackageProductDependency section */
 

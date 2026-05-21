@@ -41,6 +41,7 @@ struct SoraApp: App {
 #endif
 
     init() {
+        CrashReportManager.shared.start()
         GitHubReleaseChecker.registerDefaults()
 
         // Check and auto-clear cache on app startup if threshold exceeded
