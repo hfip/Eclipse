@@ -147,6 +147,9 @@ final class TrackerManager: NSObject, ObservableObject {
     // Prevent tracker sync bursts during local backup restore.
     private var syncSuppressedDuringBackupRestore = false
     private let backupRestoreSyncQueue = DispatchQueue(label: "com.luna.backupRestoreSync")
+    private var recentWatchSyncKeys: [String: Date] = [:]
+    private let recentWatchSyncQueue = DispatchQueue(label: "com.luna.recentWatchSync")
+    private let watchSyncDedupeInterval: TimeInterval = 60
 
     // OAuth config is supplied by ignored local build settings.
     private func bundledCredential(_ key: String) -> String {
@@ -242,6 +245,42 @@ final class TrackerManager: NSObject, ObservableObject {
         backupRestoreSyncQueue.sync {
             syncSuppressedDuringBackupRestore
         }
+    }
+
+    private func shouldStartWatchSync(
+        showId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        progress: Double,
+        isMovie: Bool,
+        playbackContext: EpisodePlaybackContext?
+    ) -> Bool {
+        let normalizedProgress = progress <= 1.0 ? progress * 100.0 : progress
+        guard normalizedProgress >= 85 else {
+            return true
+        }
+
+        let providerKey = playbackContext?.anilistMediaId.map { String($0) } ?? "none"
+        let specialKey = playbackContext?.isSpecial == true ? "special" : "regular"
+        let key = "\(isMovie ? "movie" : "episode")|\(showId)|\(seasonNumber)|\(episodeNumber)|\(providerKey)|\(specialKey)|watched"
+        let now = Date()
+        var shouldStart = true
+        recentWatchSyncQueue.sync {
+            recentWatchSyncKeys = recentWatchSyncKeys.filter {
+                now.timeIntervalSince($0.value) < watchSyncDedupeInterval * 10
+            }
+            if let previous = recentWatchSyncKeys[key],
+               now.timeIntervalSince(previous) < watchSyncDedupeInterval {
+                shouldStart = false
+            } else {
+                recentWatchSyncKeys[key] = now
+            }
+        }
+
+        if !shouldStart {
+            Logger.shared.log("Skipping duplicate watched sync for TMDB \(showId) S\(seasonNumber)E\(episodeNumber) \(Int(normalizedProgress))% within \(Int(watchSyncDedupeInterval))s", type: "Tracker")
+        }
+        return shouldStart
     }
 
     private func sendTrackerRequest(_ request: URLRequest, provider: TrackerRequestProvider, maxRetries: Int = 2) async throws -> (Data, HTTPURLResponse) {
@@ -1437,6 +1476,17 @@ final class TrackerManager: NSObject, ObservableObject {
         let connectedAccounts = trackerState.accounts.filter { $0.isConnected }
         guard !connectedAccounts.isEmpty else {
             Logger.shared.log("Skipping watch sync (no connected tracker accounts) for TMDB \(showId) S\(seasonNumber)E\(episodeNumber) \(Int(progress))%", type: "Tracker")
+            return
+        }
+
+        guard shouldStartWatchSync(
+            showId: showId,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber,
+            progress: progress,
+            isMovie: isMovie,
+            playbackContext: playbackContext
+        ) else {
             return
         }
 

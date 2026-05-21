@@ -1047,6 +1047,22 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var mpvTransportBridgeFallbackTried = false
     private var isMPVTransportBridgePlaybackActive = false
     private var lastIgnoredMPVBridgeDurationLogValue: Double = -1
+    private struct BackgroundRecoveryProgressGate {
+        let id: Int
+        let mediaKey: String
+        let source: String
+        let rendererName: String
+        let armedAt: Date
+        let baselinePosition: Double
+        let baselineDuration: Double
+        var foregroundedAt: Date?
+        var lastSuppressionLogBucket: Int = -1
+    }
+    private var backgroundRecoveryProgressGate: BackgroundRecoveryProgressGate?
+    private var backgroundRecoveryProgressGateID = 0
+    private let backgroundRecoveryProgressSuppressionWindow: TimeInterval = 12.0
+    private let backgroundRecoveryProgressMaxGuardWindow: TimeInterval = 60.0
+    private let backgroundRecoveryProgressJumpTolerance: Double = 12.0
     
     // Debounce timers for menu updates to avoid excessive rebuilds
     private var audioMenuDebounceTimer: Timer?
@@ -1167,6 +1183,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             logMPV("rendererSeek(to:) target=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)")
         }
+        releaseBackgroundRecoveryProgressGate(reason: "explicit-seek")
         renderer.seek(to: seconds)
     }
     
@@ -1180,6 +1197,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             logMPV("rendererSeek(by:) delta=\(secondsText(seconds)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading)")
         }
+        releaseBackgroundRecoveryProgressGate(reason: "explicit-relative-seek")
         renderer.seek(by: seconds)
     }
     
@@ -1194,6 +1212,128 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     private func rendererGetSpeed() -> Double {
         renderer.getSpeed()
+    }
+
+    private func currentMediaProgressKey(for info: MediaInfo? = nil) -> String? {
+        guard let target = info ?? mediaInfo else {
+            return nil
+        }
+        switch target {
+        case .movie(let id, _, _, _):
+            return "movie:\(id)"
+        case .episode(let showId, let seasonNumber, let episodeNumber, _, _, _):
+            return "episode:\(showId):\(seasonNumber):\(episodeNumber)"
+        }
+    }
+
+    private func armBackgroundRecoveryProgressGateIfNeeded(source: String) {
+        guard !isClosing,
+              let mediaKey = currentMediaProgressKey(),
+              mediaInfo != nil else {
+            return
+        }
+
+        let wasPlaying = !rendererIsPausedState() && (playbackDidStart || cachedPosition > 0.1)
+        guard wasPlaying else {
+            if backgroundRecoveryProgressGate?.mediaKey == mediaKey {
+                return
+            }
+            return
+        }
+
+        let now = Date()
+        if let existing = backgroundRecoveryProgressGate,
+           existing.mediaKey == mediaKey,
+           now.timeIntervalSince(existing.armedAt) < 3.0 {
+            return
+        }
+
+        backgroundRecoveryProgressGateID += 1
+        let rendererName = isVLCPlayer ? "VLC" : "MPV"
+        backgroundRecoveryProgressGate = BackgroundRecoveryProgressGate(
+            id: backgroundRecoveryProgressGateID,
+            mediaKey: mediaKey,
+            source: source,
+            rendererName: rendererName,
+            armedAt: now,
+            baselinePosition: max(0, cachedPosition),
+            baselineDuration: max(0, cachedDuration)
+        )
+        Logger.shared.log("[PlayerVC.Recovery] armed progress gate id=\(backgroundRecoveryProgressGateID) source=\(source) renderer=\(rendererName) media=\(mediaKey) baseline=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "Progress")
+    }
+
+    private func markBackgroundRecoveryForegrounded(source: String) {
+        guard var gate = backgroundRecoveryProgressGate else { return }
+        if gate.foregroundedAt == nil {
+            gate.foregroundedAt = Date()
+            backgroundRecoveryProgressGate = gate
+            Logger.shared.log("[PlayerVC.Recovery] foregrounded progress gate id=\(gate.id) source=\(source) renderer=\(gate.rendererName) baseline=\(secondsText(gate.baselinePosition))/\(secondsText(gate.baselineDuration))", type: "Progress")
+        }
+
+        let gateID = gate.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + backgroundRecoveryProgressMaxGuardWindow) { [weak self] in
+            guard let self,
+                  self.backgroundRecoveryProgressGate?.id == gateID else {
+                return
+            }
+            self.releaseBackgroundRecoveryProgressGate(reason: "max-guard-window")
+        }
+    }
+
+    private func releaseBackgroundRecoveryProgressGate(reason: String) {
+        guard let gate = backgroundRecoveryProgressGate else { return }
+        backgroundRecoveryProgressGate = nil
+        Logger.shared.log("[PlayerVC.Recovery] released progress gate id=\(gate.id) reason=\(reason) renderer=\(gate.rendererName) media=\(gate.mediaKey) armedSource=\(gate.source)", type: "Progress")
+    }
+
+    private func shouldPersistProgressAfterBackgroundRecovery(
+        safePosition: Double,
+        effectiveDuration: Double,
+        durationIsReliable: Bool
+    ) -> Bool {
+        guard var gate = backgroundRecoveryProgressGate else { return true }
+
+        guard currentMediaProgressKey() == gate.mediaKey else {
+            releaseBackgroundRecoveryProgressGate(reason: "media-changed")
+            return true
+        }
+
+        guard durationIsReliable, effectiveDuration > 0 else {
+            return false
+        }
+
+        let now = Date()
+        let recoveryStart = gate.foregroundedAt ?? gate.armedAt
+        let elapsed = max(0, now.timeIntervalSince(recoveryStart))
+        let baselinePosition = max(0, gate.baselinePosition)
+        let baselineDuration = max(0, gate.baselineDuration)
+        let advanceThreshold = baselinePosition < 5.0 ? 1.0 : 2.0
+        let advancedEnough = safePosition >= baselinePosition + advanceThreshold
+        let baselineProgress = baselineDuration > 0 ? min(max(baselinePosition / baselineDuration, 0), 1) : 0
+        let candidateProgress = min(max(safePosition / effectiveDuration, 0), 1)
+        let crossedWatchedThreshold = baselineProgress < 0.85 && candidateProgress >= 0.85
+        let allowedPlaybackAdvance = max(backgroundRecoveryProgressJumpTolerance, elapsed * max(1.0, rendererGetSpeed()) + 5.0)
+        let suspiciousJump = safePosition > baselinePosition + allowedPlaybackAdvance
+        let shouldSuppress = elapsed < backgroundRecoveryProgressSuppressionWindow
+            || (crossedWatchedThreshold && suspiciousJump && elapsed < backgroundRecoveryProgressMaxGuardWindow)
+
+        if advancedEnough && !suspiciousJump {
+            releaseBackgroundRecoveryProgressGate(reason: "playback-advanced")
+            return true
+        }
+
+        if shouldSuppress {
+            let bucket = Int(elapsed / 5.0)
+            if gate.lastSuppressionLogBucket != bucket {
+                gate.lastSuppressionLogBucket = bucket
+                backgroundRecoveryProgressGate = gate
+                Logger.shared.log("[PlayerVC.Recovery] suppressing progress persistence id=\(gate.id) elapsed=\(String(format: "%.1f", elapsed))s position=\(secondsText(safePosition))/\(secondsText(effectiveDuration)) baseline=\(secondsText(baselinePosition))/\(secondsText(baselineDuration)) advanced=\(advancedEnough) suspiciousJump=\(suspiciousJump) crossedWatched=\(crossedWatchedThreshold)", type: "Progress")
+            }
+            return false
+        }
+
+        releaseBackgroundRecoveryProgressGate(reason: "guard-window-expired")
+        return true
     }
     
     private func rendererGetAudioTracksDetailed() -> [(Int, String, String)] {
@@ -2182,6 +2322,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         pendingSeekTime = nil
         pendingInitialResumeTarget = nil
         pendingInitialResumeDeadline = nil
+        releaseBackgroundRecoveryProgressGate(reason: "new-load")
         if let info = mediaInfo {
             prepareSeekToLastPosition(for: info)
         }
@@ -3283,6 +3424,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     @objc private func playPauseTapped() {
         if rendererIsPausedState() {
+            markBackgroundRecoveryForegrounded(source: "play-button")
             rendererPlay()
             updatePlayPauseButton(isPaused: false)
         } else {
@@ -7123,6 +7265,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         guard durationIsReliable, effectiveDuration.isFinite, effectiveDuration > 0, safePosition >= 0, let info = mediaInfo else { return }
         let persistPosition = min(safePosition, effectiveDuration)
+        guard shouldPersistProgressAfterBackgroundRecovery(
+            safePosition: persistPosition,
+            effectiveDuration: effectiveDuration,
+            durationIsReliable: durationIsReliable
+        ) else {
+            return
+        }
         
         switch info {
         case .movie(let id, let title, _, _):
@@ -8414,6 +8563,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func appWillResignActive() {
         logPictureInPicture("lifecycle notification received source=will-resign-active")
+        armBackgroundRecoveryProgressGateIfNeeded(source: "will-resign-active")
         if isVLCPlayer {
             logPictureInPicture("VLC app-exit PiP skipped source=will-resign-active: disabled")
             return
@@ -8430,6 +8580,11 @@ extension PlayerViewController: PiPControllerDelegate {
     @objc private func appScenePhaseDidChange(_ notification: Notification) {
         let phase = notification.userInfo?["phase"] as? String ?? "unknown"
         logPictureInPicture("scenePhase notification received phase=\(phase)")
+        if phase == "inactive" || phase == "background" {
+            armBackgroundRecoveryProgressGateIfNeeded(source: "scene-phase-\(phase)")
+        } else if phase == "active" {
+            markBackgroundRecoveryForegrounded(source: "scene-phase-active")
+        }
         if isVLCPlayer {
             if phase == "active" {
                 logVLCForegroundSnapshot("scene-phase-active notification")
@@ -8537,6 +8692,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func sceneWillDeactivate() {
         logPictureInPicture("lifecycle notification received source=scene-will-deactivate")
+        armBackgroundRecoveryProgressGateIfNeeded(source: "scene-will-deactivate")
         if isVLCPlayer {
             logPictureInPicture("VLC app-exit PiP skipped source=scene-will-deactivate: disabled")
             return
@@ -8565,6 +8721,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func sceneDidEnterBackground() {
         logPictureInPicture("lifecycle notification received source=scene-did-enter-background")
+        armBackgroundRecoveryProgressGateIfNeeded(source: "scene-did-enter-background")
         if isVLCPlayer {
             logPictureInPicture("VLC app-exit PiP skipped source=scene-did-enter-background: disabled")
             return
@@ -8603,6 +8760,7 @@ extension PlayerViewController: PiPControllerDelegate {
     
     @objc private func appDidEnterBackground() {
         logPictureInPicture("lifecycle notification received source=did-enter-background")
+        armBackgroundRecoveryProgressGateIfNeeded(source: "did-enter-background")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.logVLCUIViewSnapshot("appDidEnterBackground async start")
@@ -8620,6 +8778,7 @@ extension PlayerViewController: PiPControllerDelegate {
     
     @objc private func appWillEnterForeground() {
         logVLCForegroundSnapshot("will-enter-foreground notification")
+        markBackgroundRecoveryForegrounded(source: "will-enter-foreground")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.logVLCForegroundSnapshot("will-enter-foreground async start")
@@ -8663,6 +8822,7 @@ extension PlayerViewController: PiPControllerDelegate {
     }
 
     @objc private func sceneWillEnterForeground() {
+        markBackgroundRecoveryForegrounded(source: "scene-will-enter-foreground")
         if isVLCPlayer {
             logVLCForegroundSnapshot("scene-will-enter-foreground notification")
             scheduleVLCForegroundSnapshots("scene-will-enter-foreground followup", delays: [0.10, 0.75])
@@ -8672,6 +8832,7 @@ extension PlayerViewController: PiPControllerDelegate {
     }
 
     @objc private func appDidBecomeActive() {
+        markBackgroundRecoveryForegrounded(source: "did-become-active")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.isVLCPlayer {
@@ -8686,6 +8847,7 @@ extension PlayerViewController: PiPControllerDelegate {
     }
 
     @objc private func sceneDidActivate() {
+        markBackgroundRecoveryForegrounded(source: "scene-did-activate")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.isVLCPlayer {

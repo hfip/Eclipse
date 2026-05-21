@@ -572,17 +572,13 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         guard let player = mediaPlayer else { return }
         ensureAudioSessionActive()
 
-        // After a background pause, give VLC fresh local proxy media in-place.
-        // Reusing the old backgrounded proxy connection can leave libVLC in a
-        // fragile post-foreground state even after the clock starts moving.
         let state = player.state
         if needsProxyReloadAfterBackground, isVLCHeaderProxyURL(currentURL) {
             if isTerminalState(state), !isPlaybackActive(player) {
                 Logger.shared.log("[VLCRenderer.play] Background proxy resume found terminal state \(describeState(state)); doing terminal-only media reload from position \(cachedPosition)s", type: "Stream")
                 reloadStoppedPlayerMediaPreservingPosition(cachedPosition, reason: "background-terminal")
-            } else if reloadForegroundProxiedMediaPreservingPosition(cachedPosition, player: player, reason: "background-resume") {
-                Logger.shared.log("[VLCRenderer.play] Background proxy resume refreshed media in-place from position \(cachedPosition)s", type: "Stream")
             } else {
+                Logger.shared.log("[VLCRenderer.play] Background proxy resume using soft recovery from position \(cachedPosition)s", type: "Stream")
                 softResumeProxiedStreamAfterBackground(player)
             }
             return
