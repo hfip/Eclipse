@@ -4816,7 +4816,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var nextEpisodeArtworkDecodeSize: CGSize {
-        CGSize(width: 128, height: 96)
+        CGSize(width: 256, height: 96)
     }
 
     private func makeNextEpisodeArtworkSourceImage(from data: Data) -> UIImage? {
@@ -4861,8 +4861,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let aspectRatio = rawImage.size.width / rawImage.size.height
         let targetSize = aspectRatio < 0.85
-            ? CGSize(width: 54, height: 76)
-            : CGSize(width: 96, height: 54)
+            ? CGSize(width: 108, height: 76)
+            : CGSize(width: 192, height: 54)
 
         let scale = max(targetSize.width / rawImage.size.width, targetSize.height / rawImage.size.height)
         let drawSize = CGSize(width: rawImage.size.width * scale, height: rawImage.size.height * scale)

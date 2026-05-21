@@ -87,6 +87,7 @@ struct BackupData: Codable {
     var autoClearCacheEnabled: Bool = false
     var autoClearCacheThresholdMB: Double = 500
     var highQualityThreshold: Double = 0.9
+    var servicesAutoModeQualityPreference: String = AutoModeQualityPreference.defaultPreference.rawValue
     
     // Collections (Library)
     var collections: [BackupCollection] = []
@@ -128,7 +129,7 @@ struct BackupData: Codable {
         case showKanzen, kanzenAutoMode, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
-        case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold
+        case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, servicesAutoModeQualityPreference
         case collections, progressData, trackerState, catalogs, services, stremioAddons
         case mangaCollections, mangaReadingProgress, mangaCatalogs, kanzenModules
         case recommendationCache
@@ -215,6 +216,7 @@ struct BackupData: Codable {
         autoClearCacheEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoClearCacheEnabled) ?? false
         autoClearCacheThresholdMB = try container.decodeIfPresent(Double.self, forKey: .autoClearCacheThresholdMB) ?? 500
         highQualityThreshold = try container.decodeIfPresent(Double.self, forKey: .highQualityThreshold) ?? 0.9
+        servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(try container.decodeIfPresent(String.self, forKey: .servicesAutoModeQualityPreference))
 
         collections = try container.decodeIfPresent([BackupCollection].self, forKey: .collections) ?? []
         progressData = try container.decodeIfPresent(ProgressData.self, forKey: .progressData) ?? ProgressData()
@@ -362,6 +364,7 @@ struct BackupData: Codable {
         try container.encode(autoClearCacheEnabled, forKey: .autoClearCacheEnabled)
         try container.encode(autoClearCacheThresholdMB, forKey: .autoClearCacheThresholdMB)
         try container.encode(highQualityThreshold, forKey: .highQualityThreshold)
+        try container.encode(AutoModeQualityPreference.sanitizedRawValue(servicesAutoModeQualityPreference), forKey: .servicesAutoModeQualityPreference)
 
         try container.encode(collections, forKey: .collections)
         try container.encode(progressData, forKey: .progressData)
@@ -453,6 +456,7 @@ struct BackupData: Codable {
         autoClearCacheEnabled: Bool = false,
         autoClearCacheThresholdMB: Double = 500,
         highQualityThreshold: Double = 0.9,
+        servicesAutoModeQualityPreference: String = AutoModeQualityPreference.defaultPreference.rawValue,
 
         collections: [BackupCollection] = [],
         progressData: ProgressData = ProgressData(),
@@ -536,6 +540,7 @@ struct BackupData: Codable {
         self.autoClearCacheEnabled = autoClearCacheEnabled
         self.autoClearCacheThresholdMB = autoClearCacheThresholdMB
         self.highQualityThreshold = highQualityThreshold
+        self.servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(servicesAutoModeQualityPreference)
 
         self.collections = collections
         self.progressData = progressData
@@ -833,6 +838,7 @@ class BackupManager {
         let autoClearCacheThresholdMB = savedCacheThreshold > 0 ? savedCacheThreshold : 500
         let savedQualityThreshold = userDefaults.object(forKey: "highQualityThreshold") as? Double ?? 0.9
         let highQualityThreshold = savedQualityThreshold
+        let servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(userDefaults.string(forKey: AutoModeQualityPreference.storageKey))
         
         // Get library collections
         let libraryManager = LibraryManager.shared
@@ -983,6 +989,7 @@ class BackupManager {
             autoClearCacheEnabled: autoClearCacheEnabled,
             autoClearCacheThresholdMB: autoClearCacheThresholdMB,
             highQualityThreshold: highQualityThreshold,
+            servicesAutoModeQualityPreference: servicesAutoModeQualityPreference,
 
             collections: backupCollections,
             progressData: progressData,
@@ -1127,6 +1134,7 @@ class BackupManager {
         let autoClearCacheEnabled = json["autoClearCacheEnabled"] as? Bool ?? false
         let autoClearCacheThresholdMB = json["autoClearCacheThresholdMB"] as? Double ?? 500
         let highQualityThreshold = json["highQualityThreshold"] as? Double ?? 0.9
+        let servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(json["servicesAutoModeQualityPreference"] as? String)
         
         // Try to decode complex objects individually
         var collections: [BackupCollection] = []
@@ -1322,6 +1330,7 @@ class BackupManager {
             autoClearCacheEnabled: autoClearCacheEnabled,
             autoClearCacheThresholdMB: autoClearCacheThresholdMB,
             highQualityThreshold: highQualityThreshold,
+            servicesAutoModeQualityPreference: servicesAutoModeQualityPreference,
             collections: collections,
             progressData: progressData,
             trackerState: trackerState,
@@ -1431,6 +1440,7 @@ class BackupManager {
         userDefaults.set(backup.autoClearCacheEnabled, forKey: "autoClearCacheEnabled")
         userDefaults.set(backup.autoClearCacheThresholdMB, forKey: "autoClearCacheThresholdMB")
         userDefaults.set(backup.highQualityThreshold, forKey: "highQualityThreshold")
+        userDefaults.set(AutoModeQualityPreference.sanitizedRawValue(backup.servicesAutoModeQualityPreference), forKey: AutoModeQualityPreference.storageKey)
         
         // Reload Settings singleton to pick up changes
         let settings = Settings.shared

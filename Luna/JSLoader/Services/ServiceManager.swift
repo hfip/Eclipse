@@ -31,6 +31,73 @@ enum SourceHealth {
     }
 }
 
+enum AutoModeQualityPreference: String, CaseIterable, Identifiable {
+    case manual
+    case auto
+    case highest
+    case quality2160 = "2160p"
+    case quality1080 = "1080p"
+    case quality720 = "720p"
+    case quality480 = "480p"
+    case lowest
+
+    static let storageKey = "servicesAutoModeQualityPreference"
+    static let defaultPreference: AutoModeQualityPreference = .auto
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .manual: return "Ask"
+        case .auto: return "Auto"
+        case .highest: return "Highest"
+        case .quality2160: return "2160p"
+        case .quality1080: return "1080p"
+        case .quality720: return "720p"
+        case .quality480: return "480p"
+        case .lowest: return "Lowest"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .manual:
+            return "Auto Mode asks when a source returns multiple stream qualities."
+        case .auto:
+            return "Auto Mode chooses the strongest stream quality it can identify."
+        case .highest:
+            return "Auto Mode picks the highest detected resolution."
+        case .quality2160, .quality1080, .quality720, .quality480:
+            return "Auto Mode picks this quality when available, otherwise the closest lower option."
+        case .lowest:
+            return "Auto Mode picks the lowest detected resolution."
+        }
+    }
+
+    var targetResolutionHeight: Int? {
+        switch self {
+        case .quality2160: return 2160
+        case .quality1080: return 1080
+        case .quality720: return 720
+        case .quality480: return 480
+        default: return nil
+        }
+    }
+
+    var usesAutomaticSelection: Bool {
+        self != .manual
+    }
+
+    static var current: AutoModeQualityPreference {
+        let raw = UserDefaults.standard.string(forKey: storageKey)
+        return raw.flatMap(AutoModeQualityPreference.init(rawValue:)) ?? defaultPreference
+    }
+
+    static func sanitizedRawValue(_ value: String?) -> String {
+        value.flatMap(AutoModeQualityPreference.init(rawValue:))?.rawValue ?? defaultPreference.rawValue
+    }
+}
+
 enum SourceHealthStatus: String, Codable {
     case unchecked
     case healthy

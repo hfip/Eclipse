@@ -1016,7 +1016,141 @@ struct ModulesSearchResultsSheet: View {
             .result
     }
 
-    private func stremioStreamScore(_ stream: StremioStream) -> Double {
+    private struct StreamQualityInfo {
+        let resolutionHeight: Int?
+        let sizeMB: Double?
+        let sourceScore: Double
+        let featureScore: Double
+    }
+
+    private func streamQualityInfo(from label: String) -> StreamQualityInfo {
+        let lower = label.lowercased()
+        let resolutionHeight: Int?
+        if lower.contains("2160") || lower.contains("4k") || lower.contains("uhd") {
+            resolutionHeight = 2160
+        } else if lower.contains("1440") {
+            resolutionHeight = 1440
+        } else if lower.contains("1080") {
+            resolutionHeight = 1080
+        } else if lower.contains("720") {
+            resolutionHeight = 720
+        } else if lower.contains("480") {
+            resolutionHeight = 480
+        } else if lower.contains("360") {
+            resolutionHeight = 360
+        } else {
+            resolutionHeight = nil
+        }
+
+        let sizeMB = largestFileSizeMB(in: label)
+
+        let sourceScore: Double
+        if lower.contains("remux") {
+            sourceScore = 9
+        } else if lower.contains("bluray") || lower.contains("blu-ray") || lower.contains("bdrip") || lower.contains("brrip") {
+            sourceScore = 8
+        } else if lower.contains("web-dl") || lower.contains("webdl") {
+            sourceScore = 7
+        } else if lower.contains("webrip") || lower.contains(" web ") || lower.contains(".web.") {
+            sourceScore = 6
+        } else if lower.contains("hdtv") || lower.contains("hdrip") {
+            sourceScore = 5
+        } else if lower.contains("dvdrip") || lower.contains("dvd") {
+            sourceScore = 4
+        } else if lower.contains("cam") || lower.contains("hdcam") || lower.contains(" telesync") || lower.contains(" ts ") {
+            sourceScore = 1
+        } else {
+            sourceScore = 3
+        }
+
+        var featureScore = 0.0
+        if lower.contains("cached") || lower.contains("cache") { featureScore += 0.4 }
+        if lower.contains("hdr") || lower.contains("dolby vision") || lower.contains(" dv ") { featureScore += 0.2 }
+        if lower.contains("hevc") || lower.contains("x265") || lower.contains("h265") || lower.contains("h.265") { featureScore += 0.1 }
+
+        return StreamQualityInfo(
+            resolutionHeight: resolutionHeight,
+            sizeMB: sizeMB,
+            sourceScore: sourceScore,
+            featureScore: featureScore
+        )
+    }
+
+    private func largestFileSizeMB(in label: String) -> Double? {
+        let pattern = #"(\d+(?:\.\d+)?)\s*(gb|gib|mb|mib)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let nsRange = NSRange(label.startIndex..<label.endIndex, in: label)
+        let matches = regex.matches(in: label, range: nsRange)
+        let sizes = matches.compactMap { match -> Double? in
+            guard let valueRange = Range(match.range(at: 1), in: label),
+                  let unitRange = Range(match.range(at: 2), in: label),
+                  let value = Double(String(label[valueRange])) else {
+                return nil
+            }
+            let unit = label[unitRange].lowercased()
+            return unit.hasPrefix("g") ? value * 1024 : value
+        }
+        return sizes.max()
+    }
+
+    private func streamPreferenceScore(label: String, preference: AutoModeQualityPreference, index: Int) -> Double {
+        let info = streamQualityInfo(from: label)
+        let earlierTieBreak = -Double(index) * 0.001
+        let sizeScore = min(info.sizeMB ?? 0, 80_000) / 10_000
+        let qualityBonus = info.sourceScore + info.featureScore + sizeScore + earlierTieBreak
+
+        switch preference {
+        case .manual:
+            return qualityBonus
+        case .auto, .highest:
+            return Double(info.resolutionHeight ?? 0) * 10 + qualityBonus
+        case .lowest:
+            let resolution = info.resolutionHeight ?? 10_000
+            return -Double(resolution) + (qualityBonus * 0.1)
+        case .quality2160, .quality1080, .quality720, .quality480:
+            guard let target = preference.targetResolutionHeight else {
+                return qualityBonus
+            }
+            guard let resolution = info.resolutionHeight else {
+                return -10_000 + qualityBonus
+            }
+            if resolution == target {
+                return 20_000 + qualityBonus
+            }
+            if resolution < target {
+                return 10_000 - Double(target - resolution) + qualityBonus
+            }
+            return 8_000 - Double(resolution - target) + qualityBonus
+        }
+    }
+
+    private func streamLabelHasDetectedQuality(_ label: String) -> Bool {
+        streamQualityInfo(from: label).resolutionHeight != nil
+    }
+
+    private func bestStreamOption(from options: [StreamOption]) -> StreamOption? {
+        let preference = AutoModeQualityPreference.current
+        guard preference.usesAutomaticSelection else {
+            return nil
+        }
+        let labeledOptions = options.enumerated().map { index, option in
+            (index: index, option: option, label: "\(option.name) \(option.url)")
+        }
+        guard labeledOptions.contains(where: { streamLabelHasDetectedQuality($0.label) }) else {
+            return nil
+        }
+        return options.enumerated().max { lhs, rhs in
+            let lhsLabel = "\(lhs.element.name) \(lhs.element.url)"
+            let rhsLabel = "\(rhs.element.name) \(rhs.element.url)"
+            let lhsScore = streamPreferenceScore(label: lhsLabel, preference: preference, index: lhs.offset)
+            let rhsScore = streamPreferenceScore(label: rhsLabel, preference: preference, index: rhs.offset)
+            return lhsScore < rhsScore
+        }?.element
+    }
+
+    private func legacyStremioStreamScore(_ stream: StremioStream) -> Double {
         let shortDescription = stream.description.map { String($0.prefix(120)) }
         let label = [stream.displayName, shortDescription, stream.behaviorHints?.filename]
             .compactMap { $0 }
@@ -1056,9 +1190,19 @@ struct ModulesSearchResultsSheet: View {
 
     private func bestStremioStream(from streams: [StremioStream]) -> StremioStream? {
         guard !streams.isEmpty else { return nil }
+        guard AutoModeQualityPreference.current.usesAutomaticSelection else {
+            return nil
+        }
+        guard streams.contains(where: { streamLabelHasDetectedQuality(smartPlayerMetadata(for: $0)) }) else {
+            return nil
+        }
         return streams.enumerated().max(by: { lhs, rhs in
-            let lhsScore = stremioStreamScore(lhs.element)
-            let rhsScore = stremioStreamScore(rhs.element)
+            let lhsLabel = smartPlayerMetadata(for: lhs.element)
+            let rhsLabel = smartPlayerMetadata(for: rhs.element)
+            let lhsScore = streamPreferenceScore(label: lhsLabel, preference: AutoModeQualityPreference.current, index: lhs.offset)
+                + legacyStremioStreamScore(lhs.element)
+            let rhsScore = streamPreferenceScore(label: rhsLabel, preference: AutoModeQualityPreference.current, index: rhs.offset)
+                + legacyStremioStreamScore(rhs.element)
             if lhsScore == rhsScore {
                 return lhs.offset > rhs.offset
             }
@@ -1391,6 +1535,18 @@ struct ModulesSearchResultsSheet: View {
                     viewModel.stremioResults[addon.id] = streams
                     viewModel.stremioSearchedAddons.insert(addon.id)
                     return best
+                } else if streams.count > 1 {
+                    let fallbackReason = AutoModeQualityPreference.current.usesAutomaticSelection ? "no quality label" : "auto quality disabled"
+                    viewModel.stremioResults[addon.id] = streams
+                    viewModel.stremioSearchedAddons.insert(addon.id)
+                    viewModel.stremioStreamOptions = streams
+                    viewModel.selectedStremioAddon = addon
+                    viewModel.pendingPlaybackAutoMode = true
+                    viewModel.isFetchingStreams = false
+                    viewModel.showingStremioStreamPicker = true
+                    autoModeCancelled = true
+                    Logger.shared.log("Auto Mode found \(streams.count) Stremio streams for \(addon.manifest.name) but \(fallbackReason); showing picker", type: "Stremio")
+                    return nil
                 }
             } catch {
                 Logger.shared.log("Auto Mode Stremio failed for \(addon.manifest.name) id=\(contentId): \(error.localizedDescription)", type: "Stremio")
@@ -2008,7 +2164,7 @@ struct ModulesSearchResultsSheet: View {
                 Button {
                     viewModel.showingStremioStreamPicker = false
                     if let addon = viewModel.selectedStremioAddon {
-                        playStremioStream(stream, addon: addon)
+                        playStremioStream(stream, addon: addon, autoModeLaunch: viewModel.pendingPlaybackAutoMode)
                     }
                 } label: {
                     Text(stremioStreamLabel(for: stream))
@@ -2018,6 +2174,7 @@ struct ModulesSearchResultsSheet: View {
         Button("Cancel", role: .cancel) {
             viewModel.stremioStreamOptions = nil
             viewModel.selectedStremioAddon = nil
+            viewModel.pendingPlaybackAutoMode = false
         }
     }
 
@@ -2680,7 +2837,23 @@ struct ModulesSearchResultsSheet: View {
         
         if availableStreams.count > 1 {
             if viewModel.pendingPlaybackAutoMode {
-                Logger.shared.log("Auto Mode found \(availableStreams.count) stream options for \(service.metadata.sourceName); waiting for user choice", type: "Stream")
+                if let selectedStream = bestStreamOption(from: availableStreams) {
+                    let preference = AutoModeQualityPreference.current
+                    Logger.shared.log("Auto Mode selected stream option '\(selectedStream.name)' for \(service.metadata.sourceName) preference=\(preference.rawValue) options=\(availableStreams.count)", type: "Stream")
+                    viewModel.streamFetchProgress = "Selected \(selectedStream.name)."
+                    resolveSubtitleSelection(
+                        subtitles: subtitles,
+                        defaultSubtitle: selectedStream.subtitle,
+                        service: service,
+                        streamURL: selectedStream.url,
+                        headers: selectedStream.headers,
+                        streamName: selectedStream.name,
+                        serviceHref: viewModel.pendingServiceHref
+                    )
+                    return
+                }
+                let fallbackReason = AutoModeQualityPreference.current.usesAutomaticSelection ? "no quality label" : "auto quality disabled"
+                Logger.shared.log("Auto Mode found \(availableStreams.count) stream options for \(service.metadata.sourceName) but \(fallbackReason); showing picker", type: "Stream")
                 viewModel.streamFetchProgress = "\(service.metadata.sourceName) needs a stream choice."
             } else {
                 Logger.shared.log("Found \(availableStreams.count) stream options, showing selection", type: "Stream")
@@ -2724,11 +2897,14 @@ struct ModulesSearchResultsSheet: View {
         if let sources = sources, !sources.isEmpty {
             for (idx, source) in sources.enumerated() {
                 guard let rawUrl = source["streamUrl"] as? String ?? source["url"] as? String, !rawUrl.isEmpty else { continue }
-                let title = (source["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = ["title", "name", "label", "quality"]
+                    .compactMap { source[$0] as? String }
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first { !$0.isEmpty }
                 let headers = safeConvertToHeaders(source["headers"])
                 let subtitle = source["subtitle"] as? String
                 let option = StreamOption(
-                    name: title?.isEmpty == false ? title! : "Stream \(idx + 1)",
+                    name: title ?? "Stream \(idx + 1)",
                     url: rawUrl,
                     headers: headers,
                     subtitle: subtitle
