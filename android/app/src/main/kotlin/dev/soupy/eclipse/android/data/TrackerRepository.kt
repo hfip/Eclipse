@@ -191,12 +191,17 @@ class TrackerRepository(
     ): Result<TrackerSyncSummary> = runCatching {
         val progress = progressRepository.loadSnapshot().getOrThrow()
         val showTitles = progress.showMetadata.mapValues { (_, metadata) -> metadata.title }
-        val items = progress.movieProgress
+        val traktItems = progress.movieProgress
             .filter { it.isWatched || it.progressPercent >= TrackerWatchedThreshold }
             .map(MovieProgressBackup::toTrackerSyncItem) +
             progress.episodeProgress
                 .filter { it.isWatched || it.progressPercent >= TrackerWatchedThreshold }
                 .map { episode -> episode.toTrackerSyncItem(showTitles[episode.showId.toString()]) }
+        val items = if (targetService?.normalizedTrackerService() in setOf("anilist", "myanimelist", "mal")) {
+            traktItems.filter(TrackerSyncItem::isAnime)
+        } else {
+            traktItems
+        }
 
         syncItems(
             items = items,
@@ -207,8 +212,11 @@ class TrackerRepository(
 
     suspend fun localSyncCandidateCounts(snapshot: MangaLibrarySnapshot): Result<TrackerLocalSyncCandidateCounts> = runCatching {
         val progress = progressRepository.loadSnapshot().getOrThrow()
-        val animeItems = progress.movieProgress.count { it.isWatched || it.progressPercent >= TrackerWatchedThreshold } +
-            progress.episodeProgress.count { it.isWatched || it.progressPercent >= TrackerWatchedThreshold }
+        val animeItems = progress.episodeProgress.count { entry ->
+            (entry.isWatched || entry.progressPercent >= TrackerWatchedThreshold) &&
+                entry.isAnime &&
+                entry.anilistMediaId != null
+        }
         TrackerLocalSyncCandidateCounts(
             animeItems = animeItems,
             mangaItems = snapshot.toAniListMangaProgressSyncItems().size,
@@ -1462,4 +1470,5 @@ private fun EpisodeProgressBackup.toTrackerSyncItem(showTitle: String?): Tracker
     anilistEpisodeNumber = episodeNumber,
     progressPercent = progressPercent,
     isFinished = isWatched,
+    isAnime = isAnime,
 )

@@ -2772,8 +2772,15 @@ struct ModulesSearchResultsSheet: View {
         let seasons = parseSeasons(from: episodes)
         let targetSeasonIndex = selectedEp.seasonNumber - 1
         let targetEpisodeNumber = selectedEp.episodeNumber
+        let bundledEpisodeNumbers = bundledEpisodeNumberCandidates(for: selectedEp)
         
-        if let targetHref = findEpisodeHref(seasons: seasons, seasonIndex: targetSeasonIndex, episodeNumber: targetEpisodeNumber) {
+        if let targetHref = findEpisodeHref(
+            seasons: seasons,
+            seasonIndex: targetSeasonIndex,
+            episodeNumber: targetEpisodeNumber,
+            bundledEpisodeNumbers: bundledEpisodeNumbers,
+            allowAutomaticEpisodeResolution: viewModel.pendingPlaybackAutoMode
+        ) {
             viewModel.streamFetchProgress = "Found episode, fetching stream..."
             fetchFinalStream(href: targetHref, jsController: jsController, service: service)
         } else {
@@ -2804,22 +2811,120 @@ struct ModulesSearchResultsSheet: View {
         return seasons
     }
     
-    private func findEpisodeHref(seasons: [[EpisodeLink]], seasonIndex: Int, episodeNumber: Int) -> String? {
+    private func findEpisodeHref(seasons: [[EpisodeLink]], seasonIndex: Int, episodeNumber: Int, bundledEpisodeNumbers: [Int], allowAutomaticEpisodeResolution: Bool) -> String? {
         if seasonIndex >= 0 && seasonIndex < seasons.count {
             if let episode = seasons[seasonIndex].first(where: { $0.number == episodeNumber }) {
                 Logger.shared.log("Found exact match: S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
                 return episode.href
             }
         }
-        
-        for season in seasons {
-            if let episode = season.first(where: { $0.number == episodeNumber }) {
-                Logger.shared.log("Found episode \(episodeNumber) in different season, auto-playing", type: "Stream")
-                return episode.href
+
+        guard allowAutomaticEpisodeResolution else {
+            Logger.shared.log("Episode auto-resolution skipped outside Auto Mode for S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
+            return nil
+        }
+
+        if shouldUseBundledEpisodeNumbers(seasons: seasons),
+           let bundledMatch = findBundledEpisodeHref(seasons: seasons, episodeNumbers: bundledEpisodeNumbers) {
+            Logger.shared.log("Auto-resolved bundled anime episode \(bundledMatch.number) from S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
+            return bundledMatch.href
+        }
+
+        if let singleSeasonMatch = findSingleSeasonAnimeEpisodeHref(seasons: seasons, episodeNumber: episodeNumber) {
+            Logger.shared.log("Auto-resolved season-local anime episode \(episodeNumber) from single-season source list", type: "Stream")
+            return singleSeasonMatch
+        }
+
+        if shouldUseCrossSeasonEpisodeFallback(seasonIndex: seasonIndex) {
+            for season in seasons {
+                if let episode = season.first(where: { $0.number == episodeNumber }) {
+                    Logger.shared.log("Found episode \(episodeNumber) in different season, auto-playing", type: "Stream")
+                    return episode.href
+                }
             }
         }
-        
+
         return nil
+    }
+
+    private func sourceEpisodeListStats(seasons: [[EpisodeLink]]) -> (count: Int, maxNumber: Int) {
+        let numbers = seasons.flatMap { $0 }.map(\.number)
+        return (numbers.count, numbers.max() ?? 0)
+    }
+
+    private func shouldUseBundledEpisodeNumbers(seasons: [[EpisodeLink]]) -> Bool {
+        guard effectivePlaybackContext?.isSpecial != true,
+              let seasonEpisodeCount = effectivePlaybackContext?.animeSeasonEpisodeCount,
+              seasonEpisodeCount > 0 else {
+            return false
+        }
+
+        let stats = sourceEpisodeListStats(seasons: seasons)
+        return stats.maxNumber > seasonEpisodeCount
+    }
+
+    private func findSingleSeasonAnimeEpisodeHref(seasons: [[EpisodeLink]], episodeNumber: Int) -> String? {
+        guard effectivePlaybackContext?.isSpecial != true,
+              isAnimeContent || effectivePlaybackContext?.anilistMediaId != nil,
+              let seasonEpisodeCount = effectivePlaybackContext?.animeSeasonEpisodeCount,
+              seasonEpisodeCount > 0 else {
+            return nil
+        }
+
+        let stats = sourceEpisodeListStats(seasons: seasons)
+        guard stats.count <= seasonEpisodeCount,
+              stats.maxNumber <= seasonEpisodeCount else {
+            return nil
+        }
+
+        let matches = seasons.flatMap { $0 }.filter { $0.number == episodeNumber }
+        guard matches.count == 1 else { return nil }
+        return matches.first?.href
+    }
+
+    private func bundledEpisodeNumberCandidates(for selectedEpisode: TMDBEpisode) -> [Int] {
+        var numbers: [Int] = []
+
+        if let absoluteEpisode = effectivePlaybackContext?.animeAbsoluteEpisodeNumber {
+            numbers.append(absoluteEpisode)
+        }
+
+        if isAnimeContent,
+           originalTMDBSeasonNumber == 1,
+           let originalEpisode = originalTMDBEpisodeNumber {
+            numbers.append(originalEpisode)
+        }
+
+        var seen = Set<Int>()
+        return numbers
+            .filter { $0 > 0 && $0 != selectedEpisode.episodeNumber }
+            .filter { seen.insert($0).inserted }
+    }
+
+    private func findBundledEpisodeHref(seasons: [[EpisodeLink]], episodeNumbers: [Int]) -> (href: String, number: Int)? {
+        guard !episodeNumbers.isEmpty else { return nil }
+
+        let allEpisodes = seasons.flatMap { $0 }
+        for episodeNumber in episodeNumbers {
+            let matches = allEpisodes.filter { $0.number == episodeNumber }
+            if matches.count == 1, let match = matches.first {
+                return (match.href, episodeNumber)
+            }
+        }
+
+        return nil
+    }
+
+    private func shouldUseCrossSeasonEpisodeFallback(seasonIndex: Int) -> Bool {
+        if effectivePlaybackContext?.isSpecial == true {
+            return true
+        }
+
+        if isAnimeContent || effectivePlaybackContext?.anilistMediaId != nil {
+            return seasonIndex <= 0
+        }
+
+        return true
     }
     
     @MainActor

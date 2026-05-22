@@ -28,6 +28,8 @@ class AndroidHomeViewModel(
                     _state.value = HomeScreenState(
                         isLoading = false,
                         hero = content.hero,
+                        heroCandidates = content.heroCandidates,
+                        heroCarouselEnabled = content.heroCarouselEnabled,
                         sections = content.sections,
                     )
                 }

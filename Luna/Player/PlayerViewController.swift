@@ -7610,6 +7610,9 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
             }
 
             var loaded: [PlayerEpisodeBrowserSeason] = []
+            let animeAbsoluteEpisodeOffsets = animeData.map {
+                absoluteEpisodeOffsetsBySeason(for: $0.seasons)
+            } ?? [:]
 
             if let currentSpecial = currentSpecialContext(from: specialContexts) {
                 loaded.append(buildSpecialSeason(
@@ -7623,6 +7626,7 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
                       let animeSeason = animeData?.seasons.first(where: { $0.seasonNumber == seed.currentSeasonNumber }) {
                 loaded.append(buildAnimeSeason(
                     animeSeason,
+                    absoluteEpisodeOffset: animeAbsoluteEpisodeOffsets[animeSeason.seasonNumber] ?? 0,
                     showTitle: showTitle,
                     showPosterURL: showPosterURL,
                     imdbId: resolvedImdbId
@@ -7645,6 +7649,7 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
                 for season in animeData.seasons.sorted(by: { $0.seasonNumber < $1.seasonNumber }) where season.seasonNumber != seed.currentSeasonNumber {
                     loaded.append(buildAnimeSeason(
                         season,
+                        absoluteEpisodeOffset: animeAbsoluteEpisodeOffsets[season.seasonNumber] ?? 0,
                         showTitle: showTitle,
                         showPosterURL: showPosterURL,
                         imdbId: resolvedImdbId
@@ -7704,7 +7709,19 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
         }
     }
 
-    private func buildAnimeSeason(_ season: AniListSeasonWithPoster, showTitle: String, showPosterURL: String?, imdbId: String?) -> PlayerEpisodeBrowserSeason {
+    private func absoluteEpisodeOffsetsBySeason(for seasons: [AniListSeasonWithPoster]) -> [Int: Int] {
+        var offsets: [Int: Int] = [:]
+        var absoluteOffset = 0
+
+        for season in seasons.sorted(by: { $0.seasonNumber < $1.seasonNumber }) {
+            offsets[season.seasonNumber] = absoluteOffset
+            absoluteOffset += season.episodes.count
+        }
+
+        return offsets
+    }
+
+    private func buildAnimeSeason(_ season: AniListSeasonWithPoster, absoluteEpisodeOffset: Int, showTitle: String, showPosterURL: String?, imdbId: String?) -> PlayerEpisodeBrowserSeason {
         let title = season.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Season \(season.seasonNumber)" : season.title
         let items = season.episodes
             .sorted { $0.number < $1.number }
@@ -7728,6 +7745,8 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
                     tmdbSeasonNumber: aniEpisode.tmdbSeasonNumber,
                     tmdbEpisodeNumber: aniEpisode.tmdbEpisodeNumber,
                     tmdbEpisodeOffset: nil,
+                    animeAbsoluteEpisodeNumber: absoluteEpisodeOffset + aniEpisode.number,
+                    animeSeasonEpisodeCount: season.episodes.count,
                     isSpecial: false,
                     titleOnlySearch: false
                 )

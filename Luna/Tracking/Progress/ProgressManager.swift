@@ -789,6 +789,8 @@ struct EpisodePlaybackContext: Codable, Equatable {
     let tmdbSeasonNumber: Int?
     let tmdbEpisodeNumber: Int?
     let tmdbEpisodeOffset: Int?
+    let animeAbsoluteEpisodeNumber: Int?
+    let animeSeasonEpisodeCount: Int?
     let isSpecial: Bool
     let titleOnlySearch: Bool
 
@@ -807,6 +809,10 @@ struct EpisodePlaybackContext: Codable, Equatable {
     }
 
     func forEpisodeNumber(_ episodeNumber: Int) -> EpisodePlaybackContext {
+        let absoluteEpisodeNumber = animeAbsoluteEpisodeNumber.map {
+            max(1, $0 - localEpisodeNumber + episodeNumber)
+        }
+
         EpisodePlaybackContext(
             localSeasonNumber: localSeasonNumber,
             localEpisodeNumber: episodeNumber,
@@ -814,6 +820,8 @@ struct EpisodePlaybackContext: Codable, Equatable {
             tmdbSeasonNumber: tmdbSeasonNumber,
             tmdbEpisodeNumber: tmdbEpisodeOffset.map { $0 + episodeNumber } ?? tmdbEpisodeNumber,
             tmdbEpisodeOffset: tmdbEpisodeOffset,
+            animeAbsoluteEpisodeNumber: absoluteEpisodeNumber,
+            animeSeasonEpisodeCount: animeSeasonEpisodeCount,
             isSpecial: isSpecial,
             titleOnlySearch: titleOnlySearch
         )

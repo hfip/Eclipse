@@ -2,6 +2,8 @@ package dev.soupy.eclipse.android.data
 
 import dev.soupy.eclipse.android.core.model.DetailTarget
 import dev.soupy.eclipse.android.core.model.EpisodePlaybackContext
+import dev.soupy.eclipse.android.core.model.TrackerAccountSnapshot
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -52,6 +54,31 @@ class TrackerSyncClientTest {
         assertEquals(12, item.episodeNumber)
         assertEquals(9001, item.anilistMediaId)
         assertEquals(3, item.anilistEpisodeNumber)
+        assertTrue(item.isAnime)
+    }
+
+    @Test
+    fun aniListSyncSkipsTmdbShowsWithoutAnimeEvidenceEvenIfAniListIdIsPresent() = runBlocking {
+        val result = TrackerSyncClient().sync(
+            account = TrackerAccountSnapshot(
+                service = "AniList",
+                accessToken = "token",
+                isConnected = true,
+            ),
+            item = TrackerSyncItem(
+                target = DetailTarget.TmdbShow(100),
+                title = "Ordinary Show",
+                seasonNumber = 1,
+                episodeNumber = 1,
+                anilistMediaId = 9001,
+                anilistEpisodeNumber = 1,
+                progressPercent = 0.95,
+                isAnime = false,
+            ),
+        )
+
+        assertTrue(result.skipped)
+        assertEquals("AniList anime sync needs anime playback evidence.", result.message)
     }
 
     @Test

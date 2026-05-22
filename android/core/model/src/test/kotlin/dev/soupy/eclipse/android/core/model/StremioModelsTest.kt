@@ -51,6 +51,56 @@ class StremioModelsTest {
     }
 
     @Test
+    fun buildsMultipleContentIdsIncludingAniListForFallbackRetries() {
+        val manifest = StremioManifest(
+            id = "addon",
+            name = "Addon",
+            idPrefixes = listOf("tt", "tmdb:", "anilist:"),
+        )
+
+        val ids = manifest.buildContentIds(
+            StremioContentIdRequest(
+                tmdbId = 100,
+                imdbId = "tt1234567",
+                type = "series",
+                season = 1,
+                episode = 2,
+                anilistId = 999,
+            ),
+        )
+
+        assertEquals(
+            listOf("tt1234567:1:2", "tmdb:100:1:2", "anilist:999:1:2"),
+            ids,
+        )
+    }
+
+    @Test
+    fun streamResourcePrefixesOverrideManifestPrefixes() {
+        val manifest = StremioManifest(
+            id = "addon",
+            name = "Addon",
+            idPrefixes = listOf("kitsu:"),
+            resources = listOf(
+                StremioResourceDescriptor(
+                    name = "stream",
+                    idPrefixes = listOf("tmdb:"),
+                ),
+            ),
+        )
+
+        val id = manifest.buildContentId(
+            StremioContentIdRequest(
+                tmdbId = 100,
+                imdbId = "tt1234567",
+                type = "movie",
+            ),
+        )
+
+        assertEquals("tmdb:100", id)
+    }
+
+    @Test
     fun returnsNullWhenNoSupportedPrefixCanBeBuilt() {
         val manifest = StremioManifest(
             id = "addon",
@@ -98,6 +148,58 @@ class StremioModelsTest {
         assertTrue(manifest.supportsResource("stream"))
         assertTrue(manifest.supportsResource("subtitles"))
         assertEquals("tt1234567:1:2", id)
+    }
+
+    @Test
+    fun decodesSearchableCatalogsWithStringAndObjectExtras() {
+        val manifest = json.decodeFromString<StremioManifest>(
+            """
+            {
+              "id": "catalog-addon",
+              "name": "Catalog Addon",
+              "resources": ["stream", "meta"],
+              "catalogs": [
+                {
+                  "type": "series",
+                  "id": "anime",
+                  "name": "Anime",
+                  "extra": ["search", { "name": "genre", "isRequired": false }]
+                },
+                {
+                  "type": "movie",
+                  "id": "filtered",
+                  "extra": [{ "name": "genre", "isRequired": true }, "search"]
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("anime", manifest.searchableCatalogs.single().id)
+        assertTrue(manifest.searchableCatalogs.single().supportsType("series"))
+    }
+
+    @Test
+    fun decodesMetaResponseWhenAddonReturnsMetaArray() {
+        val response = json.decodeFromString<StremioMetaResponse>(
+            """
+            {
+              "meta": [
+                {
+                  "id": "series:1",
+                  "type": "series",
+                  "name": "Frieren",
+                  "videos": [
+                    { "id": "series:1:1:1", "season": 1, "episode": 1 }
+                  ]
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("series:1", response.meta?.id)
+        assertEquals("series:1:1:1", response.meta?.videos?.single()?.id)
     }
 
     @Test

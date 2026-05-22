@@ -10,7 +10,12 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.soupy.eclipse.android.core.model.BackupData
+import dev.soupy.eclipse.android.core.model.AtmosphereSolidColorSource
+import dev.soupy.eclipse.android.core.model.AtmosphereStyle
+import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.InAppPlayer
+import dev.soupy.eclipse.android.core.model.MediaDetailElement
+import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -40,13 +45,17 @@ data class AppSettings(
     val defaultPlaybackSpeed: Double = 1.0,
     val holdSpeedPlayer: Double = 2.0,
     val externalPlayer: String = "none",
+    val preferDownloadedMedia: Boolean = false,
     val alwaysLandscape: Boolean = false,
     val aniSkipEnabled: Boolean = true,
     val introDbEnabled: Boolean = true,
+    val introDbAppEnabled: Boolean = true,
     val aniSkipAutoSkip: Boolean = false,
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
     val showNextEpisodeButton: Boolean = true,
+    val showVlcEpisodeBrowserButton: Boolean = true,
+    val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
     val vlcHeaderProxyEnabled: Boolean = true,
     val vlcBrightnessGestureEnabled: Boolean = false,
@@ -76,6 +85,13 @@ data class AppSettings(
     val githubReleaseLastPromptedVersion: String = "",
     val seasonMenu: Boolean = false,
     val horizontalEpisodeList: Boolean = false,
+    val mediaDetailElementOrder: String = MediaDetailElement.DefaultOrderRawValue,
+    val mediaDetailHiddenElements: String = "",
+    val heroBannerCatalogId: String = "trending",
+    val heroBannerBehavior: String = HeroBannerBehavior.Default.rawValue,
+    val atmosphereStyle: String = AtmosphereStyle.Default.rawValue,
+    val atmosphereSolidColorSource: String = AtmosphereSolidColorSource.Default.rawValue,
+    val atmosphereSolidColor: String = DefaultSettingsGradientColor,
     val mediaColumnsPortrait: Int = 3,
     val mediaColumnsLandscape: Int = 5,
     val readingMode: Int = 2,
@@ -89,6 +105,7 @@ data class AppSettings(
     val autoClearCacheEnabled: Boolean = false,
     val autoClearCacheThresholdMB: Double = 500.0,
     val highQualityThreshold: Double = 0.9,
+    val servicesAutoModeQualityPreference: String = ServicesAutoModeQualityPreference.Default.rawValue,
     val filterHorrorContent: Boolean = false,
     val selectedSimilarityAlgorithm: SimilarityAlgorithm = SimilarityAlgorithm.HYBRID,
 )
@@ -115,11 +132,13 @@ class SettingsStore(
     suspend fun updatePlayback(
         inAppPlayer: InAppPlayer,
         showNextEpisodeButton: Boolean,
+        showNextEpisodePosterButton: Boolean,
         nextEpisodeThreshold: Int,
     ) {
         context.dataStore.edit { prefs ->
             prefs[Keys.inAppPlayer] = inAppPlayer.name
             prefs[Keys.showNextEpisodeButton] = showNextEpisodeButton
+            prefs[Keys.showNextEpisodePosterButton] = showNextEpisodePosterButton
             prefs[Keys.nextEpisodeThreshold] = nextEpisodeThreshold.coerceIn(50, 99)
         }
     }
@@ -127,6 +146,7 @@ class SettingsStore(
     suspend fun updateSkipBehavior(
         aniSkipEnabled: Boolean,
         introDbEnabled: Boolean,
+        introDbAppEnabled: Boolean,
         aniSkipAutoSkip: Boolean,
         skip85sEnabled: Boolean,
         skip85sAlwaysVisible: Boolean,
@@ -134,6 +154,7 @@ class SettingsStore(
         context.dataStore.edit { prefs ->
             prefs[Keys.aniSkipEnabled] = aniSkipEnabled
             prefs[Keys.introDbEnabled] = introDbEnabled
+            prefs[Keys.introDbAppEnabled] = introDbAppEnabled
             prefs[Keys.aniSkipAutoSkip] = aniSkipAutoSkip
             prefs[Keys.skip85sEnabled] = skip85sEnabled
             prefs[Keys.skip85sAlwaysVisible] = skip85sAlwaysVisible
@@ -148,6 +169,7 @@ class SettingsStore(
         defaultPlaybackSpeed: Double,
         holdSpeedPlayer: Double,
         externalPlayer: String,
+        preferDownloadedMedia: Boolean,
         alwaysLandscape: Boolean,
         vlcHeaderProxyEnabled: Boolean,
     ) {
@@ -159,6 +181,7 @@ class SettingsStore(
             prefs[Keys.defaultPlaybackSpeed] = defaultPlaybackSpeed.coerceIn(0.25, 2.0)
             prefs[Keys.holdSpeedPlayer] = holdSpeedPlayer.coerceIn(0.1, 3.0)
             prefs[Keys.externalPlayer] = externalPlayer.trim().ifBlank { "none" }
+            prefs[Keys.preferDownloadedMedia] = preferDownloadedMedia
             prefs[Keys.alwaysLandscape] = alwaysLandscape
             prefs[Keys.vlcHeaderProxyEnabled] = true
         }
@@ -258,6 +281,45 @@ class SettingsStore(
         }
     }
 
+    suspend fun updateMediaDetailLayout(
+        orderRawValue: String,
+        hiddenRawValue: String,
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.mediaDetailElementOrder] = MediaDetailElement.sanitizedOrderRawValue(orderRawValue)
+            prefs[Keys.mediaDetailHiddenElements] = MediaDetailElement.sanitizedHiddenRawValue(hiddenRawValue)
+        }
+    }
+
+    suspend fun updateHeroBanner(
+        catalogId: String,
+        behaviorRawValue: String,
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.heroBannerCatalogId] = catalogId.trim().ifBlank { "trending" }
+            prefs[Keys.heroBannerBehavior] = HeroBannerBehavior.sanitizedRawValue(behaviorRawValue)
+        }
+    }
+
+    suspend fun updateAtmosphere(
+        styleRawValue: String,
+        solidColorSourceRawValue: String,
+        solidColor: String,
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.atmosphereStyle] = AtmosphereStyle.sanitizedRawValue(styleRawValue)
+            prefs[Keys.atmosphereSolidColorSource] =
+                AtmosphereSolidColorSource.sanitizedRawValue(solidColorSourceRawValue)
+            prefs[Keys.atmosphereSolidColor] = solidColor.normalizedColor(DefaultSettingsGradientColor)
+        }
+    }
+
+    suspend fun setShowVlcEpisodeBrowserButton(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.showVlcEpisodeBrowserButton] = enabled
+        }
+    }
+
     suspend fun updateMediaColumns(
         portrait: Int,
         landscape: Int,
@@ -314,6 +376,13 @@ class SettingsStore(
         }
     }
 
+    suspend fun clearGitHubReleaseCachedUpdateState() {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.githubReleaseUpdateAvailable] = false
+            prefs[Keys.githubReleaseShowAlertPending] = false
+        }
+    }
+
     suspend fun consumeGitHubReleasePrompt() {
         context.dataStore.edit { prefs ->
             val latestVersion = prefs[Keys.githubReleaseLatestVersion].orEmpty()
@@ -333,6 +402,13 @@ class SettingsStore(
     suspend fun setHighQualityThreshold(threshold: Double) {
         context.dataStore.edit { prefs ->
             prefs[Keys.highQualityThreshold] = threshold.coerceIn(0.0, 1.0)
+        }
+    }
+
+    suspend fun setServicesAutoModeQualityPreference(preferenceRawValue: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.servicesAutoModeQualityPreference] =
+                ServicesAutoModeQualityPreference.sanitizedRawValue(preferenceRawValue)
         }
     }
 
@@ -435,13 +511,17 @@ class SettingsStore(
             prefs[Keys.defaultPlaybackSpeed] = payload.defaultPlaybackSpeed
             prefs[Keys.holdSpeedPlayer] = payload.holdSpeedPlayer
             prefs[Keys.externalPlayer] = payload.externalPlayer
+            prefs[Keys.preferDownloadedMedia] = payload.preferDownloadedMedia
             prefs[Keys.alwaysLandscape] = payload.alwaysLandscape
             prefs[Keys.aniSkipEnabled] = payload.aniSkipEnabled
             prefs[Keys.introDbEnabled] = payload.introDBEnabled
+            prefs[Keys.introDbAppEnabled] = true
             prefs[Keys.aniSkipAutoSkip] = payload.aniSkipAutoSkip
             prefs[Keys.skip85sEnabled] = payload.skip85sEnabled
             prefs[Keys.skip85sAlwaysVisible] = payload.skip85sAlwaysVisible
             prefs[Keys.showNextEpisodeButton] = payload.showNextEpisodeButton
+            prefs[Keys.showVlcEpisodeBrowserButton] = payload.showVLCEpisodeBrowserButton
+            prefs[Keys.showNextEpisodePosterButton] = payload.showNextEpisodePosterButton
             prefs[Keys.nextEpisodeThreshold] = payload.nextEpisodeThresholdPercent()
             prefs[Keys.vlcHeaderProxyEnabled] = true
             prefs[Keys.vlcBrightnessGestureEnabled] = payload.vlcBrightnessGestureEnabled
@@ -480,6 +560,10 @@ class SettingsStore(
             prefs[Keys.githubReleaseUrl] = payload.githubReleaseURL
             prefs[Keys.seasonMenu] = payload.seasonMenu
             prefs[Keys.horizontalEpisodeList] = payload.horizontalEpisodeList
+            prefs[Keys.mediaDetailElementOrder] =
+                MediaDetailElement.sanitizedOrderRawValue(payload.mediaDetailElementOrder)
+            prefs[Keys.mediaDetailHiddenElements] =
+                MediaDetailElement.sanitizedHiddenRawValue(payload.mediaDetailHiddenElements)
             prefs[Keys.mediaColumnsPortrait] = payload.mediaColumnsPortrait
             prefs[Keys.mediaColumnsLandscape] = payload.mediaColumnsLandscape
             prefs[Keys.readingMode] = payload.readingMode
@@ -493,6 +577,8 @@ class SettingsStore(
             prefs[Keys.autoClearCacheEnabled] = payload.autoClearCacheEnabled
             prefs[Keys.autoClearCacheThresholdMB] = payload.autoClearCacheThresholdMB
             prefs[Keys.highQualityThreshold] = payload.highQualityThreshold
+            prefs[Keys.servicesAutoModeQualityPreference] =
+                ServicesAutoModeQualityPreference.sanitizedRawValue(payload.servicesAutoModeQualityPreference)
             prefs[Keys.filterHorrorContent] = payload.filterHorrorContent
             prefs[Keys.selectedSimilarityAlgorithm] = SimilarityAlgorithm
                 .fromId(payload.selectedSimilarityAlgorithm)
@@ -519,13 +605,17 @@ class SettingsStore(
         defaultPlaybackSpeed = preferences[Keys.defaultPlaybackSpeed] ?: 1.0,
         holdSpeedPlayer = preferences[Keys.holdSpeedPlayer] ?: 2.0,
         externalPlayer = preferences[Keys.externalPlayer] ?: "none",
+        preferDownloadedMedia = preferences[Keys.preferDownloadedMedia] ?: false,
         alwaysLandscape = preferences[Keys.alwaysLandscape] ?: false,
         aniSkipEnabled = preferences[Keys.aniSkipEnabled] ?: true,
         introDbEnabled = preferences[Keys.introDbEnabled] ?: true,
+        introDbAppEnabled = preferences[Keys.introDbAppEnabled] ?: true,
         aniSkipAutoSkip = preferences[Keys.aniSkipAutoSkip] ?: false,
         skip85sEnabled = preferences[Keys.skip85sEnabled] ?: false,
         skip85sAlwaysVisible = preferences[Keys.skip85sAlwaysVisible] ?: false,
         showNextEpisodeButton = preferences[Keys.showNextEpisodeButton] ?: true,
+        showVlcEpisodeBrowserButton = preferences[Keys.showVlcEpisodeBrowserButton] ?: true,
+        showNextEpisodePosterButton = preferences[Keys.showNextEpisodePosterButton] ?: false,
         nextEpisodeThreshold = preferences[Keys.nextEpisodeThreshold] ?: 90,
         vlcHeaderProxyEnabled = true,
         vlcBrightnessGestureEnabled = preferences[Keys.vlcBrightnessGestureEnabled] ?: false,
@@ -555,6 +645,16 @@ class SettingsStore(
         githubReleaseLastPromptedVersion = preferences[Keys.githubReleaseLastPromptedVersion] ?: "",
         seasonMenu = preferences[Keys.seasonMenu] ?: false,
         horizontalEpisodeList = preferences[Keys.horizontalEpisodeList] ?: false,
+        mediaDetailElementOrder = MediaDetailElement.sanitizedOrderRawValue(preferences[Keys.mediaDetailElementOrder]),
+        mediaDetailHiddenElements = MediaDetailElement.sanitizedHiddenRawValue(preferences[Keys.mediaDetailHiddenElements]),
+        heroBannerCatalogId = preferences[Keys.heroBannerCatalogId]?.trim()?.ifBlank { "trending" } ?: "trending",
+        heroBannerBehavior = HeroBannerBehavior.sanitizedRawValue(preferences[Keys.heroBannerBehavior]),
+        atmosphereStyle = AtmosphereStyle.sanitizedRawValue(preferences[Keys.atmosphereStyle]),
+        atmosphereSolidColorSource =
+            AtmosphereSolidColorSource.sanitizedRawValue(preferences[Keys.atmosphereSolidColorSource]),
+        atmosphereSolidColor =
+            preferences[Keys.atmosphereSolidColor]?.normalizedColor(DefaultSettingsGradientColor)
+                ?: DefaultSettingsGradientColor,
         mediaColumnsPortrait = preferences[Keys.mediaColumnsPortrait] ?: 3,
         mediaColumnsLandscape = preferences[Keys.mediaColumnsLandscape] ?: 5,
         readingMode = preferences[Keys.readingMode] ?: 2,
@@ -568,6 +668,8 @@ class SettingsStore(
         autoClearCacheEnabled = preferences[Keys.autoClearCacheEnabled] ?: false,
         autoClearCacheThresholdMB = preferences[Keys.autoClearCacheThresholdMB] ?: 500.0,
         highQualityThreshold = preferences[Keys.highQualityThreshold] ?: 0.9,
+        servicesAutoModeQualityPreference =
+            ServicesAutoModeQualityPreference.sanitizedRawValue(preferences[Keys.servicesAutoModeQualityPreference]),
         filterHorrorContent = preferences[Keys.filterHorrorContent] ?: false,
         selectedSimilarityAlgorithm = SimilarityAlgorithm.fromId(preferences[Keys.selectedSimilarityAlgorithm]),
     )
@@ -591,13 +693,17 @@ class SettingsStore(
         val defaultPlaybackSpeed = doublePreferencesKey("default_playback_speed")
         val holdSpeedPlayer = doublePreferencesKey("hold_speed_player")
         val externalPlayer = stringPreferencesKey("external_player")
+        val preferDownloadedMedia = booleanPreferencesKey("prefer_downloaded_media")
         val alwaysLandscape = booleanPreferencesKey("always_landscape")
         val aniSkipEnabled = booleanPreferencesKey("aniskip_enabled")
         val introDbEnabled = booleanPreferencesKey("introdb_enabled")
+        val introDbAppEnabled = booleanPreferencesKey("introdb_app_enabled")
         val aniSkipAutoSkip = booleanPreferencesKey("aniskip_auto_skip")
         val skip85sEnabled = booleanPreferencesKey("skip_85s_enabled")
         val skip85sAlwaysVisible = booleanPreferencesKey("skip_85s_always_visible")
         val showNextEpisodeButton = booleanPreferencesKey("show_next_episode_button")
+        val showVlcEpisodeBrowserButton = booleanPreferencesKey("show_vlc_episode_browser_button")
+        val showNextEpisodePosterButton = booleanPreferencesKey("show_next_episode_poster_button")
         val nextEpisodeThreshold = intPreferencesKey("next_episode_threshold")
         val vlcHeaderProxyEnabled = booleanPreferencesKey("vlc_header_proxy_enabled")
         val vlcBrightnessGestureEnabled = booleanPreferencesKey("vlc_brightness_gesture_enabled")
@@ -627,6 +733,13 @@ class SettingsStore(
         val githubReleaseLastPromptedVersion = stringPreferencesKey("github_release_last_prompted_version")
         val seasonMenu = booleanPreferencesKey("season_menu")
         val horizontalEpisodeList = booleanPreferencesKey("horizontal_episode_list")
+        val mediaDetailElementOrder = stringPreferencesKey("media_detail_element_order")
+        val mediaDetailHiddenElements = stringPreferencesKey("media_detail_hidden_elements")
+        val heroBannerCatalogId = stringPreferencesKey("hero_banner_catalog_id")
+        val heroBannerBehavior = stringPreferencesKey("hero_banner_behavior")
+        val atmosphereStyle = stringPreferencesKey("atmosphere_style")
+        val atmosphereSolidColorSource = stringPreferencesKey("atmosphere_solid_color_source")
+        val atmosphereSolidColor = stringPreferencesKey("atmosphere_solid_color")
         val mediaColumnsPortrait = intPreferencesKey("media_columns_portrait")
         val mediaColumnsLandscape = intPreferencesKey("media_columns_landscape")
         val readingMode = intPreferencesKey("reading_mode")
@@ -640,6 +753,7 @@ class SettingsStore(
         val autoClearCacheEnabled = booleanPreferencesKey("auto_clear_cache_enabled")
         val autoClearCacheThresholdMB = doublePreferencesKey("auto_clear_cache_threshold_mb")
         val highQualityThreshold = doublePreferencesKey("high_quality_threshold")
+        val servicesAutoModeQualityPreference = stringPreferencesKey("services_auto_mode_quality_preference")
         val filterHorrorContent = booleanPreferencesKey("filter_horror_content")
         val selectedSimilarityAlgorithm = stringPreferencesKey("selected_similarity_algorithm")
     }

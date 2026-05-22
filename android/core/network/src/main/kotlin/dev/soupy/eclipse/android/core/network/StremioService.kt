@@ -1,7 +1,10 @@
 package dev.soupy.eclipse.android.core.network
 
 import dev.soupy.eclipse.android.core.model.StremioContentIdRequest
+import dev.soupy.eclipse.android.core.model.StremioCatalog
+import dev.soupy.eclipse.android.core.model.StremioCatalogResponse
 import dev.soupy.eclipse.android.core.model.StremioManifest
+import dev.soupy.eclipse.android.core.model.StremioMetaResponse
 import dev.soupy.eclipse.android.core.model.StremioSubtitle
 import dev.soupy.eclipse.android.core.model.StremioSubtitleResponse
 import dev.soupy.eclipse.android.core.model.StremioStreamResponse
@@ -28,6 +31,27 @@ class StremioService(
     ): NetworkResult<StremioStreamResponse> = decode {
         val base = transportUrl.normalizedStremioBaseUrl()
         httpClient.get("$base/stream/$type/${id.encodedPathSegment()}.json")
+    }
+
+    suspend fun fetchCatalogMetas(
+        transportUrl: String,
+        catalog: StremioCatalog,
+        searchQuery: String,
+    ): NetworkResult<StremioCatalogResponse> = decode {
+        val base = transportUrl.normalizedStremioBaseUrl()
+        val type = catalog.type.encodedPathSegment(preservingColon = false)
+        val catalogId = catalog.id.encodedPathSegment()
+        val search = searchQuery.encodedExtraValue()
+        httpClient.get("$base/catalog/$type/$catalogId/search=$search.json")
+    }
+
+    suspend fun fetchMeta(
+        transportUrl: String,
+        type: String,
+        id: String,
+    ): NetworkResult<StremioMetaResponse> = decode {
+        val base = transportUrl.normalizedStremioBaseUrl()
+        httpClient.get("$base/meta/${type.encodedPathSegment(preservingColon = false)}/${id.encodedPathSegment()}.json")
     }
 
     suspend fun fetchSubtitles(
@@ -92,10 +116,17 @@ private fun String.ensureManifestUrl(): String =
 private fun String.normalizedStremioBaseUrl(): String =
     trim().removeSuffix("/").removeSuffix("/manifest.json")
 
-private fun String.encodedPathSegment(): String =
+private fun String.encodedPathSegment(preservingColon: Boolean = true): String =
     URLEncoder.encode(this, StandardCharsets.UTF_8.name())
         .replace("+", "%20")
-        .replace("%3A", ":")
+        .let { encoded ->
+            if (preservingColon) encoded.replace("%3A", ":") else encoded
+        }
+
+private fun String.encodedExtraValue(): String =
+    URLEncoder.encode(this, StandardCharsets.UTF_8.name())
+        .replace("+", "%20")
+        .replace("%2F", "%2F")
 
 private fun String?.isDirectHttpUrl(): Boolean =
     this?.startsWith("http://", ignoreCase = true) == true ||

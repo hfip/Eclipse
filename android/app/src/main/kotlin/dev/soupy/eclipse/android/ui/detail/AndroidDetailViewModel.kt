@@ -9,10 +9,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.Instant
 import dev.soupy.eclipse.android.data.ContinueWatchingDraft
 import dev.soupy.eclipse.android.data.DetailContent
 import dev.soupy.eclipse.android.data.DetailRepository
 import dev.soupy.eclipse.android.data.DownloadDraft
+import dev.soupy.eclipse.android.data.DownloadsRepository
 import dev.soupy.eclipse.android.data.EpisodeProgressDraft
 import dev.soupy.eclipse.android.data.LibraryItemDraft
 import dev.soupy.eclipse.android.data.MovieProgressDraft
@@ -32,6 +34,7 @@ import dev.soupy.eclipse.android.core.model.SkipSegment
 import dev.soupy.eclipse.android.core.model.TrackerStateSnapshot
 import dev.soupy.eclipse.android.core.model.formattedUserRatingOutOf10
 import dev.soupy.eclipse.android.core.model.normalizedUserRatingOutOf10
+import dev.soupy.eclipse.android.core.model.progressPercent
 import dev.soupy.eclipse.android.feature.detail.DetailCastRow
 import dev.soupy.eclipse.android.feature.detail.DetailEpisodeRow
 import dev.soupy.eclipse.android.feature.detail.DetailFactRow
@@ -39,16 +42,19 @@ import dev.soupy.eclipse.android.feature.detail.DetailScreenState
 import dev.soupy.eclipse.android.feature.detail.DetailStreamRow
 import dev.soupy.eclipse.android.core.network.AniSkipService
 import dev.soupy.eclipse.android.core.network.IntroDbService
+import dev.soupy.eclipse.android.core.network.TmdbService
 import kotlin.math.roundToInt
 
 class AndroidDetailViewModel(
     private val repository: DetailRepository,
     private val streamResolutionRepository: StreamResolutionRepository,
     private val progressRepository: ProgressRepository,
+    private val downloadsRepository: DownloadsRepository,
     private val ratingsRepository: RatingsRepository,
     private val trackerRepository: TrackerRepository,
     private val aniSkipService: AniSkipService,
     private val introDbService: IntroDbService,
+    private val tmdbService: TmdbService,
     private val settingsStore: SettingsStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(DetailScreenState())
@@ -59,15 +65,26 @@ class AndroidDetailViewModel(
     private var currentRatingTmdbId: Int? = null
     private var currentRatingAniListId: Int? = null
     private var skipProviderSettings = SkipProviderSettings()
+    private var preferDownloadedMedia = false
+    private var detailUiSettings = DetailUiSettings()
     private val syncedTrackerProgressKeys = mutableSetOf<String>()
 
     init {
         viewModelScope.launch {
             settingsStore.settings.collect { settings ->
+                preferDownloadedMedia = settings.preferDownloadedMedia
                 skipProviderSettings = SkipProviderSettings(
                     aniSkipEnabled = settings.aniSkipEnabled,
                     introDbEnabled = settings.introDbEnabled,
+                    introDbAppEnabled = settings.introDbAppEnabled,
                 )
+                detailUiSettings = DetailUiSettings(
+                    seasonMenu = settings.seasonMenu,
+                    horizontalEpisodeList = settings.horizontalEpisodeList,
+                    mediaDetailElementOrder = settings.mediaDetailElementOrder,
+                    mediaDetailHiddenElements = settings.mediaDetailHiddenElements,
+                )
+                _state.update { state -> detailUiSettings.applyTo(state) }
             }
         }
     }
@@ -104,9 +121,11 @@ class AndroidDetailViewModel(
                         ratingsSnapshot?.notes?.get(key)
                     }.orEmpty()
                     val trackerSnapshot = trackerRepository.loadSnapshot().getOrNull()
-                    _state.value = content.toUiState(userRating = rating, userRatingNote = note).copy(
-                        canSyncRatingToAniList = content.canSyncRatingTo("anilist", trackerSnapshot),
-                        canSyncRatingToMyAnimeList = content.canSyncRatingTo("myanimelist", trackerSnapshot),
+                    _state.value = detailUiSettings.applyTo(
+                        content.toUiState(userRating = rating, userRatingNote = note).copy(
+                            canSyncRatingToAniList = content.canSyncRatingTo("anilist", trackerSnapshot),
+                            canSyncRatingToMyAnimeList = content.canSyncRatingTo("myanimelist", trackerSnapshot),
+                        ),
                     )
                 }
                 .onFailure { error ->
@@ -289,6 +308,8 @@ class AndroidDetailViewModel(
                     seasonNumber = previous.sourceSeasonNumber ?: return@forEach,
                     episodeNumber = previous.sourceEpisodeNumber ?: return@forEach,
                     watched = true,
+                    anilistMediaId = previous.anilistMediaId,
+                    isAnime = state.value.hasAnimePlaybackEvidence(previous),
                 ).onFailure { error ->
                     failureMessage = error.message ?: "Could not mark previous episodes watched."
                 }
@@ -308,10 +329,26 @@ class AndroidDetailViewModel(
     }
 
     fun resolveStreams() {
-        val selectedEpisode = state.value.selectedEpisodeId
-            ?.let { id -> state.value.episodes.firstOrNull { it.id == id } }
-            ?.toStreamEpisodeSelection()
-        resolveStreamsForEpisode(selectedEpisode)
+        val snapshot = state.value
+        val selectedEpisode = snapshot.selectedEpisodeId
+            ?.let { id -> snapshot.episodes.firstOrNull { it.id == id } }
+        viewModelScope.launch {
+            val showTarget = (currentProgressTarget ?: currentTarget) as? DetailTarget.TmdbShow
+            val progressEntries = showTarget
+                ?.let { progressRepository.loadSnapshot().getOrNull()?.episodeProgress }
+                .orEmpty()
+            val mainPlayEpisode = selectedEpisode ?: if (snapshot.isMovie) {
+                null
+            } else {
+                chooseMainPlayEpisode(
+                    episodes = snapshot.episodes,
+                    progressEntries = progressEntries,
+                    showId = showTarget?.id,
+                )
+            }
+            if (playDownloadedIfPreferred(snapshot, mainPlayEpisode)) return@launch
+            resolveStreamsForEpisode(mainPlayEpisode?.toStreamEpisodeSelection())
+        }
     }
 
     fun resolveEpisodeStreams(episodeId: String) {
@@ -389,6 +426,52 @@ class AndroidDetailViewModel(
                     }
                 }
         }
+    }
+
+    private suspend fun playDownloadedIfPreferred(
+        snapshot: DetailScreenState,
+        episode: DetailEpisodeRow?,
+    ): Boolean {
+        if (!preferDownloadedMedia) return false
+        val target = currentTarget ?: return false
+        val exactSource = downloadsRepository.completedPlayerSource(
+            target = target,
+            downloadKeySuffix = episode?.downloadKeySuffix(),
+        ).getOrNull()
+        val fallbackPlayback = if (exactSource == null && target is DetailTarget.TmdbShow) {
+            downloadsRepository.latestCompletedPlayerSource(target).getOrNull()
+        } else {
+            null
+        }
+        val fallbackEpisode = fallbackPlayback
+            ?.downloadKeySuffix
+            ?.let { suffix -> snapshot.episodes.firstOrNull { it.downloadKeySuffix() == suffix } }
+        val source = exactSource ?: fallbackPlayback?.source ?: return false
+        val playbackEpisode = episode ?: fallbackEpisode
+        val selection = playbackEpisode?.toStreamEpisodeSelection()
+        val sourceWithContext = source.copy(
+            context = source.context ?: selection?.toPlaybackContext(),
+            isDownloaded = true,
+        )
+        val resumeState = snapshot.copy(
+            selectedEpisodeId = playbackEpisode?.id ?: snapshot.selectedEpisodeId,
+            selectedEpisodeLabel = selection?.label ?: snapshot.selectedEpisodeLabel,
+        )
+        val resumedSource = sourceWithContext.withResumePosition(resumeState)
+        _state.update { state ->
+            state.copy(
+                selectedEpisodeId = resumeState.selectedEpisodeId,
+                selectedEpisodeLabel = resumeState.selectedEpisodeLabel,
+                isResolvingStreams = false,
+                streamStatusMessage = "Playing downloaded media from app storage.",
+                streamCandidates = emptyList(),
+                playerSource = resumedSource,
+                skipSegments = emptyList(),
+                skipStatusMessage = "Loading skip segments...",
+            )
+        }
+        loadSkipSegmentsFor(resumedSource)
+        return true
     }
 
     fun playResolvedStream(streamId: String) {
@@ -601,6 +684,7 @@ class AndroidDetailViewModel(
                             showTitle = snapshot.title,
                             showPosterUrl = snapshot.posterUrl,
                             anilistMediaId = snapshot.playerSource?.context?.anilistMediaId,
+                            isAnime = snapshot.hasAnimePlaybackEvidence(selectedEpisode),
                             currentTimeSeconds = currentSeconds,
                             totalDurationSeconds = durationSeconds,
                             isFinished = isFinished,
@@ -645,6 +729,7 @@ class AndroidDetailViewModel(
                     seasonNumber = selectedEpisode?.sourceSeasonNumber,
                     episodeNumber = selectedEpisode?.sourceEpisodeNumber,
                     anilistMediaId = snapshot.playerSource?.context?.anilistMediaId,
+                    isAnime = snapshot.hasAnimePlaybackEvidence(selectedEpisode),
                     progressPercent = progressPercent,
                     isFinished = isFinished,
                     playbackContext = snapshot.playerSource?.context,
@@ -692,6 +777,8 @@ class AndroidDetailViewModel(
                     seasonNumber = episode.sourceSeasonNumber ?: return@forEach,
                     episodeNumber = episode.sourceEpisodeNumber ?: return@forEach,
                     watched = watched,
+                    anilistMediaId = episode.anilistMediaId,
+                    isAnime = state.value.hasAnimePlaybackEvidence(episode),
                 )
             }
             _state.update {
@@ -717,6 +804,8 @@ class AndroidDetailViewModel(
                 seasonNumber = seasonNumber,
                 episodeNumber = episodeNumber,
                 watched = watched,
+                anilistMediaId = episode.anilistMediaId,
+                isAnime = state.value.hasAnimePlaybackEvidence(episode),
             ).onSuccess {
                 _state.update {
                     it.copy(
@@ -806,7 +895,7 @@ class AndroidDetailViewModel(
         val context = source.context
         viewModelScope.launch {
             val providerSettings = skipProviderSettings
-            if (!providerSettings.aniSkipEnabled && !providerSettings.introDbEnabled) {
+            if (!providerSettings.aniSkipEnabled && !providerSettings.introDbEnabled && !providerSettings.introDbAppEnabled) {
                 _state.update {
                     it.copy(
                         skipSegments = emptyList(),
@@ -816,7 +905,15 @@ class AndroidDetailViewModel(
                 return@launch
             }
 
-            val introSegments = if (providerSettings.introDbEnabled) {
+            val aniSkipSegments = if (providerSettings.aniSkipEnabled) context?.anilistMediaId?.let { anilistId ->
+                aniSkipService.fetchSkipTimes(
+                    anilistId = anilistId,
+                    episodeNumber = context.localEpisodeNumber,
+                    episodeDurationSeconds = 0.0,
+                ).orNull().orEmpty()
+            }.orEmpty() else emptyList()
+
+            val introSegments = if (providerSettings.introDbEnabled && aniSkipSegments.isEmpty()) {
                 when (target) {
                     is DetailTarget.TmdbMovie -> introDbService.fetchSkipTimes(
                         tmdbId = target.id,
@@ -832,15 +929,23 @@ class AndroidDetailViewModel(
             } else {
                 emptyList()
             }
-            val aniSkipSegments = if (providerSettings.aniSkipEnabled) context?.anilistMediaId?.let { anilistId ->
-                aniSkipService.fetchSkipTimes(
-                    anilistId = anilistId,
-                    episodeNumber = context.localEpisodeNumber,
-                    episodeDurationSeconds = 0.0,
-                ).orNull().orEmpty()
-            }.orEmpty() else emptyList()
+            val introDbAppSegments = if (
+                providerSettings.introDbAppEnabled &&
+                aniSkipSegments.isEmpty() &&
+                introSegments.isEmpty()
+            ) {
+                resolveIntroDbAppImdbId(target, source)?.let { imdbId ->
+                    introDbService.fetchIntroDbAppSkipTimes(
+                        imdbId = imdbId,
+                        seasonNumber = context?.resolvedTMDBSeasonNumber,
+                        episodeNumber = context?.resolvedTMDBEpisodeNumber,
+                    ).orNull().orEmpty()
+                }.orEmpty()
+            } else {
+                emptyList()
+            }
 
-            val merged = (introSegments + aniSkipSegments).mergeSkipSegments()
+            val merged = (aniSkipSegments + introSegments + introDbAppSegments).mergeSkipSegments()
             _state.update {
                 it.copy(
                     skipSegments = merged,
@@ -852,12 +957,40 @@ class AndroidDetailViewModel(
             }
         }
     }
+
+    private suspend fun resolveIntroDbAppImdbId(
+        target: DetailTarget,
+        source: PlayerSource,
+    ): String? =
+        source.serviceHref.extractImdbId()
+            ?: source.uri.extractImdbId()
+            ?: when (target) {
+                is DetailTarget.TmdbMovie -> tmdbService.movieDetail(target.id).orNull()?.externalIds?.imdbId
+                is DetailTarget.TmdbShow -> tmdbService.tvShowDetail(target.id).orNull()?.externalIds?.imdbId
+                is DetailTarget.AniListMediaTarget,
+                is DetailTarget.ServiceMedia -> null
+            }?.takeIf { it.isNotBlank() }
 }
 
 private data class SkipProviderSettings(
     val aniSkipEnabled: Boolean = true,
     val introDbEnabled: Boolean = true,
+    val introDbAppEnabled: Boolean = true,
 )
+
+private data class DetailUiSettings(
+    val seasonMenu: Boolean = false,
+    val horizontalEpisodeList: Boolean = false,
+    val mediaDetailElementOrder: String = dev.soupy.eclipse.android.core.model.MediaDetailElement.DefaultOrderRawValue,
+    val mediaDetailHiddenElements: String = "",
+) {
+    fun applyTo(state: DetailScreenState): DetailScreenState = state.copy(
+        seasonMenu = seasonMenu,
+        horizontalEpisodeList = horizontalEpisodeList,
+        mediaDetailElementOrder = mediaDetailElementOrder,
+        mediaDetailHiddenElements = mediaDetailHiddenElements,
+    )
+}
 
 private fun DetailContent.toUiState(
     userRating: Double?,
@@ -904,6 +1037,8 @@ private fun DetailContent.toUiState(
             tmdbSeasonNumber = it.tmdbSeasonNumber,
             tmdbEpisodeNumber = it.tmdbEpisodeNumber,
             tmdbEpisodeOffset = it.tmdbEpisodeOffset,
+            animeAbsoluteEpisodeNumber = it.animeAbsoluteEpisodeNumber,
+            animeSeasonEpisodeCount = it.animeSeasonEpisodeCount,
             isSpecial = it.isSpecial,
             titleOnlySearch = it.titleOnlySearch,
             searchTitle = it.searchTitle,
@@ -911,7 +1046,46 @@ private fun DetailContent.toUiState(
         )
     },
     isMovie = isMovie,
+    isAnime = isAnime,
 )
+
+private fun DetailScreenState.hasAnimePlaybackEvidence(episode: DetailEpisodeRow?): Boolean =
+    isAnime || episode?.anilistMediaId != null || playerSource?.context?.anilistMediaId != null
+
+internal fun chooseMainPlayEpisode(
+    episodes: List<DetailEpisodeRow>,
+    progressEntries: List<EpisodeProgressBackup>,
+    showId: Int?,
+): DetailEpisodeRow? {
+    val candidates = episodes
+        .filter { episode -> episode.sourceSeasonNumber != null && episode.sourceEpisodeNumber != null }
+        .distinctBy { episode -> DetailEpisodeKey(episode.sourceSeasonNumber ?: 0, episode.sourceEpisodeNumber ?: 0) }
+    if (candidates.isEmpty()) return null
+    if (showId == null) return candidates.first()
+
+    val progressByEpisode = progressEntries
+        .asSequence()
+        .filter { entry -> entry.showId == showId }
+        .groupBy { entry -> DetailEpisodeKey(entry.seasonNumber, entry.episodeNumber) }
+        .mapValues { (_, entries) ->
+            entries.maxByOrNull { entry -> entry.lastUpdated.toEpochMillisOrZero() }
+        }
+
+    val latestWatchedIndex = candidates.indices.lastOrNull { index ->
+        progressByEpisode[candidates[index].episodeKey]?.let(::isWatchedForMainPlay) == true
+    }
+    val inProgressIndices = candidates.indices.filter { index ->
+        progressByEpisode[candidates[index].episodeKey]?.let(::hasResumeProgressForMainPlay) == true
+    }
+    val eligibleInProgressIndices = latestWatchedIndex
+        ?.let { watchedIndex -> inProgressIndices.filter { index -> index > watchedIndex } }
+        ?: inProgressIndices
+
+    eligibleInProgressIndices.lastOrNull()?.let { return candidates[it] }
+    latestWatchedIndex?.plus(1)?.takeIf { it < candidates.size }?.let { return candidates[it] }
+    inProgressIndices.lastOrNull()?.let { return candidates[it] }
+    return candidates.first()
+}
 
 private fun DetailContent.canSyncRatingTo(
     service: String,
@@ -960,6 +1134,8 @@ private fun DetailEpisodeRow.toStreamEpisodeSelection(): StreamEpisodeSelection?
         localEpisodeNumber = localEpisode,
         anilistMediaId = anilistMediaId,
         tmdbEpisodeOffset = tmdbEpisodeOffset,
+        animeAbsoluteEpisodeNumber = animeAbsoluteEpisodeNumber,
+        animeSeasonEpisodeCount = animeSeasonEpisodeCount,
         searchTitle = searchTitle ?: title,
         isSpecial = isSpecial,
         titleOnlySearch = useTitleOnly,
@@ -991,6 +1167,20 @@ private val DetailEpisodeRow.sourceSeasonNumber: Int?
 private val DetailEpisodeRow.sourceEpisodeNumber: Int?
     get() = tmdbEpisodeNumber ?: episodeNumber
 
+private val DetailEpisodeRow.episodeKey: DetailEpisodeKey
+    get() = DetailEpisodeKey(sourceSeasonNumber ?: 0, sourceEpisodeNumber ?: 0)
+
+private data class DetailEpisodeKey(
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+)
+
+private fun isWatchedForMainPlay(entry: EpisodeProgressBackup): Boolean =
+    entry.isWatched || entry.progressPercent >= MainPlayWatchedThreshold
+
+private fun hasResumeProgressForMainPlay(entry: EpisodeProgressBackup): Boolean =
+    !isWatchedForMainPlay(entry) && (entry.currentTime > 0.0 || entry.progressPercent > 0.0)
+
 private fun DetailEpisodeRow.downloadKeySuffix(): String? {
     val season = sourceSeasonNumber ?: return null
     val episode = sourceEpisodeNumber ?: return null
@@ -999,6 +1189,19 @@ private fun DetailEpisodeRow.downloadKeySuffix(): String? {
 
 private fun EpisodePlaybackContext.downloadKeySuffix(): String =
     "s${resolvedTMDBSeasonNumber}_e${resolvedTMDBEpisodeNumber}"
+
+private fun StreamEpisodeSelection.toPlaybackContext(): EpisodePlaybackContext = EpisodePlaybackContext(
+    localSeasonNumber = localSeasonNumber,
+    localEpisodeNumber = localEpisodeNumber,
+    anilistMediaId = anilistMediaId,
+    tmdbSeasonNumber = seasonNumber.takeUnless { titleOnlySearch },
+    tmdbEpisodeNumber = episodeNumber.takeUnless { titleOnlySearch },
+    tmdbEpisodeOffset = tmdbEpisodeOffset,
+    animeAbsoluteEpisodeNumber = animeAbsoluteEpisodeNumber,
+    animeSeasonEpisodeCount = animeSeasonEpisodeCount,
+    isSpecial = isSpecial,
+    titleOnlySearch = titleOnlySearch,
+)
 
 private fun MovieProgressBackup.resumePositionMs(): Long =
     resumePositionMs(
@@ -1056,6 +1259,15 @@ private fun List<SkipSegment>.mergeSkipSegments(): List<SkipSegment> =
             "${segment.type.id}:${segment.startTime.toInt()}:${segment.endTime.toInt()}"
         }
 
+private fun String?.toEpochMillisOrZero(): Long =
+    this?.let { value -> runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L) } ?: 0L
+
+private fun String?.extractImdbId(): String? =
+    this
+        ?.let { value -> Regex("""tt\d{6,10}""").find(value)?.value }
+        ?.takeIf { it.isNotBlank() }
+
 private const val TrackerSyncProgressThreshold = 0.85
+private const val MainPlayWatchedThreshold = 0.85
 
 

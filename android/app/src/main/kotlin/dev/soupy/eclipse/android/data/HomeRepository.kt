@@ -7,6 +7,7 @@ import dev.soupy.eclipse.android.core.model.AniListMedia
 import dev.soupy.eclipse.android.core.model.BackupCatalog
 import dev.soupy.eclipse.android.core.model.DetailTarget
 import dev.soupy.eclipse.android.core.model.ExploreMediaCard
+import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.MediaCarouselSection
 import dev.soupy.eclipse.android.core.model.TMDBSearchResult
 import dev.soupy.eclipse.android.core.model.bestLogoUrl
@@ -24,6 +25,8 @@ private const val HorrorGenreId = 27
 
 data class HomeContent(
     val hero: ExploreMediaCard? = null,
+    val heroCandidates: List<ExploreMediaCard> = emptyList(),
+    val heroCarouselEnabled: Boolean = false,
     val sections: List<MediaCarouselSection> = emptyList(),
 )
 
@@ -200,8 +203,27 @@ class HomeRepository(
                 error("No TMDB or AniList browse sections were available.")
             }
 
+            val heroBehavior = HeroBannerBehavior.fromRawValue(settings.heroBannerBehavior)
+            val heroCandidates = sections
+                .heroCandidatesFor(settings.heroBannerCatalogId)
+                .ifEmpty { sections.flatMap { it.items }.take(12) }
+            val selectedHero = when (heroBehavior) {
+                HeroBannerBehavior.LAUNCH -> heroCandidates.randomOrNull()
+                HeroBannerBehavior.STATIC,
+                HeroBannerBehavior.CAROUSEL -> heroCandidates.firstOrNull()
+            }?.withLogo(settings.tmdbLanguage)
+            val carouselCandidates = if (heroBehavior == HeroBannerBehavior.CAROUSEL) {
+                heroCandidates
+                    .take(8)
+                    .map { candidate -> candidate.withLogo(settings.tmdbLanguage) }
+            } else {
+                emptyList()
+            }
+
             HomeContent(
-                hero = sections.firstNotNullOfOrNull { it.items.firstOrNull() }?.withLogo(settings.tmdbLanguage),
+                hero = selectedHero,
+                heroCandidates = carouselCandidates,
+                heroCarouselEnabled = carouselCandidates.size > 1,
                 sections = sections,
             )
         }
@@ -359,6 +381,19 @@ private fun MediaCarouselSection.forCatalog(catalog: BackupCatalog): MediaCarous
         else -> subtitle
     },
 )
+
+private fun List<MediaCarouselSection>.heroCandidatesFor(catalogId: String): List<ExploreMediaCard> {
+    val normalized = catalogId.trim().ifBlank { "trending" }
+    val sectionIds = when (normalized) {
+        "continueWatching" -> listOf("local-continue-watching")
+        "forYou" -> listOf("local-for-you")
+        "becauseYouWatched" -> listOf("local-because-you-watched")
+        else -> listOf("catalog-$normalized", normalized)
+    }
+    return firstOrNull { section -> section.id in sectionIds }
+        ?.items
+        .orEmpty()
+}
 
 private fun List<TMDBSearchResult>.withoutFilteredHorror(enabled: Boolean): List<TMDBSearchResult> =
     if (enabled) {

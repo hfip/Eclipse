@@ -373,6 +373,7 @@ struct MediaDetailView: View {
         }
         .sheet(isPresented: $showingSearchResults) {
             let _ = Logger.shared.log("MediaDetailView constructing play sheet: id=\(searchResult.id) isAnime=\(isAnimeShow) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") autoMode=\(UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"))", type: "CrashProbe")
+            let playbackContext = playbackContextForSearchSheet(selectedEpisodeForSearch)
             ModulesSearchResultsSheet(
                 mediaTitle: {
                     if isAnimeShow, let episode = selectedEpisodeForSearch,
@@ -396,12 +397,16 @@ struct MediaDetailView: View {
                 animeSeasonTitle: isAnimeShow ? "anime" : nil,
                 posterPath: searchResult.isMovie ? movieDetail?.posterPath : tvShowDetail?.posterPath,
                 imdbId: searchResult.isMovie ? movieDetail?.imdbId : tvShowDetail?.externalIds?.imdbId,
+                originalTMDBSeasonNumber: playbackContext?.resolvedTMDBSeasonNumber,
+                originalTMDBEpisodeNumber: playbackContext?.resolvedTMDBEpisodeNumber,
+                episodePlaybackContext: playbackContext,
                 autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
             )
             .id(playSheetRequestId)
         }
         .sheet(isPresented: $showingDownloadSheet) {
             let _ = Logger.shared.log("MediaDetailView constructing download sheet: id=\(searchResult.id) isAnime=\(isAnimeShow) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") autoMode=\(UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"))", type: "CrashProbe")
+            let playbackContext = playbackContextForSearchSheet(selectedEpisodeForSearch)
             ModulesSearchResultsSheet(
                 mediaTitle: {
                     if isAnimeShow, let episode = selectedEpisodeForSearch,
@@ -425,6 +430,9 @@ struct MediaDetailView: View {
                 animeSeasonTitle: isAnimeShow ? "anime" : nil,
                 posterPath: searchResult.isMovie ? movieDetail?.posterPath : tvShowDetail?.posterPath,
                 imdbId: searchResult.isMovie ? movieDetail?.imdbId : tvShowDetail?.externalIds?.imdbId,
+                originalTMDBSeasonNumber: playbackContext?.resolvedTMDBSeasonNumber,
+                originalTMDBEpisodeNumber: playbackContext?.resolvedTMDBEpisodeNumber,
+                episodePlaybackContext: playbackContext,
                 downloadMode: true,
                 autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
             )
@@ -773,6 +781,7 @@ struct MediaDetailView: View {
                 animeEpisodes: anilistEpisodes,
                 animeSeasonTitles: animeSeasonTitles,
                 animeSeasonRomajiTitles: animeSeasonRomajiTitles,
+                animeSeasonAniListIds: animeSeasonAniListIds,
                 showsMetadataDetails: false,
                 showsInsertedContent: false,
                 tmdbService: tmdbService
@@ -820,6 +829,52 @@ struct MediaDetailView: View {
             return romajiTitle
         }
         return seasonRomaji
+    }
+
+    private func playbackContextForSearchSheet(_ episode: TMDBEpisode?) -> EpisodePlaybackContext? {
+        guard isAnimeShow, let episode else { return nil }
+
+        let aniEpisode = anilistEpisodes?.first {
+            $0.seasonNumber == episode.seasonNumber && $0.number == episode.episodeNumber
+        }
+        let absoluteEpisodeNumber = animeAbsoluteEpisodeNumber(for: episode)
+
+        guard aniEpisode != nil || absoluteEpisodeNumber != nil || animeSeasonAniListIds[episode.seasonNumber] != nil else {
+            return nil
+        }
+
+        return EpisodePlaybackContext(
+            localSeasonNumber: episode.seasonNumber,
+            localEpisodeNumber: episode.episodeNumber,
+            anilistMediaId: animeSeasonAniListIds[episode.seasonNumber],
+            tmdbSeasonNumber: aniEpisode?.tmdbSeasonNumber,
+            tmdbEpisodeNumber: aniEpisode?.tmdbEpisodeNumber,
+            tmdbEpisodeOffset: nil,
+            animeAbsoluteEpisodeNumber: absoluteEpisodeNumber,
+            animeSeasonEpisodeCount: animeSeasonEpisodeCount(for: episode.seasonNumber),
+            isSpecial: false,
+            titleOnlySearch: false
+        )
+    }
+
+    private func animeAbsoluteEpisodeNumber(for episode: TMDBEpisode) -> Int? {
+        guard let anilistEpisodes else { return nil }
+
+        var absolute = 0
+        for aniEpisode in anilistEpisodes.sorted(by: episodeSort) {
+            absolute += 1
+            if aniEpisode.seasonNumber == episode.seasonNumber && aniEpisode.number == episode.episodeNumber {
+                return absolute
+            }
+        }
+
+        return nil
+    }
+
+    private func animeSeasonEpisodeCount(for seasonNumber: Int) -> Int? {
+        guard let anilistEpisodes else { return nil }
+        let count = anilistEpisodes.filter { $0.seasonNumber == seasonNumber }.count
+        return count > 0 ? count : nil
     }
     
     private func toggleBookmark() {
@@ -2039,6 +2094,8 @@ struct SpecialEpisodeListContext: Identifiable {
             tmdbSeasonNumber: mappedSeasonNumber,
             tmdbEpisodeNumber: mappedSeasonNumber == nil ? nil : (episodeOffset ?? 0) + episode.episodeNumber,
             tmdbEpisodeOffset: episodeOffset,
+            animeAbsoluteEpisodeNumber: nil,
+            animeSeasonEpisodeCount: nil,
             isSpecial: true,
             titleOnlySearch: episodes.count == 1
         )

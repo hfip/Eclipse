@@ -4,7 +4,12 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.soupy.eclipse.android.core.model.AniListMedia
+import dev.soupy.eclipse.android.core.model.AtmosphereSolidColorSource
+import dev.soupy.eclipse.android.core.model.AtmosphereStyle
+import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.InAppPlayer
+import dev.soupy.eclipse.android.core.model.MediaDetailElement
+import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import dev.soupy.eclipse.android.core.model.TrackerAccountSnapshot
 import dev.soupy.eclipse.android.core.model.TrackerStateSnapshot
@@ -20,6 +25,7 @@ import dev.soupy.eclipse.android.data.BackupRepository
 import dev.soupy.eclipse.android.data.BackupStatusSnapshot
 import dev.soupy.eclipse.android.data.CacheRepository
 import dev.soupy.eclipse.android.data.CatalogRepository
+import dev.soupy.eclipse.android.data.GitHubReleaseCachedState
 import dev.soupy.eclipse.android.data.LibraryRepository
 import dev.soupy.eclipse.android.data.LoggerRepository
 import dev.soupy.eclipse.android.data.MangaRepository
@@ -81,6 +87,7 @@ class AndroidSettingsViewModel(
     init {
         viewModelScope.launch {
             settingsStore.settings.collect { settings ->
+                val releaseState = releaseRepository.cachedStateForDisplay(settings)
                 _state.value = _state.value.copy(
                     accentColor = settings.accentColor,
                     settingsGradientColor = settings.settingsGradientColor,
@@ -88,9 +95,12 @@ class AndroidSettingsViewModel(
                     selectedAppearance = settings.selectedAppearance,
                     autoModeEnabled = settings.autoModeEnabled,
                     highQualityThreshold = settings.highQualityThreshold,
+                    servicesAutoModeQualityPreference =
+                        ServicesAutoModeQualityPreference.fromRawValue(settings.servicesAutoModeQualityPreference),
                     filterHorrorContent = settings.filterHorrorContent,
                     selectedSimilarityAlgorithm = settings.selectedSimilarityAlgorithm,
                     showNextEpisodeButton = settings.showNextEpisodeButton,
+                    showNextEpisodePosterButton = settings.showNextEpisodePosterButton,
                     nextEpisodeThreshold = settings.nextEpisodeThreshold,
                     inAppPlayer = settings.inAppPlayer,
                     enableSubtitlesByDefault = settings.enableSubtitlesByDefault,
@@ -100,6 +110,7 @@ class AndroidSettingsViewModel(
                     defaultPlaybackSpeed = settings.defaultPlaybackSpeed,
                     holdSpeedPlayer = settings.holdSpeedPlayer,
                     externalPlayer = settings.externalPlayer,
+                    preferDownloadedMedia = settings.preferDownloadedMedia,
                     alwaysLandscape = settings.alwaysLandscape,
                     vlcHeaderProxyEnabled = settings.vlcHeaderProxyEnabled,
                     vlcBrightnessGestureEnabled = settings.vlcBrightnessGestureEnabled,
@@ -117,15 +128,25 @@ class AndroidSettingsViewModel(
                     subtitleVerticalOffset = settings.subtitleVerticalOffset,
                     aniSkipEnabled = settings.aniSkipEnabled,
                     introDbEnabled = settings.introDbEnabled,
+                    introDbAppEnabled = settings.introDbAppEnabled,
                     aniSkipAutoSkip = settings.aniSkipAutoSkip,
                     skip85sEnabled = settings.skip85sEnabled,
                     skip85sAlwaysVisible = settings.skip85sAlwaysVisible,
+                    showVlcEpisodeBrowserButton = settings.showVlcEpisodeBrowserButton,
                     showScheduleTab = settings.showScheduleTab,
                     showLocalScheduleTime = settings.showLocalScheduleTime,
                     useClassicScheduleUI = settings.useClassicScheduleUI,
                     showKanzen = settings.showKanzen,
                     seasonMenu = settings.seasonMenu,
                     horizontalEpisodeList = settings.horizontalEpisodeList,
+                    mediaDetailElementOrder = settings.mediaDetailElementOrder,
+                    mediaDetailHiddenElements = settings.mediaDetailHiddenElements,
+                    heroBannerCatalogId = settings.heroBannerCatalogId,
+                    heroBannerBehavior = HeroBannerBehavior.fromRawValue(settings.heroBannerBehavior),
+                    atmosphereStyle = AtmosphereStyle.fromRawValue(settings.atmosphereStyle),
+                    atmosphereSolidColorSource =
+                        AtmosphereSolidColorSource.fromRawValue(settings.atmosphereSolidColorSource),
+                    atmosphereSolidColor = settings.atmosphereSolidColor,
                     mediaColumnsPortrait = settings.mediaColumnsPortrait,
                     mediaColumnsLandscape = settings.mediaColumnsLandscape,
                     readingMode = settings.readingMode,
@@ -142,11 +163,11 @@ class AndroidSettingsViewModel(
                     autoClearCacheThresholdMB = settings.autoClearCacheThresholdMB,
                     autoUpdateServicesEnabled = settings.autoUpdateServicesEnabled,
                     githubReleaseAutoCheckEnabled = settings.githubReleaseAutoCheckEnabled,
-                    githubReleaseUpdateAvailable = settings.githubReleaseUpdateAvailable,
+                    githubReleaseUpdateAvailable = releaseState.updateAvailable,
                     githubReleaseLatestVersion = settings.githubReleaseLatestVersion,
                     githubReleaseUrl = settings.githubReleaseUrl,
-                    githubReleaseShowAlertPending = settings.githubReleaseShowAlertPending,
-                    githubReleaseStatus = settings.toGitHubReleaseStatus(),
+                    githubReleaseShowAlertPending = releaseState.showAlertPending,
+                    githubReleaseStatus = settings.toGitHubReleaseStatus(releaseState),
                 )
             }
         }
@@ -252,6 +273,84 @@ class AndroidSettingsViewModel(
         )
     }
 
+    fun setMediaDetailElementVisible(element: MediaDetailElement, visible: Boolean) {
+        val current = _state.value
+        val hidden = MediaDetailElement.hiddenElements(current.mediaDetailHiddenElements).toMutableSet()
+        if (visible) {
+            hidden.remove(element)
+        } else {
+            hidden.add(element)
+        }
+        updateMediaDetailLayout(
+            orderRawValue = current.mediaDetailElementOrder,
+            hiddenRawValue = MediaDetailElement.rawValueFor(MediaDetailElement.DefaultOrder.filter { it in hidden }),
+        )
+    }
+
+    fun moveMediaDetailElement(element: MediaDetailElement, direction: Int) {
+        val current = _state.value
+        val order = MediaDetailElement.orderedElements(current.mediaDetailElementOrder).toMutableList()
+        val index = order.indexOf(element)
+        if (index < 0) return
+        val target = (index + direction).coerceIn(0, order.lastIndex)
+        if (target == index) return
+        order.add(target, order.removeAt(index))
+        updateMediaDetailLayout(
+            orderRawValue = MediaDetailElement.rawValueFor(order),
+            hiddenRawValue = current.mediaDetailHiddenElements,
+        )
+    }
+
+    fun resetMediaDetailLayout() {
+        updateMediaDetailLayout(
+            orderRawValue = MediaDetailElement.DefaultOrderRawValue,
+            hiddenRawValue = "",
+        )
+    }
+
+    fun setHeroBannerCatalog(id: String) {
+        val current = _state.value
+        updateHeroBanner(
+            catalogId = id,
+            behavior = current.heroBannerBehavior,
+        )
+    }
+
+    fun setHeroBannerBehavior(behavior: HeroBannerBehavior) {
+        val current = _state.value
+        updateHeroBanner(
+            catalogId = current.heroBannerCatalogId,
+            behavior = behavior,
+        )
+    }
+
+    fun setAtmosphereStyle(style: AtmosphereStyle) {
+        val current = _state.value
+        updateAtmosphere(
+            style = style,
+            solidColorSource = current.atmosphereSolidColorSource,
+            solidColor = current.atmosphereSolidColor,
+        )
+    }
+
+    fun setAtmosphereSolidColorSource(source: AtmosphereSolidColorSource) {
+        val current = _state.value
+        updateAtmosphere(
+            style = current.atmosphereStyle,
+            solidColorSource = source,
+            solidColor = current.atmosphereSolidColor,
+        )
+    }
+
+    fun setAtmosphereSolidColor(color: String) {
+        val current = _state.value
+        updateAtmosphere(
+            style = current.atmosphereStyle,
+            solidColorSource = current.atmosphereSolidColorSource,
+            solidColor = color,
+        )
+    }
+
     fun setMediaColumnsPortrait(value: Int) {
         val current = _state.value
         viewModelScope.launch {
@@ -290,7 +389,7 @@ class AndroidSettingsViewModel(
                 isCheckingGitHubRelease = true,
                 githubReleaseStatus = "Checking GitHub releases...",
             )
-            releaseRepository.checkForUpdates(forcePrompt = true)
+            releaseRepository.checkForUpdates()
                 .onSuccess { summary ->
                     _state.value = _state.value.copy(
                         isCheckingGitHubRelease = false,
@@ -333,6 +432,12 @@ class AndroidSettingsViewModel(
         }
     }
 
+    fun setServicesAutoModeQualityPreference(preference: ServicesAutoModeQualityPreference) {
+        viewModelScope.launch {
+            settingsStore.setServicesAutoModeQualityPreference(preference.rawValue)
+        }
+    }
+
     fun setFilterHorrorContent(enabled: Boolean) {
         viewModelScope.launch {
             settingsStore.setFilterHorrorContent(enabled)
@@ -367,6 +472,25 @@ class AndroidSettingsViewModel(
             settingsStore.updatePlayback(
                 inAppPlayer = current.inAppPlayer,
                 showNextEpisodeButton = enabled,
+                showNextEpisodePosterButton = current.showNextEpisodePosterButton,
+                nextEpisodeThreshold = current.nextEpisodeThreshold,
+            )
+        }
+    }
+
+    fun setShowVlcEpisodeBrowserButton(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setShowVlcEpisodeBrowserButton(enabled)
+        }
+    }
+
+    fun setShowNextEpisodePosterButton(enabled: Boolean) {
+        val current = _state.value
+        viewModelScope.launch {
+            settingsStore.updatePlayback(
+                inAppPlayer = current.inAppPlayer,
+                showNextEpisodeButton = current.showNextEpisodeButton,
+                showNextEpisodePosterButton = enabled,
                 nextEpisodeThreshold = current.nextEpisodeThreshold,
             )
         }
@@ -378,6 +502,7 @@ class AndroidSettingsViewModel(
             settingsStore.updatePlayback(
                 inAppPlayer = current.inAppPlayer,
                 showNextEpisodeButton = current.showNextEpisodeButton,
+                showNextEpisodePosterButton = current.showNextEpisodePosterButton,
                 nextEpisodeThreshold = threshold.coerceIn(50, 99),
             )
         }
@@ -389,6 +514,7 @@ class AndroidSettingsViewModel(
             settingsStore.updatePlayback(
                 inAppPlayer = player,
                 showNextEpisodeButton = current.showNextEpisodeButton,
+                showNextEpisodePosterButton = current.showNextEpisodePosterButton,
                 nextEpisodeThreshold = current.nextEpisodeThreshold,
             )
         }
@@ -399,6 +525,7 @@ class AndroidSettingsViewModel(
         updateSkipBehavior(
             aniSkipEnabled = current.aniSkipEnabled,
             introDbEnabled = current.introDbEnabled,
+            introDbAppEnabled = current.introDbAppEnabled,
             aniSkipAutoSkip = enabled,
             skip85sEnabled = current.skip85sEnabled,
             skip85sAlwaysVisible = current.skip85sAlwaysVisible,
@@ -410,6 +537,7 @@ class AndroidSettingsViewModel(
         updateSkipBehavior(
             aniSkipEnabled = current.aniSkipEnabled,
             introDbEnabled = current.introDbEnabled,
+            introDbAppEnabled = current.introDbAppEnabled,
             aniSkipAutoSkip = current.aniSkipAutoSkip,
             skip85sEnabled = enabled,
             skip85sAlwaysVisible = current.skip85sAlwaysVisible,
@@ -421,6 +549,7 @@ class AndroidSettingsViewModel(
         updateSkipBehavior(
             aniSkipEnabled = enabled,
             introDbEnabled = current.introDbEnabled,
+            introDbAppEnabled = current.introDbAppEnabled,
             aniSkipAutoSkip = current.aniSkipAutoSkip,
             skip85sEnabled = current.skip85sEnabled,
             skip85sAlwaysVisible = current.skip85sAlwaysVisible,
@@ -432,6 +561,19 @@ class AndroidSettingsViewModel(
         updateSkipBehavior(
             aniSkipEnabled = current.aniSkipEnabled,
             introDbEnabled = enabled,
+            introDbAppEnabled = current.introDbAppEnabled,
+            aniSkipAutoSkip = current.aniSkipAutoSkip,
+            skip85sEnabled = current.skip85sEnabled,
+            skip85sAlwaysVisible = current.skip85sAlwaysVisible,
+        )
+    }
+
+    fun setIntroDbAppEnabled(enabled: Boolean) {
+        val current = _state.value
+        updateSkipBehavior(
+            aniSkipEnabled = current.aniSkipEnabled,
+            introDbEnabled = current.introDbEnabled,
+            introDbAppEnabled = enabled,
             aniSkipAutoSkip = current.aniSkipAutoSkip,
             skip85sEnabled = current.skip85sEnabled,
             skip85sAlwaysVisible = current.skip85sAlwaysVisible,
@@ -443,6 +585,7 @@ class AndroidSettingsViewModel(
         updateSkipBehavior(
             aniSkipEnabled = current.aniSkipEnabled,
             introDbEnabled = current.introDbEnabled,
+            introDbAppEnabled = current.introDbAppEnabled,
             aniSkipAutoSkip = current.aniSkipAutoSkip,
             skip85sEnabled = current.skip85sEnabled,
             skip85sAlwaysVisible = enabled,
@@ -452,6 +595,7 @@ class AndroidSettingsViewModel(
     private fun updateSkipBehavior(
         aniSkipEnabled: Boolean,
         introDbEnabled: Boolean,
+        introDbAppEnabled: Boolean,
         aniSkipAutoSkip: Boolean,
         skip85sEnabled: Boolean,
         skip85sAlwaysVisible: Boolean,
@@ -460,6 +604,7 @@ class AndroidSettingsViewModel(
             settingsStore.updateSkipBehavior(
                 aniSkipEnabled = aniSkipEnabled,
                 introDbEnabled = introDbEnabled,
+                introDbAppEnabled = introDbAppEnabled,
                 aniSkipAutoSkip = aniSkipAutoSkip,
                 skip85sEnabled = skip85sEnabled,
                 skip85sAlwaysVisible = skip85sAlwaysVisible,
@@ -567,6 +712,22 @@ class AndroidSettingsViewModel(
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = value,
+            alwaysLandscape = current.alwaysLandscape,
+            vlcHeaderProxyEnabled = current.vlcHeaderProxyEnabled,
+        )
+    }
+
+    fun setPreferDownloadedMedia(enabled: Boolean) {
+        val current = _state.value
+        updatePlayerPreferences(
+            enableSubtitlesByDefault = current.enableSubtitlesByDefault,
+            enableVLCSubtitleEditMenu = current.enableVLCSubtitleEditMenu,
+            defaultSubtitleLanguage = current.defaultSubtitleLanguage,
+            preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
+            defaultPlaybackSpeed = current.defaultPlaybackSpeed,
+            holdSpeedPlayer = current.holdSpeedPlayer,
+            externalPlayer = current.externalPlayer,
+            preferDownloadedMedia = enabled,
             alwaysLandscape = current.alwaysLandscape,
             vlcHeaderProxyEnabled = current.vlcHeaderProxyEnabled,
         )
@@ -705,6 +866,7 @@ class AndroidSettingsViewModel(
         defaultPlaybackSpeed: Double,
         holdSpeedPlayer: Double,
         externalPlayer: String,
+        preferDownloadedMedia: Boolean = _state.value.preferDownloadedMedia,
         alwaysLandscape: Boolean,
         vlcHeaderProxyEnabled: Boolean,
     ) {
@@ -717,6 +879,7 @@ class AndroidSettingsViewModel(
                 defaultPlaybackSpeed = defaultPlaybackSpeed,
                 holdSpeedPlayer = holdSpeedPlayer,
                 externalPlayer = externalPlayer,
+                preferDownloadedMedia = preferDownloadedMedia,
                 alwaysLandscape = alwaysLandscape,
                 vlcHeaderProxyEnabled = vlcHeaderProxyEnabled,
             )
@@ -964,6 +1127,44 @@ class AndroidSettingsViewModel(
             settingsStore.updateDisplayOptions(
                 seasonMenu = seasonMenu,
                 horizontalEpisodeList = horizontalEpisodeList,
+            )
+        }
+    }
+
+    private fun updateMediaDetailLayout(
+        orderRawValue: String,
+        hiddenRawValue: String,
+    ) {
+        viewModelScope.launch {
+            settingsStore.updateMediaDetailLayout(
+                orderRawValue = orderRawValue,
+                hiddenRawValue = hiddenRawValue,
+            )
+        }
+    }
+
+    private fun updateHeroBanner(
+        catalogId: String,
+        behavior: HeroBannerBehavior,
+    ) {
+        viewModelScope.launch {
+            settingsStore.updateHeroBanner(
+                catalogId = catalogId,
+                behaviorRawValue = behavior.rawValue,
+            )
+        }
+    }
+
+    private fun updateAtmosphere(
+        style: AtmosphereStyle,
+        solidColorSource: AtmosphereSolidColorSource,
+        solidColor: String,
+    ) {
+        viewModelScope.launch {
+            settingsStore.updateAtmosphere(
+                styleRawValue = style.rawValue,
+                solidColorSourceRawValue = solidColorSource.rawValue,
+                solidColor = solidColor,
             )
         }
     }
@@ -2140,10 +2341,10 @@ class AndroidSettingsViewModel(
 
 private const val ServiceAutoUpdateIntervalMillis = 60L * 60L * 1_000L
 
-private fun AppSettings.toGitHubReleaseStatus(): String = when {
-    githubReleaseUpdateAvailable && githubReleaseLatestVersion.isNotBlank() ->
+private fun AppSettings.toGitHubReleaseStatus(releaseState: GitHubReleaseCachedState): String = when {
+    releaseState.updateAvailable && githubReleaseLatestVersion.isNotBlank() ->
         "Update available: $githubReleaseLatestVersion"
-    githubReleaseUpdateAvailable -> "Update available on GitHub."
+    releaseState.updateAvailable -> "Update available on GitHub."
     githubReleaseLatestVersion.isNotBlank() -> "App is up to date: $githubReleaseLatestVersion"
     githubReleaseLastCheckTimestamp > 0L -> "Last GitHub release check did not find a release."
     else -> "Release checks have not run yet."

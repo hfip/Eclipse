@@ -40,5 +40,21 @@ class EpisodePlaybackContextTest {
 
         assertEquals(12, context.forEpisodeNumber(5).tmdbEpisodeNumber)
     }
+
+    @Test
+    fun forEpisodeNumberAdvancesAnimeAbsoluteEpisodeAndKeepsSeasonCount() {
+        val context = EpisodePlaybackContext(
+            localSeasonNumber = 2,
+            localEpisodeNumber = 1,
+            animeAbsoluteEpisodeNumber = 13,
+            animeSeasonEpisodeCount = 13,
+        )
+
+        val advanced = context.forEpisodeNumber(3)
+
+        assertEquals(3, advanced.localEpisodeNumber)
+        assertEquals(15, advanced.animeAbsoluteEpisodeNumber)
+        assertEquals(13, advanced.animeSeasonEpisodeCount)
+    }
 }
 

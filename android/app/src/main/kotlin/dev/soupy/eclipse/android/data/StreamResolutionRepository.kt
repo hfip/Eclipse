@@ -4,19 +4,28 @@ import dev.soupy.eclipse.android.core.model.DetailTarget
 import dev.soupy.eclipse.android.core.model.EpisodePlaybackContext
 import dev.soupy.eclipse.android.core.model.InAppPlayer
 import dev.soupy.eclipse.android.core.model.PlayerSource
+import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
+import dev.soupy.eclipse.android.core.model.SourceHealthSnapshot
 import dev.soupy.eclipse.android.core.js.ServiceStreamResult
+import dev.soupy.eclipse.android.core.js.ServiceEpisodeLink
+import dev.soupy.eclipse.android.core.js.ServiceSearchResult
+import dev.soupy.eclipse.android.core.model.StremioCatalog
 import dev.soupy.eclipse.android.core.model.StremioContentIdRequest
 import dev.soupy.eclipse.android.core.model.StremioManifest
+import dev.soupy.eclipse.android.core.model.StremioMetaPreview
 import dev.soupy.eclipse.android.core.model.StremioSubtitle
 import dev.soupy.eclipse.android.core.model.StremioStream
+import dev.soupy.eclipse.android.core.model.StremioVideo
 import dev.soupy.eclipse.android.core.model.SubtitleTrack
-import dev.soupy.eclipse.android.core.model.buildContentId
+import dev.soupy.eclipse.android.core.model.buildContentIds
 import dev.soupy.eclipse.android.core.model.displayLabel
 import dev.soupy.eclipse.android.core.model.displayTitle
 import dev.soupy.eclipse.android.core.model.isDirectHttp
 import dev.soupy.eclipse.android.core.model.isTorrentLike
 import dev.soupy.eclipse.android.core.model.qualityScore
+import dev.soupy.eclipse.android.core.model.searchableCatalogs
+import dev.soupy.eclipse.android.core.model.supportsResource
 import dev.soupy.eclipse.android.core.model.warningTextFor
 import dev.soupy.eclipse.android.core.network.AniListService
 import dev.soupy.eclipse.android.core.network.EclipseJson
@@ -35,6 +44,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 private const val ExactStremioContentMatchFloor = 0.90
+private const val ServiceSearchMatchFloor = 0.55
 
 data class ResolvedStreamCandidate(
     val id: String,
@@ -62,6 +72,8 @@ data class StreamEpisodeSelection(
     val localEpisodeNumber: Int = episodeNumber ?: 1,
     val anilistMediaId: Int? = null,
     val tmdbEpisodeOffset: Int? = null,
+    val animeAbsoluteEpisodeNumber: Int? = null,
+    val animeSeasonEpisodeCount: Int? = null,
     val searchTitle: String? = null,
     val isSpecial: Boolean = false,
     val titleOnlySearch: Boolean = false,
@@ -84,16 +96,21 @@ class StreamResolutionRepository(
     ): Result<StreamResolutionResult> = runCatching {
         sourceHealthRepository.load()
         val healthSnapshot = sourceHealthRepository.snapshot.value
+        val settings = settingsStore.settings.first()
         if (target is DetailTarget.ServiceMedia) {
             return@runCatching resolveServiceMedia(
                 target = target,
                 episode = episode,
                 sourceWarning = healthSnapshot.warningTextFor("service:${target.serviceId}"),
+                settings = settings,
             )
         }
-        val settings = settingsStore.settings.first()
         tmdbService.setLanguage(settings.tmdbLanguage)
-        val request = buildRequest(target, episode)
+        val request = buildRequest(
+            target = target,
+            episode = episode,
+            allowEpisodeAutoResolution = settings.autoModeEnabled,
+        )
         val addons = stremioAddonDao.observeAll().first()
             .filter(StremioAddonEntity::enabled)
             .let { enabled ->
@@ -112,10 +129,23 @@ class StreamResolutionRepository(
                 val manifest = addon.manifest()
                 manifest == null || manifest.types.isEmpty() || request.type in manifest.types
             }
+        val services = servicesRepository.activeSearchSources()
+            .let { enabled ->
+                val enabledByAutoModeId = enabled.associateBy { service -> service.autoModeId }
+                val selectedServiceIds = settings.autoModeSourceOrderIds
+                    .filter { it in settings.autoModeSourceIds && it in enabledByAutoModeId } +
+                    enabledByAutoModeId.keys
+                        .filter { it in settings.autoModeSourceIds && it !in settings.autoModeSourceOrderIds }
+                if (settings.autoModeEnabled && selectedServiceIds.isNotEmpty()) {
+                    selectedServiceIds.mapNotNull(enabledByAutoModeId::get)
+                } else {
+                    enabled
+                }
+            }
 
-        if (addons.isEmpty()) {
+        if (addons.isEmpty() && services.isEmpty()) {
             return@runCatching StreamResolutionResult(
-                statusMessage = "No enabled Stremio addons are ready for ${request.type}. Import one in Services first, or include it in Auto Mode.",
+                statusMessage = "No enabled Stremio addons or custom services are ready for ${request.type}. Import a source in Services first, or include it in Auto Mode.",
             )
         }
 
@@ -124,32 +154,22 @@ class StreamResolutionRepository(
             addons.forEach { addon ->
                 val addonLabel = addon.name.ifBlank { addon.transportUrl }
                 val sourceWarning = healthSnapshot.warningTextFor("stremio:${addon.transportUrl}")
-                val manifest = addon.manifest()
-                val contentId = manifest?.buildContentId(request.toContentIdRequest())
-                    ?: StremioManifest().buildContentId(request.toContentIdRequest())
-                if (contentId == null) {
-                    return@forEach
-                }
-                stremioService.fetchStreams(
-                    transportUrl = addon.transportUrl,
-                    type = request.type,
-                    id = contentId,
-                ).orNull()?.streams.orEmpty()
-                    .filter { stream ->
-                        if (stream.isTorrentLike) {
-                            rejectedTorrentCount += 1
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    .mapIndexed { index, stream ->
+                val manifest = addon.manifest() ?: StremioManifest()
+                val resolution = resolveAddonStreams(
+                    addon = addon,
+                    manifest = manifest,
+                    request = request,
+                )
+                rejectedTorrentCount += resolution.rejectedTorrentCount
+                resolution.streams
+                    .mapIndexed { index, resolvedStream ->
+                        val stream = resolvedStream.stream
                         stream.toResolvedCandidate(
                             addon = addon,
                             addonLabel = addonLabel,
                             requestSummary = request.summary,
                             requestTitles = request.matchTitles,
-                            contentId = contentId,
+                            contentId = resolvedStream.contentId,
                             playbackContext = request.playbackContext,
                             similarityAlgorithm = settings.selectedSimilarityAlgorithm,
                             sourceWarning = sourceWarning,
@@ -158,13 +178,16 @@ class StreamResolutionRepository(
                     }
                     .let(::addAll)
             }
-        }.sortedWith(
-            compareByDescending<ResolvedStreamCandidate> { it.isPlayable }
-                .thenByDescending { it.matchScore }
-                .thenByDescending { it.qualityScore }
-                .thenBy { it.addonName.lowercase() }
-                .thenBy { it.title.lowercase() },
-        )
+            addAll(
+                resolveCustomServiceCandidates(
+                    services = services,
+                    request = request,
+                    episode = episode,
+                    settings = settings,
+                    healthSnapshot = healthSnapshot,
+                ),
+            )
+        }.sortedWith(streamCandidateComparator(settings.qualityPreference()))
         val openSubtitles = fetchOpenSubtitlesFallbackTracks(settings, request, rawCandidates)
         val candidates = rawCandidates.withAdditionalSubtitles(openSubtitles)
 
@@ -181,6 +204,7 @@ class StreamResolutionRepository(
         val threshold = settings.highQualityThreshold.coerceIn(0.0, 1.0)
         val autoSelectedCandidate = candidates.firstOrNull { candidate ->
             settings.autoModeEnabled &&
+                settings.qualityPreference().usesAutomaticSelection &&
                 candidate.isPlayable &&
                 candidate.matchScore >= threshold
         }
@@ -210,6 +234,7 @@ class StreamResolutionRepository(
         target: DetailTarget.ServiceMedia,
         episode: StreamEpisodeSelection?,
         sourceWarning: String?,
+        settings: AppSettings,
     ): StreamResolutionResult {
         val href = episode?.serviceHref ?: target.href
         val streamResult = servicesRepository.resolveServiceStream(
@@ -221,21 +246,29 @@ class StreamResolutionRepository(
             href = href,
             episode = episode,
             sourceWarning = sourceWarning,
-        )
+        ).sortedWith(streamCandidateComparator(settings.qualityPreference()))
+        val selectedSource = candidates.firstOrNull { candidate ->
+            settings.autoModeEnabled &&
+                settings.qualityPreference().usesAutomaticSelection &&
+                candidate.isPlayable
+        }?.playerSource
         return StreamResolutionResult(
             statusMessage = if (candidates.isEmpty()) {
                 "The selected service did not return a safe direct HTTP(S) stream."
+            } else if (!settings.qualityPreference().usesAutomaticSelection && candidates.count(ResolvedStreamCandidate::isPlayable) > 1) {
+                "Resolved ${candidates.size} service streams. Auto Mode quality is set to Ask, so pick one manually."
             } else {
                 "Resolved ${candidates.size} service stream${if (candidates.size == 1) "" else "s"}."
             },
             candidates = candidates,
-            selectedSource = candidates.firstOrNull(ResolvedStreamCandidate::isPlayable)?.playerSource,
+            selectedSource = selectedSource,
         )
     }
 
     private suspend fun buildRequest(
         target: DetailTarget,
         episode: StreamEpisodeSelection?,
+        allowEpisodeAutoResolution: Boolean,
     ): StremioRequest = when (target) {
         is DetailTarget.TmdbMovie -> {
             val movie = tmdbService.movieDetail(target.id).orThrow()
@@ -248,6 +281,8 @@ class StreamResolutionRepository(
                 episode = null,
                 summary = movie.title.ifBlank { imdbId ?: "tmdb:${target.id}" },
                 matchTitles = listOfNotNull(movie.title, imdbId),
+                expectedYear = movie.releaseDate.releaseYear(),
+                allowEpisodeAutoResolution = allowEpisodeAutoResolution,
             )
         }
 
@@ -263,7 +298,10 @@ class StreamResolutionRepository(
                 episode = selectedEpisode.episodeNumber.takeUnless { selectedEpisode.titleOnlySearch },
                 summary = listOfNotNull(selectedEpisode.searchTitle ?: show.name, selectedEpisode.label).joinToString(" "),
                 matchTitles = listOfNotNull(selectedEpisode.searchTitle, show.name),
+                expectedYear = show.firstAirDate.releaseYear(),
+                anilistMediaId = selectedEpisode.anilistMediaId,
                 playbackContext = selectedEpisode.toPlaybackContext(),
+                allowEpisodeAutoResolution = allowEpisodeAutoResolution,
             )
         }
 
@@ -283,6 +321,9 @@ class StreamResolutionRepository(
                         episode = null,
                         summary = "${media.displayTitle} via ${match.title}",
                         matchTitles = listOf(media.displayTitle, match.title, movie.title),
+                        expectedYear = media.seasonYear ?: movie.releaseDate.releaseYear(),
+                        anilistMediaId = media.id,
+                        allowEpisodeAutoResolution = allowEpisodeAutoResolution,
                     )
                 }
 
@@ -299,9 +340,12 @@ class StreamResolutionRepository(
                         episode = selectedEpisode.episodeNumber.takeUnless { selectedEpisode.titleOnlySearch },
                         summary = "${selectedEpisode.searchTitle ?: media.displayTitle} ${selectedEpisode.label} via ${match.title}",
                         matchTitles = listOfNotNull(selectedEpisode.searchTitle, media.displayTitle, match.title, show.name),
+                        expectedYear = media.seasonYear ?: show.firstAirDate.releaseYear(),
+                        anilistMediaId = media.id,
                         playbackContext = selectedEpisode
                             .copy(anilistMediaId = selectedEpisode.anilistMediaId ?: media.id)
                             .toPlaybackContext(),
+                        allowEpisodeAutoResolution = allowEpisodeAutoResolution,
                     )
                 }
 
@@ -311,6 +355,260 @@ class StreamResolutionRepository(
         }
 
         is DetailTarget.ServiceMedia -> error("Service-backed media streams use the service runtime.")
+    }
+
+    private suspend fun resolveAddonStreams(
+        addon: StremioAddonEntity,
+        manifest: StremioManifest,
+        request: StremioRequest,
+    ): StremioAddonResolution {
+        val contentIds = manifest.buildContentIds(request.toContentIdRequest())
+        var rejectedTorrentCount = 0
+        val pendingDirectResults = mutableListOf<ResolvedStremioStream>()
+
+        for (contentId in contentIds) {
+            val directResult = stremioService.fetchStreams(
+                transportUrl = addon.transportUrl,
+                type = request.type,
+                id = contentId,
+            ).orNull()
+                ?.streams
+                .orEmpty()
+                .toResolvedStremioStreams(contentId)
+            rejectedTorrentCount += directResult.rejectedTorrentCount
+            if (directResult.streams.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
+                return directResult.copy(rejectedTorrentCount = rejectedTorrentCount)
+            }
+            pendingDirectResults += directResult.streams
+        }
+
+        val fallbackResult = fetchStreamsByCatalogSearch(
+            addon = addon,
+            manifest = manifest,
+            request = request,
+        )
+        rejectedTorrentCount += fallbackResult.rejectedTorrentCount
+        if (fallbackResult.streams.isNotEmpty()) {
+            return fallbackResult.copy(rejectedTorrentCount = rejectedTorrentCount)
+        }
+
+        return StremioAddonResolution(
+            streams = pendingDirectResults,
+            rejectedTorrentCount = rejectedTorrentCount,
+        )
+    }
+
+    private suspend fun resolveCustomServiceCandidates(
+        services: List<ServiceSourceRecord>,
+        request: StremioRequest,
+        episode: StreamEpisodeSelection?,
+        settings: AppSettings,
+        healthSnapshot: SourceHealthSnapshot,
+    ): List<ResolvedStreamCandidate> {
+        if (services.isEmpty()) return emptyList()
+        val queries = normalizedSearchQueries(request.catalogSearchTitles()).take(3)
+        if (queries.isEmpty()) return emptyList()
+        val candidates = mutableListOf<ResolvedStreamCandidate>()
+        services.forEach { service ->
+            val sourceWarning = healthSnapshot.warningTextFor(service.autoModeId)
+            val searchResults = queries
+                .flatMap { query ->
+                    servicesRepository.searchService(service.id, query)
+                        .getOrNull()
+                        .orEmpty()
+                        .take(8)
+                }
+            val match = searchResults
+                .distinctBy(ServiceSearchResult::href)
+                .map { result ->
+                    result to titleMatchScore(
+                        expectedTitles = request.catalogSearchTitles(),
+                        candidateText = listOf(result.title, result.subtitle.orEmpty()).joinToString(" "),
+                        algorithm = settings.selectedSimilarityAlgorithm,
+                    )
+                }
+                .filter { (_, score) -> score >= ServiceSearchMatchFloor }
+                .maxByOrNull { (_, score) -> score }
+                ?: return@forEach
+            val (result, matchScore) = match
+            val detail = servicesRepository.loadServiceDetail(
+                id = service.id,
+                href = result.href,
+                fallbackTitle = result.title,
+                fallbackImageUrl = result.image,
+            ).getOrNull()
+            val serviceTarget = DetailTarget.ServiceMedia(
+                serviceId = service.id,
+                href = result.href,
+                title = detail?.title ?: result.title,
+                imageUrl = detail?.imageUrl ?: result.image,
+            )
+            val serviceEpisodes = detail
+                ?.episodes
+                ?.episodeCandidatesForRequest(
+                    request = request,
+                    fallback = episode,
+                    allowEpisodeAutoResolution = settings.autoModeEnabled,
+                )
+                .orEmpty()
+            val resolutionTargets = serviceEpisodes
+                .takeIf { it.isNotEmpty() }
+                ?.map { serviceEpisode ->
+                    val serviceSelection = serviceEpisode.toStreamEpisodeSelection(
+                        fallback = episode,
+                        request = request,
+                        preferServiceLabel = !settings.autoModeEnabled,
+                    )
+                    serviceEpisode.href to serviceSelection
+                }
+                ?: listOf((detail?.href ?: result.href) to episode?.copy(serviceHref = detail?.href ?: result.href))
+            resolutionTargets.forEach { (href, serviceSelection) ->
+                val streamResult = servicesRepository.resolveServiceStream(
+                    id = service.id,
+                    href = href,
+                ).getOrNull() ?: return@forEach
+                candidates += streamResult.toServiceCandidates(
+                    target = serviceTarget,
+                    href = href,
+                    episode = serviceSelection,
+                    sourceWarning = sourceWarning,
+                ).map { candidate ->
+                    candidate.copy(
+                        id = "service:${service.id}:${href.hashCode()}:${candidate.id.substringAfterLast(':')}",
+                        subtitle = service.name,
+                        addonName = service.name,
+                        matchScore = matchScore.coerceAtLeast(candidate.matchScore),
+                    )
+                }
+            }
+        }
+        return candidates
+    }
+
+    private suspend fun fetchStreamsByCatalogSearch(
+        addon: StremioAddonEntity,
+        manifest: StremioManifest,
+        request: StremioRequest,
+    ): StremioAddonResolution {
+        val searchQueries = normalizedSearchQueries(request.catalogSearchTitles())
+        if (searchQueries.isEmpty()) return StremioAddonResolution()
+
+        val catalogs = manifest.searchableCatalogs
+            .filter { catalog -> catalog.supportsType(request.type) }
+            .take(3)
+        if (catalogs.isEmpty()) return StremioAddonResolution()
+
+        val ranked = mutableListOf<RankedCatalogMeta>()
+        for (catalog in catalogs) {
+            for (query in searchQueries.take(4)) {
+                val metas = stremioService.fetchCatalogMetas(
+                    transportUrl = addon.transportUrl,
+                    catalog = catalog,
+                    searchQuery = query,
+                ).orNull()
+                    ?.metas
+                    .orEmpty()
+                ranked += metas
+                    .asSequence()
+                    .take(12)
+                    .filter { meta -> metaMatchesRequestedType(meta, catalog, request.type) }
+                    .map { meta ->
+                        RankedCatalogMeta(
+                            catalog = catalog,
+                            meta = meta,
+                            score = catalogMetaScore(meta, request.catalogSearchTitles(), request.expectedYear),
+                            query = query,
+                        )
+                    }
+                    .filter { candidate -> candidate.score >= 0.78 && candidate.meta.id.isNotBlank() }
+                    .toList()
+            }
+        }
+
+        val candidates = ranked
+            .sortedWith(
+                compareByDescending<RankedCatalogMeta> { candidate -> candidate.score }
+                    .thenBy { candidate -> candidate.meta.name.length },
+            )
+            .take(5)
+
+        var rejectedTorrentCount = 0
+        val pendingResults = mutableListOf<ResolvedStremioStream>()
+        for (candidate in candidates) {
+            val result = fetchStreamsForCatalogMeta(
+                preview = candidate.meta,
+                catalog = candidate.catalog,
+                addon = addon,
+                manifest = manifest,
+                request = request,
+            )
+            rejectedTorrentCount += result.rejectedTorrentCount
+            if (result.streams.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
+                return result.copy(rejectedTorrentCount = rejectedTorrentCount)
+            }
+            pendingResults += result.streams
+        }
+
+        return StremioAddonResolution(
+            streams = pendingResults,
+            rejectedTorrentCount = rejectedTorrentCount,
+        )
+    }
+
+    private suspend fun fetchStreamsForCatalogMeta(
+        preview: StremioMetaPreview,
+        catalog: StremioCatalog,
+        addon: StremioAddonEntity,
+        manifest: StremioManifest,
+        request: StremioRequest,
+    ): StremioAddonResolution {
+        val streamType = preview.type ?: catalog.type
+        val directPreviewStreams = streamsFromMeta(preview, request)
+        if (directPreviewStreams.streams.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
+            return directPreviewStreams
+        }
+
+        var meta = preview
+        var rejectedTorrentCount = directPreviewStreams.rejectedTorrentCount
+        if (manifest.supportsResource("meta")) {
+            val fetched = stremioService.fetchMeta(
+                transportUrl = addon.transportUrl,
+                type = streamType,
+                id = preview.id,
+            ).orNull()
+                ?.meta
+            if (fetched != null) {
+                meta = fetched
+                val metaStreams = streamsFromMeta(fetched, request)
+                rejectedTorrentCount += metaStreams.rejectedTorrentCount
+                if (metaStreams.streams.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
+                    return metaStreams.copy(rejectedTorrentCount = rejectedTorrentCount)
+                }
+            }
+        }
+
+        val pendingResults = mutableListOf<ResolvedStremioStream>()
+        pendingResults += directPreviewStreams.streams
+        for (contentId in streamIdsFromMeta(meta, request)) {
+            val result = stremioService.fetchStreams(
+                transportUrl = addon.transportUrl,
+                type = streamType,
+                id = contentId,
+            ).orNull()
+                ?.streams
+                .orEmpty()
+                .toResolvedStremioStreams(contentId)
+            rejectedTorrentCount += result.rejectedTorrentCount
+            if (result.streams.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
+                return result.copy(rejectedTorrentCount = rejectedTorrentCount)
+            }
+            pendingResults += result.streams
+        }
+
+        return StremioAddonResolution(
+            streams = pendingResults,
+            rejectedTorrentCount = rejectedTorrentCount,
+        )
     }
 
     private suspend fun fetchOpenSubtitlesFallbackTracks(
@@ -453,7 +751,7 @@ private fun AnimeTmdbMatch.firstMappedEpisodeSelection(anilistMediaId: Int): Str
     )
 }
 
-private data class StremioRequest(
+internal data class StremioRequest(
     val type: String,
     val tmdbId: Int,
     val imdbId: String?,
@@ -462,6 +760,9 @@ private data class StremioRequest(
     val summary: String,
     val matchTitles: List<String> = emptyList(),
     val playbackContext: EpisodePlaybackContext? = null,
+    val expectedYear: Int? = null,
+    val anilistMediaId: Int? = playbackContext?.anilistMediaId,
+    val allowEpisodeAutoResolution: Boolean = false,
 ) {
     fun toContentIdRequest(): StremioContentIdRequest = StremioContentIdRequest(
         tmdbId = tmdbId,
@@ -469,7 +770,299 @@ private data class StremioRequest(
         type = type,
         season = season,
         episode = episode,
+        anilistId = anilistMediaId,
     )
+}
+
+private data class StremioAddonResolution(
+    val streams: List<ResolvedStremioStream> = emptyList(),
+    val rejectedTorrentCount: Int = 0,
+)
+
+private data class ResolvedStremioStream(
+    val stream: StremioStream,
+    val contentId: String,
+)
+
+private data class RankedCatalogMeta(
+    val catalog: StremioCatalog,
+    val meta: StremioMetaPreview,
+    val score: Double,
+    val query: String,
+)
+
+private fun List<StremioStream>.toResolvedStremioStreams(contentId: String): StremioAddonResolution {
+    var rejectedTorrentCount = 0
+    val streams = mapNotNull { stream ->
+        if (stream.isTorrentLike) {
+            rejectedTorrentCount += 1
+            null
+        } else {
+            ResolvedStremioStream(stream = stream, contentId = contentId)
+        }
+    }
+    return StremioAddonResolution(
+        streams = streams,
+        rejectedTorrentCount = rejectedTorrentCount,
+    )
+}
+
+private fun streamsFromMeta(
+    meta: StremioMetaPreview,
+    request: StremioRequest,
+): StremioAddonResolution {
+    val matchingVideos = matchingMetaVideosForRequest(meta, request)
+
+    var rejectedTorrentCount = 0
+    val streams = matchingVideos.flatMap { video ->
+        val contentId = video.id.ifBlank { meta.id }
+        video.streams.mapNotNull { stream ->
+            if (stream.isTorrentLike) {
+                rejectedTorrentCount += 1
+                null
+            } else {
+                ResolvedStremioStream(stream = stream, contentId = contentId)
+            }
+        }
+    }.distinctBy { resolvedStream ->
+        resolvedStream.stream.url ?: resolvedStream.stream.infoHash ?: resolvedStream.contentId
+    }
+
+    return StremioAddonResolution(
+        streams = streams,
+        rejectedTorrentCount = rejectedTorrentCount,
+    )
+}
+
+private fun streamIdsFromMeta(
+    meta: StremioMetaPreview,
+    request: StremioRequest,
+): List<String> {
+    val candidates = mutableListOf<String>()
+
+    if (request.season != null && request.episode != null) {
+        val matchingVideos = matchingMetaVideosForRequest(meta, request)
+        matchingVideos.forEach { video ->
+            video.id.takeIf(String::isNotBlank)?.let(candidates::add)
+            val videoSeason = video.season ?: request.season
+            val videoEpisode = video.episode ?: request.episode
+            candidates += "${meta.id}:$videoSeason:$videoEpisode"
+        }
+        candidates += "${meta.id}:${request.season}:${request.episode}"
+    } else if (request.type == "movie") {
+        candidates += meta.id
+    } else {
+        meta.behaviorHints?.defaultVideoId?.let(candidates::add)
+    }
+
+    if (candidates.isEmpty()) {
+        candidates += meta.id
+    }
+
+    return candidates.filter(String::isNotBlank).distinct()
+}
+
+internal fun matchingMetaVideosForRequest(
+    meta: StremioMetaPreview,
+    request: StremioRequest,
+): List<StremioVideo> {
+    val defaultVideoId = meta.behaviorHints?.defaultVideoId
+    val season = request.season
+    val episode = request.episode
+    return when {
+        season != null && episode != null -> {
+            meta.videos.filter { video ->
+                video.season == season && video.episode == episode
+            }.ifEmpty {
+                request.autoEpisodeMatches(meta.videos)
+            }
+        }
+        defaultVideoId != null -> meta.videos.filter { video ->
+            video.id == defaultVideoId
+        }.ifEmpty { meta.videos }
+        else -> meta.videos
+    }
+}
+
+private fun StremioRequest.autoEpisodeMatches(videos: List<StremioVideo>): List<StremioVideo> {
+    val context = playbackContext ?: return emptyList()
+    if (!allowEpisodeAutoResolution || context.isSpecial || context.titleOnlySearch) return emptyList()
+    val seasonEpisodeCount = context.animeSeasonEpisodeCount?.takeIf { it > 0 } ?: return emptyList()
+    val localEpisode = context.localEpisodeNumber.takeIf { it > 0 } ?: return emptyList()
+    val absoluteEpisode = context.animeAbsoluteEpisodeNumber?.takeIf { it > 0 }
+    val episodeNumbers = videos.mapNotNull(StremioVideo::episode)
+    val maxEpisode = episodeNumbers.maxOrNull() ?: return emptyList()
+
+    return when {
+        absoluteEpisode != null && maxEpisode > seasonEpisodeCount -> videos.filter { video ->
+            video.episode == absoluteEpisode
+        }
+        maxEpisode <= seasonEpisodeCount -> videos.filter { video ->
+            video.episode == localEpisode
+        }
+        else -> emptyList()
+    }
+}
+
+private fun metaMatchesRequestedType(
+    meta: StremioMetaPreview,
+    catalog: StremioCatalog,
+    requestedType: String,
+): Boolean {
+    val metaType = meta.type ?: catalog.type
+    return metaType == requestedType || (requestedType == "series" && metaType == "tv")
+}
+
+private fun catalogMetaScore(
+    meta: StremioMetaPreview,
+    titleCandidates: List<String>,
+    expectedYear: Int?,
+): Double {
+    val score = titleCandidates
+        .map { title -> catalogTitleSimilarity(title, meta.name) }
+        .maxOrNull()
+        ?: 0.0
+    val yearAdjusted = when {
+        expectedYear == null -> score
+        meta.releaseYear() == null -> score
+        kotlin.math.abs(expectedYear - meta.releaseYear()!!) == 0 -> score + 0.08
+        kotlin.math.abs(expectedYear - meta.releaseYear()!!) == 1 -> score + 0.03
+        kotlin.math.abs(expectedYear - meta.releaseYear()!!) > 3 -> score - 0.12
+        else -> score
+    }
+    return yearAdjusted.coerceIn(0.0, 1.0)
+}
+
+private fun catalogTitleSimilarity(expected: String, result: String): Double {
+    val expectedCanonical = expected.normalizedCatalogTitle()
+    val resultCanonical = result.normalizedCatalogTitle()
+    if (expectedCanonical.isBlank() || resultCanonical.isBlank()) return 0.0
+
+    val raw = titleMatchScore(listOf(expected), result, SimilarityAlgorithm.HYBRID)
+    val canonical = titleMatchScore(listOf(expectedCanonical), resultCanonical, SimilarityAlgorithm.HYBRID)
+    val token = tokenOverlapScore(expectedCanonical, resultCanonical)
+    val base = maxOf(raw, canonical) * 0.68 + token * 0.32
+    val adjusted = when {
+        expectedCanonical == resultCanonical -> base + 0.12
+        expectedCanonical.contains(resultCanonical) || resultCanonical.contains(expectedCanonical) -> base + 0.05
+        else -> base
+    }
+    return adjusted.coerceIn(0.0, 1.0)
+}
+
+private fun StremioRequest.catalogSearchTitles(): List<String> {
+    val values = matchTitles + summary
+    val filtered = values
+        .map { title -> title.trim() }
+        .filter { title -> title.isNotBlank() }
+        .filterNot { title -> title.startsWith("tt") || title.startsWith("tmdb:") || title.startsWith("imdb:") }
+    return filtered.ifEmpty { listOf(summary) }
+}
+
+private fun normalizedSearchQueries(values: List<String>): List<String> {
+    val seen = mutableSetOf<String>()
+    return values
+        .map { value -> value.stripEpisodeSuffix().trim() }
+        .filter(String::isNotBlank)
+        .filter { value -> seen.add(value.normalizedCatalogTitle()) }
+}
+
+private fun String.normalizedCatalogTitle(): String =
+    lowercase()
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .trim()
+
+private fun String.stripEpisodeSuffix(): String {
+    val patterns = listOf(
+        Regex("\\s*-\\s*S\\d{1,3}E\\d{1,4}$", RegexOption.IGNORE_CASE),
+        Regex("\\s*S\\d{1,3}E\\d{1,4}$", RegexOption.IGNORE_CASE),
+        Regex("\\s*-\\s*E\\d{1,4}$", RegexOption.IGNORE_CASE),
+        Regex("\\s*E\\d{1,4}$", RegexOption.IGNORE_CASE),
+        Regex("\\s*episode\\s+\\d{1,4}$", RegexOption.IGNORE_CASE),
+    )
+    return patterns.firstOrNull { pattern -> pattern.containsMatchIn(this) }?.replace(this, "") ?: this
+}
+
+private fun tokenOverlapScore(left: String, right: String): Double {
+    val ignored = setOf("a", "an", "and", "the", "of", "to", "in", "on", "tv", "series", "episode")
+    val leftTokens = left.split(" ").filter { token -> token.length > 1 && token !in ignored }.toSet()
+    val rightTokens = right.split(" ").filter { token -> token.length > 1 && token !in ignored }.toSet()
+    if (leftTokens.isEmpty() || rightTokens.isEmpty()) return 0.0
+    return leftTokens.intersect(rightTokens).size.toDouble() / maxOf(leftTokens.size, rightTokens.size).toDouble()
+}
+
+private fun StremioMetaPreview.releaseYear(): Int? =
+    (releaseInfo ?: released).releaseYear()
+
+private fun String?.releaseYear(): Int? =
+    this?.let { value -> Regex("\\b(19|20)\\d{2}\\b").find(value)?.value?.toIntOrNull() }
+
+private fun AppSettings.qualityPreference(): ServicesAutoModeQualityPreference =
+    ServicesAutoModeQualityPreference.fromRawValue(servicesAutoModeQualityPreference)
+
+private fun streamCandidateComparator(
+    preference: ServicesAutoModeQualityPreference,
+): Comparator<ResolvedStreamCandidate> =
+    compareByDescending<ResolvedStreamCandidate> { it.isPlayable }
+        .thenByDescending { it.matchScore }
+        .thenByDescending { it.qualityPreferenceScore(preference) }
+        .thenByDescending { it.qualityScore }
+        .thenBy { it.addonName.lowercase() }
+        .thenBy { it.title.lowercase() }
+
+private fun ResolvedStreamCandidate.qualityPreferenceScore(
+    preference: ServicesAutoModeQualityPreference,
+): Double {
+    if (!preference.usesAutomaticSelection) return 0.0
+    val height = qualityHeight()
+    return when (preference) {
+        ServicesAutoModeQualityPreference.MANUAL -> 0.0
+        ServicesAutoModeQualityPreference.AUTO,
+        ServicesAutoModeQualityPreference.HIGHEST -> qualityScore
+        ServicesAutoModeQualityPreference.LOWEST -> 1.0 - qualityScore
+        ServicesAutoModeQualityPreference.QUALITY_2160,
+        ServicesAutoModeQualityPreference.QUALITY_1080,
+        ServicesAutoModeQualityPreference.QUALITY_720,
+        ServicesAutoModeQualityPreference.QUALITY_480 -> {
+            val target = preference.targetResolutionHeight ?: return qualityScore
+            when {
+                height == null -> qualityScore * 0.25
+                height == target -> 2.0
+                height < target -> 1.0 + height.toDouble() / target.toDouble()
+                else -> 0.5 + target.toDouble() / height.toDouble()
+            }
+        }
+    }
+}
+
+private fun ResolvedStreamCandidate.qualityHeight(): Int? {
+    val haystack = listOfNotNull(title, subtitle, supportingText, addonName)
+        .joinToString(" ")
+        .lowercase()
+    if (Regex("""\b(4k|uhd)\b""").containsMatchIn(haystack)) return 2160
+    return Regex("""\b(2160|1080|720|480)p?\b""")
+        .find(haystack)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+}
+
+private fun qualityScoreFromText(text: String): Double {
+    val lower = text.lowercase()
+    val height = when {
+        Regex("""\b(4k|uhd|2160p?)\b""").containsMatchIn(lower) -> 2160
+        Regex("""\b1080p?\b""").containsMatchIn(lower) -> 1080
+        Regex("""\b720p?\b""").containsMatchIn(lower) -> 720
+        Regex("""\b480p?\b""").containsMatchIn(lower) -> 480
+        else -> null
+    }
+    return when (height) {
+        2160 -> 1.0
+        1080 -> 0.86
+        720 -> 0.70
+        480 -> 0.52
+        else -> 0.50
+    }
 }
 
 private fun StremioStream.toResolvedCandidate(
@@ -567,7 +1160,7 @@ private fun ServiceStreamResult.toServiceCandidates(
             ).joinToString(" | "),
             addonName = target.serviceId,
             isPlayable = true,
-            qualityScore = 1.0,
+            qualityScore = qualityScoreFromText("$title ${stream.url}"),
             matchScore = 1.0,
             playerSource = PlayerSource(
                 uri = stream.url,
@@ -604,6 +1197,7 @@ private fun ServiceStreamResult.serviceStreamPayloads(): List<ServiceStreamPaylo
             )
         }
     }
+
     val sourceStreams = sources.mapNotNull { source ->
         val url = source.firstString("url", "stream", "file", "src", "href")
             ?.takeIf(String::isDirectHttpUrl)
@@ -680,9 +1274,112 @@ private fun StreamEpisodeSelection.toPlaybackContext(): EpisodePlaybackContext =
     tmdbSeasonNumber = seasonNumber.takeUnless { titleOnlySearch },
     tmdbEpisodeNumber = episodeNumber.takeUnless { titleOnlySearch },
     tmdbEpisodeOffset = tmdbEpisodeOffset,
+    animeAbsoluteEpisodeNumber = animeAbsoluteEpisodeNumber,
+    animeSeasonEpisodeCount = animeSeasonEpisodeCount,
     isSpecial = isSpecial,
     titleOnlySearch = titleOnlySearch,
 )
+
+internal fun List<ServiceEpisodeLink>.bestEpisodeForRequest(
+    request: StremioRequest,
+    fallback: StreamEpisodeSelection?,
+    allowEpisodeAutoResolution: Boolean,
+): ServiceEpisodeLink? {
+    if (isEmpty()) return null
+    val selected = fallback
+    if (selected != null) {
+        firstOrNull { episode ->
+            episode.seasonNumber == selected.seasonNumber &&
+                episode.episodeNumber == selected.episodeNumber
+        }?.let { return it }
+        if (allowEpisodeAutoResolution && !selected.isSpecial && !selected.titleOnlySearch) {
+            bundledAnimeAbsoluteEpisode(selected)?.let { absoluteEpisode ->
+                firstOrNull { episode -> episode.episodeNumber == absoluteEpisode }?.let { return it }
+            }
+        }
+        firstOrNull { episode -> episode.episodeNumber == selected.localEpisodeNumber }?.let { return it }
+    }
+    if (request.type == "movie") return firstOrNull()
+    request.episode?.let { requestedEpisode ->
+        firstOrNull { episode -> episode.episodeNumber == requestedEpisode }?.let { return it }
+    }
+    return firstOrNull()
+}
+
+internal fun List<ServiceEpisodeLink>.episodeCandidatesForRequest(
+    request: StremioRequest,
+    fallback: StreamEpisodeSelection?,
+    allowEpisodeAutoResolution: Boolean,
+): List<ServiceEpisodeLink> {
+    if (isEmpty()) return emptyList()
+    if (allowEpisodeAutoResolution) {
+        return listOfNotNull(bestEpisodeForRequest(request, fallback, allowEpisodeAutoResolution = true))
+    }
+    val selected = fallback
+    if (selected != null) {
+        firstOrNull { episode ->
+            episode.seasonNumber == selected.seasonNumber &&
+                episode.episodeNumber == selected.episodeNumber
+        }?.let { return listOf(it) }
+
+        val candidates = buildList {
+            this@episodeCandidatesForRequest
+                .firstOrNull { episode -> episode.episodeNumber == selected.localEpisodeNumber }
+                ?.let(::add)
+            this@episodeCandidatesForRequest.bundledAnimeAbsoluteEpisode(selected)?.let { absoluteEpisode ->
+                this@episodeCandidatesForRequest
+                    .firstOrNull { episode -> episode.episodeNumber == absoluteEpisode }
+                    ?.let(::add)
+            }
+            request.episode?.let { requestedEpisode ->
+                this@episodeCandidatesForRequest
+                    .firstOrNull { episode -> episode.episodeNumber == requestedEpisode }
+                    ?.let(::add)
+            }
+        }.distinctBy(ServiceEpisodeLink::href)
+        if (candidates.isNotEmpty()) return candidates
+    }
+    if (request.type == "movie") return take(1)
+    request.episode?.let { requestedEpisode ->
+        firstOrNull { episode -> episode.episodeNumber == requestedEpisode }?.let { return listOf(it) }
+    }
+    return take(1)
+}
+
+private fun List<ServiceEpisodeLink>.bundledAnimeAbsoluteEpisode(
+    selected: StreamEpisodeSelection,
+): Int? {
+    if (selected.isSpecial || selected.titleOnlySearch) return null
+    val seasonEpisodeCount = selected.animeSeasonEpisodeCount?.takeIf { it > 0 } ?: return null
+    val absoluteEpisode = selected.animeAbsoluteEpisodeNumber?.takeIf { it > 0 } ?: return null
+    val maxEpisode = mapNotNull(ServiceEpisodeLink::episodeNumber).maxOrNull() ?: return null
+    return absoluteEpisode.takeIf { maxEpisode > seasonEpisodeCount }
+}
+
+private fun ServiceEpisodeLink.toStreamEpisodeSelection(
+    fallback: StreamEpisodeSelection?,
+    request: StremioRequest,
+    preferServiceLabel: Boolean = false,
+): StreamEpisodeSelection {
+    val localSeason = seasonNumber ?: fallback?.localSeasonNumber ?: request.season ?: 1
+    val localEpisode = episodeNumber ?: fallback?.localEpisodeNumber ?: request.episode ?: 1
+    val serviceLabel = title.takeIf { it.isNotBlank() } ?: "Episode $localEpisode"
+    return StreamEpisodeSelection(
+        seasonNumber = seasonNumber ?: fallback?.seasonNumber ?: request.season,
+        episodeNumber = episodeNumber ?: fallback?.episodeNumber ?: request.episode,
+        label = if (preferServiceLabel) serviceLabel else fallback?.label ?: "S${localSeason}E${localEpisode}",
+        localSeasonNumber = localSeason,
+        localEpisodeNumber = localEpisode,
+        anilistMediaId = fallback?.anilistMediaId ?: request.anilistMediaId,
+        tmdbEpisodeOffset = fallback?.tmdbEpisodeOffset,
+        animeAbsoluteEpisodeNumber = fallback?.animeAbsoluteEpisodeNumber,
+        animeSeasonEpisodeCount = fallback?.animeSeasonEpisodeCount,
+        searchTitle = fallback?.searchTitle ?: request.summary,
+        isSpecial = fallback?.isSpecial == true,
+        titleOnlySearch = fallback?.titleOnlySearch == true,
+        serviceHref = href,
+    )
+}
 
 private fun Int.rejectionSuffix(): String =
     if (this > 0) {

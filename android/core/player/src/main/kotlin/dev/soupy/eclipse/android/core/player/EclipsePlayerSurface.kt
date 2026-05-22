@@ -25,6 +25,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -59,8 +62,10 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import dev.soupy.eclipse.android.core.design.GlassPanel
+import dev.soupy.eclipse.android.core.design.PosterImage
 import dev.soupy.eclipse.android.core.model.InAppPlayer
 import dev.soupy.eclipse.android.core.model.PlaybackSettingsSnapshot
+import dev.soupy.eclipse.android.core.model.PlayerEpisodeBrowserItem
 import dev.soupy.eclipse.android.core.model.PlayerSource
 import dev.soupy.eclipse.android.core.model.SkipSegment
 import dev.soupy.eclipse.android.core.model.SubtitleTrack
@@ -96,8 +101,11 @@ fun EclipsePlayerSurface(
     preferredPlayer: InAppPlayer = InAppPlayer.VLC,
     settings: PlaybackSettingsSnapshot = PlaybackSettingsSnapshot(),
     skipSegments: List<SkipSegment> = emptyList(),
+    episodeBrowserItems: List<PlayerEpisodeBrowserItem> = emptyList(),
     nextEpisodeLabel: String? = null,
+    nextEpisodePosterUrl: String? = null,
     onNextEpisode: () -> Unit = {},
+    onSelectEpisode: (String) -> Unit = {},
     onProgress: (PlaybackProgressSnapshot) -> Unit = {},
     onPlaybackReady: (PlayerSource) -> Unit = {},
     onPlaybackFailure: (PlayerSource, String, Boolean) -> Unit = { _, _, _ -> },
@@ -181,8 +189,11 @@ fun EclipsePlayerSurface(
             modifier = modifier,
             settings = settings,
             skipSegments = skipSegments,
+            episodeBrowserItems = episodeBrowserItems,
             nextEpisodeLabel = nextEpisodeLabel,
+            nextEpisodePosterUrl = nextEpisodePosterUrl,
             onNextEpisode = onNextEpisode,
+            onSelectEpisode = onSelectEpisode,
             onProgress = onProgressState.value,
             onPlaybackReady = onPlaybackReadyState.value,
             onPlaybackFailure = onPlaybackFailureState.value,
@@ -355,8 +366,11 @@ fun EclipsePlayerSurface(
             progressPercent = progressPercent,
             currentPositionSeconds = currentPositionSeconds,
             skipSegments = skipSegments,
+            episodeBrowserItems = episodeBrowserItems,
             nextEpisodeLabel = nextEpisodeLabel,
+            nextEpisodePosterUrl = nextEpisodePosterUrl,
             onNextEpisode = onNextEpisode,
+            onSelectEpisode = onSelectEpisode,
             onProgressChanged = { emitProgressSnapshot() },
         )
 
@@ -485,8 +499,11 @@ private fun PlaybackShortcutRow(
     progressPercent: Float,
     currentPositionSeconds: Double,
     skipSegments: List<SkipSegment>,
+    episodeBrowserItems: List<PlayerEpisodeBrowserItem>,
     nextEpisodeLabel: String?,
+    nextEpisodePosterUrl: String?,
     onNextEpisode: () -> Unit,
+    onSelectEpisode: (String) -> Unit,
     onProgressChanged: () -> Unit,
 ) {
     val showNextEpisode = settings.showNextEpisodeButton &&
@@ -510,9 +527,18 @@ private fun PlaybackShortcutRow(
             }
         }
 
+        EpisodeBrowserButton(
+            settings = settings,
+            episodes = episodeBrowserItems,
+            onSelectEpisode = onSelectEpisode,
+        )
+
         if (showNextEpisode) {
             Button(onClick = onNextEpisode) {
-                Text(nextEpisodeLabel)
+                NextEpisodeButtonContent(
+                    label = nextEpisodeLabel,
+                    posterUrl = nextEpisodePosterUrl.takeIf { settings.showNextEpisodePosterButton },
+                )
             }
         }
 
@@ -549,14 +575,66 @@ private fun List<SkipSegment>.nextManualSkip(positionSeconds: Double): SkipSegme
     }
 
 @Composable
+private fun EpisodeBrowserButton(
+    settings: PlaybackSettingsSnapshot,
+    episodes: List<PlayerEpisodeBrowserItem>,
+    onSelectEpisode: (String) -> Unit,
+) {
+    if (!settings.showVlcEpisodeBrowserButton || episodes.size < 2) return
+    var expanded by remember(episodes) { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.padding(end = 10.dp),
+        ) {
+            Text("Episodes")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            episodes.forEach { episode ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = episode.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            episode.subtitle?.let { subtitle ->
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelectEpisode(episode.id)
+                    },
+                    enabled = !episode.selected,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun VlcPlaybackShortcutRow(
     mediaPlayer: MediaPlayer?,
     settings: PlaybackSettingsSnapshot,
     progressPercent: Float,
     currentPositionSeconds: Double,
     skipSegments: List<SkipSegment>,
+    episodeBrowserItems: List<PlayerEpisodeBrowserItem>,
     nextEpisodeLabel: String?,
+    nextEpisodePosterUrl: String?,
     onNextEpisode: () -> Unit,
+    onSelectEpisode: (String) -> Unit,
     onProgressChanged: () -> Unit,
 ) {
     val showNextEpisode = settings.showNextEpisodeButton &&
@@ -581,12 +659,21 @@ private fun VlcPlaybackShortcutRow(
             }
         }
 
+        EpisodeBrowserButton(
+            settings = settings,
+            episodes = episodeBrowserItems,
+            onSelectEpisode = onSelectEpisode,
+        )
+
         if (showNextEpisode) {
             Button(
                 onClick = onNextEpisode,
                 modifier = Modifier.padding(end = 10.dp),
             ) {
-                Text(nextEpisodeLabel)
+                NextEpisodeButtonContent(
+                    label = nextEpisodeLabel,
+                    posterUrl = nextEpisodePosterUrl.takeIf { settings.showNextEpisodePosterButton },
+                )
             }
         }
 
@@ -610,6 +697,35 @@ private fun VlcPlaybackShortcutRow(
                 Text("Skip 85s")
             }
         }
+    }
+}
+
+@Composable
+private fun NextEpisodeButtonContent(
+    label: String,
+    posterUrl: String?,
+) {
+    if (posterUrl.isNullOrBlank()) {
+        Text(label)
+        return
+    }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PosterImage(
+            imageUrl = posterUrl,
+            contentDescription = null,
+            modifier = Modifier
+                .size(42.dp)
+                .clip(MaterialTheme.shapes.small),
+        )
+        Text(
+            text = label,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -903,8 +1019,11 @@ private fun EmbeddedVlcPlayerPanel(
     modifier: Modifier = Modifier,
     settings: PlaybackSettingsSnapshot,
     skipSegments: List<SkipSegment>,
+    episodeBrowserItems: List<PlayerEpisodeBrowserItem>,
     nextEpisodeLabel: String?,
+    nextEpisodePosterUrl: String?,
     onNextEpisode: () -> Unit,
+    onSelectEpisode: (String) -> Unit,
     onProgress: (PlaybackProgressSnapshot) -> Unit,
     onPlaybackReady: (PlayerSource) -> Unit,
     onPlaybackFailure: (PlayerSource, String, Boolean) -> Unit,
@@ -1060,8 +1179,11 @@ private fun EmbeddedVlcPlayerPanel(
             progressPercent = progressPercent,
             currentPositionSeconds = currentPositionSeconds,
             skipSegments = skipSegments,
+            episodeBrowserItems = episodeBrowserItems,
             nextEpisodeLabel = nextEpisodeLabel,
+            nextEpisodePosterUrl = nextEpisodePosterUrl,
             onNextEpisode = onNextEpisode,
+            onSelectEpisode = onSelectEpisode,
             onProgressChanged = { emitProgressSnapshot() },
         )
 

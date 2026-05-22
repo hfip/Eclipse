@@ -9,15 +9,16 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 import java.net.URLDecoder
-import java.net.URLEncoder
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
 internal object AndroidVlcHeaderProxy {
     private val sessions = ConcurrentHashMap<String, ProxySession>()
+    private val token = UUID.randomUUID().toString()
     @Volatile
     private var server: ServerSocket? = null
     @Volatile
@@ -28,8 +29,17 @@ internal object AndroidVlcHeaderProxy {
         headers: Map<String, String>,
     ): String? {
         if (headers.isEmpty() || !targetUrl.isHttpUrl()) return null
+        cleanupExpiredSessions()
+        if (sessions.size >= MaxSessions) {
+            cleanupOldestSessions()
+        }
         val sessionId = UUID.randomUUID().toString()
-        sessions[sessionId] = ProxySession(headers.sanitizedProxyHeaders())
+        val now = System.currentTimeMillis()
+        sessions[sessionId] = ProxySession(
+            headers = headers.sanitizedProxyHeaders(),
+            createdAtMillis = now,
+            lastAccessedMillis = now,
+        )
         val activePort = ensureStarted() ?: return null
         return proxyUrl(
             port = activePort,
@@ -71,7 +81,17 @@ internal object AndroidVlcHeaderProxy {
                 output.sendSimpleResponse(400, "Bad request")
                 return
             }
-            val session = sessions[request.sessionId] ?: run {
+            if (!request.method.equals("GET", ignoreCase = true) &&
+                !request.method.equals("HEAD", ignoreCase = true)
+            ) {
+                output.sendSimpleResponse(405, "Method not allowed")
+                return
+            }
+            if (request.token != token) {
+                output.sendSimpleResponse(403, "Forbidden")
+                return
+            }
+            val session = touchSession(request.sessionId) ?: run {
                 output.sendSimpleResponse(404, "Unknown VLC proxy session")
                 return
             }
@@ -81,6 +101,12 @@ internal object AndroidVlcHeaderProxy {
             }
             val target = runCatching { URL(targetUrl) }.getOrNull() ?: run {
                 output.sendSimpleResponse(400, "Invalid target URL")
+                return
+            }
+            if (!target.protocol.equals("http", ignoreCase = true) &&
+                !target.protocol.equals("https", ignoreCase = true)
+            ) {
+                output.sendSimpleResponse(400, "Unsupported target URL")
                 return
             }
             runCatching {
@@ -107,8 +133,10 @@ internal object AndroidVlcHeaderProxy {
             requestMethod = if (request.method.equals("HEAD", ignoreCase = true)) "HEAD" else "GET"
             connectTimeout = 15_000
             readTimeout = 30_000
+            request.headers
+                .filterKeys { name -> !name.isHopByHopHeader() && !name.equals("host", ignoreCase = true) }
+                .forEach { (name, value) -> setRequestProperty(name, value) }
             session.headers.forEach { (name, value) -> setRequestProperty(name, value) }
-            request.headers["range"]?.let { range -> setRequestProperty("Range", range) }
         }
         val statusCode = connection.responseCode
         val responseHeaders = connection.filteredResponseHeaders()
@@ -155,18 +183,21 @@ internal object AndroidVlcHeaderProxy {
         sessionId: String,
         targetUrl: String,
     ): String {
-        val encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8.name())
-        return "http://127.0.0.1:$port/proxy/$sessionId?url=$encoded"
+        val encoded = encodeTargetUrl(targetUrl)
+        return "http://127.0.0.1:$port/proxy/$sessionId?url=$encoded&token=$token"
     }
 
     private data class ProxySession(
         val headers: Map<String, String>,
+        val createdAtMillis: Long,
+        val lastAccessedMillis: Long,
     )
 
     private data class ProxyRequest(
         val method: String,
         val sessionId: String,
         val targetUrl: String?,
+        val token: String?,
         val headers: Map<String, String>,
     )
 
@@ -204,15 +235,13 @@ internal object AndroidVlcHeaderProxy {
             .toMap()
         val path = rawPath.substringBefore('?')
         val sessionId = path.removePrefix("/proxy/").substringBefore('/').takeIf { it.isNotBlank() } ?: return null
-        val targetUrl = rawPath.substringAfter("?", missingDelimiterValue = "")
-            .split("&")
-            .firstOrNull { it.startsWith("url=") }
-            ?.substringAfter("=")
-            ?.let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+        val queryItems = rawPath.substringAfter("?", missingDelimiterValue = "").parseQueryItems()
+        val targetUrl = queryItems["url"]?.let(::decodeTargetUrl)
         return ProxyRequest(
             method = method,
             sessionId = sessionId,
             targetUrl = targetUrl,
+            token = queryItems["token"],
             headers = headers,
         )
     }
@@ -266,7 +295,11 @@ internal object AndroidVlcHeaderProxy {
         200 -> "OK"
         206 -> "Partial Content"
         400 -> "Bad Request"
+        403 -> "Forbidden"
         404 -> "Not Found"
+        405 -> "Method Not Allowed"
+        416 -> "Range Not Satisfiable"
+        431 -> "Request Header Fields Too Large"
         502 -> "Bad Gateway"
         else -> "Status"
     }
@@ -288,17 +321,38 @@ internal object AndroidVlcHeaderProxy {
         .map { line ->
             when {
                 line.startsWith("#") ->
-                    line.replace(Regex("""URI="([^"]+)"""")) { match ->
-                        val resolved = runCatching { URL(baseUrl, match.groupValues[1]).toString() }
-                            .getOrDefault(match.groupValues[1])
-                        "URI=\"${proxyUrl(port, sessionId, resolved)}\""
-                    }
+                    line.rewriteUriAttributes(baseUrl = baseUrl, port = port, sessionId = sessionId)
                 line.isBlank() -> line
                 else -> runCatching { proxyUrl(port, sessionId, URL(baseUrl, line.trim()).toString()) }
                     .getOrDefault(line)
             }
         }
         .joinToString("\n")
+
+    private fun String.rewriteUriAttributes(
+        baseUrl: URL,
+        port: Int,
+        sessionId: String,
+    ): String {
+        val quoted = replace(QuotedUriAttributeRegex) { match ->
+            val original = match.groupValues[1]
+            val proxied = runCatching { URL(baseUrl, original).toString() }
+                .getOrNull()
+                ?.takeIf { it.isHttpUrl() }
+                ?.let { proxyUrl(port, sessionId, it) }
+                ?: return@replace match.value
+            "${match.value.substringBefore('=')}=\"$proxied\""
+        }
+        return quoted.replace(UnquotedUriAttributeRegex) { match ->
+            val original = match.groupValues[1].trim()
+            val proxied = runCatching { URL(baseUrl, original).toString() }
+                .getOrNull()
+                ?.takeIf { it.isHttpUrl() }
+                ?.let { proxyUrl(port, sessionId, it) }
+                ?: return@replace match.value
+            "${match.value.substringBefore('=')}=$proxied"
+        }
+    }
 
     private fun ByteArray.isPlaylistData(): Boolean =
         decodeToStringOrEmpty().trimStart().startsWith("#EXTM3U")
@@ -341,4 +395,59 @@ internal object AndroidVlcHeaderProxy {
     private fun Map<String, String>.sanitizedProxyHeaders(): Map<String, String> =
         filterKeys { name -> !name.isHopByHopHeader() && !name.equals("host", ignoreCase = true) }
             .filterValues { it.isNotBlank() }
+
+    private fun touchSession(sessionId: String): ProxySession? {
+        val session = sessions[sessionId] ?: return null
+        val now = System.currentTimeMillis()
+        if (now - session.lastAccessedMillis >= SessionTtlMillis) {
+            sessions.remove(sessionId, session)
+            return null
+        }
+        val updated = session.copy(lastAccessedMillis = now)
+        sessions[sessionId] = updated
+        return updated
+    }
+
+    private fun cleanupExpiredSessions(now: Long = System.currentTimeMillis()) {
+        sessions.entries.removeIf { (_, session) -> now - session.lastAccessedMillis >= SessionTtlMillis }
+    }
+
+    private fun cleanupOldestSessions() {
+        val removeCount = (sessions.size - MaxSessions + 1).coerceAtLeast(0)
+        if (removeCount == 0) return
+        sessions.entries
+            .sortedBy { it.value.lastAccessedMillis }
+            .take(removeCount)
+            .forEach { sessions.remove(it.key, it.value) }
+    }
+
+    private fun String.parseQueryItems(): Map<String, String> =
+        split("&")
+            .asSequence()
+            .filter(String::isNotBlank)
+            .mapNotNull { part ->
+                val key = part.substringBefore("=", missingDelimiterValue = "").takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                val value = part.substringAfter("=", missingDelimiterValue = "")
+                URLDecoder.decode(key, StandardCharsets.UTF_8.name()) to
+                    URLDecoder.decode(value, StandardCharsets.UTF_8.name())
+            }
+            .toMap()
+
+    private fun encodeTargetUrl(targetUrl: String): String =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(targetUrl.toByteArray(StandardCharsets.UTF_8))
+
+    private fun decodeTargetUrl(encoded: String): String? =
+        runCatching {
+            String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8)
+        }.getOrNull() ?: runCatching {
+            URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
+        }.getOrNull()
+
+    private val QuotedUriAttributeRegex = Regex("""(?i)URI="([^"]+)"""")
+    private val UnquotedUriAttributeRegex = Regex("""(?i)URI=([^",\s]+)""")
+    private const val MaxSessions = 200
+    private const val SessionTtlMillis = 6L * 60L * 60L * 1_000L
 }

@@ -11,6 +11,8 @@ data class EpisodePlaybackContext(
     val tmdbSeasonNumber: Int? = null,
     val tmdbEpisodeNumber: Int? = null,
     val tmdbEpisodeOffset: Int? = null,
+    val animeAbsoluteEpisodeNumber: Int? = null,
+    val animeSeasonEpisodeCount: Int? = null,
     val isSpecial: Boolean = false,
     val titleOnlySearch: Boolean = false,
 ) {
@@ -20,12 +22,14 @@ data class EpisodePlaybackContext(
     val resolvedTMDBEpisodeNumber: Int
         get() = tmdbEpisodeNumber ?: (localEpisodeNumber + (tmdbEpisodeOffset ?: 0))
 
-    fun forEpisodeNumber(episodeNumber: Int): EpisodePlaybackContext = copy(
-        localEpisodeNumber = episodeNumber,
-        tmdbEpisodeNumber = tmdbEpisodeNumber?.let {
-            it + (episodeNumber - localEpisodeNumber)
-        },
-    )
+    fun forEpisodeNumber(episodeNumber: Int): EpisodePlaybackContext {
+        val delta = episodeNumber - localEpisodeNumber
+        return copy(
+            localEpisodeNumber = episodeNumber,
+            tmdbEpisodeNumber = tmdbEpisodeNumber?.let { it + delta },
+            animeAbsoluteEpisodeNumber = animeAbsoluteEpisodeNumber?.let { (it + delta).coerceAtLeast(1) },
+        )
+    }
 }
 
 @Serializable
@@ -95,6 +99,15 @@ data class PlayerSource(
     val serviceHref: String? = null,
     val context: EpisodePlaybackContext? = null,
     val resumePositionMs: Long = 0L,
+)
+
+@Serializable
+data class PlayerEpisodeBrowserItem(
+    val id: String,
+    val label: String,
+    val subtitle: String? = null,
+    val posterUrl: String? = null,
+    val selected: Boolean = false,
 )
 
 @Serializable

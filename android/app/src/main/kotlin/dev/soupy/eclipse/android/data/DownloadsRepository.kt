@@ -16,6 +16,7 @@ import dev.soupy.eclipse.android.core.storage.DownloadsStore
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.nio.ByteBuffer
 import javax.crypto.Cipher
@@ -59,6 +60,11 @@ data class DownloadResumeResult(
     val resumedTransfers: Int,
 )
 
+data class CompletedDownloadPlayback(
+    val source: PlayerSource,
+    val downloadKeySuffix: String? = null,
+)
+
 class DownloadsRepository(
     private val downloadsStore: DownloadsStore,
     private val workManager: WorkManager? = null,
@@ -76,6 +82,54 @@ class DownloadsRepository(
 
     suspend fun loadSnapshot(): Result<DownloadSnapshot> = runCatching {
         downloadsStore.read().normalized()
+    }
+
+    suspend fun completedPlayerSource(
+        target: DetailTarget,
+        downloadKeySuffix: String? = null,
+    ): Result<PlayerSource?> = runCatching {
+        val key = target.downloadKey(downloadKeySuffix)
+        val record = downloadsStore.read()
+            .normalized()
+            .items
+            .firstOrNull { item -> item.id == key && item.status == DownloadStatus.COMPLETED }
+            ?: return@runCatching null
+        val verified = record.verifiedLocalRecord() ?: return@runCatching null
+        val uri = verified.localUri ?: return@runCatching null
+        PlayerSource(
+            uri = uri,
+            title = verified.title,
+            mimeType = verified.mimeType,
+            subtitles = verified.subtitleFileNames.toOfflineSubtitleTracks(uri),
+            isDownloaded = true,
+        )
+    }
+
+    suspend fun latestCompletedPlayerSource(
+        target: DetailTarget,
+    ): Result<CompletedDownloadPlayback?> = runCatching {
+        val baseKey = target.downloadKey(null)
+        val record = downloadsStore.read()
+            .normalized()
+            .items
+            .filter { item ->
+                item.status == DownloadStatus.COMPLETED &&
+                    (item.id == baseKey || item.id.startsWith("$baseKey:"))
+            }
+            .maxByOrNull(DownloadRecord::updatedAt)
+            ?: return@runCatching null
+        val verified = record.verifiedLocalRecord() ?: return@runCatching null
+        val uri = verified.localUri ?: return@runCatching null
+        CompletedDownloadPlayback(
+            source = PlayerSource(
+                uri = uri,
+                title = verified.title,
+                mimeType = verified.mimeType,
+                subtitles = verified.subtitleFileNames.toOfflineSubtitleTracks(uri),
+                isDownloaded = true,
+            ),
+            downloadKeySuffix = record.id.removePrefix("$baseKey:").takeIf { it != record.id },
+        )
     }
 
     suspend fun queueDownload(draft: DownloadDraft): Result<DownloadSnapshot> = runCatching {
@@ -950,6 +1004,18 @@ private fun List<SubtitleTrack>.downloadSubtitles(directory: File, downloadId: S
             }
         }.getOrNull()
     }
+
+private fun List<String>.toOfflineSubtitleTracks(localUri: String): List<SubtitleTrack> {
+    if (isEmpty()) return emptyList()
+    val directory = runCatching { File(URI(localUri)).parentFile }.getOrNull() ?: return emptyList()
+    return mapIndexed { index, fileName ->
+        SubtitleTrack(
+            id = "offline-subtitle-${index + 1}",
+            label = "Offline Subtitle ${index + 1}",
+            uri = File(directory, fileName).toURI().toString(),
+        )
+    }
+}
 
 private fun DownloadRecord.outputFileName(sourceUri: String): String {
     val extension = sourceUri.fileExtension(

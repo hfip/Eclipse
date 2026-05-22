@@ -21,6 +21,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import dev.soupy.eclipse.android.core.design.ErrorPanel
 import dev.soupy.eclipse.android.core.design.GlassPanel
 import dev.soupy.eclipse.android.core.design.HeroBackdrop
@@ -45,6 +47,8 @@ data class HomeScreenState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val hero: ExploreMediaCard? = null,
+    val heroCandidates: List<ExploreMediaCard> = emptyList(),
+    val heroCarouselEnabled: Boolean = false,
     val sections: List<MediaCarouselSection> = emptyList(),
 )
 
@@ -56,6 +60,14 @@ fun HomeRoute(
 ) {
     var selectedSectionId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedChildSection by remember { mutableStateOf<MediaCarouselSection?>(null) }
+    var heroIndex by remember(state.heroCandidates) { mutableStateOf(0) }
+    LaunchedEffect(state.heroCarouselEnabled, state.heroCandidates) {
+        heroIndex = 0
+        while (state.heroCarouselEnabled && state.heroCandidates.size > 1) {
+            delay(12_000)
+            heroIndex = (heroIndex + 1) % state.heroCandidates.size
+        }
+    }
     val selectedSection = selectedChildSection
         ?: selectedSectionId?.let { id -> state.sections.firstOrNull { it.id == id } }
     if (selectedSection != null) {
@@ -78,7 +90,12 @@ fun HomeRoute(
         verticalArrangement = Arrangement.spacedBy(24.dp),
         contentPadding = PaddingValues(bottom = 18.dp),
     ) {
-        state.hero?.let { hero ->
+        val displayedHero = if (state.heroCarouselEnabled) {
+            state.heroCandidates.getOrNull(heroIndex) ?: state.hero
+        } else {
+            state.hero
+        }
+        displayedHero?.let { hero ->
             item {
                 HeroBackdrop(
                     title = hero.title,

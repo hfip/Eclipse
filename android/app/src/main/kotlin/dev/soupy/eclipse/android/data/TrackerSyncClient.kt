@@ -27,6 +27,7 @@ data class TrackerPlaybackProgressDraft(
     val progressPercent: Double,
     val isFinished: Boolean = false,
     val playbackContext: EpisodePlaybackContext? = null,
+    val isAnime: Boolean = false,
 )
 
 data class TrackerSyncSummary(
@@ -57,6 +58,7 @@ internal data class TrackerSyncItem(
     val anilistEpisodeNumber: Int? = episodeNumber,
     val progressPercent: Double,
     val isFinished: Boolean = false,
+    val isAnime: Boolean = false,
 ) {
     val isWatchedEnough: Boolean
         get() = isFinished || progressPercent >= TrackerWatchedThreshold
@@ -94,6 +96,9 @@ class TrackerSyncClient(
         account: TrackerAccountSnapshot,
         item: TrackerSyncItem,
     ): TrackerItemSyncResult {
+        if (!item.hasAnimeTrackerEvidence) {
+            return TrackerItemSyncResult(skipped = true, message = "AniList anime sync needs anime playback evidence.")
+        }
         if (!item.isWatchedEnough) {
             return TrackerItemSyncResult(skipped = true, message = "AniList waits until 85% watched.")
         }
@@ -163,6 +168,9 @@ class TrackerSyncClient(
         account: TrackerAccountSnapshot,
         item: TrackerSyncItem,
     ): TrackerItemSyncResult {
+        if (!item.hasAnimeTrackerEvidence) {
+            return TrackerItemSyncResult(skipped = true, message = "MAL anime sync needs anime playback evidence.")
+        }
         if (!item.isWatchedEnough) {
             return TrackerItemSyncResult(skipped = true, message = "MAL anime sync waits until 85% watched.")
         }
@@ -241,8 +249,12 @@ internal fun TrackerPlaybackProgressDraft.toTrackerSyncItem(): TrackerSyncItem {
         anilistEpisodeNumber = context?.localEpisodeNumber ?: episodeNumber,
         progressPercent = progressPercent,
         isFinished = isFinished,
+        isAnime = isAnime || target is DetailTarget.AniListMediaTarget || context?.anilistMediaId != null,
     )
 }
+
+private val TrackerSyncItem.hasAnimeTrackerEvidence: Boolean
+    get() = isAnime || target is DetailTarget.AniListMediaTarget
 
 internal fun TrackerSyncItem.toTraktHistoryPayload(watchedAt: String): JsonObject? = when (val detailTarget = target) {
     is DetailTarget.TmdbMovie -> buildJsonObject {

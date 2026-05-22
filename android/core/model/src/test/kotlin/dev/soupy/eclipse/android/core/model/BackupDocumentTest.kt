@@ -62,6 +62,7 @@ class BackupDocumentTest {
               "vlcOpenSubtitlesEnabled": true,
               "vlcOpenSubtitlesAutoFallbackEnabled": false,
               "skip85sEnabled": true,
+              "showVLCEpisodeBrowserButton": false,
               "nextEpisodeThreshold": 0.9,
               "subtitleForegroundColor": "#FFFFFF",
               "subtitleStrokeColor": "#111111",
@@ -72,6 +73,9 @@ class BackupDocumentTest {
               "servicesAutoModeEnabled": false,
               "servicesAutoModeSourceIds": ["service:first", "stremio:https://addon.example"],
               "servicesAutoModeSourceOrderIds": ["stremio:https://addon.example", "service:first"],
+              "servicesAutoModeQualityPreference": "1080p",
+              "mediaDetailElementOrder": "actions,overview,details,cast,ratingNotes,episodes",
+              "mediaDetailHiddenElements": "cast",
               "readerFontFamily": "Georgia",
               "collections": [
                 {
@@ -193,6 +197,7 @@ class BackupDocumentTest {
         assertEquals(true, document.payload.vlcOpenSubtitlesEnabled)
         assertEquals(false, document.payload.vlcOpenSubtitlesAutoFallbackEnabled)
         assertEquals(true, document.payload.skip85sEnabled)
+        assertEquals(false, document.payload.showVLCEpisodeBrowserButton)
         assertEquals("#FFFFFF", document.payload.subtitleForegroundColor)
         assertEquals("#111111", document.payload.subtitleStrokeColor)
         assertEquals(2.5, document.payload.subtitleStrokeWidth)
@@ -201,6 +206,9 @@ class BackupDocumentTest {
         assertEquals(false, document.payload.autoModeEnabled)
         assertEquals(listOf("service:first", "stremio:https://addon.example"), document.payload.autoModeSourceIds)
         assertEquals(listOf("stremio:https://addon.example", "service:first"), document.payload.autoModeSourceOrderIds)
+        assertEquals("1080p", document.payload.servicesAutoModeQualityPreference)
+        assertEquals("actions,overview,details,cast,ratingNotes,episodes", document.payload.mediaDetailElementOrder)
+        assertEquals("cast", document.payload.mediaDetailHiddenElements)
         assertEquals("Georgia", document.payload.readerFontFamily)
         assertEquals(1, document.payload.collections.single().items.size)
         assertTrue(document.payload.progressData.jsonObject.containsKey("movieProgress"))

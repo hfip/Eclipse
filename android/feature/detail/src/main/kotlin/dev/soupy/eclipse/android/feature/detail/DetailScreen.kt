@@ -67,7 +67,9 @@ import dev.soupy.eclipse.android.core.design.ContentImage
 import dev.soupy.eclipse.android.core.design.PosterImage
 import dev.soupy.eclipse.android.core.design.SectionHeading
 import dev.soupy.eclipse.android.core.model.InAppPlayer
+import dev.soupy.eclipse.android.core.model.MediaDetailElement
 import dev.soupy.eclipse.android.core.model.PlaybackSettingsSnapshot
+import dev.soupy.eclipse.android.core.model.PlayerEpisodeBrowserItem
 import dev.soupy.eclipse.android.core.model.PlayerSource
 import dev.soupy.eclipse.android.core.model.SkipSegment
 import dev.soupy.eclipse.android.core.model.formattedUserRatingOutOf10
@@ -87,6 +89,8 @@ data class DetailEpisodeRow(
     val tmdbSeasonNumber: Int? = null,
     val tmdbEpisodeNumber: Int? = null,
     val tmdbEpisodeOffset: Int? = null,
+    val animeAbsoluteEpisodeNumber: Int? = null,
+    val animeSeasonEpisodeCount: Int? = null,
     val isSpecial: Boolean = false,
     val titleOnlySearch: Boolean = false,
     val searchTitle: String? = null,
@@ -155,10 +159,13 @@ data class DetailScreenState(
     val playerSource: PlayerSource? = null,
     val skipSegments: List<SkipSegment> = emptyList(),
     val skipStatusMessage: String? = null,
+    val isAnime: Boolean = false,
     val selectedEpisodeId: String? = null,
     val selectedEpisodeLabel: String? = null,
     val seasonMenu: Boolean = false,
     val horizontalEpisodeList: Boolean = false,
+    val mediaDetailElementOrder: String = MediaDetailElement.DefaultOrderRawValue,
+    val mediaDetailHiddenElements: String = "",
     val collections: List<DetailCollectionRow> = emptyList(),
 )
 
@@ -231,6 +238,7 @@ fun DetailRoute(
     } else {
         regularEpisodes
     }
+    val visibleDetailElements = state.visibleDetailElements()
 
     if (!state.hasSelection && !state.isLoading) {
         ErrorPanel(
@@ -295,219 +303,238 @@ fun DetailRoute(
             }
         }
 
-        if (!state.overview.isNullOrBlank()) {
-            item {
-                SynopsisBlock(
-                    text = state.overview,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-        }
-
-        if (state.title.isNotBlank()) {
-            item {
-                DetailActions(
-                    isResolvingStreams = state.isResolvingStreams,
-                    selectedEpisodeLabel = state.selectedEpisodeLabel,
-                    collections = state.collections,
-                    onResolveStreams = onResolveStreams,
-                    onSaveToLibrary = onSaveToLibrary,
-                    onQueueDownload = onQueueDownload,
-                    onAddToCollection = onAddToCollection,
-                    onQueueResume = onQueueResume,
-                    onMarkWatched = onMarkWatched,
-                    onMarkUnwatched = onMarkUnwatched,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-        }
-
-        if (state.detailFacts.isNotEmpty()) {
-            item {
-                DetailFactsCard(
-                    facts = state.detailFacts,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-        }
-
-        if (state.streamStatusMessage != null || state.streamCandidates.isNotEmpty()) {
-            item {
-                SectionHeading(
-                    title = "Streams",
-                    subtitle = state.streamStatusMessage,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-        }
-
-        if (state.streamStatusMessage != null && state.streamCandidates.isEmpty()) {
-            item {
-                GlassPanel(modifier = Modifier.padding(horizontal = 20.dp)) {
-                    Text(
-                        text = state.streamStatusMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
-                    )
-                }
-            }
-        }
-
-        if (state.streamCandidates.isNotEmpty()) {
-            items(state.streamCandidates, key = { it.id }) { stream ->
-                StreamCandidateCard(
-                    stream = stream,
-                    onPlayStream = onPlayStream,
-                    onDownloadStream = onDownloadStream,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-        }
-
-        state.playerSource?.let { playerSource ->
-            item {
-                EclipsePlayerSurface(
-                    source = playerSource,
-                    preferredPlayer = preferredPlayer,
-                    settings = playbackSettings,
-                    skipSegments = state.skipSegments,
-                    nextEpisodeLabel = state.nextEpisodeLabel(),
-                    onNextEpisode = onPlayNextEpisode,
-                    onProgress = onPlaybackProgress,
-                    onPlaybackReady = onPlaybackReady,
-                    onPlaybackFailure = onPlaybackFailure,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-        }
-
-        state.skipStatusMessage?.let { message ->
-            item {
-                GlassPanel(modifier = Modifier.padding(horizontal = 20.dp)) {
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
-                    )
-                }
-            }
-        }
-
-        if (state.cast.isNotEmpty()) {
-            item {
-                SectionHeading(
-                    title = "Cast",
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                ) {
-                    items(state.cast, key = { it.id }) { cast ->
-                        CastMember(cast = cast)
-                    }
-                }
-            }
-        }
-
-        if (state.title.isNotBlank()) {
-            item {
-                StarRatingSection(
-                    rating = state.userRating,
-                    note = state.userRatingNote,
-                    onSetRating = onSetRating,
-                    onClearRating = onClearRating,
-                    onSetNote = onSetRatingNote,
-                    canSyncAniList = state.canSyncRatingToAniList,
-                    canSyncMyAnimeList = state.canSyncRatingToMyAnimeList,
-                    onSyncAniList = onSyncRatingToAniList,
-                    onSyncMyAnimeList = onSyncRatingToMyAnimeList,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-            }
-        }
-
-        state.episodesTitle?.let { title ->
-            if (state.episodes.isNotEmpty()) {
-                if (isSeasonedShow && !state.seasonMenu) {
-                    item {
-                        SectionHeading(
-                            title = "Seasons",
-                            modifier = Modifier.padding(horizontal = 20.dp),
-                        )
-                    }
-                    item {
-                        StyledSeasonSelector(
-                            episodeSeasons = episodeSeasons,
-                            selectedSeason = selectedSeason,
-                            onSelectSeason = {
-                                selectedSpecialGroupKey = null
-                                selectedSeason = it
-                            },
-                        )
+        visibleDetailElements.forEach { element ->
+            when (element) {
+                MediaDetailElement.OVERVIEW -> {
+                    if (!state.overview.isNullOrBlank()) {
+                        item {
+                            SynopsisBlock(
+                                text = state.overview,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
                     }
                 }
 
-                if (specialEpisodeGroups.isNotEmpty()) {
-                    item {
-                        SpecialsOvaSection(
-                            groups = specialEpisodeGroups,
-                            selectedKey = activeSpecialGroup?.key,
-                            onSelectGroup = { selectedSpecialGroupKey = it },
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
+                MediaDetailElement.ACTIONS -> {
+                    if (state.title.isNotBlank()) {
+                        item {
+                            DetailActions(
+                                isResolvingStreams = state.isResolvingStreams,
+                                selectedEpisodeLabel = state.selectedEpisodeLabel,
+                                collections = state.collections,
+                                onResolveStreams = onResolveStreams,
+                                onSaveToLibrary = onSaveToLibrary,
+                                onQueueDownload = onQueueDownload,
+                                onAddToCollection = onAddToCollection,
+                                onQueueResume = onQueueResume,
+                                onMarkWatched = onMarkWatched,
+                                onMarkUnwatched = onMarkUnwatched,
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
                     }
-                }
 
-                item {
-                    EpisodesHeader(
-                        title = activeSpecialGroup?.title ?: title,
-                        isSeasonedShow = isSeasonedShow,
-                        seasonMenu = state.seasonMenu,
-                        episodeSeasons = episodeSeasons,
-                        selectedSeason = selectedSeason,
-                        visibleEpisodeIds = visibleEpisodes.map { it.id },
-                        onSelectSeason = {
-                            selectedSpecialGroupKey = null
-                            selectedSeason = it
-                        },
-                        onQueueVisibleEpisodesDownload = onQueueVisibleEpisodesDownload,
-                        modifier = Modifier.padding(horizontal = 20.dp),
-                    )
-                }
+                    if (state.streamStatusMessage != null || state.streamCandidates.isNotEmpty()) {
+                        item {
+                            SectionHeading(
+                                title = "Streams",
+                                subtitle = state.streamStatusMessage,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
+                    }
 
-                if (state.horizontalEpisodeList) {
-                    item {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                        ) {
-                            items(visibleEpisodes, key = { it.id }) { episode ->
-                                EpisodeCard(
-                                    episode = episode,
-                                    onResolveEpisodeStreams = onResolveEpisodeStreams,
-                                    onMarkEpisodeWatched = onMarkEpisodeWatched,
-                                    onMarkEpisodeUnwatched = onMarkEpisodeUnwatched,
-                                    onMarkPreviousEpisodesWatched = onMarkPreviousEpisodesWatched,
-                                    onQueueEpisodeDownload = onQueueEpisodeDownload,
-                                    modifier = Modifier.width(320.dp),
+                    if (state.streamStatusMessage != null && state.streamCandidates.isEmpty()) {
+                        item {
+                            GlassPanel(modifier = Modifier.padding(horizontal = 20.dp)) {
+                                Text(
+                                    text = state.streamStatusMessage,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
                                 )
                             }
                         }
                     }
-                } else {
-                    items(visibleEpisodes, key = { it.id }) { episode ->
-                        EpisodeCard(
-                            episode = episode,
-                            onResolveEpisodeStreams = onResolveEpisodeStreams,
-                            onMarkEpisodeWatched = onMarkEpisodeWatched,
-                            onMarkEpisodeUnwatched = onMarkEpisodeUnwatched,
-                            onMarkPreviousEpisodesWatched = onMarkPreviousEpisodesWatched,
-                            onQueueEpisodeDownload = onQueueEpisodeDownload,
-                            modifier = Modifier.padding(horizontal = 20.dp),
-                        )
+
+                    if (state.streamCandidates.isNotEmpty()) {
+                        items(state.streamCandidates, key = { it.id }) { stream ->
+                            StreamCandidateCard(
+                                stream = stream,
+                                onPlayStream = onPlayStream,
+                                onDownloadStream = onDownloadStream,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
+                    }
+
+                    state.playerSource?.let { playerSource ->
+                        item {
+                            EclipsePlayerSurface(
+                                source = playerSource,
+                                preferredPlayer = preferredPlayer,
+                                settings = playbackSettings,
+                                skipSegments = state.skipSegments,
+                                episodeBrowserItems = state.playerEpisodeBrowserItems(),
+                                nextEpisodeLabel = state.nextEpisodeLabel(),
+                                nextEpisodePosterUrl = state.nextEpisodePosterUrl(),
+                                onNextEpisode = onPlayNextEpisode,
+                                onSelectEpisode = onResolveEpisodeStreams,
+                                onProgress = onPlaybackProgress,
+                                onPlaybackReady = onPlaybackReady,
+                                onPlaybackFailure = onPlaybackFailure,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
+                    }
+
+                    state.skipStatusMessage?.let { message ->
+                        item {
+                            GlassPanel(modifier = Modifier.padding(horizontal = 20.dp)) {
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                MediaDetailElement.DETAILS -> {
+                    if (state.detailFacts.isNotEmpty()) {
+                        item {
+                            DetailFactsCard(
+                                facts = state.detailFacts,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
+                    }
+                }
+
+                MediaDetailElement.CAST -> {
+                    if (state.cast.isNotEmpty()) {
+                        item {
+                            SectionHeading(
+                                title = "Cast",
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
+                        item {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                            ) {
+                                items(state.cast, key = { it.id }) { cast ->
+                                    CastMember(cast = cast)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                MediaDetailElement.RATING_NOTES -> {
+                    if (state.title.isNotBlank()) {
+                        item {
+                            StarRatingSection(
+                                rating = state.userRating,
+                                note = state.userRatingNote,
+                                onSetRating = onSetRating,
+                                onClearRating = onClearRating,
+                                onSetNote = onSetRatingNote,
+                                canSyncAniList = state.canSyncRatingToAniList,
+                                canSyncMyAnimeList = state.canSyncRatingToMyAnimeList,
+                                onSyncAniList = onSyncRatingToAniList,
+                                onSyncMyAnimeList = onSyncRatingToMyAnimeList,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
+                    }
+                }
+
+                MediaDetailElement.EPISODES -> {
+                    state.episodesTitle?.let { title ->
+                        if (state.episodes.isNotEmpty()) {
+                            if (isSeasonedShow && !state.seasonMenu) {
+                                item {
+                                    SectionHeading(
+                                        title = "Seasons",
+                                        modifier = Modifier.padding(horizontal = 20.dp),
+                                    )
+                                }
+                                item {
+                                    StyledSeasonSelector(
+                                        episodeSeasons = episodeSeasons,
+                                        selectedSeason = selectedSeason,
+                                        onSelectSeason = {
+                                            selectedSpecialGroupKey = null
+                                            selectedSeason = it
+                                        },
+                                    )
+                                }
+                            }
+
+                            if (specialEpisodeGroups.isNotEmpty()) {
+                                item {
+                                    SpecialsOvaSection(
+                                        groups = specialEpisodeGroups,
+                                        selectedKey = activeSpecialGroup?.key,
+                                        onSelectGroup = { selectedSpecialGroupKey = it },
+                                        modifier = Modifier.padding(top = 2.dp),
+                                    )
+                                }
+                            }
+
+                            item {
+                                EpisodesHeader(
+                                    title = activeSpecialGroup?.title ?: title,
+                                    isSeasonedShow = isSeasonedShow,
+                                    seasonMenu = state.seasonMenu,
+                                    episodeSeasons = episodeSeasons,
+                                    selectedSeason = selectedSeason,
+                                    visibleEpisodeIds = visibleEpisodes.map { it.id },
+                                    onSelectSeason = {
+                                        selectedSpecialGroupKey = null
+                                        selectedSeason = it
+                                    },
+                                    onQueueVisibleEpisodesDownload = onQueueVisibleEpisodesDownload,
+                                    modifier = Modifier.padding(horizontal = 20.dp),
+                                )
+                            }
+
+                            if (state.horizontalEpisodeList) {
+                                item {
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                        contentPadding = PaddingValues(horizontal = 20.dp),
+                                    ) {
+                                        items(visibleEpisodes, key = { it.id }) { episode ->
+                                            EpisodeCard(
+                                                episode = episode,
+                                                onResolveEpisodeStreams = onResolveEpisodeStreams,
+                                                onMarkEpisodeWatched = onMarkEpisodeWatched,
+                                                onMarkEpisodeUnwatched = onMarkEpisodeUnwatched,
+                                                onMarkPreviousEpisodesWatched = onMarkPreviousEpisodesWatched,
+                                                onQueueEpisodeDownload = onQueueEpisodeDownload,
+                                                modifier = Modifier.width(320.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(visibleEpisodes, key = { it.id }) { episode ->
+                                    EpisodeCard(
+                                        episode = episode,
+                                        onResolveEpisodeStreams = onResolveEpisodeStreams,
+                                        onMarkEpisodeWatched = onMarkEpisodeWatched,
+                                        onMarkEpisodeUnwatched = onMarkEpisodeUnwatched,
+                                        onMarkPreviousEpisodesWatched = onMarkPreviousEpisodesWatched,
+                                        onQueueEpisodeDownload = onQueueEpisodeDownload,
+                                        modifier = Modifier.padding(horizontal = 20.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1375,6 +1402,14 @@ private fun EpisodeCard(
 }
 
 private fun DetailScreenState.nextEpisodeLabel(): String? {
+    val nextEpisode = nextPlayableEpisode() ?: return null
+    return nextEpisode.subtitle?.let { "Next $it" } ?: "Next Episode"
+}
+
+private fun DetailScreenState.nextEpisodePosterUrl(): String? =
+    nextPlayableEpisode()?.imageUrl
+
+private fun DetailScreenState.nextPlayableEpisode(): DetailEpisodeRow? {
     val playableEpisodes = episodes.filter {
         it.seasonNumber != null && it.episodeNumber != null
     }
@@ -1383,9 +1418,29 @@ private fun DetailScreenState.nextEpisodeLabel(): String? {
         ?.let { id -> playableEpisodes.indexOfFirst { it.id == id } }
         ?.takeIf { it >= 0 }
         ?: 0
-    val nextEpisode = playableEpisodes.getOrNull(currentIndex + 1) ?: return null
-    return nextEpisode.subtitle?.let { "Next $it" } ?: "Next Episode"
+    return playableEpisodes.getOrNull(currentIndex + 1)
 }
+
+private fun DetailScreenState.visibleDetailElements(): List<MediaDetailElement> {
+    val hidden = MediaDetailElement.hiddenElements(mediaDetailHiddenElements)
+    return MediaDetailElement.orderedElements(mediaDetailElementOrder)
+        .filter { element -> element !in hidden }
+        .filter { element -> !isMovie || element.appliesToMovies }
+}
+
+private fun DetailScreenState.playerEpisodeBrowserItems(): List<PlayerEpisodeBrowserItem> =
+    episodes
+        .filterNot { it.isSpecial && it.titleOnlySearch }
+        .filter { it.seasonNumber != null && it.episodeNumber != null }
+        .map { episode ->
+            PlayerEpisodeBrowserItem(
+                id = episode.id,
+                label = episode.subtitle ?: episode.title,
+                subtitle = episode.title.takeIf { episode.subtitle != null },
+                posterUrl = episode.imageUrl,
+                selected = episode.id == selectedEpisodeId,
+            )
+        }
 
 private fun DetailEpisodeRow.specialGroupKey(): String =
     searchTitle

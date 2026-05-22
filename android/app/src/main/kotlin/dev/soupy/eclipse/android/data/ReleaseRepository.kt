@@ -18,36 +18,55 @@ data class ReleaseCheckSummary(
     val checked: Boolean,
 )
 
+data class GitHubReleaseCachedState(
+    val updateAvailable: Boolean,
+    val showAlertPending: Boolean,
+)
+
 class ReleaseRepository(
     private val settingsStore: SettingsStore,
     private val currentVersion: String,
 ) {
     suspend fun checkForUpdatesIfNeeded(): Result<ReleaseCheckSummary?> = runCatching {
         val settings = settingsStore.settings.first()
+        refreshCachedUpdateStateForCurrentVersion(settings)
         if (!settings.githubReleaseAutoCheckEnabled) return@runCatching null
         val now = System.currentTimeMillis()
         val elapsed = now - settings.githubReleaseLastCheckTimestamp
         if (elapsed in 0 until AutoCheckIntervalMillis) return@runCatching null
-        checkForUpdates(forcePrompt = false, settings = settings)
+        checkForUpdates(settings = settings)
     }
 
-    suspend fun checkForUpdates(forcePrompt: Boolean = true): Result<ReleaseCheckSummary> = runCatching {
-        checkForUpdates(forcePrompt = forcePrompt, settings = settingsStore.settings.first())
+    suspend fun checkForUpdates(): Result<ReleaseCheckSummary> = runCatching {
+        val settings = settingsStore.settings.first()
+        refreshCachedUpdateStateForCurrentVersion(settings)
+        checkForUpdates(settings = settings)
     }
 
     suspend fun consumePendingPrompt() {
         settingsStore.consumeGitHubReleasePrompt()
     }
 
+    fun cachedStateForDisplay(settings: AppSettings): GitHubReleaseCachedState =
+        effectiveGitHubReleaseCachedState(settings, currentVersion)
+
+    private suspend fun refreshCachedUpdateStateForCurrentVersion(settings: AppSettings) {
+        if (refreshedGitHubReleaseCachedState(settings, currentVersion) != null) {
+            settingsStore.clearGitHubReleaseCachedUpdateState()
+        }
+    }
+
     private suspend fun checkForUpdates(
-        forcePrompt: Boolean,
         settings: AppSettings,
     ): ReleaseCheckSummary {
         val release = fetchLatestRelease()
         val latestVersion = release.tagName
         val updateAvailable = normalizedVersion(latestVersion).isNewerThan(normalizedVersion(currentVersion))
-        val shouldPrompt = updateAvailable &&
-            (forcePrompt || settings.githubReleaseLastPromptedVersion != latestVersion)
+        val shouldPrompt = shouldPromptForGitHubRelease(
+            updateAvailable = updateAvailable,
+            latestVersion = latestVersion,
+            lastPromptedVersion = settings.githubReleaseLastPromptedVersion,
+        )
 
         settingsStore.saveGitHubReleaseCheck(
             latestVersion = latestVersion,
@@ -94,6 +113,44 @@ private data class GitHubRelease(
 
 private const val GitHubLatestReleaseUrl = "https://api.github.com/repos/Soupy-dev/Eclipse/releases/latest"
 private const val AutoCheckIntervalMillis = 6L * 60L * 60L * 1_000L
+
+internal fun shouldPromptForGitHubRelease(
+    updateAvailable: Boolean,
+    latestVersion: String,
+    lastPromptedVersion: String,
+): Boolean =
+    updateAvailable && latestVersion.isNotBlank() && lastPromptedVersion != latestVersion
+
+internal fun effectiveGitHubReleaseCachedState(
+    settings: AppSettings,
+    currentVersion: String,
+): GitHubReleaseCachedState {
+    val latestVersion = normalizedVersion(settings.githubReleaseLatestVersion)
+    val updateAvailable = latestVersion.isNotBlank() &&
+        settings.githubReleaseUpdateAvailable &&
+        latestVersion.isNewerThan(normalizedVersion(currentVersion))
+    return GitHubReleaseCachedState(
+        updateAvailable = updateAvailable,
+        showAlertPending = settings.githubReleaseShowAlertPending && updateAvailable,
+    )
+}
+
+internal fun refreshedGitHubReleaseCachedState(
+    settings: AppSettings,
+    currentVersion: String,
+): GitHubReleaseCachedState? {
+    if (!settings.githubReleaseUpdateAvailable && !settings.githubReleaseShowAlertPending) {
+        return null
+    }
+    val latestVersion = normalizedVersion(settings.githubReleaseLatestVersion)
+    val shouldClear = latestVersion.isBlank() ||
+        !latestVersion.isNewerThan(normalizedVersion(currentVersion))
+    return if (shouldClear) {
+        GitHubReleaseCachedState(updateAvailable = false, showAlertPending = false)
+    } else {
+        null
+    }
+}
 
 private fun normalizedVersion(raw: String): String =
     raw.trim().removePrefix("v").removePrefix("V")

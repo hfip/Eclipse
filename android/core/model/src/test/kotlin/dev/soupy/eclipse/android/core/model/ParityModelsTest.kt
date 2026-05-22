@@ -60,6 +60,73 @@ class ParityModelsTest {
     }
 
     @Test
+    fun episodeProgressPreservesExplicitAnimeEvidence() {
+        val json = Json.encodeToString(
+            EpisodeProgressBackup(
+                id = "ep_2_s1_e1",
+                showId = 2,
+                seasonNumber = 1,
+                episodeNumber = 1,
+                anilistMediaId = 123,
+                isAnime = true,
+            ),
+        )
+        val decoded = Json.decodeFromString<EpisodeProgressBackup>(json)
+        val legacy = Json.decodeFromString<EpisodeProgressBackup>(
+            """{"id":"ep_3_s1_e1","showId":3,"seasonNumber":1,"episodeNumber":1,"anilistMediaId":456}""",
+        )
+
+        assertTrue(decoded.isAnime)
+        assertFalse(legacy.isAnime)
+    }
+
+    @Test
+    fun backupPreservesNextEpisodePosterButtonSetting() {
+        val json = Json.encodeToString(BackupData(showNextEpisodePosterButton = true))
+        val decoded = Json.decodeFromString<BackupData>(json)
+        val legacy = Json.decodeFromString<BackupData>("{}")
+
+        assertTrue(decoded.showNextEpisodePosterButton)
+        assertFalse(legacy.showNextEpisodePosterButton)
+    }
+
+    @Test
+    fun backupPreservesIosDetailLayoutAndAutoModeQualityFields() {
+        val json = Json.encodeToString(
+            BackupData(
+                showVLCEpisodeBrowserButton = false,
+                mediaDetailElementOrder = "actions,overview,episodes",
+                mediaDetailHiddenElements = "cast,ratingNotes",
+                servicesAutoModeQualityPreference = "720p",
+            ),
+        )
+        val decoded = Json.decodeFromString<BackupData>(json)
+
+        assertFalse(decoded.showVLCEpisodeBrowserButton)
+        assertEquals("actions,overview,episodes", decoded.mediaDetailElementOrder)
+        assertEquals("cast,ratingNotes", decoded.mediaDetailHiddenElements)
+        assertEquals("720p", decoded.servicesAutoModeQualityPreference)
+    }
+
+    @Test
+    fun mediaDetailElementSanitizesOrderAndHiddenValuesLikeIos() {
+        val order = MediaDetailElement.sanitizedOrderRawValue("actions,overview,actions,unknown")
+        val hidden = MediaDetailElement.sanitizedHiddenRawValue("ratingNotes,unknown,cast")
+
+        assertEquals("actions,overview,details,cast,ratingNotes,episodes", order)
+        assertEquals("cast,ratingNotes", hidden)
+    }
+
+    @Test
+    fun autoModeQualityPreferenceUsesIosRawValues() {
+        assertEquals(ServicesAutoModeQualityPreference.MANUAL, ServicesAutoModeQualityPreference.fromRawValue("manual"))
+        assertEquals(ServicesAutoModeQualityPreference.QUALITY_1080, ServicesAutoModeQualityPreference.fromRawValue("1080p"))
+        assertEquals("auto", ServicesAutoModeQualityPreference.sanitizedRawValue("nonsense"))
+        assertFalse(ServicesAutoModeQualityPreference.MANUAL.usesAutomaticSelection)
+        assertTrue(ServicesAutoModeQualityPreference.QUALITY_720.usesAutomaticSelection)
+    }
+
+    @Test
     fun ratingsSnapshotClampsBackupValues() {
         val snapshot = RatingsSnapshot(
             ratings = mapOf(

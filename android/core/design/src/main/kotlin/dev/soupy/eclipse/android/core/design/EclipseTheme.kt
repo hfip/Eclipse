@@ -136,6 +136,9 @@ fun EclipseBackground(
     modifier: Modifier = Modifier,
     appearance: String = "system",
     gradientColor: String = "#401F73",
+    atmosphereStyle: String = "gradient",
+    atmosphereSolidColorSource: String = "dominant",
+    atmosphereSolidColor: String = "#401F73",
     kanzenMode: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -146,6 +149,21 @@ fun EclipseBackground(
     }
     val base = if (dark) Color(0xFF141414) else Color(0xFFF8F4FF)
     val accent = gradientColor.toComposeColor(Color(0xFF401F73))
+    val solid = if (atmosphereSolidColorSource.equals("custom", ignoreCase = true)) {
+        atmosphereSolidColor.toComposeColor(accent)
+    } else {
+        accent
+    }
+    if (atmosphereStyle.equals("solid", ignoreCase = true)) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(solid.copy(alpha = if (dark) 0.82f else 0.22f)),
+        ) {
+            content()
+        }
+        return
+    }
     val colorStops = if (kanzenMode) {
         arrayOf(
             0.0f to base,

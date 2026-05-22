@@ -39,6 +39,8 @@ data class DetailEpisodeEntry(
     val tmdbSeasonNumber: Int? = null,
     val tmdbEpisodeNumber: Int? = null,
     val tmdbEpisodeOffset: Int? = null,
+    val animeAbsoluteEpisodeNumber: Int? = null,
+    val animeSeasonEpisodeCount: Int? = null,
     val isSpecial: Boolean = false,
     val titleOnlySearch: Boolean = false,
     val searchTitle: String? = null,
@@ -292,6 +294,8 @@ class DetailRepository(
                     tmdbEpisodeOffset = tmdbEpisode
                         ?.let { episode -> episode.episodeNumber - localEpisode }
                         ?.takeUnless { it == 0 },
+                    animeAbsoluteEpisodeNumber = absoluteEpisode,
+                    animeSeasonEpisodeCount = episodeCount,
                 )
                 absoluteEpisode += 1
             }
@@ -708,6 +712,8 @@ private fun AniListMedia.syntheticAnimeEpisodes(): List<DetailEpisodeEntry> {
             seasonNumber = 1,
             episodeNumber = episode,
             anilistMediaId = id,
+            animeAbsoluteEpisodeNumber = episode,
+            animeSeasonEpisodeCount = count.takeIf { it > 0 },
         )
     }
 }
@@ -761,6 +767,7 @@ private fun AniListMedia.toAnimeDetailEpisodeEntries(
             tmdbSeasonNumber = resolvedSeasonNumber,
             tmdbEpisodeNumber = resolvedTmdbEpisodeNumber,
             tmdbEpisodeOffset = mapping?.tmdbEpisodeOffset ?: offset.takeUnless { it == 0 },
+            animeSeasonEpisodeCount = expectedCount,
             isSpecial = mapping?.isSpecial == true,
         )
     }

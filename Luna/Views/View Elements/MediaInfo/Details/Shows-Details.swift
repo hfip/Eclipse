@@ -98,6 +98,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     var animeEpisodes: [AniListEpisode]? = nil
     var animeSeasonTitles: [Int: String]? = nil
     var animeSeasonRomajiTitles: [Int: String] = [:]
+    var animeSeasonAniListIds: [Int: Int] = [:]
     var showsMetadataDetails: Bool = true
     var showsInsertedContent: Bool = true
     let tmdbService: TMDBService
@@ -198,7 +199,60 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     }
 
     private func playbackContext(for episode: TMDBEpisode) -> EpisodePlaybackContext? {
-        specialEpisodeContext?.playbackContext(for: episode)
+        if let specialEpisodeContext {
+            return specialEpisodeContext.playbackContext(for: episode)
+        }
+
+        guard isAnime else { return nil }
+
+        let aniEpisode = animeEpisodes?.first {
+            $0.seasonNumber == episode.seasonNumber && $0.number == episode.episodeNumber
+        }
+        let absoluteEpisodeNumber = animeAbsoluteEpisodeNumber(for: episode)
+
+        guard aniEpisode != nil || absoluteEpisodeNumber != nil || animeSeasonAniListIds[episode.seasonNumber] != nil else {
+            return nil
+        }
+
+        return EpisodePlaybackContext(
+            localSeasonNumber: episode.seasonNumber,
+            localEpisodeNumber: episode.episodeNumber,
+            anilistMediaId: animeSeasonAniListIds[episode.seasonNumber],
+            tmdbSeasonNumber: aniEpisode?.tmdbSeasonNumber,
+            tmdbEpisodeNumber: aniEpisode?.tmdbEpisodeNumber,
+            tmdbEpisodeOffset: nil,
+            animeAbsoluteEpisodeNumber: absoluteEpisodeNumber,
+            animeSeasonEpisodeCount: animeSeasonEpisodeCount(for: episode.seasonNumber),
+            isSpecial: false,
+            titleOnlySearch: false
+        )
+    }
+
+    private func animeAbsoluteEpisodeNumber(for episode: TMDBEpisode) -> Int? {
+        guard let animeEpisodes else { return nil }
+
+        var absolute = 0
+        for aniEpisode in animeEpisodes.sorted(by: episodeSort) {
+            absolute += 1
+            if aniEpisode.seasonNumber == episode.seasonNumber && aniEpisode.number == episode.episodeNumber {
+                return absolute
+            }
+        }
+
+        return nil
+    }
+
+    private func animeSeasonEpisodeCount(for seasonNumber: Int) -> Int? {
+        guard let animeEpisodes else { return nil }
+        let count = animeEpisodes.filter { $0.seasonNumber == seasonNumber }.count
+        return count > 0 ? count : nil
+    }
+
+    private func episodeSort(_ lhs: AniListEpisode, _ rhs: AniListEpisode) -> Bool {
+        if lhs.seasonNumber == rhs.seasonNumber {
+            return lhs.number < rhs.number
+        }
+        return lhs.seasonNumber < rhs.seasonNumber
     }
     
     var body: some View {
@@ -946,7 +1000,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         if let first = episodes.first {
             downloadEpisode = first
             selectedEpisodeForSearch = first
-            let context = specialEpisodeContext?.playbackContext(for: first)
+            let context = playbackContext(for: first)
             selectedEpisodePlaybackContext = context
             downloadEpisodePlaybackContext = context
             Logger.shared.log("TVShowSeasonsSection startDownloadAllSeason presenting first: showId=\(tvShow?.id ?? 0) first=S\(first.seasonNumber)E\(first.episodeNumber) remaining=\(downloadAllQueue.count)", type: "CrashProbe")
@@ -966,7 +1020,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         let next = downloadAllQueue.removeFirst()
         downloadEpisode = next
         selectedEpisodeForSearch = next
-        let context = downloadAllSpecialContext?.playbackContext(for: next)
+        let context = downloadAllSpecialContext?.playbackContext(for: next) ?? playbackContext(for: next)
         selectedEpisodePlaybackContext = context
         downloadEpisodePlaybackContext = context
         Logger.shared.log("TVShowSeasonsSection showNextDownloadSheet presenting next: showId=\(tvShow?.id ?? 0) episode=S\(next.seasonNumber)E\(next.episodeNumber) remaining=\(downloadAllQueue.count)", type: "CrashProbe")

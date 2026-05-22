@@ -37,6 +37,7 @@ data class EpisodeProgressDraft(
     val showTitle: String,
     val showPosterUrl: String? = null,
     val anilistMediaId: Int? = null,
+    val isAnime: Boolean = false,
     val currentTimeSeconds: Double,
     val totalDurationSeconds: Double,
     val isFinished: Boolean = false,
@@ -103,6 +104,7 @@ class ProgressRepository(
             seasonNumber = draft.seasonNumber,
             episodeNumber = draft.episodeNumber,
             anilistMediaId = draft.anilistMediaId,
+            isAnime = draft.isAnime,
             currentTime = if (draft.isFinished) draft.totalDurationSeconds else draft.currentTimeSeconds.coerceIn(0.0, draft.totalDurationSeconds),
             totalDuration = draft.totalDurationSeconds,
             isWatched = draft.isFinished,
@@ -143,6 +145,8 @@ class ProgressRepository(
         seasonNumber: Int,
         episodeNumber: Int,
         watched: Boolean,
+        anilistMediaId: Int? = null,
+        isAnime: Boolean = false,
     ): Result<ProgressDataBackup> = runCatching {
         val snapshot = progressStore.read()
         val now = Instant.now().toString()
@@ -151,6 +155,8 @@ class ProgressRepository(
             ?: EpisodeProgressBackup(id = id, showId = showId, seasonNumber = seasonNumber, episodeNumber = episodeNumber)
         val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
         val updatedEntry = existing.copy(
+            anilistMediaId = anilistMediaId ?: existing.anilistMediaId,
+            isAnime = existing.isAnime || isAnime,
             currentTime = if (watched) safeDuration else 0.0,
             totalDuration = safeDuration,
             isWatched = watched,
@@ -164,6 +170,7 @@ class ProgressRepository(
         seasonNumber: Int,
         throughEpisodeExclusive: Int,
         watched: Boolean,
+        isAnime: Boolean = false,
     ): Result<ProgressDataBackup> = runCatching {
         if (throughEpisodeExclusive <= 1) return@runCatching progressStore.read().normalized()
         val now = Instant.now().toString()
@@ -175,6 +182,7 @@ class ProgressRepository(
                 ?: EpisodeProgressBackup(id = id, showId = showId, seasonNumber = seasonNumber, episodeNumber = episode)
             val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
             updatedById[id] = existing.copy(
+                isAnime = existing.isAnime || isAnime,
                 currentTime = if (watched) safeDuration else 0.0,
                 totalDuration = safeDuration,
                 isWatched = watched,

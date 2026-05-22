@@ -13,6 +13,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 
@@ -52,8 +53,35 @@ data class StremioManifest(
     val resources: List<StremioResourceDescriptor> = emptyList(),
     @SerialName("idPrefixes") val idPrefixes: List<String> = emptyList(),
     val types: List<String> = emptyList(),
-    val catalogs: List<JsonObject> = emptyList(),
+    val catalogs: List<StremioCatalog> = emptyList(),
     @SerialName("behaviorHints") val behaviorHints: StremioManifestBehaviorHints = StremioManifestBehaviorHints(),
+)
+
+@Serializable
+data class StremioCatalog(
+    val type: String = "",
+    val id: String = "",
+    val name: String? = null,
+    val extra: List<StremioCatalogExtra> = emptyList(),
+) {
+    val supportsSearch: Boolean
+        get() = extra.any { catalogExtra -> catalogExtra.name == "search" }
+
+    val canSearchWithQueryOnly: Boolean
+        get() = supportsSearch && extra.all { catalogExtra ->
+            !catalogExtra.isRequired || catalogExtra.name == "search"
+        }
+
+    fun supportsType(requestedType: String): Boolean =
+        type == requestedType || (requestedType == "series" && type == "tv")
+}
+
+@Serializable(with = StremioCatalogExtraSerializer::class)
+data class StremioCatalogExtra(
+    val name: String = "",
+    @SerialName("isRequired") val isRequired: Boolean = false,
+    val options: List<String> = emptyList(),
+    @SerialName("optionsLimit") val optionsLimit: Int? = null,
 )
 
 @Serializable
@@ -104,6 +132,44 @@ data class StremioSubtitleResponse(
 )
 
 @Serializable
+data class StremioCatalogResponse(
+    val metas: List<StremioMetaPreview> = emptyList(),
+)
+
+@Serializable(with = StremioMetaResponseSerializer::class)
+data class StremioMetaResponse(
+    val meta: StremioMetaPreview? = null,
+)
+
+@Serializable
+data class StremioMetaPreview(
+    val id: String = "",
+    val type: String? = null,
+    val name: String = "",
+    val poster: String? = null,
+    val description: String? = null,
+    @SerialName("releaseInfo") val releaseInfo: String? = null,
+    val released: String? = null,
+    val videos: List<StremioVideo> = emptyList(),
+    @SerialName("behaviorHints") val behaviorHints: StremioMetaBehaviorHints? = null,
+)
+
+@Serializable
+data class StremioMetaBehaviorHints(
+    @SerialName("defaultVideoId") val defaultVideoId: String? = null,
+)
+
+@Serializable
+data class StremioVideo(
+    val id: String = "",
+    val title: String? = null,
+    val released: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val streams: List<StremioStream> = emptyList(),
+)
+
+@Serializable
 data class StremioAddon(
     val transportUrl: String,
     val manifest: StremioManifest,
@@ -118,6 +184,7 @@ data class StremioContentIdRequest(
     val type: String,
     val season: Int? = null,
     val episode: Int? = null,
+    val anilistId: Int? = null,
 )
 
 val StremioStream.isDirectHttp: Boolean
@@ -135,45 +202,75 @@ val StremioStream.isTorrentLike: Boolean
 fun StremioManifest.supportsResource(name: String): Boolean =
     resources.any { resource -> resource.name.equals(name, ignoreCase = true) }
 
+val StremioManifest.searchableCatalogs: List<StremioCatalog>
+    get() = catalogs.filter(StremioCatalog::canSearchWithQueryOnly)
+
 fun StremioManifest.buildContentId(
     request: StremioContentIdRequest,
     resourceName: String = "stream",
-): String? {
-    val prefixes = idPrefixes.ifEmpty {
-        resources
-            .filter { resource -> resource.name.equals(resourceName, ignoreCase = true) }
-            .flatMap(StremioResourceDescriptor::idPrefixes)
-    }
+): String? = buildContentIds(request = request, resourceName = resourceName).firstOrNull()
+
+fun StremioManifest.buildContentIds(
+    request: StremioContentIdRequest,
+    resourceName: String = "stream",
+): List<String> {
+    val resourcePrefixes = resources
+        .filter { resource -> resource.name.equals(resourceName, ignoreCase = true) }
+        .flatMap(StremioResourceDescriptor::idPrefixes)
+        .filter(String::isNotBlank)
+    val prefixes = resourcePrefixes.ifEmpty { idPrefixes }.map { prefix -> prefix.lowercase() }
     val supportsAny = prefixes.isEmpty()
     val supportsImdb = supportsAny || prefixes.any { prefix ->
-        prefix == "tt" || prefix == "imdb" || prefix == "imdb:"
+        prefix == "tt" || prefix.startsWith("tt") || prefix == "imdb" || prefix == "imdb:"
     }
+    val supportsImdbNamespace = prefixes.any { prefix -> prefix == "imdb:" }
     val supportsTmdb = supportsAny || prefixes.any { prefix ->
-        prefix == "tmdb" || prefix == "tmdb:"
+        prefix == "tmdb" || prefix.startsWith("tmdb:")
     }
+    val supportsAniList = supportsAny || prefixes.any { prefix ->
+        prefix == "anilist" || prefix == "anilist:"
+    }
+    val candidates = mutableListOf<String>()
 
     if (supportsImdb) {
         val imdb = request.imdbId?.takeIf { it.isNotBlank() }?.let { value ->
             if (value.startsWith("tt")) value else "tt$value"
         }
         if (imdb != null) {
-            return if (request.type == "series" && request.season != null && request.episode != null) {
+            val imdbId = if (request.type == "series" && request.season != null && request.episode != null) {
                 "$imdb:${request.season}:${request.episode}"
             } else {
                 imdb
+            }
+            candidates += imdbId
+
+            if (supportsImdbNamespace) {
+                candidates += if (request.type == "series" && request.season != null && request.episode != null) {
+                    "imdb:$imdb:${request.season}:${request.episode}"
+                } else {
+                    "imdb:$imdb"
+                }
             }
         }
     }
 
     if (supportsTmdb) {
-        return if (request.type == "series" && request.season != null && request.episode != null) {
+        candidates += if (request.type == "series" && request.season != null && request.episode != null) {
             "tmdb:${request.tmdbId}:${request.season}:${request.episode}"
         } else {
             "tmdb:${request.tmdbId}"
         }
     }
 
-    return null
+    if (supportsAniList && request.anilistId != null) {
+        candidates += if (request.type == "series" && request.season != null && request.episode != null) {
+            "anilist:${request.anilistId}:${request.season}:${request.episode}"
+        } else {
+            "anilist:${request.anilistId}"
+        }
+    }
+
+    return candidates.distinct()
 }
 
 val StremioSubtitle.displayLabel: String
@@ -250,6 +347,64 @@ object StremioSubtitleSerializer : KSerializer<StremioSubtitle> {
     }
 }
 
+object StremioCatalogExtraSerializer : KSerializer<StremioCatalogExtra> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("StremioCatalogExtra") {
+        element<String>("name")
+        element<Boolean>("isRequired", isOptional = true)
+        element<List<String>>("options", isOptional = true)
+        element<Int>("optionsLimit", isOptional = true)
+    }
+
+    override fun deserialize(decoder: Decoder): StremioCatalogExtra {
+        val input = decoder as? JsonDecoder ?: error("StremioCatalogExtra requires JSON decoding")
+        return when (val element = input.decodeJsonElement()) {
+            is JsonPrimitive -> StremioCatalogExtra(name = element.contentOrNull.orEmpty())
+            else -> input.json.decodeFromJsonElement<StremioCatalogExtraSurrogate>(element).toCatalogExtra()
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: StremioCatalogExtra) {
+        val output = encoder as? JsonEncoder ?: error("StremioCatalogExtra requires JSON encoding")
+        output.encodeJsonElement(
+            output.json.encodeToJsonElement(
+                StremioCatalogExtraSurrogate(
+                    name = value.name,
+                    isRequired = value.isRequired,
+                    options = value.options,
+                    optionsLimit = value.optionsLimit,
+                ),
+            ),
+        )
+    }
+}
+
+object StremioMetaResponseSerializer : KSerializer<StremioMetaResponse> {
+    override val descriptor: SerialDescriptor = buildClassSerialDescriptor("StremioMetaResponse") {
+        element<StremioMetaPreview>("meta", isOptional = true)
+    }
+
+    override fun deserialize(decoder: Decoder): StremioMetaResponse {
+        val input = decoder as? JsonDecoder ?: error("StremioMetaResponse requires JSON decoding")
+        val root = input.decodeJsonElement() as? JsonObject ?: return StremioMetaResponse()
+        val metaElement = root["meta"] ?: return StremioMetaResponse()
+        val meta = when (metaElement) {
+            is JsonArray -> metaElement.firstOrNull()?.let { element ->
+                runCatching { input.json.decodeFromJsonElement<StremioMetaPreview>(element) }.getOrNull()
+            }
+            is JsonObject -> runCatching {
+                input.json.decodeFromJsonElement<StremioMetaPreview>(metaElement)
+            }.getOrNull()
+            else -> null
+        }
+        return StremioMetaResponse(meta = meta)
+    }
+
+    override fun serialize(encoder: Encoder, value: StremioMetaResponse) {
+        val output = encoder as? JsonEncoder ?: error("StremioMetaResponse requires JSON encoding")
+        output.encodeJsonElement(output.json.encodeToJsonElement(value.meta?.let { mapOf("meta" to it) } ?: emptyMap()))
+    }
+}
+
 @Serializable
 private data class StremioResourceDescriptorSurrogate(
     val name: String = "",
@@ -272,6 +427,21 @@ private data class StremioSubtitleSurrogate(
     val name: String? = null,
     val title: String? = null,
 )
+
+@Serializable
+private data class StremioCatalogExtraSurrogate(
+    val name: String = "",
+    @SerialName("isRequired") val isRequired: Boolean = false,
+    val options: List<String> = emptyList(),
+    @SerialName("optionsLimit") val optionsLimit: Int? = null,
+) {
+    fun toCatalogExtra(): StremioCatalogExtra = StremioCatalogExtra(
+        name = name,
+        isRequired = isRequired,
+        options = options,
+        optionsLimit = optionsLimit,
+    )
+}
 
 fun StremioStream.qualityScore(): Double {
     val haystack = listOfNotNull(

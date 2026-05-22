@@ -97,6 +97,8 @@ data class PlaybackSettingsSnapshot(
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
     val showNextEpisodeButton: Boolean = true,
+    val showVlcEpisodeBrowserButton: Boolean = true,
+    val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
 )
 

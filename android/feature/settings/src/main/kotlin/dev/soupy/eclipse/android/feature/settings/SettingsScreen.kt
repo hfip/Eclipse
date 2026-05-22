@@ -45,7 +45,12 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.soupy.eclipse.android.core.design.GlassPanel
 import dev.soupy.eclipse.android.core.design.SectionHeading
+import dev.soupy.eclipse.android.core.model.AtmosphereSolidColorSource
+import dev.soupy.eclipse.android.core.model.AtmosphereStyle
+import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.InAppPlayer
+import dev.soupy.eclipse.android.core.model.MediaDetailElement
+import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -57,9 +62,11 @@ data class SettingsScreenState(
     val selectedAppearance: String = "system",
     val autoModeEnabled: Boolean = true,
     val highQualityThreshold: Double = 0.9,
+    val servicesAutoModeQualityPreference: ServicesAutoModeQualityPreference = ServicesAutoModeQualityPreference.Default,
     val filterHorrorContent: Boolean = false,
     val selectedSimilarityAlgorithm: SimilarityAlgorithm = SimilarityAlgorithm.HYBRID,
     val showNextEpisodeButton: Boolean = true,
+    val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
     val inAppPlayer: InAppPlayer = InAppPlayer.VLC,
     val enableSubtitlesByDefault: Boolean = false,
@@ -69,6 +76,7 @@ data class SettingsScreenState(
     val defaultPlaybackSpeed: Double = 1.0,
     val holdSpeedPlayer: Double = 2.0,
     val externalPlayer: String = "none",
+    val preferDownloadedMedia: Boolean = false,
     val alwaysLandscape: Boolean = false,
     val vlcHeaderProxyEnabled: Boolean = true,
     val vlcBrightnessGestureEnabled: Boolean = false,
@@ -86,15 +94,24 @@ data class SettingsScreenState(
     val subtitleVerticalOffset: Double = -6.0,
     val aniSkipEnabled: Boolean = true,
     val introDbEnabled: Boolean = true,
+    val introDbAppEnabled: Boolean = true,
     val aniSkipAutoSkip: Boolean = false,
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
+    val showVlcEpisodeBrowserButton: Boolean = true,
     val showScheduleTab: Boolean = true,
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
     val showKanzen: Boolean = false,
     val seasonMenu: Boolean = false,
     val horizontalEpisodeList: Boolean = false,
+    val mediaDetailElementOrder: String = MediaDetailElement.DefaultOrderRawValue,
+    val mediaDetailHiddenElements: String = "",
+    val heroBannerCatalogId: String = "trending",
+    val heroBannerBehavior: HeroBannerBehavior = HeroBannerBehavior.Default,
+    val atmosphereStyle: AtmosphereStyle = AtmosphereStyle.Default,
+    val atmosphereSolidColorSource: AtmosphereSolidColorSource = AtmosphereSolidColorSource.Default,
+    val atmosphereSolidColor: String = "#401F73",
     val mediaColumnsPortrait: Int = 3,
     val mediaColumnsLandscape: Int = 5,
     val readingMode: Int = 2,
@@ -338,6 +355,7 @@ fun SettingsRoute(
     onGitHubReleaseAutoCheckChanged: (Boolean) -> Unit,
     onAutoModeChanged: (Boolean) -> Unit,
     onShowNextEpisodeChanged: (Boolean) -> Unit,
+    onShowNextEpisodePosterChanged: (Boolean) -> Unit,
     onNextEpisodeThresholdChanged: (Int) -> Unit,
     onPlayerSelected: (InAppPlayer) -> Unit,
     onEnableSubtitlesByDefaultChanged: (Boolean) -> Unit,
@@ -346,6 +364,7 @@ fun SettingsRoute(
     onDefaultPlaybackSpeedChanged: (Double) -> Unit,
     onHoldSpeedChanged: (Double) -> Unit,
     onExternalPlayerChanged: (String) -> Unit,
+    onPreferDownloadedMediaChanged: (Boolean) -> Unit,
     onAlwaysLandscapeChanged: (Boolean) -> Unit,
     onVlcBrightnessGestureChanged: (Boolean) -> Unit,
     onVlcVolumeGestureChanged: (Boolean) -> Unit,
@@ -398,8 +417,19 @@ fun SettingsRoute(
     onExportBackup: (Uri) -> Unit,
     onImportBackup: (Uri) -> Unit,
     onHighQualityThresholdChanged: (Double) -> Unit,
+    onServicesAutoModeQualityPreferenceChanged: (ServicesAutoModeQualityPreference) -> Unit,
     onFilterHorrorContentChanged: (Boolean) -> Unit,
     onSimilarityAlgorithmChanged: (SimilarityAlgorithm) -> Unit,
+    onIntroDbAppChanged: (Boolean) -> Unit,
+    onShowVlcEpisodeBrowserButtonChanged: (Boolean) -> Unit,
+    onMediaDetailElementVisibleChanged: (MediaDetailElement, Boolean) -> Unit,
+    onMoveMediaDetailElement: (MediaDetailElement, Int) -> Unit,
+    onResetMediaDetailLayout: () -> Unit,
+    onHeroBannerCatalogChanged: (String) -> Unit,
+    onHeroBannerBehaviorChanged: (HeroBannerBehavior) -> Unit,
+    onAtmosphereStyleChanged: (AtmosphereStyle) -> Unit,
+    onAtmosphereSolidColorSourceChanged: (AtmosphereSolidColorSource) -> Unit,
+    onAtmosphereSolidColorChanged: (String) -> Unit,
 ) {
     val exportLauncher = rememberLauncherForActivityResult(CreateDocument("application/json")) { uri ->
         uri?.let(onExportBackup)
@@ -504,6 +534,20 @@ fun SettingsRoute(
             )
         }
 
+        item {
+            InterfaceCustomizationCard(
+                state = state,
+                onMediaDetailElementVisibleChanged = onMediaDetailElementVisibleChanged,
+                onMoveMediaDetailElement = onMoveMediaDetailElement,
+                onResetMediaDetailLayout = onResetMediaDetailLayout,
+                onHeroBannerCatalogChanged = onHeroBannerCatalogChanged,
+                onHeroBannerBehaviorChanged = onHeroBannerBehaviorChanged,
+                onAtmosphereStyleChanged = onAtmosphereStyleChanged,
+                onAtmosphereSolidColorSourceChanged = onAtmosphereSolidColorSourceChanged,
+                onAtmosphereSolidColorChanged = onAtmosphereSolidColorChanged,
+            )
+        }
+
         }
 
         if (selectedSection == SettingsSection.UPDATES) {
@@ -578,6 +622,13 @@ fun SettingsRoute(
         }
 
         item {
+            QualityPreferenceCard(
+                selected = state.servicesAutoModeQualityPreference,
+                onSelected = onServicesAutoModeQualityPreferenceChanged,
+            )
+        }
+
+        item {
             SimilarityAlgorithmCard(
                 selected = state.selectedSimilarityAlgorithm,
                 onSelected = onSimilarityAlgorithmChanged,
@@ -618,6 +669,7 @@ fun SettingsRoute(
                 onDefaultPlaybackSpeedChanged = onDefaultPlaybackSpeedChanged,
                 onHoldSpeedChanged = onHoldSpeedChanged,
                 onExternalPlayerChanged = onExternalPlayerChanged,
+                onPreferDownloadedMediaChanged = onPreferDownloadedMediaChanged,
                 onAlwaysLandscapeChanged = onAlwaysLandscapeChanged,
                 onVlcBrightnessGestureChanged = onVlcBrightnessGestureChanged,
                 onVlcVolumeGestureChanged = onVlcVolumeGestureChanged,
@@ -651,6 +703,26 @@ fun SettingsRoute(
 
         item {
             SettingToggleCard(
+                title = "Episode Browser Button",
+                description = "Show a player button for jumping to another loaded episode while playback is active.",
+                checked = state.showVlcEpisodeBrowserButton,
+                onCheckedChange = onShowVlcEpisodeBrowserButtonChanged,
+            )
+        }
+
+        if (state.showNextEpisodeButton) {
+            item {
+                SettingToggleCard(
+                    title = "Use Episode Poster",
+                    description = "Show the upcoming episode artwork in the next-episode CTA when artwork is available.",
+                    checked = state.showNextEpisodePosterButton,
+                    onCheckedChange = onShowNextEpisodePosterChanged,
+                )
+            }
+        }
+
+        item {
+            SettingToggleCard(
                 title = "AniSkip",
                 description = "Fetch anime skip segments from AniSkip when an AniList episode context is available.",
                 checked = state.aniSkipEnabled,
@@ -664,6 +736,15 @@ fun SettingsRoute(
                 description = "Fetch skip segments from TheIntroDB for mapped TMDB movies and episodes.",
                 checked = state.introDbEnabled,
                 onCheckedChange = onIntroDbEnabledChanged,
+            )
+        }
+
+        item {
+            SettingToggleCard(
+                title = "introdb.app Fallback",
+                description = "After TheIntroDB misses, try the introdb.app segment database before giving up.",
+                checked = state.introDbAppEnabled,
+                onCheckedChange = onIntroDbAppChanged,
             )
         }
 
@@ -1167,6 +1248,150 @@ private fun DisplayOptionsCard(
 }
 
 @Composable
+private fun InterfaceCustomizationCard(
+    state: SettingsScreenState,
+    onMediaDetailElementVisibleChanged: (MediaDetailElement, Boolean) -> Unit,
+    onMoveMediaDetailElement: (MediaDetailElement, Int) -> Unit,
+    onResetMediaDetailLayout: () -> Unit,
+    onHeroBannerCatalogChanged: (String) -> Unit,
+    onHeroBannerBehaviorChanged: (HeroBannerBehavior) -> Unit,
+    onAtmosphereStyleChanged: (AtmosphereStyle) -> Unit,
+    onAtmosphereSolidColorSourceChanged: (AtmosphereSolidColorSource) -> Unit,
+    onAtmosphereSolidColorChanged: (String) -> Unit,
+) {
+    val orderedElements = MediaDetailElement.orderedElements(state.mediaDetailElementOrder)
+    val hiddenElements = MediaDetailElement.hiddenElements(state.mediaDetailHiddenElements)
+    val heroCatalogOptions = state.heroCatalogOptions()
+    GlassPanel {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(
+                text = "Interface Customization",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            ReaderOptionButtons(
+                title = "Hero Catalog",
+                selected = state.heroBannerCatalogId,
+                options = heroCatalogOptions,
+                onSelected = onHeroBannerCatalogChanged,
+            )
+            OptionButtonGroup(
+                title = "Hero Behavior",
+                selected = state.heroBannerBehavior.rawValue,
+                options = HeroBannerBehavior.entries.map { it.rawValue to it.title },
+                onSelected = { onHeroBannerBehaviorChanged(HeroBannerBehavior.fromRawValue(it)) },
+            )
+            OptionButtonGroup(
+                title = "Atmosphere",
+                selected = state.atmosphereStyle.rawValue,
+                options = AtmosphereStyle.entries.map { it.rawValue to it.title },
+                onSelected = { onAtmosphereStyleChanged(AtmosphereStyle.fromRawValue(it)) },
+            )
+            if (state.atmosphereStyle == AtmosphereStyle.SOLID) {
+                OptionButtonGroup(
+                    title = "Solid Color Source",
+                    selected = state.atmosphereSolidColorSource.rawValue,
+                    options = AtmosphereSolidColorSource.entries.map { it.rawValue to it.title },
+                    onSelected = { onAtmosphereSolidColorSourceChanged(AtmosphereSolidColorSource.fromRawValue(it)) },
+                )
+                if (state.atmosphereSolidColorSource == AtmosphereSolidColorSource.CUSTOM) {
+                    OutlinedTextField(
+                        value = state.atmosphereSolidColor,
+                        onValueChange = onAtmosphereSolidColorChanged,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Custom Atmosphere Color") },
+                        singleLine = true,
+                    )
+                }
+            }
+            Text(
+                text = "Media Detail Sections",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            orderedElements.forEachIndexed { index, element ->
+                MediaDetailElementRow(
+                    element = element,
+                    visible = element !in hiddenElements,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < orderedElements.lastIndex,
+                    onVisibleChanged = { onMediaDetailElementVisibleChanged(element, it) },
+                    onMoveUp = { onMoveMediaDetailElement(element, -1) },
+                    onMoveDown = { onMoveMediaDetailElement(element, 1) },
+                )
+            }
+            OutlinedButton(
+                onClick = onResetMediaDetailLayout,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Reset Detail Layout")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MediaDetailElementRow(
+    element: MediaDetailElement,
+    visible: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onVisibleChanged: (Boolean) -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = element.displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = visible,
+                onCheckedChange = onVisibleChanged,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OutlinedButton(
+                onClick = onMoveUp,
+                enabled = canMoveUp,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Up")
+            }
+            OutlinedButton(
+                onClick = onMoveDown,
+                enabled = canMoveDown,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Down")
+            }
+        }
+    }
+}
+
+private fun SettingsScreenState.heroCatalogOptions(): List<Pair<String, String>> {
+    val catalogOptions = catalogs
+        .sortedBy(CatalogSettingsRow::order)
+        .map { it.id to it.name }
+    val base = listOf("trending" to "Trending") + catalogOptions
+    return if (base.any { it.first == heroBannerCatalogId }) {
+        base.distinctBy { it.first }
+    } else {
+        (listOf(heroBannerCatalogId to heroBannerCatalogId) + base).distinctBy { it.first }
+    }
+}
+
+@Composable
 private fun UpdatesCard(
     state: SettingsScreenState,
     onAutoUpdateServicesChanged: (Boolean) -> Unit,
@@ -1265,6 +1490,33 @@ private fun NextEpisodeThresholdCard(
 }
 
 @Composable
+private fun QualityPreferenceCard(
+    selected: ServicesAutoModeQualityPreference,
+    onSelected: (ServicesAutoModeQualityPreference) -> Unit,
+) {
+    GlassPanel {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                text = "Auto Mode Quality",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            ReaderOptionButtons(
+                title = "Stream Selection",
+                selected = selected.rawValue,
+                options = ServicesAutoModeQualityPreference.entries.map { it.rawValue to it.title },
+                onSelected = { onSelected(ServicesAutoModeQualityPreference.fromRawValue(it)) },
+            )
+            Text(
+                text = "Ask keeps manual source picking when a provider returns multiple qualities.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.74f),
+            )
+        }
+    }
+}
+
+@Composable
 private fun SimilarityAlgorithmCard(
     selected: SimilarityAlgorithm,
     onSelected: (SimilarityAlgorithm) -> Unit,
@@ -1311,6 +1563,7 @@ private fun PlayerPreferencesCard(
     onDefaultPlaybackSpeedChanged: (Double) -> Unit,
     onHoldSpeedChanged: (Double) -> Unit,
     onExternalPlayerChanged: (String) -> Unit,
+    onPreferDownloadedMediaChanged: (Boolean) -> Unit,
     onAlwaysLandscapeChanged: (Boolean) -> Unit,
     onVlcBrightnessGestureChanged: (Boolean) -> Unit,
     onVlcVolumeGestureChanged: (Boolean) -> Unit,
@@ -1364,6 +1617,11 @@ private fun PlayerPreferencesCard(
                 value = state.holdSpeedPlayer.coerceIn(0.1, 3.0).toFloat(),
                 valueRange = 0.1f..3.0f,
                 onValueChange = { onHoldSpeedChanged(roundedToTenthStep(it).toDouble()) },
+            )
+            SettingInlineToggle(
+                title = "Prefer Downloads",
+                checked = state.preferDownloadedMedia,
+                onCheckedChange = onPreferDownloadedMediaChanged,
             )
             SettingInlineToggle(
                 title = "Always Landscape",

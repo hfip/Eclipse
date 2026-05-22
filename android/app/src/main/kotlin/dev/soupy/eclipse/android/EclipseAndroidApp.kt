@@ -119,10 +119,12 @@ fun EclipseAndroidApp(
             repository = appContainer.detailRepository,
             streamResolutionRepository = appContainer.streamResolutionRepository,
             progressRepository = appContainer.progressRepository,
+            downloadsRepository = appContainer.downloadsRepository,
             ratingsRepository = appContainer.ratingsRepository,
             trackerRepository = appContainer.trackerRepository,
             aniSkipService = appContainer.aniSkipService,
             introDbService = appContainer.introDbService,
+            tmdbService = appContainer.tmdbService,
             settingsStore = appContainer.settingsStore,
         )
     }
@@ -229,6 +231,8 @@ fun EclipseAndroidApp(
         skip85sEnabled = settingsState.skip85sEnabled,
         skip85sAlwaysVisible = settingsState.skip85sAlwaysVisible,
         showNextEpisodeButton = settingsState.showNextEpisodeButton,
+        showVlcEpisodeBrowserButton = settingsState.showVlcEpisodeBrowserButton,
+        showNextEpisodePosterButton = settingsState.showNextEpisodePosterButton,
         nextEpisodeThreshold = settingsState.nextEpisodeThreshold,
     )
     val mangaReaderSettings = MangaReaderSettingsRow(
@@ -300,6 +304,9 @@ fun EclipseAndroidApp(
         EclipseBackground(
             appearance = settingsState.selectedAppearance,
             gradientColor = settingsState.settingsGradientColor,
+            atmosphereStyle = settingsState.atmosphereStyle.rawValue,
+            atmosphereSolidColorSource = settingsState.atmosphereSolidColorSource.rawValue,
+            atmosphereSolidColor = settingsState.atmosphereSolidColor,
             kanzenMode = settingsState.showKanzen,
         ) {
             val uriHandler = LocalUriHandler.current
@@ -624,6 +631,7 @@ fun EclipseAndroidApp(
                             onGitHubReleaseAutoCheckChanged = settingsViewModel::setGitHubReleaseAutoCheckEnabled,
                             onAutoModeChanged = settingsViewModel::setAutoModeEnabled,
                             onShowNextEpisodeChanged = settingsViewModel::setShowNextEpisodeButton,
+                            onShowNextEpisodePosterChanged = settingsViewModel::setShowNextEpisodePosterButton,
                             onNextEpisodeThresholdChanged = settingsViewModel::setNextEpisodeThreshold,
                             onPlayerSelected = settingsViewModel::setInAppPlayer,
                             onEnableSubtitlesByDefaultChanged = settingsViewModel::setEnableSubtitlesByDefault,
@@ -632,6 +640,7 @@ fun EclipseAndroidApp(
                             onDefaultPlaybackSpeedChanged = settingsViewModel::setDefaultPlaybackSpeed,
                             onHoldSpeedChanged = settingsViewModel::setHoldSpeed,
                             onExternalPlayerChanged = settingsViewModel::setExternalPlayer,
+                            onPreferDownloadedMediaChanged = settingsViewModel::setPreferDownloadedMedia,
                             onAlwaysLandscapeChanged = settingsViewModel::setAlwaysLandscape,
                             onVlcBrightnessGestureChanged = settingsViewModel::setVlcBrightnessGestureEnabled,
                             onVlcVolumeGestureChanged = settingsViewModel::setVlcVolumeGestureEnabled,
@@ -703,8 +712,23 @@ fun EclipseAndroidApp(
                             onExportBackup = settingsViewModel::exportBackup,
                             onImportBackup = settingsViewModel::importBackup,
                             onHighQualityThresholdChanged = settingsViewModel::setHighQualityThreshold,
+                            onServicesAutoModeQualityPreferenceChanged =
+                                settingsViewModel::setServicesAutoModeQualityPreference,
                             onFilterHorrorContentChanged = settingsViewModel::setFilterHorrorContent,
                             onSimilarityAlgorithmChanged = settingsViewModel::setSimilarityAlgorithm,
+                            onIntroDbAppChanged = settingsViewModel::setIntroDbAppEnabled,
+                            onShowVlcEpisodeBrowserButtonChanged =
+                                settingsViewModel::setShowVlcEpisodeBrowserButton,
+                            onMediaDetailElementVisibleChanged =
+                                settingsViewModel::setMediaDetailElementVisible,
+                            onMoveMediaDetailElement = settingsViewModel::moveMediaDetailElement,
+                            onResetMediaDetailLayout = settingsViewModel::resetMediaDetailLayout,
+                            onHeroBannerCatalogChanged = settingsViewModel::setHeroBannerCatalog,
+                            onHeroBannerBehaviorChanged = settingsViewModel::setHeroBannerBehavior,
+                            onAtmosphereStyleChanged = settingsViewModel::setAtmosphereStyle,
+                            onAtmosphereSolidColorSourceChanged =
+                                settingsViewModel::setAtmosphereSolidColorSource,
+                            onAtmosphereSolidColorChanged = settingsViewModel::setAtmosphereSolidColor,
                         )
                     }
                     composable("manga") {
