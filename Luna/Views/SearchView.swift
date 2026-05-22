@@ -27,6 +27,7 @@ struct SearchView: View {
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var contentFilter = TMDBContentFilter.shared
     @Environment(\.verticalSizeClass) var verticalSizeClass
+    private static let maxVisibleServiceSearchResults = 120
     
     enum SearchFilter: String, CaseIterable {
         case all = "All"
@@ -460,7 +461,11 @@ struct SearchView: View {
         let jsController = JSController()
         jsController.loadScript(service.jsScript)
         
-        jsController.fetchJsSearchResults(keyword: searchText, module: service) { results in
+        jsController.fetchJsSearchResults(
+            keyword: searchText,
+            module: service,
+            maxResults: Self.maxVisibleServiceSearchResults
+        ) { results in
             DispatchQueue.main.async {
                 self.serviceSearchResults = results
                 self.isLoading = false

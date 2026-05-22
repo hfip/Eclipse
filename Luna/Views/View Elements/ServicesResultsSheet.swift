@@ -157,6 +157,8 @@ struct ModulesSearchResultsSheet: View {
     @State private var showManualPicker = false
     @State private var sheetHostController: UIViewController?
     private static let autoModeInitialMatchThreshold = 0.85
+    private static let maxRetainedServiceResultsPerService = 300
+    private static let maxVisibleServiceResultsPerService = 80
 
     private var effectiveTitle: String { seasonTitleOverride ?? mediaTitle }
     private var playerMediaTitle: String {
@@ -788,7 +790,7 @@ struct ModulesSearchResultsSheet: View {
     }
     
     private func filterResults(for results: [SearchItem]) -> (highQuality: [SearchItem], lowQuality: [SearchItem]) {
-        let sortedResults = rankedServiceResults(results)
+        let sortedResults = rankedServiceResults(results).prefix(Self.maxVisibleServiceResultsPerService)
         let threshold = viewModel.highQualityThreshold
         let highQuality = sortedResults.filter { $0.initialSimilarity >= threshold }.map { $0.result }
         let lowQuality = sortedResults.filter { $0.initialSimilarity < threshold }.map { $0.result }
@@ -1035,6 +1037,26 @@ struct ModulesSearchResultsSheet: View {
         return rankedServiceResults(results)
             .first { $0.initialSimilarity >= Self.autoModeInitialMatchThreshold }?
             .result
+    }
+
+    private func retainedServiceResults(_ results: [SearchItem]) -> [SearchItem] {
+        guard results.count > Self.maxRetainedServiceResultsPerService else {
+            return results
+        }
+
+        return rankedServiceResults(results)
+            .prefix(Self.maxRetainedServiceResultsPerService)
+            .map { $0.result }
+    }
+
+    private func mergedServiceResults(existing: [SearchItem], additional: [SearchItem]) -> [SearchItem] {
+        guard !additional.isEmpty else {
+            return retainedServiceResults(existing)
+        }
+
+        var seenHrefs = Set(existing.map { $0.href })
+        let newResults = additional.filter { seenHrefs.insert($0.href).inserted }
+        return retainedServiceResults(existing + newResults)
     }
 
     private struct StreamQualityInfo {
@@ -1511,6 +1533,7 @@ struct ModulesSearchResultsSheet: View {
             guard !autoModeCancelled else { return nil }
             let newResults = results.filter { seenHrefs.insert($0.href).inserted }
             combined.append(contentsOf: newResults)
+            combined = retainedServiceResults(combined)
             viewModel.moduleResults[service.id] = combined
             viewModel.searchedServices.insert(service.id)
         }
@@ -1856,7 +1879,7 @@ struct ModulesSearchResultsSheet: View {
                 query: searchQuery,
                 onResult: { service, results in
                     Task { @MainActor in
-                        self.viewModel.moduleResults[service.id] = results ?? []
+                        self.viewModel.moduleResults[service.id] = self.retainedServiceResults(results ?? [])
                         self.viewModel.searchedServices.insert(service.id)
                         
                         if results == nil {
@@ -1876,9 +1899,7 @@ struct ModulesSearchResultsSheet: View {
                                     Task { @MainActor in
                                         let additional = additionalResults ?? []
                                         let existing = self.viewModel.moduleResults[service.id] ?? []
-                                        let existingHrefs = Set(existing.map { $0.href })
-                                        let newResults = additional.filter { !existingHrefs.contains($0.href) }
-                                        self.viewModel.moduleResults[service.id] = existing + newResults
+                                        self.viewModel.moduleResults[service.id] = self.mergedServiceResults(existing: existing, additional: additional)
                                         
                                         if additionalResults == nil {
                                             self.viewModel.failedServices.insert(service.id)
@@ -1895,9 +1916,7 @@ struct ModulesSearchResultsSheet: View {
                                                     Task { @MainActor in
                                                         let additional = additionalResults ?? []
                                                         let existing = self.viewModel.moduleResults[service.id] ?? []
-                                                        let existingHrefs = Set(existing.map { $0.href })
-                                                        let newResults = additional.filter { !existingHrefs.contains($0.href) }
-                                                        self.viewModel.moduleResults[service.id] = existing + newResults
+                                                        self.viewModel.moduleResults[service.id] = self.mergedServiceResults(existing: existing, additional: additional)
                                                         
                                                         if additionalResults == nil {
                                                             self.viewModel.failedServices.insert(service.id)
@@ -1928,9 +1947,7 @@ struct ModulesSearchResultsSheet: View {
                                     Task { @MainActor in
                                         let additional = additionalResults ?? []
                                         let existing = self.viewModel.moduleResults[service.id] ?? []
-                                        let existingHrefs = Set(existing.map { $0.href })
-                                        let newResults = additional.filter { !existingHrefs.contains($0.href) }
-                                        self.viewModel.moduleResults[service.id] = existing + newResults
+                                        self.viewModel.moduleResults[service.id] = self.mergedServiceResults(existing: existing, additional: additional)
                                         
                                         if additionalResults == nil {
                                             self.viewModel.failedServices.insert(service.id)

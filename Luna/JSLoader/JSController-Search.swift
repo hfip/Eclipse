@@ -15,7 +15,7 @@ struct SearchItem: Identifiable {
 }
 
 extension JSController {
-    func fetchJsSearchResults(keyword: String, module: Service, completion: @escaping ([SearchItem]) -> Void) {
+    func fetchJsSearchResults(keyword: String, module: Service, maxResults: Int? = nil, completion: @escaping ([SearchItem]) -> Void) {
         if let exception = context.exception {
             Logger.shared.log("JavaScript exception: \(exception)", type: "Error")
             completion([])
@@ -40,7 +40,7 @@ extension JSController {
                let data = jsonString.data(using: .utf8) {
                 do {
                     if let array = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] {
-                        let resultItems = array.compactMap { item -> SearchItem? in
+                        let resultItems = array.prefix(maxResults ?? array.count).compactMap { item -> SearchItem? in
                             guard let title = item["title"] as? String,
                                   let imageUrl = item["image"] as? String,
                                   let href = item["href"] as? String else {
