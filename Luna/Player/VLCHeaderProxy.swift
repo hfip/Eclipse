@@ -48,8 +48,6 @@ final class VLCHeaderProxy {
     private let maxHeaderBytes = 64 * 1024
     private let maxPlaylistBytes = 5 * 1024 * 1024
     private let playlistProbeBytes = 4 * 1024
-    private let rewrittenPlaylistChildQueryName = "playlistChild"
-    private let rewrittenPlaylistChildQueryValue = "1"
     private let hopByHopRequestHeaders: Set<String> = [
         "connection",
         "keep-alive",
@@ -426,7 +424,6 @@ final class VLCHeaderProxy {
 
         let sessionId = String(pathParts[1])
         let queryItems = Dictionary(uniqueKeysWithValues: (urlComponents.queryItems ?? []).map { ($0.name, $0.value ?? "") })
-        let playlistDerived = isRewrittenPlaylistChildRequest(queryItems)
 
         guard queryItems["token"] == token else {
             sendSimpleResponse(connection, statusCode: 403, body: "Forbidden")
@@ -482,7 +479,6 @@ final class VLCHeaderProxy {
             method: method,
             targetURL: targetURL,
             sessionId: sessionId,
-            playlistDerived: playlistDerived,
             connection: connection
         )
         await bridge.start()
@@ -674,11 +670,7 @@ final class VLCHeaderProxy {
             return nil
         }
 
-        guard let proxied = buildProxyURL(port: port, sessionId: sessionId, targetURL: resolved) else {
-            return nil
-        }
-
-        return markAsRewrittenPlaylistChild(proxied)
+        return buildProxyURL(port: port, sessionId: sessionId, targetURL: resolved)
     }
 
     private func filteredResponseHeaders(from http: HTTPURLResponse) -> [String: String] {
@@ -692,58 +684,6 @@ final class VLCHeaderProxy {
             headers[key] = "\(value)"
         }
         return headers
-    }
-
-    private func normalizedResponseHeaders(
-        from http: HTTPURLResponse,
-        targetURL: URL,
-        playlistDerived: Bool
-    ) -> [String: String] {
-        var headers = filteredResponseHeaders(from: http)
-        guard shouldNormalizePlaylistChildContentType(http: http, targetURL: targetURL, playlistDerived: playlistDerived) else {
-            return headers
-        }
-
-        setHeader("Content-Type", value: "application/octet-stream", in: &headers)
-        return headers
-    }
-
-    private func shouldNormalizePlaylistChildContentType(
-        http: HTTPURLResponse,
-        targetURL: URL,
-        playlistDerived: Bool
-    ) -> Bool {
-        guard playlistDerived else { return false }
-        guard !isPlaylistMetadata(http: http, targetURL: targetURL) else { return false }
-
-        let ext = targetURL.pathExtension.lowercased()
-        if ["vtt", "srt", "ass", "ssa", "key"].contains(ext) {
-            return false
-        }
-
-        let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-        return contentType.hasPrefix("image/")
-    }
-
-    private func isRewrittenPlaylistChildRequest(_ queryItems: [String: String]) -> Bool {
-        queryItems[rewrittenPlaylistChildQueryName] == rewrittenPlaylistChildQueryValue
-    }
-
-    private func markAsRewrittenPlaylistChild(_ url: URL) -> URL? {
-        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-
-        var queryItems = components.queryItems ?? []
-        queryItems.removeAll { $0.name == rewrittenPlaylistChildQueryName }
-        queryItems.append(
-            URLQueryItem(
-                name: rewrittenPlaylistChildQueryName,
-                value: rewrittenPlaylistChildQueryValue
-            )
-        )
-        components.queryItems = queryItems
-        return components.url
     }
 
     private func removeHeader(_ name: String, from headers: inout [String: String]) {
@@ -901,7 +841,6 @@ final class VLCHeaderProxy {
         private let method: String
         private let targetURL: URL
         private let sessionId: String
-        private let playlistDerived: Bool
         private let connection: NWConnection
         private let callbackQueue: OperationQueue
 
@@ -930,7 +869,6 @@ final class VLCHeaderProxy {
             method: String,
             targetURL: URL,
             sessionId: String,
-            playlistDerived: Bool,
             connection: NWConnection
         ) {
             self.proxy = proxy
@@ -939,7 +877,6 @@ final class VLCHeaderProxy {
             self.method = method
             self.targetURL = targetURL
             self.sessionId = sessionId
-            self.playlistDerived = playlistDerived
             self.connection = connection
             let callbackQueue = OperationQueue()
             callbackQueue.maxConcurrentOperationCount = 1
@@ -997,18 +934,7 @@ final class VLCHeaderProxy {
             let kind = proxy.requestKind(for: targetURL, contentType: contentType)
             Logger.shared.log("VLCHeaderProxy[\(requestId)]: upstream response status=\(http.statusCode) kind=\(kind) mode=\(mode.logName) activeRequests=\(proxy.activeRequestCountSnapshot()) headerMs=\(proxy.elapsedMilliseconds(since: startedAt)) target=\(proxy.logURLSummary(targetURL)) contentLength=\(contentLength) contentRange=\(contentRange) contentType=\(contentType)", type: "VLCProxy")
 
-            let responseHeaders = proxy.normalizedResponseHeaders(
-                from: http,
-                targetURL: targetURL,
-                playlistDerived: playlistDerived
-            )
-            if playlistDerived,
-               proxy.shouldNormalizePlaylistChildContentType(http: http, targetURL: targetURL, playlistDerived: true) {
-                Logger.shared.log(
-                    "VLCHeaderProxy[\(requestId)]: normalized playlist child contentType \(contentType) -> application/octet-stream target=\(proxy.logURLSummary(targetURL))",
-                    type: "VLCProxy"
-                )
-            }
+            let responseHeaders = proxy.filteredResponseHeaders(from: http)
             if method == "HEAD" {
                 proxy.sendResponse(connection, statusCode: http.statusCode, headers: responseHeaders, body: Data())
                 completionHandler(.cancel)
