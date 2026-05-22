@@ -51,17 +51,9 @@ final class StremioClient {
     /// Fetches streams for a given addon and content ID.
     /// **SAFETY**: Only returns streams with direct HTTP(S) URLs. Any torrent-only entry is stripped.
     func fetchStreams(baseURL: String, type: String, id: String) async throws -> [StremioStream] {
-        let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
-
-        // Remove /manifest.json suffix if present
-        let cleanBase: String
-        if base.hasSuffix("/manifest.json") {
-            cleanBase = String(base.dropLast("/manifest.json".count))
-        } else {
-            cleanBase = base
-        }
-
-        let urlString = "\(cleanBase)/stream/\(type)/\(id).json"
+        let cleanBase = normalizedBaseURL(baseURL)
+        let encodedId = encodePathSegment(id, preservingColon: true)
+        let urlString = "\(cleanBase)/stream/\(type)/\(encodedId).json"
         guard let url = URL(string: urlString) else {
             throw StremioError.invalidURL
         }
@@ -105,17 +97,74 @@ final class StremioClient {
         return safeStreams
     }
 
+    // MARK: - Fetch Catalogs and Meta
+
+    func fetchCatalogMetas(baseURL: String, catalog: StremioCatalog, searchQuery: String) async throws -> [StremioMetaPreview] {
+        let cleanBase = normalizedBaseURL(baseURL)
+        let encodedType = encodePathSegment(catalog.type, preservingColon: false)
+        let encodedCatalogId = encodePathSegment(catalog.id, preservingColon: true)
+        let encodedSearch = encodeExtraValue(searchQuery)
+        let urlString = "\(cleanBase)/catalog/\(encodedType)/\(encodedCatalogId)/search=\(encodedSearch).json"
+
+        guard let url = URL(string: urlString) else {
+            throw StremioError.invalidURL
+        }
+
+        Logger.shared.log("Stremio: Searching catalog \(catalog.id) query='\(searchQuery)' url=\(urlString)", type: "Stremio")
+
+        let (data, response) = try await session.data(from: url)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            Logger.shared.log("Stremio: Catalog search failed HTTP \(statusCode) catalog=\(catalog.id) query='\(searchQuery)'", type: "Stremio")
+            throw StremioError.httpError(statusCode)
+        }
+
+        do {
+            let response = try decoder.decode(StremioCatalogResponse.self, from: data)
+            Logger.shared.log("Stremio: Catalog \(catalog.id) returned \(response.metas.count) meta candidate(s)", type: "Stremio")
+            return response.metas
+        } catch {
+            let preview = String(data: data.prefix(512), encoding: .utf8) ?? "<binary>"
+            Logger.shared.log("Stremio: Catalog decode FAILED for \(catalog.id) - \(error.localizedDescription) body=\(preview)", type: "Stremio")
+            throw error
+        }
+    }
+
+    func fetchMeta(baseURL: String, type: String, id: String) async throws -> StremioMetaPreview? {
+        let cleanBase = normalizedBaseURL(baseURL)
+        let encodedType = encodePathSegment(type, preservingColon: false)
+        let encodedId = encodePathSegment(id, preservingColon: true)
+        let urlString = "\(cleanBase)/meta/\(encodedType)/\(encodedId).json"
+
+        guard let url = URL(string: urlString) else {
+            throw StremioError.invalidURL
+        }
+
+        Logger.shared.log("Stremio: Fetching meta type=\(type) id=\(id) url=\(urlString)", type: "Stremio")
+
+        let (data, response) = try await session.data(from: url)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            Logger.shared.log("Stremio: Meta fetch failed HTTP \(statusCode) type=\(type) id=\(id)", type: "Stremio")
+            throw StremioError.httpError(statusCode)
+        }
+
+        do {
+            let response = try decoder.decode(StremioMetaResponse.self, from: data)
+            return response.meta
+        } catch {
+            let preview = String(data: data.prefix(512), encoding: .utf8) ?? "<binary>"
+            Logger.shared.log("Stremio: Meta decode FAILED for id=\(id) - \(error.localizedDescription) body=\(preview)", type: "Stremio")
+            throw error
+        }
+    }
+
     // MARK: - Fetch Subtitles
 
     func fetchSubtitles(baseURL: String, type: String, id: String) async throws -> [StremioSubtitle] {
-        let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
-
-        let cleanBase: String
-        if base.hasSuffix("/manifest.json") {
-            cleanBase = String(base.dropLast("/manifest.json".count))
-        } else {
-            cleanBase = base
-        }
+        let cleanBase = normalizedBaseURL(baseURL)
 
         guard let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "\(cleanBase)/subtitles/\(type)/\(encodedId).json") else {
@@ -195,42 +244,47 @@ final class StremioClient {
             type: type,
             season: season,
             episode: episode,
-            idPrefixes: addon.manifest.idPrefixes,
+            anilistId: nil,
+            idPrefixes: addon.manifest.streamIdPrefixes,
             addonName: addon.manifest.name
         ).first
     }
 
-    func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, idPrefixes: [String]?, addonName: String) -> String? {
+    func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, idPrefixes: [String]?, addonName: String) -> String? {
         buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
             type: type,
             season: season,
             episode: episode,
+            anilistId: anilistId,
             idPrefixes: idPrefixes,
             addonName: addonName
         ).first
     }
 
-    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, addon: StremioAddon) -> [String] {
+    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, addon: StremioAddon) -> [String] {
         buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
             type: type,
             season: season,
             episode: episode,
-            idPrefixes: addon.manifest.idPrefixes,
+            anilistId: anilistId,
+            idPrefixes: addon.manifest.streamIdPrefixes,
             addonName: addon.manifest.name
         )
     }
 
-    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, idPrefixes: [String]?, addonName: String) -> [String] {
+    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, idPrefixes: [String]?, addonName: String) -> [String] {
         let prefixes = idPrefixes ?? []
         let normalizedPrefixes = prefixes.map { $0.lowercased() }
         let supportsTMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tmdb" || $0.hasPrefix("tmdb:") }
-        let supportsIMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tt" || $0.hasPrefix("tt") || $0 == "imdb" }
+        let supportsIMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tt" || $0.hasPrefix("tt") || $0 == "imdb" || $0 == "imdb:" }
+        let supportsIMDBNamespace = normalizedPrefixes.contains { $0 == "imdb:" }
+        let supportsAniList = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "anilist" || $0 == "anilist:" }
 
-        Logger.shared.log("Stremio: buildContentId addon=\(addonName) prefixes=\(prefixes) imdbId=\(imdbId ?? "nil") tmdbId=\(tmdbId) type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
+        Logger.shared.log("Stremio: buildContentId addon=\(addonName) prefixes=\(prefixes) imdbId=\(imdbId ?? "nil") tmdbId=\(tmdbId) anilistId=\(anilistId?.description ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
         var candidates: [String] = []
 
         // Prefer IMDB because it is the universal Stremio standard, then try TMDB too.
@@ -243,6 +297,13 @@ final class StremioClient {
                 result = ttId
             }
             candidates.append(result)
+
+            if supportsIMDBNamespace {
+                let namespaced = type == "series" && season != nil && episode != nil
+                    ? "imdb:\(ttId):\(season!):\(episode!)"
+                    : "imdb:\(ttId)"
+                candidates.append(namespaced)
+            }
         }
 
         if supportsTMDB {
@@ -251,6 +312,16 @@ final class StremioClient {
                 result = "tmdb:\(tmdbId):\(s):\(e)"
             } else {
                 result = "tmdb:\(tmdbId)"
+            }
+            candidates.append(result)
+        }
+
+        if supportsAniList, let anilistId {
+            var result: String
+            if type == "series", let s = season, let e = episode {
+                result = "anilist:\(anilistId):\(s):\(e)"
+            } else {
+                result = "anilist:\(anilistId)"
             }
             candidates.append(result)
         }
@@ -277,6 +348,31 @@ final class StremioClient {
         }
 
         return "\(cleaned)/manifest.json"
+    }
+
+    private func normalizedBaseURL(_ url: String) -> String {
+        var cleaned = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasSuffix("/") { cleaned = String(cleaned.dropLast()) }
+        if cleaned.hasSuffix("/manifest.json") {
+            cleaned = String(cleaned.dropLast("/manifest.json".count))
+        }
+        return cleaned
+    }
+
+    private func encodePathSegment(_ value: String, preservingColon: Bool) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: ":/?#[]@!$&'()*+,;=")
+        if preservingColon {
+            allowed.insert(charactersIn: ":")
+        }
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
+    private func encodeExtraValue(_ value: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=?#/")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed)?
+            .replacingOccurrences(of: "+", with: "%20") ?? value
     }
 
     enum StremioError: LocalizedError {

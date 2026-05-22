@@ -19,10 +19,11 @@ struct StremioManifest: Codable {
     let types: [String]?
     let resources: [StremioResource]?
     let idPrefixes: [String]?
+    let catalogs: [StremioCatalog]?
     let behaviorHints: StremioManifestBehaviorHints?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, version, logo, types, resources, idPrefixes, behaviorHints
+        case id, name, description, version, logo, types, resources, idPrefixes, catalogs, behaviorHints
     }
 
     /// Whether this addon supports a given ID prefix (e.g. "tt", "tmdb:", "kitsu:")
@@ -41,6 +42,22 @@ struct StremioManifest: Codable {
     var supportsSubtitles: Bool {
         guard let resources = resources else { return false }
         return resources.contains { $0.isSubtitles }
+    }
+
+    var supportsMeta: Bool {
+        guard let resources = resources else { return false }
+        return resources.contains { $0.isMeta }
+    }
+
+    var searchableCatalogs: [StremioCatalog] {
+        catalogs?.filter { $0.canSearchWithQueryOnly } ?? []
+    }
+
+    var streamIdPrefixes: [String]? {
+        let resourcePrefixes = resources?
+            .flatMap { $0.idPrefixes(for: "stream") }
+            .filter { !$0.isEmpty } ?? []
+        return resourcePrefixes.isEmpty ? idPrefixes : resourcePrefixes
     }
 }
 
@@ -69,6 +86,22 @@ enum StremioResource: Codable {
         }
     }
 
+    var isMeta: Bool {
+        switch self {
+        case .simple(let name): return name == "meta"
+        case .detailed(let detail): return detail.name == "meta"
+        }
+    }
+
+    func idPrefixes(for resourceName: String) -> [String] {
+        switch self {
+        case .simple:
+            return []
+        case .detailed(let detail):
+            return detail.name == resourceName ? (detail.idPrefixes ?? []) : []
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let string = try? container.decode(String.self) {
@@ -94,6 +127,138 @@ struct StremioResourceDetail: Codable {
     let name: String
     let types: [String]?
     let idPrefixes: [String]?
+}
+
+// MARK: - Catalog and Meta Responses
+
+struct StremioCatalog: Codable, Hashable {
+    let type: String
+    let id: String
+    let name: String?
+    let extra: [StremioCatalogExtra]?
+
+    var supportsSearch: Bool {
+        extra?.contains { $0.name == "search" } ?? false
+    }
+
+    var canSearchWithQueryOnly: Bool {
+        guard supportsSearch else { return false }
+        return extra?.allSatisfy { extra in
+            extra.isRequired != true || extra.name == "search"
+        } ?? true
+    }
+
+    func supportsType(_ requestedType: String) -> Bool {
+        type == requestedType || (requestedType == "series" && type == "tv")
+    }
+}
+
+struct StremioCatalogExtra: Codable, Hashable {
+    let name: String
+    let isRequired: Bool?
+    let options: [String]?
+    let optionsLimit: Int?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let name = try? container.decode(String.self) {
+            self.name = name
+            self.isRequired = nil
+            self.options = nil
+            self.optionsLimit = nil
+            return
+        }
+
+        let keyed = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? keyed.decode(String.self, forKey: .name)) ?? ""
+        isRequired = try? keyed.decodeIfPresent(Bool.self, forKey: .isRequired)
+        options = try? keyed.decodeIfPresent([String].self, forKey: .options)
+        optionsLimit = try? keyed.decodeIfPresent(Int.self, forKey: .optionsLimit)
+    }
+}
+
+struct StremioCatalogResponse: Codable {
+    let metas: [StremioMetaPreview]
+
+    enum CodingKeys: String, CodingKey {
+        case metas
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        metas = Self.decodeLossyArray(from: container, forKey: .metas)
+    }
+
+    private static func decodeLossyArray(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> [StremioMetaPreview] {
+        guard var unkeyedContainer = try? container.nestedUnkeyedContainer(forKey: key) else {
+            return []
+        }
+
+        var decoded = [StremioMetaPreview]()
+        while !unkeyedContainer.isAtEnd {
+            if let meta = try? unkeyedContainer.decode(StremioMetaPreview.self) {
+                decoded.append(meta)
+            } else {
+                _ = try? unkeyedContainer.decode(AnyCodable.self)
+            }
+        }
+        return decoded
+    }
+}
+
+struct StremioMetaResponse: Codable {
+    let meta: StremioMetaPreview?
+
+    enum CodingKeys: String, CodingKey {
+        case meta
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let single = try? container.decodeIfPresent(StremioMetaPreview.self, forKey: .meta) {
+            meta = single
+        } else if let array = try? container.decodeIfPresent([StremioMetaPreview].self, forKey: .meta) {
+            meta = array.first
+        } else {
+            meta = nil
+        }
+    }
+}
+
+struct StremioMetaPreview: Codable, Identifiable, Hashable {
+    let id: String
+    let type: String?
+    let name: String
+    let poster: String?
+    let description: String?
+    let releaseInfo: String?
+    let released: String?
+    let videos: [StremioVideo]?
+    let behaviorHints: StremioMetaBehaviorHints?
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, name, poster, description, releaseInfo, released, videos, behaviorHints
+    }
+}
+
+struct StremioMetaBehaviorHints: Codable, Hashable {
+    let defaultVideoId: String?
+}
+
+struct StremioVideo: Codable, Identifiable, Hashable {
+    let id: String
+    let title: String?
+    let released: String?
+    let season: Int?
+    let episode: Int?
+    let streams: [StremioStream]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, released, season, episode, streams
+    }
 }
 
 // MARK: - Stream Response
@@ -160,7 +325,7 @@ private struct AnyCodable: Codable {
     func encode(to encoder: Encoder) throws {}
 }
 
-struct StremioStream: Codable, Identifiable {
+struct StremioStream: Codable, Identifiable, Hashable {
     let id: String
 
     let url: String?
@@ -208,7 +373,7 @@ struct StremioStream: Codable, Identifiable {
     }
 }
 
-struct StremioStreamBehaviorHints: Codable {
+struct StremioStreamBehaviorHints: Codable, Hashable {
     let notWebReady: Bool?
     let bingeGroup: String?
     let proxyHeaders: StremioProxyHeaders?
@@ -234,11 +399,11 @@ struct StremioStreamBehaviorHints: Codable {
     }
 }
 
-struct StremioProxyHeaders: Codable {
+struct StremioProxyHeaders: Codable, Hashable {
     let request: [String: String]?
 }
 
-struct StremioSubtitle: Codable, Sendable {
+struct StremioSubtitle: Codable, Sendable, Hashable {
     let id: String?
     let url: String?
     let lang: String?

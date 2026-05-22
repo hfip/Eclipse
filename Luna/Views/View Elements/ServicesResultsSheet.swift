@@ -255,6 +255,27 @@ struct ModulesSearchResultsSheet: View {
         }
         return originalTMDBEpisodeNumber ?? (specialTitleOnlySearch ? nil : selectedEpisode?.episodeNumber)
     }
+
+    private var stremioLookupAniListId: Int? {
+        effectivePlaybackContext?.anilistMediaId
+    }
+
+    private var stremioCatalogTitleCandidates: [String] {
+        var candidates = titleRankingCandidates()
+        candidates.append(displayTitle)
+        if let fallbackAnimeSearchQuery {
+            candidates.append(fallbackAnimeSearchQuery)
+        }
+        if let episodeName = selectedEpisode?.name, !episodeName.isEmpty {
+            candidates.append("\(sheetTitleBaseForMatching) \(episodeName)")
+        }
+
+        var seen = Set<String>()
+        return candidates
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert(normalizeTitleForRanking($0)).inserted }
+    }
     
     private var searchStatusText: String {
         let anySearching = viewModel.isSearching || viewModel.isSearchingStremio
@@ -1506,55 +1527,38 @@ struct ModulesSearchResultsSheet: View {
             return nil
         }
 
-        let client = StremioClient.shared
         let type = isMovie ? "movie" : "series"
         let season = streamLookupSeasonNumber
         let episode = streamLookupEpisodeNumber
 
-        let contentIds = client.buildContentIds(
+        let streams = await stremioManager.fetchStreamsFromAddon(
+            addon,
             tmdbId: tmdbId,
             imdbId: imdbId,
             type: type,
             season: season,
             episode: episode,
-            addon: addon
+            anilistId: stremioLookupAniListId,
+            titleCandidates: stremioCatalogTitleCandidates
         )
 
-        guard !contentIds.isEmpty else {
-            viewModel.stremioResults[addon.id] = []
-            viewModel.stremioSearchedAddons.insert(addon.id)
+        viewModel.stremioResults[addon.id] = streams
+        viewModel.stremioSearchedAddons.insert(addon.id)
+
+        if let best = bestStremioStream(from: streams) {
+            return best
+        } else if streams.count > 1 {
+            let fallbackReason = AutoModeQualityPreference.current.usesAutomaticSelection ? "no quality label" : "auto quality disabled"
+            viewModel.stremioStreamOptions = streams
+            viewModel.selectedStremioAddon = addon
+            viewModel.pendingPlaybackAutoMode = true
+            viewModel.isFetchingStreams = false
+            viewModel.showingStremioStreamPicker = true
+            autoModeCancelled = true
+            Logger.shared.log("Auto Mode found \(streams.count) Stremio streams for \(addon.manifest.name) but \(fallbackReason); showing picker", type: "Stremio")
             return nil
         }
 
-        var collected: [StremioStream] = []
-        for contentId in contentIds {
-            do {
-                let streams = try await client.fetchStreams(baseURL: addon.configuredURL, type: type, id: contentId)
-                collected.append(contentsOf: streams)
-                if let best = bestStremioStream(from: streams) {
-                    viewModel.stremioResults[addon.id] = streams
-                    viewModel.stremioSearchedAddons.insert(addon.id)
-                    return best
-                } else if streams.count > 1 {
-                    let fallbackReason = AutoModeQualityPreference.current.usesAutomaticSelection ? "no quality label" : "auto quality disabled"
-                    viewModel.stremioResults[addon.id] = streams
-                    viewModel.stremioSearchedAddons.insert(addon.id)
-                    viewModel.stremioStreamOptions = streams
-                    viewModel.selectedStremioAddon = addon
-                    viewModel.pendingPlaybackAutoMode = true
-                    viewModel.isFetchingStreams = false
-                    viewModel.showingStremioStreamPicker = true
-                    autoModeCancelled = true
-                    Logger.shared.log("Auto Mode found \(streams.count) Stremio streams for \(addon.manifest.name) but \(fallbackReason); showing picker", type: "Stremio")
-                    return nil
-                }
-            } catch {
-                Logger.shared.log("Auto Mode Stremio failed for \(addon.manifest.name) id=\(contentId): \(error.localizedDescription)", type: "Stremio")
-            }
-        }
-
-        viewModel.stremioResults[addon.id] = collected
-        viewModel.stremioSearchedAddons.insert(addon.id)
         return nil
     }
 
@@ -1981,6 +1985,8 @@ struct ModulesSearchResultsSheet: View {
                 type: type,
                 season: season,
                 episode: episode,
+                anilistId: stremioLookupAniListId,
+                titleCandidates: stremioCatalogTitleCandidates,
                 onResult: { addon, streams in
                     Task { @MainActor in
                         self.viewModel.stremioResults[addon.id] = streams
