@@ -289,7 +289,7 @@ class StremioAddonManager: ObservableObject {
             expectedYear: expectedYear
         )
 
-        await Self.resolveStreamsForAddon(
+        return await Self.resolveStreamsForAddon(
             addon,
             client: StremioClient.shared,
             tmdbId: tmdbId,
