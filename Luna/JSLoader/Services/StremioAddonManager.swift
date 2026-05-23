@@ -203,7 +203,7 @@ class StremioAddonManager: ObservableObject {
         }
 
         let client = StremioClient.shared
-        let effectivePlaybackContext = await enrichedPlaybackContextForKitsuIfNeeded(
+        let effectivePlaybackContext = await Self.enrichedPlaybackContextForKitsuIfNeeded(
             playbackContext,
             addons: active,
             type: type,
