@@ -413,7 +413,7 @@ final class ProgressManager: ObservableObject {
             entry.totalDuration = times.totalDuration
             entry.lastUpdated = Date()
             entry.playbackContext = playbackContext
-            entry.isAnime = isAnime || playbackContext?.anilistMediaId != nil
+            entry.isAnime = isAnime || playbackContext?.hasAnimeMediaId == true
 
             if entry.progress >= 0.85 {
                 entry.isWatched = true
@@ -495,7 +495,7 @@ final class ProgressManager: ObservableObject {
             entry.currentTime = safeDuration
             entry.lastUpdated = Date()
             entry.playbackContext = playbackContext
-            entry.isAnime = isAnime || playbackContext?.anilistMediaId != nil
+            entry.isAnime = isAnime || playbackContext?.hasAnimeMediaId == true
             self.progressData.updateEpisode(entry)
             self.publishCurrentData()
             Logger.shared.log("Marked episode as watched: S\(seasonNumber)E\(episodeNumber)", type: "Progress")
@@ -544,7 +544,7 @@ final class ProgressManager: ObservableObject {
                 entry.currentTime = safeDuration
                 entry.lastUpdated = Date()
                 entry.playbackContext = playbackContext?.forEpisodeNumber(e)
-                entry.isAnime = isAnime || playbackContext?.anilistMediaId != nil
+                entry.isAnime = isAnime || playbackContext?.hasAnimeMediaId == true
                 self.progressData.updateEpisode(entry)
             }
             self.publishCurrentData()
@@ -558,7 +558,7 @@ final class ProgressManager: ObservableObject {
                     seasonNumber: seasonNumber,
                     episodeNumber: highestEpisode,
                     progress: 1.0,
-                    isAnime: isAnime || playbackContext?.anilistMediaId != nil,
+                    isAnime: isAnime || playbackContext?.hasAnimeMediaId == true,
                     playbackContext: playbackContext?.forEpisodeNumber(highestEpisode)
                 )
             }
@@ -655,7 +655,7 @@ final class ProgressManager: ObservableObject {
                     currentTime: episode.currentTime,
                     totalDuration: episode.totalDuration,
                     playbackContext: episode.playbackContext,
-                    isAnime: episode.isAnime == true || episode.playbackContext?.anilistMediaId != nil
+                    isAnime: episode.isAnime == true || episode.playbackContext?.hasAnimeMediaId == true
                 )
             }
             
@@ -772,7 +772,7 @@ final class ProgressManager: ObservableObject {
                     showTitle: showTitle,
                     showPosterURL: showPosterURL,
                     playbackContext: playbackContext?.forEpisodeNumber(episodeNumber),
-                    isAnime: isAnime || playbackContext?.anilistMediaId != nil
+                    isAnime: isAnime || playbackContext?.hasAnimeMediaId == true
                 )
             }
         }
@@ -786,6 +786,7 @@ struct EpisodePlaybackContext: Codable, Equatable {
     let localSeasonNumber: Int
     let localEpisodeNumber: Int
     let anilistMediaId: Int?
+    let kitsuMediaId: Int?
     let tmdbSeasonNumber: Int?
     let tmdbEpisodeNumber: Int?
     let tmdbEpisodeOffset: Int?
@@ -794,8 +795,38 @@ struct EpisodePlaybackContext: Codable, Equatable {
     let isSpecial: Bool
     let titleOnlySearch: Bool
 
+    init(
+        localSeasonNumber: Int,
+        localEpisodeNumber: Int,
+        anilistMediaId: Int?,
+        kitsuMediaId: Int? = nil,
+        tmdbSeasonNumber: Int?,
+        tmdbEpisodeNumber: Int?,
+        tmdbEpisodeOffset: Int?,
+        animeAbsoluteEpisodeNumber: Int?,
+        animeSeasonEpisodeCount: Int?,
+        isSpecial: Bool,
+        titleOnlySearch: Bool
+    ) {
+        self.localSeasonNumber = localSeasonNumber
+        self.localEpisodeNumber = localEpisodeNumber
+        self.anilistMediaId = anilistMediaId
+        self.kitsuMediaId = kitsuMediaId
+        self.tmdbSeasonNumber = tmdbSeasonNumber
+        self.tmdbEpisodeNumber = tmdbEpisodeNumber
+        self.tmdbEpisodeOffset = tmdbEpisodeOffset
+        self.animeAbsoluteEpisodeNumber = animeAbsoluteEpisodeNumber
+        self.animeSeasonEpisodeCount = animeSeasonEpisodeCount
+        self.isSpecial = isSpecial
+        self.titleOnlySearch = titleOnlySearch
+    }
+
     var resolvedTMDBSeasonNumber: Int? {
         tmdbSeasonNumber
+    }
+
+    var hasAnimeMediaId: Bool {
+        anilistMediaId != nil || kitsuMediaId != nil
     }
 
     var resolvedTMDBEpisodeNumber: Int? {
@@ -817,10 +848,27 @@ struct EpisodePlaybackContext: Codable, Equatable {
             localSeasonNumber: localSeasonNumber,
             localEpisodeNumber: episodeNumber,
             anilistMediaId: anilistMediaId,
+            kitsuMediaId: kitsuMediaId,
             tmdbSeasonNumber: tmdbSeasonNumber,
             tmdbEpisodeNumber: tmdbEpisodeOffset.map { $0 + episodeNumber } ?? tmdbEpisodeNumber,
             tmdbEpisodeOffset: tmdbEpisodeOffset,
             animeAbsoluteEpisodeNumber: absoluteEpisodeNumber,
+            animeSeasonEpisodeCount: animeSeasonEpisodeCount,
+            isSpecial: isSpecial,
+            titleOnlySearch: titleOnlySearch
+        )
+    }
+
+    func withKitsuMediaId(_ kitsuId: Int?) -> EpisodePlaybackContext {
+        EpisodePlaybackContext(
+            localSeasonNumber: localSeasonNumber,
+            localEpisodeNumber: localEpisodeNumber,
+            anilistMediaId: anilistMediaId,
+            kitsuMediaId: kitsuId ?? kitsuMediaId,
+            tmdbSeasonNumber: tmdbSeasonNumber,
+            tmdbEpisodeNumber: tmdbEpisodeNumber,
+            tmdbEpisodeOffset: tmdbEpisodeOffset,
+            animeAbsoluteEpisodeNumber: animeAbsoluteEpisodeNumber,
             animeSeasonEpisodeCount: animeSeasonEpisodeCount,
             isSpecial: isSpecial,
             titleOnlySearch: titleOnlySearch

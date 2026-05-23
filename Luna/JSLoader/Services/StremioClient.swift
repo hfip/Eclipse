@@ -250,7 +250,7 @@ final class StremioClient {
         ).first
     }
 
-    func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, anilistSeason: Int? = nil, anilistEpisode: Int? = nil, alternateSeason: Int? = nil, alternateEpisode: Int? = nil, idPrefixes: [String]?, addonName: String) -> String? {
+    func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, anilistSeason: Int? = nil, anilistEpisode: Int? = nil, kitsuId: Int? = nil, kitsuEpisode: Int? = nil, alternateSeason: Int? = nil, alternateEpisode: Int? = nil, idPrefixes: [String]?, addonName: String) -> String? {
         buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
@@ -260,6 +260,8 @@ final class StremioClient {
             anilistId: anilistId,
             anilistSeason: anilistSeason,
             anilistEpisode: anilistEpisode,
+            kitsuId: kitsuId,
+            kitsuEpisode: kitsuEpisode,
             alternateSeason: alternateSeason,
             alternateEpisode: alternateEpisode,
             idPrefixes: idPrefixes,
@@ -267,7 +269,7 @@ final class StremioClient {
         ).first
     }
 
-    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, anilistSeason: Int? = nil, anilistEpisode: Int? = nil, alternateSeason: Int? = nil, alternateEpisode: Int? = nil, addon: StremioAddon) -> [String] {
+    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, anilistSeason: Int? = nil, anilistEpisode: Int? = nil, kitsuId: Int? = nil, kitsuEpisode: Int? = nil, alternateSeason: Int? = nil, alternateEpisode: Int? = nil, addon: StremioAddon) -> [String] {
         buildContentIds(
             tmdbId: tmdbId,
             imdbId: imdbId,
@@ -277,6 +279,8 @@ final class StremioClient {
             anilistId: anilistId,
             anilistSeason: anilistSeason,
             anilistEpisode: anilistEpisode,
+            kitsuId: kitsuId,
+            kitsuEpisode: kitsuEpisode,
             alternateSeason: alternateSeason,
             alternateEpisode: alternateEpisode,
             idPrefixes: addon.manifest.streamIdPrefixes,
@@ -284,15 +288,16 @@ final class StremioClient {
         )
     }
 
-    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, anilistSeason: Int? = nil, anilistEpisode: Int? = nil, alternateSeason: Int? = nil, alternateEpisode: Int? = nil, idPrefixes: [String]?, addonName: String) -> [String] {
+    func buildContentIds(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, anilistId: Int? = nil, anilistSeason: Int? = nil, anilistEpisode: Int? = nil, kitsuId: Int? = nil, kitsuEpisode: Int? = nil, alternateSeason: Int? = nil, alternateEpisode: Int? = nil, idPrefixes: [String]?, addonName: String) -> [String] {
         let prefixes = idPrefixes ?? []
         let normalizedPrefixes = prefixes.map { $0.lowercased() }
         let supportsTMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tmdb" || $0.hasPrefix("tmdb:") }
         let supportsIMDB = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "tt" || $0.hasPrefix("tt") || $0 == "imdb" || $0 == "imdb:" }
         let supportsIMDBNamespace = normalizedPrefixes.contains { $0 == "imdb:" }
         let supportsAniList = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "anilist" || $0 == "anilist:" }
+        let supportsKitsu = normalizedPrefixes.isEmpty || normalizedPrefixes.contains { $0 == "kitsu" || $0 == "kitsu:" }
 
-        Logger.shared.log("Stremio: buildContentId addon=\(addonName) prefixes=\(prefixes) imdbId=\(imdbId ?? "nil") tmdbId=\(tmdbId) anilistId=\(anilistId?.description ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil") anilistS=\(anilistSeason?.description ?? "nil") anilistE=\(anilistEpisode?.description ?? "nil") altS=\(alternateSeason?.description ?? "nil") altE=\(alternateEpisode?.description ?? "nil")", type: "Stremio")
+        Logger.shared.log("Stremio: buildContentId addon=\(addonName) prefixes=\(prefixes) imdbId=\(imdbId ?? "nil") tmdbId=\(tmdbId) anilistId=\(anilistId?.description ?? "nil") kitsuId=\(kitsuId?.description ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil") anilistS=\(anilistSeason?.description ?? "nil") anilistE=\(anilistEpisode?.description ?? "nil") kitsuE=\(kitsuEpisode?.description ?? "nil") altS=\(alternateSeason?.description ?? "nil") altE=\(alternateEpisode?.description ?? "nil")", type: "Stremio")
         var candidates: [String] = []
         let seriesTuples = contentIdSeriesTuples(
             type: type,
@@ -344,6 +349,16 @@ final class StremioClient {
                 }
             } else {
                 candidates.append("anilist:\(anilistId)")
+            }
+        }
+
+        if supportsKitsu, let kitsuId, kitsuId > 0 {
+            if type == "series" {
+                if let kitsuEpisode, kitsuEpisode > 0 {
+                    candidates.append("kitsu:\(kitsuId):\(kitsuEpisode)")
+                }
+            } else {
+                candidates.append("kitsu:\(kitsuId)")
             }
         }
 

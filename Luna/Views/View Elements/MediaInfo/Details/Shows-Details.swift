@@ -99,6 +99,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     var animeSeasonTitles: [Int: String]? = nil
     var animeSeasonRomajiTitles: [Int: String] = [:]
     var animeSeasonAniListIds: [Int: Int] = [:]
+    var animeSeasonKitsuIds: [Int: Int] = [:]
     var showsMetadataDetails: Bool = true
     var showsInsertedContent: Bool = true
     let tmdbService: TMDBService
@@ -210,7 +211,10 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         }
         let absoluteEpisodeNumber = animeAbsoluteEpisodeNumber(for: episode)
 
-        guard aniEpisode != nil || absoluteEpisodeNumber != nil || animeSeasonAniListIds[episode.seasonNumber] != nil else {
+        guard aniEpisode != nil ||
+              absoluteEpisodeNumber != nil ||
+              animeSeasonAniListIds[episode.seasonNumber] != nil ||
+              animeSeasonKitsuIds[episode.seasonNumber] != nil else {
             return nil
         }
 
@@ -218,6 +222,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
             localSeasonNumber: episode.seasonNumber,
             localEpisodeNumber: episode.episodeNumber,
             anilistMediaId: animeSeasonAniListIds[episode.seasonNumber],
+            kitsuMediaId: animeSeasonKitsuIds[episode.seasonNumber],
             tmdbSeasonNumber: aniEpisode?.tmdbSeasonNumber,
             tmdbEpisodeNumber: aniEpisode?.tmdbEpisodeNumber,
             tmdbEpisodeOffset: nil,
@@ -713,7 +718,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 subtitles: subtitleArray,
                 mediaInfo: item.mediaInfo
             )
-            pvc.isAnimeHint = item.isAnime
+            pvc.isAnimeHint = item.isAnime || item.episodePlaybackContext?.hasAnimeMediaId == true
             pvc.episodePlaybackContext = item.episodePlaybackContext
             pvc.originalTMDBSeasonNumber = item.episodePlaybackContext?.resolvedTMDBSeasonNumber
             pvc.originalTMDBEpisodeNumber = item.episodePlaybackContext?.resolvedTMDBEpisodeNumber

@@ -235,6 +235,12 @@ struct ModulesSearchResultsSheet: View {
         return episodePlaybackContext?.forEpisodeNumber(selectedEpisode.episodeNumber)
     }
 
+    private var hasAnimeLookupContext: Bool {
+        isAnimeContent ||
+            animeSeasonTitle != nil ||
+            effectivePlaybackContext?.hasAnimeMediaId == true
+    }
+
     private var shouldSearchStremio: Bool {
         guard !isMovie,
               let context = effectivePlaybackContext,
@@ -1855,7 +1861,7 @@ struct ModulesSearchResultsSheet: View {
         }
         
         // Check if this search has explicit anime context for logging.
-        let isAnime = isAnimeContent || animeSeasonTitle != nil || effectivePlaybackContext?.anilistMediaId != nil
+        let isAnime = hasAnimeLookupContext
         
         // Build search query
         let searchQuery: String
@@ -2438,7 +2444,7 @@ struct ModulesSearchResultsSheet: View {
                 subtitleNames: subtitleNames,
                 retryCount: retryCount
             )
-            let resolvedAnimeHint = isAnimeContent || animeSeasonTitle != nil || effectivePlaybackContext?.anilistMediaId != nil
+            let resolvedAnimeHint = hasAnimeLookupContext
 
             if onResolvedPlaybackRequest != nil {
                 let request = PlayerResolvedPlaybackRequest(
@@ -2485,7 +2491,7 @@ struct ModulesSearchResultsSheet: View {
                     retryCount: retryCount
                 )
                 configurePlaybackRecovery(pvc, context: launchContext)
-                let isAnimeHint = isAnimeContent || animeSeasonTitle != nil || effectivePlaybackContext?.anilistMediaId != nil
+                let isAnimeHint = hasAnimeLookupContext
                 pvc.isAnimeHint = isAnimeHint
                 pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
                 pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber
@@ -2867,7 +2873,7 @@ struct ModulesSearchResultsSheet: View {
 
     private func findSingleSeasonAnimeEpisodeHref(seasons: [[EpisodeLink]], episodeNumber: Int) -> String? {
         guard effectivePlaybackContext?.isSpecial != true,
-              isAnimeContent || effectivePlaybackContext?.anilistMediaId != nil,
+              hasAnimeLookupContext,
               let seasonEpisodeCount = effectivePlaybackContext?.animeSeasonEpisodeCount,
               seasonEpisodeCount > 0 else {
             return nil
@@ -2922,7 +2928,7 @@ struct ModulesSearchResultsSheet: View {
             return true
         }
 
-        if isAnimeContent || effectivePlaybackContext?.anilistMediaId != nil {
+        if hasAnimeLookupContext {
             return seasonIndex <= 0
         }
 
@@ -3259,7 +3265,7 @@ struct ModulesSearchResultsSheet: View {
                 subtitleNames: nil,
                 retryCount: retryCount
             )
-            let resolvedAnimeHint = isAnimeContent || animeSeasonTitle != nil || effectivePlaybackContext?.anilistMediaId != nil
+            let resolvedAnimeHint = hasAnimeLookupContext
 
             if onResolvedPlaybackRequest != nil {
                 let request = PlayerResolvedPlaybackRequest(
@@ -3314,7 +3320,7 @@ struct ModulesSearchResultsSheet: View {
                     retryCount: retryCount
                 )
                 configurePlaybackRecovery(pvc, context: launchContext)
-                let isAnimeHint = isAnimeContent || animeSeasonTitle != nil || effectivePlaybackContext?.anilistMediaId != nil
+                let isAnimeHint = hasAnimeLookupContext
                 pvc.isAnimeHint = isAnimeHint
                 pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
                 pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber
@@ -3385,7 +3391,7 @@ struct ModulesSearchResultsSheet: View {
                     retryCount: retryCount
                 )
                 configurePlaybackRecovery(pvc, context: launchContext)
-                let isAnimeHint = isAnimeContent || animeSeasonTitle != nil || effectivePlaybackContext?.anilistMediaId != nil
+                let isAnimeHint = hasAnimeLookupContext
                 pvc.isAnimeHint = isAnimeHint
                 pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
                 pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber

@@ -3375,7 +3375,7 @@ final class TrackerManager: NSObject, ObservableObject {
         let eligible = ProgressManager.shared.getProgressData().episodeProgress
             .filter {
                 ($0.isWatched || $0.progress >= 0.85) &&
-                ($0.isAnime == true || $0.playbackContext?.anilistMediaId != nil)
+                ($0.isAnime == true || $0.playbackContext?.hasAnimeMediaId == true)
             }
 
         var bestBySeason: [String: EpisodeProgressEntry] = [:]

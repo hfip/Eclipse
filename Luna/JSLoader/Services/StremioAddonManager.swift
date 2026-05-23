@@ -344,12 +344,16 @@ class StremioAddonManager: ObservableObject {
             anilistId: anilistId,
             anilistSeason: animeLocalStremioSeason(from: playbackContext),
             anilistEpisode: animeLocalStremioEpisode(from: playbackContext),
+            kitsuId: playbackContext?.kitsuMediaId,
+            kitsuEpisode: animeLocalKitsuEpisode(from: playbackContext),
             alternateSeason: animeLocalSeriesSeason(from: playbackContext),
             alternateEpisode: animeLocalSeriesEpisode(from: playbackContext),
             addon: addon
         )
 
         var lastError: Error?
+        var directStreams: [StremioStream] = []
+        var directHitCount = 0
         for contentId in contentIds {
             Logger.shared.log("Stremio: \(addon.manifest.name) requesting streams with contentId='\(contentId)'", type: "Stremio")
 
@@ -361,12 +365,19 @@ class StremioAddonManager: ObservableObject {
                 )
                 Logger.shared.log("Stremio: \(addon.manifest.name) returned \(streams.count) stream(s) for '\(contentId)'", type: "Stremio")
                 if !streams.isEmpty {
-                    return streams
+                    directHitCount += 1
+                    directStreams.append(contentsOf: streams)
                 }
             } catch {
                 lastError = error
                 Logger.shared.log("Stremio: \(addon.manifest.name) FAILED with id '\(contentId)': \(error.localizedDescription)", type: "Stremio")
             }
+        }
+
+        let dedupedDirectStreams = dedupeStreams(directStreams)
+        if !dedupedDirectStreams.isEmpty {
+            Logger.shared.log("Stremio: \(addon.manifest.name) merged \(dedupedDirectStreams.count) stream(s) from \(directHitCount) direct content ID(s)", type: "Stremio")
+            return dedupedDirectStreams
         }
 
         if contentIds.isEmpty {
@@ -558,15 +569,23 @@ class StremioAddonManager: ObservableObject {
                 candidates.append(videoId)
             }
             candidates.append(contentsOf: autoEpisodeMatches(videos: meta.videos ?? [], playbackContext: playbackContext).map(\.id))
-            candidates.append("\(meta.id):\(season):\(episode)")
-            if let localSeason = animeLocalSeriesSeason(from: playbackContext),
-               let localEpisode = animeLocalSeriesEpisode(from: playbackContext) {
-                candidates.append("\(meta.id):\(localSeason):\(localEpisode)")
-            }
-            if shouldTrySeasonScopedAnimeMetaId(meta.id, playbackContext: playbackContext),
-               let localSeason = animeLocalStremioSeason(from: playbackContext),
-               let localEpisode = animeLocalStremioEpisode(from: playbackContext) {
-                candidates.append("\(meta.id):\(localSeason):\(localEpisode)")
+            if isKitsuMetaId(meta.id) {
+                if let localEpisode = animeLocalKitsuEpisode(from: playbackContext) {
+                    candidates.append(kitsuStreamId(from: meta.id, episode: localEpisode))
+                } else if episode > 0 {
+                    candidates.append(kitsuStreamId(from: meta.id, episode: episode))
+                }
+            } else {
+                candidates.append("\(meta.id):\(season):\(episode)")
+                if let localSeason = animeLocalSeriesSeason(from: playbackContext),
+                   let localEpisode = animeLocalSeriesEpisode(from: playbackContext) {
+                    candidates.append("\(meta.id):\(localSeason):\(localEpisode)")
+                }
+                if shouldTrySeasonScopedAnimeMetaId(meta.id, playbackContext: playbackContext),
+                   let localSeason = animeLocalStremioSeason(from: playbackContext),
+                   let localEpisode = animeLocalStremioEpisode(from: playbackContext) {
+                    candidates.append("\(meta.id):\(localSeason):\(localEpisode)")
+                }
             }
         } else if requestedType == "movie" {
             candidates.append(meta.id)
@@ -604,6 +623,17 @@ class StremioAddonManager: ObservableObject {
         return context.localEpisodeNumber
     }
 
+    private static func animeLocalKitsuEpisode(from context: EpisodePlaybackContext?) -> Int? {
+        guard let context,
+              !context.isSpecial,
+              !context.titleOnlySearch,
+              context.kitsuMediaId != nil,
+              context.localEpisodeNumber > 0 else {
+            return nil
+        }
+        return context.localEpisodeNumber
+    }
+
     private static func animeLocalSeriesSeason(from context: EpisodePlaybackContext?) -> Int? {
         guard let context,
               !context.isSpecial,
@@ -631,7 +661,22 @@ class StremioAddonManager: ObservableObject {
         let lowercased = metaId.lowercased()
         return !lowercased.hasPrefix("tt") &&
             !lowercased.hasPrefix("imdb:") &&
-            !lowercased.hasPrefix("tmdb:")
+            !lowercased.hasPrefix("tmdb:") &&
+            !lowercased.hasPrefix("kitsu:")
+    }
+
+    private static func isKitsuMetaId(_ metaId: String) -> Bool {
+        metaId.lowercased().hasPrefix("kitsu:")
+    }
+
+    private static func kitsuStreamId(from metaId: String, episode: Int) -> String {
+        let parts = metaId.split(separator: ":", omittingEmptySubsequences: false)
+        if parts.count >= 3,
+           let last = parts.last,
+           Int(last) != nil {
+            return metaId
+        }
+        return "\(metaId):\(episode)"
     }
 
     private static func autoEpisodeMatches(videos: [StremioVideo], playbackContext: EpisodePlaybackContext?) -> [StremioVideo] {

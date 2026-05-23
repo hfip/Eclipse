@@ -978,6 +978,7 @@ final class AniListService {
                 media(search: "\(title.replacingOccurrences(of: "\"", with: "\\\""))", type: ANIME, sort: POPULARITY_DESC) {
                     id
                     idMal
+                    externalLinks { site siteId url }
                     averageScore
                     title {
                         romaji
@@ -1003,6 +1004,7 @@ final class AniListService {
                             node {
                                 id
                                 idMal
+                                externalLinks { site siteId url }
                                 averageScore
                                 title {
                                     romaji
@@ -1025,6 +1027,7 @@ final class AniListService {
                                         node {
                                             id
                                             idMal
+                                            externalLinks { site siteId url }
                                             averageScore
                                             title { romaji english native }
                                             episodes
@@ -1201,6 +1204,7 @@ final class AniListService {
                         media(search: "\(searchTitle.replacingOccurrences(of: "\"", with: "\\\""))", type: ANIME, sort: POPULARITY_DESC) {
                             id
                             idMal
+                            externalLinks { site siteId url }
                             averageScore
                             title { romaji english native }
                             episodes
@@ -1502,6 +1506,7 @@ final class AniListService {
             seasons.append(AniListSeasonWithPoster(
                 seasonNumber: seasonIndex,
                 anilistId: currentAnime.id,
+                kitsuId: currentAnime.kitsuId,
                 title: seasonTitle,
                 englishTitle: currentAnime.title.english.map(AniListTitlePicker.cleanedTitle),
                 romajiTitle: currentAnime.title.romaji.map(AniListTitlePicker.cleanedTitle),
@@ -2664,6 +2669,7 @@ final class AniListService {
         let fragment = """
             id
             idMal
+            externalLinks { site siteId url }
             averageScore
             title { romaji english native }
             episodes
@@ -2722,6 +2728,7 @@ final class AniListService {
         let fragment = """
             id
             idMal
+            externalLinks { site siteId url }
             title { romaji english native }
             episodes
             status
@@ -2736,6 +2743,7 @@ final class AniListService {
                     node {
                         id
                         idMal
+                        externalLinks { site siteId url }
                         averageScore
                         title { romaji english native }
                         episodes
@@ -2752,6 +2760,7 @@ final class AniListService {
                                 node {
                                     id
                                     idMal
+                                    externalLinks { site siteId url }
                                     averageScore
                                     title { romaji english native }
                                     episodes
@@ -2804,6 +2813,7 @@ final class AniListService {
         query {
             Media(id: \(id), type: ANIME) {
                 id
+                externalLinks { site siteId url }
                 title { romaji english native }
                 episodes
                 status
@@ -2818,6 +2828,7 @@ final class AniListService {
                         relationType
                         node {
                             id
+                            externalLinks { site siteId url }
                             title { romaji english native }
                             episodes
                             status
@@ -2885,6 +2896,7 @@ struct AniListAiringScheduleEntry: Identifiable, Codable {
 struct AniListSeasonWithPoster: Codable {
     let seasonNumber: Int
     let anilistId: Int             // AniList anime ID for this specific season
+    let kitsuId: Int?              // Kitsu anime ID for Stremio anime catalogs, when AniList exposes it
     let title: String              // Full AniList title for this season (e.g., "SPYÃ—FAMILY Season 2")
     let englishTitle: String?
     let romajiTitle: String?
@@ -3044,6 +3056,7 @@ struct AniListDate: Codable {
 struct AniListAnime: Codable {
     let id: Int
     let idMal: Int?
+    let externalLinks: [AniListExternalLink]?
     let averageScore: Int?
     let title: AniListTitle
     let episodes: Int?
@@ -3056,6 +3069,10 @@ struct AniListAnime: Codable {
     let type: String?
     let nextAiringEpisode: AniListNextAiringEpisode?
     let relations: AniListRelations?
+
+    var kitsuId: Int? {
+        Self.kitsuId(from: externalLinks)
+    }
 
     struct AniListTitle: Codable {
         let romaji: String?
@@ -3085,6 +3102,7 @@ struct AniListAnime: Codable {
     struct AniListRelationNode: Codable {
         let id: Int
         let idMal: Int?
+        let externalLinks: [AniListExternalLink]?
         let averageScore: Int?
         let title: AniListTitle
         let episodes: Int?
@@ -3101,6 +3119,7 @@ struct AniListAnime: Codable {
             return AniListAnime(
                 id: id,
                 idMal: idMal,
+                externalLinks: externalLinks,
                 averageScore: averageScore,
                 title: title,
                 episodes: episodes,
@@ -3114,6 +3133,82 @@ struct AniListAnime: Codable {
                 nextAiringEpisode: nil,
                 relations: relations
             )
+        }
+    }
+
+    private static func kitsuId(from links: [AniListExternalLink]?) -> Int? {
+        guard let links else { return nil }
+
+        for link in links where link.looksLikeKitsu {
+            if let siteId = link.siteId, siteId > 0 {
+                return siteId
+            }
+            if let parsedId = link.numericKitsuIdFromURL {
+                return parsedId
+            }
+        }
+
+        return nil
+    }
+}
+
+struct AniListExternalLink: Codable {
+    let site: String?
+    let siteId: Int?
+    let url: String?
+
+    var looksLikeKitsu: Bool {
+        if site?.localizedCaseInsensitiveContains("kitsu") == true {
+            return true
+        }
+        guard let host = URL(string: url ?? "")?.host?.lowercased() else {
+            return false
+        }
+        return host.contains("kitsu")
+    }
+
+    var numericKitsuIdFromURL: Int? {
+        guard looksLikeKitsu,
+              let url,
+              let components = URLComponents(string: url) else {
+            return nil
+        }
+
+        if let queryId = components.queryItems?.first(where: { $0.name.caseInsensitiveCompare("id") == .orderedSame })?.value,
+           let value = Int(queryId), value > 0 {
+            return value
+        }
+
+        for segment in components.path.split(separator: "/").reversed() {
+            if let value = Int(segment), value > 0 {
+                return value
+            }
+
+            let prefix = segment.prefix { $0.isNumber }
+            if let value = Int(prefix), value > 0 {
+                return value
+            }
+        }
+
+        return nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case site, siteId, url
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        site = try? container.decodeIfPresent(String.self, forKey: .site)
+        url = try? container.decodeIfPresent(String.self, forKey: .url)
+
+        if let intSiteId = try? container.decodeIfPresent(Int.self, forKey: .siteId) {
+            siteId = intSiteId
+        } else if let stringSiteId = try? container.decodeIfPresent(String.self, forKey: .siteId),
+                  let parsed = Int(stringSiteId) {
+            siteId = parsed
+        } else {
+            siteId = nil
         }
     }
 }
@@ -3352,6 +3447,7 @@ private final class MALMetadataService {
             seasons.append(AniListSeasonWithPoster(
                 seasonNumber: seasonNumber,
                 anilistId: malProviderId(detail.id),
+                kitsuId: nil,
                 title: seasonTitle,
                 englishTitle: detail.alternativeTitles?.en,
                 romajiTitle: detail.title,

@@ -4445,7 +4445,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func isAnimeContent() -> Bool {
         if let hint = isAnimeHint, hint == true { return true }
-        if episodePlaybackContext?.anilistMediaId != nil { return true }
+        if episodePlaybackContext?.hasAnimeMediaId == true { return true }
         guard let info = mediaInfo else { return false }
         switch info {
         case .movie(_, _, _, let isAnime):
@@ -7405,7 +7405,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 showTitle: showTitle,
                 showPosterURL: showPosterURL,
                 playbackContext: episodePlaybackContext?.forEpisodeNumber(episodeNumber),
-                isAnime: isAnime || episodePlaybackContext?.anilistMediaId != nil
+                isAnime: isAnime || episodePlaybackContext?.hasAnimeMediaId == true
             )
         }
     }
@@ -7735,6 +7735,7 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
                     localSeasonNumber: season.seasonNumber,
                     localEpisodeNumber: aniEpisode.number,
                     anilistMediaId: season.anilistId,
+                    kitsuMediaId: season.kitsuId,
                     tmdbSeasonNumber: aniEpisode.tmdbSeasonNumber,
                     tmdbEpisodeNumber: aniEpisode.tmdbEpisodeNumber,
                     tmdbEpisodeOffset: nil,
