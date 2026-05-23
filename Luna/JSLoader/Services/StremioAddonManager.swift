@@ -203,6 +203,13 @@ class StremioAddonManager: ObservableObject {
         }
 
         let client = StremioClient.shared
+        let effectivePlaybackContext = await enrichedPlaybackContextForKitsuIfNeeded(
+            playbackContext,
+            addons: active,
+            type: type,
+            titleCandidates: titleCandidates,
+            expectedYear: expectedYear
+        )
         let maxConcurrent = 2
 
         await withTaskGroup(of: (StremioAddon, [StremioStream])?.self) { group in
@@ -221,7 +228,7 @@ class StremioAddonManager: ObservableObject {
                         season: season,
                         episode: episode,
                         anilistId: anilistId,
-                        playbackContext: playbackContext,
+                        playbackContext: effectivePlaybackContext,
                         titleCandidates: titleCandidates,
                         expectedYear: expectedYear
                     )
@@ -249,7 +256,7 @@ class StremioAddonManager: ObservableObject {
                             season: season,
                             episode: episode,
                             anilistId: anilistId,
-                            playbackContext: playbackContext,
+                            playbackContext: effectivePlaybackContext,
                             titleCandidates: titleCandidates,
                             expectedYear: expectedYear
                         )
@@ -274,6 +281,14 @@ class StremioAddonManager: ObservableObject {
         titleCandidates: [String] = [],
         expectedYear: Int? = nil
     ) async -> [StremioStream] {
+        let effectivePlaybackContext = await Self.enrichedPlaybackContextForKitsuIfNeeded(
+            playbackContext,
+            addons: [addon],
+            type: type,
+            titleCandidates: titleCandidates,
+            expectedYear: expectedYear
+        )
+
         await Self.resolveStreamsForAddon(
             addon,
             client: StremioClient.shared,
@@ -283,7 +298,7 @@ class StremioAddonManager: ObservableObject {
             season: season,
             episode: episode,
             anilistId: anilistId,
-            playbackContext: playbackContext,
+            playbackContext: effectivePlaybackContext,
             titleCandidates: titleCandidates,
             expectedYear: expectedYear
         )
@@ -318,6 +333,49 @@ class StremioAddonManager: ObservableObject {
             expectedYear: expectedYear
         )
         return (addon, streams)
+    }
+
+    private static func enrichedPlaybackContextForKitsuIfNeeded(
+        _ playbackContext: EpisodePlaybackContext?,
+        addons: [StremioAddon],
+        type: String,
+        titleCandidates: [String],
+        expectedYear: Int?
+    ) async -> EpisodePlaybackContext? {
+        guard type == "series",
+              let playbackContext,
+              playbackContext.kitsuMediaId == nil,
+              playbackContext.anilistMediaId != nil,
+              !playbackContext.isSpecial,
+              !playbackContext.titleOnlySearch,
+              addons.contains(where: supportsKitsuContentIds),
+              !titleCandidates.isEmpty else {
+            return playbackContext
+        }
+
+        let kitsuId = await KitsuAnimeIDLookup.shared.resolveAnimeId(
+            titleCandidates: titleCandidates,
+            expectedEpisodeCount: playbackContext.animeSeasonEpisodeCount,
+            expectedYear: expectedYear,
+            cacheHint: playbackContext.anilistMediaId
+        )
+
+        guard let kitsuId else {
+            Logger.shared.log("Stremio: Kitsu lookup found no safe match for AniList \(playbackContext.anilistMediaId?.description ?? "nil")", type: "Stremio")
+            return playbackContext
+        }
+
+        Logger.shared.log("Stremio: Kitsu lookup resolved AniList \(playbackContext.anilistMediaId?.description ?? "nil") to kitsu:\(kitsuId)", type: "Stremio")
+        return playbackContext.withKitsuMediaId(kitsuId)
+    }
+
+    private static func supportsKitsuContentIds(_ addon: StremioAddon) -> Bool {
+        let prefixes = addon.manifest.streamIdPrefixes ?? []
+        guard !prefixes.isEmpty else { return true }
+        return prefixes.contains { prefix in
+            let lowercased = prefix.lowercased()
+            return lowercased == "kitsu" || lowercased == "kitsu:"
+        }
     }
 
     private static func resolveStreamsForAddon(
@@ -827,6 +885,259 @@ class StremioAddonManager: ObservableObject {
             switch self {
             case .noStreamSupport: return "This addon does not support streams"
             case .alreadyExists: return "This addon is already installed"
+            }
+        }
+    }
+}
+
+private actor KitsuAnimeIDLookup {
+    static let shared = KitsuAnimeIDLookup()
+
+    private let endpoint = URL(string: "https://kitsu.io/api/edge/anime")!
+    private var positiveCacheByHint: [Int: Int] = [:]
+    private var queryCache: [String: Int?] = [:]
+    private var nextAvailableAt = Date.distantPast
+    private let minimumSpacing: TimeInterval = 0.4
+
+    func resolveAnimeId(
+        titleCandidates: [String],
+        expectedEpisodeCount: Int?,
+        expectedYear: Int?,
+        cacheHint: Int?
+    ) async -> Int? {
+        if let cacheHint, let cached = positiveCacheByHint[cacheHint] {
+            return cached
+        }
+
+        let queries = searchQueries(from: titleCandidates).prefix(5)
+        guard !queries.isEmpty else { return nil }
+
+        for query in queries {
+            let cacheKey = "\(normalizedTitle(query))|\(expectedEpisodeCount?.description ?? "-")|\(expectedYear?.description ?? "-")"
+            if let cached = queryCache[cacheKey] {
+                if let cacheHint, let cached {
+                    positiveCacheByHint[cacheHint] = cached
+                }
+                return cached
+            }
+
+            guard let response = await fetchKitsuSearch(query: query) else {
+                continue
+            }
+
+            if let match = bestMatch(
+                in: response.data,
+                titleCandidates: titleCandidates,
+                expectedEpisodeCount: expectedEpisodeCount,
+                expectedYear: expectedYear
+            ) {
+                queryCache[cacheKey] = match.id
+                if let cacheHint {
+                    positiveCacheByHint[cacheHint] = match.id
+                }
+                Logger.shared.log("Stremio: Kitsu title lookup matched id=\(match.id) title='\(match.title)' score=\(String(format: "%.2f", match.score)) query='\(query)'", type: "Stremio")
+                return match.id
+            }
+
+            queryCache[cacheKey] = nil
+        }
+
+        return nil
+    }
+
+    private func fetchKitsuSearch(query: String) async -> KitsuSearchResponse? {
+        await waitForSlot()
+
+        guard var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.queryItems = [
+            URLQueryItem(name: "filter[text]", value: query),
+            URLQueryItem(name: "page[limit]", value: "5"),
+            URLQueryItem(name: "fields[anime]", value: "slug,canonicalTitle,titles,startDate,episodeCount")
+        ]
+
+        guard let url = components.url else { return nil }
+
+        do {
+            var request = URLRequest(url: url, timeoutInterval: 5.0)
+            request.setValue("application/vnd.api+json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { return nil }
+
+            if httpResponse.statusCode == 429 {
+                pauseUntilRetryAfter(httpResponse)
+                Logger.shared.log("Stremio: Kitsu title lookup rate limited", type: "Stremio")
+                return nil
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                Logger.shared.log("Stremio: Kitsu title lookup failed status=\(httpResponse.statusCode) query='\(query)'", type: "Stremio")
+                return nil
+            }
+
+            return try JSONDecoder().decode(KitsuSearchResponse.self, from: data)
+        } catch {
+            Logger.shared.log("Stremio: Kitsu title lookup failed query='\(query)' error=\(error.localizedDescription)", type: "Stremio")
+            return nil
+        }
+    }
+
+    private func waitForSlot() async {
+        let now = Date()
+        if nextAvailableAt > now {
+            let delay = nextAvailableAt.timeIntervalSince(now)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+        nextAvailableAt = Date().addingTimeInterval(minimumSpacing)
+    }
+
+    private func pauseUntilRetryAfter(_ response: HTTPURLResponse) {
+        let retryAfter = response.value(forHTTPHeaderField: "Retry-After")
+            .flatMap(TimeInterval.init) ?? 5
+        nextAvailableAt = max(nextAvailableAt, Date().addingTimeInterval(min(max(retryAfter, 1), 120)))
+    }
+
+    private func bestMatch(
+        in items: [KitsuAnime],
+        titleCandidates: [String],
+        expectedEpisodeCount: Int?,
+        expectedYear: Int?
+    ) -> (id: Int, title: String, score: Double)? {
+        items.compactMap { item -> (id: Int, title: String, score: Double)? in
+            guard let id = Int(item.id), id > 0 else { return nil }
+            let titles = item.attributes.matchableTitles
+            guard !titles.isEmpty else { return nil }
+
+            let titleScore = titleCandidates
+                .flatMap { candidate in titles.map { titleSimilarity(expected: candidate, result: $0) } }
+                .max() ?? 0
+            guard titleScore >= 0.82 else { return nil }
+
+            var score = titleScore
+            if let expectedEpisodeCount,
+               expectedEpisodeCount > 0,
+               let actualEpisodeCount = item.attributes.episodeCount,
+               actualEpisodeCount > 0 {
+                let distance = abs(actualEpisodeCount - expectedEpisodeCount)
+                if distance == 0 {
+                    score += 0.08
+                } else if distance == 1 {
+                    score += 0.03
+                } else if distance > max(2, expectedEpisodeCount / 4) {
+                    score -= 0.12
+                }
+            }
+
+            if let expectedYear,
+               let startDate = item.attributes.startDate,
+               let actualYear = Int(startDate.prefix(4)) {
+                let distance = abs(actualYear - expectedYear)
+                if distance == 0 {
+                    score += 0.05
+                } else if distance > 2 {
+                    score -= 0.08
+                }
+            }
+
+            guard score >= 0.84 else { return nil }
+            return (id, item.attributes.displayTitle, min(score, 1))
+        }
+        .sorted { lhs, rhs in
+            if abs(lhs.score - rhs.score) > 0.0001 {
+                return lhs.score > rhs.score
+            }
+            return lhs.title.count < rhs.title.count
+        }
+        .first
+    }
+
+    private func searchQueries(from values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values
+            .map { stripEpisodeSuffix(from: $0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert(normalizedTitle($0)).inserted }
+    }
+
+    private func titleSimilarity(expected: String, result: String) -> Double {
+        let expectedCanonical = normalizedTitle(expected)
+        let resultCanonical = normalizedTitle(result)
+        guard !expectedCanonical.isEmpty, !resultCanonical.isEmpty else { return 0 }
+
+        let raw = HybridSimilarity.calculateSimilarity(original: expected, result: result)
+        let canonical = HybridSimilarity.calculateSimilarity(original: expectedCanonical, result: resultCanonical)
+        let token = tokenOverlapScore(expectedCanonical, resultCanonical)
+
+        var score = max(raw, canonical) * 0.68 + token * 0.32
+        if expectedCanonical == resultCanonical {
+            score += 0.12
+        } else if expectedCanonical.contains(resultCanonical) || resultCanonical.contains(expectedCanonical) {
+            score += 0.05
+        }
+        return min(max(score, 0), 1)
+    }
+
+    private func normalizedTitle(_ title: String) -> String {
+        title
+            .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func stripEpisodeSuffix(from title: String) -> String {
+        let patterns = [
+            #"(?i)\s*-\s*S\d{1,3}E\d{1,4}$"#,
+            #"(?i)\s*S\d{1,3}E\d{1,4}$"#,
+            #"(?i)\s*-\s*E\d{1,4}$"#,
+            #"(?i)\s*E\d{1,4}$"#,
+            #"(?i)\s*episode\s+\d{1,4}$"#
+        ]
+
+        var stripped = title
+        for pattern in patterns {
+            if let range = stripped.range(of: pattern, options: .regularExpression) {
+                stripped.removeSubrange(range)
+                break
+            }
+        }
+        return stripped
+    }
+
+    private func tokenOverlapScore(_ lhs: String, _ rhs: String) -> Double {
+        let ignored: Set<String> = ["a", "an", "and", "the", "of", "to", "in", "on", "tv", "series", "episode"]
+        let lhsTokens = Set(lhs.split(separator: " ").map(String.init).filter { $0.count > 1 && !ignored.contains($0) })
+        let rhsTokens = Set(rhs.split(separator: " ").map(String.init).filter { $0.count > 1 && !ignored.contains($0) })
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
+        return Double(lhsTokens.intersection(rhsTokens).count) / Double(max(lhsTokens.count, rhsTokens.count))
+    }
+
+    private struct KitsuSearchResponse: Decodable {
+        let data: [KitsuAnime]
+    }
+
+    private struct KitsuAnime: Decodable {
+        let id: String
+        let attributes: Attributes
+
+        struct Attributes: Decodable {
+            let slug: String?
+            let canonicalTitle: String?
+            let titles: [String: String?]?
+            let startDate: String?
+            let episodeCount: Int?
+
+            var displayTitle: String {
+                canonicalTitle ?? titles?.values.compactMap { $0 }.first ?? slug ?? "unknown"
+            }
+
+            var matchableTitles: [String] {
+                var seen = Set<String>()
+                return ([canonicalTitle, slug] + (titles?.values.compactMap { $0 }.map(Optional.some) ?? []))
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .filter { seen.insert($0.lowercased()).inserted }
             }
         }
     }

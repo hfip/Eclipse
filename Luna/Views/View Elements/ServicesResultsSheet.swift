@@ -269,7 +269,13 @@ struct ModulesSearchResultsSheet: View {
     }
 
     private var stremioCatalogTitleCandidates: [String] {
-        var candidates = titleRankingCandidates()
+        var candidates: [String] = []
+        if hasAnimeLookupContext,
+           let originalTitle,
+           !originalTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            candidates.append(originalTitle)
+        }
+        candidates.append(contentsOf: titleRankingCandidates())
         candidates.append(displayTitle)
         if let fallbackAnimeSearchQuery {
             candidates.append(fallbackAnimeSearchQuery)
