@@ -704,7 +704,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private let doubleTapSeekEnabledKey = "vlcDoubleTapSeekEnabled"
     private let playerSeekSecondsKey = "vlcDoubleTapSeekSeconds"
     private let playerPerformanceOverlayKey = "playerPerformanceOverlayEnabled"
-    private let brightnessLevelKey = "mpvBrightnessLevel"
     
     private lazy var renderer: PlayerRenderer = {
         let requestedPlayerChoice = Settings.shared.playerChoice
@@ -3264,13 +3263,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
 #if !os(tvOS)
     private func loadBrightnessLevel() {
-        if UserDefaults.standard.object(forKey: brightnessLevelKey) == nil {
-            UserDefaults.standard.set(Float(UIScreen.main.brightness), forKey: brightnessLevelKey)
-        }
-        let stored = UserDefaults.standard.float(forKey: brightnessLevelKey)
-        brightnessLevel = max(0.0, min(stored, 1.0))
+        let current = Float(UIScreen.main.brightness)
+        brightnessLevel = max(0.0, min(current, 1.0))
         brightnessSlider.value = brightnessLevel
-        applyBrightnessLevel(brightnessLevel)
     }
 
     private func setupBrightnessObservation() {
@@ -3295,7 +3290,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if isClosing { return }
         let clamped = max(0.0, min(value, 1.0))
         brightnessLevel = clamped
-        UserDefaults.standard.set(clamped, forKey: brightnessLevelKey)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.isClosing { return }
@@ -3393,7 +3387,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let brightness = max(0.0, min(Float(UIScreen.main.brightness), 1.0))
         brightnessLevel = brightness
-        UserDefaults.standard.set(brightness, forKey: brightnessLevelKey)
         brightnessSlider.setValue(brightness, animated: animated)
 
         var volume = AVAudioSession.sharedInstance().outputVolume
