@@ -22,12 +22,12 @@
       "category": "entertainment",
       "versions": [
         {
-          "version": "1.0.7",
-          "buildVersion": "7",
-          "marketingVersion": "1.0.7",
+          "version": "1.0.8",
+          "buildVersion": "8",
+          "marketingVersion": "1.0.8",
           "date": "2026-05-23",
-          "localizedDescription": "Internal version bump for Eclipse 1.0.7.",
-          "downloadURL": "https://github.com/Soupy-dev/Eclipse/releases/download/v1.0.7/Eclipse.ipa",
+          "localizedDescription": "Internal version bump for Eclipse 1.0.8.",
+          "downloadURL": "https://github.com/Soupy-dev/Eclipse/releases/download/v1.0.8/Eclipse.ipa",
           "size": 65433540,
           "minOSVersion": "15.0"
         }

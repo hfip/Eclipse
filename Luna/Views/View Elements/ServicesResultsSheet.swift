@@ -1322,6 +1322,14 @@ struct ModulesSearchResultsSheet: View {
         autoModeOnly && !showManualPicker
     }
 
+    private var shouldForceAutoResolutionForDownload: Bool {
+        downloadMode && autoModeOnly && !showManualPicker
+    }
+
+    private var shouldUseAutomaticResolution: Bool {
+        viewModel.pendingPlaybackAutoMode || shouldForceAutoResolutionForDownload
+    }
+
     @MainActor
     private func finishResolvedPlayback(_ request: PlayerResolvedPlaybackRequest) {
         guard let onResolvedPlaybackRequest else { return }
@@ -1607,7 +1615,7 @@ struct ModulesSearchResultsSheet: View {
 
     @MainActor
     private func cancelPendingAutoModeChoice(_ message: String) {
-        let wasAutoModeChoice = viewModel.pendingPlaybackAutoMode
+        let wasAutoModeChoice = shouldUseAutomaticResolution
         viewModel.resetPickerState()
         viewModel.resetStreamState()
         viewModel.subtitleOptions = []
@@ -2728,7 +2736,7 @@ struct ModulesSearchResultsSheet: View {
         viewModel.isFetchingStreams = true
         viewModel.currentFetchingTitle = result.title
         viewModel.streamFetchProgress = "Initializing..."
-        viewModel.pendingPlaybackAutoMode = autoModeLaunch
+        viewModel.pendingPlaybackAutoMode = autoModeLaunch || shouldForceAutoResolutionForDownload
         viewModel.pendingPlaybackRetryCount = retryCount
         
         guard let service = serviceManager.activeServices.first(where: { service in
@@ -2793,7 +2801,7 @@ struct ModulesSearchResultsSheet: View {
             seasonIndex: targetSeasonIndex,
             episodeNumber: targetEpisodeNumber,
             bundledEpisodeNumbers: bundledEpisodeNumbers,
-            allowAutomaticEpisodeResolution: viewModel.pendingPlaybackAutoMode
+            allowAutomaticEpisodeResolution: shouldUseAutomaticResolution
         ) {
             viewModel.streamFetchProgress = "Found episode, fetching stream..."
             fetchFinalStream(href: targetHref, jsController: jsController, service: service)
@@ -2834,7 +2842,7 @@ struct ModulesSearchResultsSheet: View {
         }
 
         guard allowAutomaticEpisodeResolution else {
-            Logger.shared.log("Episode auto-resolution skipped outside Auto Mode for S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
+            Logger.shared.log("Episode auto-resolution skipped outside automatic source selection for S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
             return nil
         }
 
@@ -2978,7 +2986,7 @@ struct ModulesSearchResultsSheet: View {
         let availableStreams = parseStreamOptions(streams: streams, sources: sources)
         
         if availableStreams.count > 1 {
-            if viewModel.pendingPlaybackAutoMode {
+            if shouldUseAutomaticResolution {
                 if let selectedStream = bestStreamOption(from: availableStreams) {
                     let preference = AutoModeQualityPreference.current
                     Logger.shared.log("Auto Mode selected stream option '\(selectedStream.name)' for \(service.metadata.sourceName) preference=\(preference.rawValue) options=\(availableStreams.count)", type: "Stream")
