@@ -731,9 +731,13 @@ struct ContinueWatchingCard: View {
         title.isEmpty ? item.title : title
     }
 
+    private var searchSheetIsAnime: Bool {
+        isAnimeContent || item.isAnime || item.playbackContext?.anilistMediaId != nil
+    }
+
     /// Title to pass to the search sheet – uses the AniList season title for anime, matching MediaDetailView's logic
     private var searchSheetTitle: String {
-        if isAnimeContent, !item.isMovie,
+        if searchSheetIsAnime, !item.isMovie,
            let seasonTitle = animeSeasonTitle {
             return seasonTitle
         }
@@ -759,6 +763,11 @@ struct ContinueWatchingCard: View {
             voteAverage: 0,
             voteCount: 0
         )
+    }
+
+    private var selectedEpisodePlaybackContext: EpisodePlaybackContext? {
+        guard let episode = selectedEpisodeForSearch else { return item.playbackContext }
+        return item.playbackContext?.forEpisodeNumber(episode.episodeNumber)
     }
 
     private var detailSearchResult: TMDBSearchResult {
@@ -882,15 +891,18 @@ struct ContinueWatchingCard: View {
         .sheet(isPresented: $showingSearchResults) {
             ModulesSearchResultsSheet(
                 mediaTitle: searchSheetTitle,
-                seasonTitleOverride: isAnimeContent ? animeSeasonTitle : nil,
-                originalTitle: isAnimeContent ? (animeSeasonRomajiTitle ?? originalTitle) : originalTitle,
+                seasonTitleOverride: searchSheetIsAnime ? animeSeasonTitle : nil,
+                originalTitle: searchSheetIsAnime ? (animeSeasonRomajiTitle ?? originalTitle) : originalTitle,
                 isMovie: item.isMovie,
-                isAnimeContent: isAnimeContent,
+                isAnimeContent: searchSheetIsAnime,
                 selectedEpisode: selectedEpisodeForSearch,
                 tmdbId: item.tmdbId,
-                animeSeasonTitle: isAnimeContent ? "anime" : nil,
+                animeSeasonTitle: searchSheetIsAnime ? "anime" : nil,
                 posterPath: item.posterURL,
                 imdbId: imdbId,
+                originalTMDBSeasonNumber: selectedEpisodePlaybackContext?.resolvedTMDBSeasonNumber,
+                originalTMDBEpisodeNumber: selectedEpisodePlaybackContext?.resolvedTMDBEpisodeNumber,
+                episodePlaybackContext: selectedEpisodePlaybackContext,
                 autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
                 onResolvedPlaybackRequest: { request in
                     Task { @MainActor in
@@ -995,7 +1007,7 @@ struct ContinueWatchingCard: View {
                 // Anime detection: same logic as MediaDetailView
                 let isJapanese = details.originCountry?.contains("JP") ?? false
                 let isAnimation = details.genres.contains { $0.id == 16 }
-                let detectedAsAnime = isJapanese && isAnimation
+                let detectedAsAnime = item.isAnime || item.playbackContext?.anilistMediaId != nil || (isJapanese && isAnimation)
 
                 // Set visual details immediately
                 await MainActor.run {
@@ -1027,12 +1039,20 @@ struct ContinueWatchingCard: View {
 
                         // Find the season title for the episode the user was watching
                         let matchedSeasonTitle: String? = {
+                            if let anilistId = item.playbackContext?.anilistMediaId,
+                               let season = animeData.seasons.first(where: { $0.anilistId == anilistId }) {
+                                return season.title
+                            }
                             guard let sn = item.seasonNumber else { return animeData.seasons.first?.title }
                             return animeData.seasons.first(where: { $0.seasonNumber == sn })?.title
                                 ?? animeData.seasons.first?.title
                         }()
 
                         let matchedSeasonRomajiTitle: String? = {
+                            if let anilistId = item.playbackContext?.anilistMediaId,
+                               let season = animeData.seasons.first(where: { $0.anilistId == anilistId }) {
+                                return season.romajiTitle
+                            }
                             guard let sn = item.seasonNumber else { return animeData.seasons.first?.romajiTitle }
                             return animeData.seasons.first(where: { $0.seasonNumber == sn })?.romajiTitle
                                 ?? animeData.seasons.first?.romajiTitle
@@ -1116,7 +1136,10 @@ struct ContinueWatchingCard: View {
             return nil
         }
 
-        let season = animeData.seasons.first(where: { $0.seasonNumber == localSeasonNumber })
+        let season = item.playbackContext?.anilistMediaId.flatMap { anilistId in
+            animeData.seasons.first(where: { $0.anilistId == anilistId })
+        }
+            ?? animeData.seasons.first(where: { $0.seasonNumber == localSeasonNumber })
             ?? animeData.seasons.first
         let episode = season?.episodes.first(where: { $0.number == localEpisodeNumber })
         return fullImageURL(from: episode?.stillPath)
