@@ -813,7 +813,7 @@ struct EpisodePlaybackContext: Codable, Equatable {
             max(1, $0 - localEpisodeNumber + episodeNumber)
         }
 
-        EpisodePlaybackContext(
+        return EpisodePlaybackContext(
             localSeasonNumber: localSeasonNumber,
             localEpisodeNumber: episodeNumber,
             anilistMediaId: anilistMediaId,
