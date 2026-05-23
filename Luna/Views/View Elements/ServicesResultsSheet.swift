@@ -1562,6 +1562,7 @@ struct ModulesSearchResultsSheet: View {
             season: season,
             episode: episode,
             anilistId: stremioLookupAniListId,
+            playbackContext: effectivePlaybackContext,
             titleCandidates: stremioCatalogTitleCandidates
         )
 
@@ -2003,6 +2004,7 @@ struct ModulesSearchResultsSheet: View {
                 season: season,
                 episode: episode,
                 anilistId: stremioLookupAniListId,
+                playbackContext: effectivePlaybackContext,
                 titleCandidates: stremioCatalogTitleCandidates,
                 onResult: { addon, streams in
                     Task { @MainActor in

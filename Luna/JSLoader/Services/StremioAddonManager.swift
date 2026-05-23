@@ -188,6 +188,7 @@ class StremioAddonManager: ObservableObject {
         season: Int?,
         episode: Int?,
         anilistId: Int? = nil,
+        playbackContext: EpisodePlaybackContext? = nil,
         titleCandidates: [String] = [],
         expectedYear: Int? = nil,
         onResult: @escaping (StremioAddon, [StremioStream]) -> Void,
@@ -220,6 +221,7 @@ class StremioAddonManager: ObservableObject {
                         season: season,
                         episode: episode,
                         anilistId: anilistId,
+                        playbackContext: playbackContext,
                         titleCandidates: titleCandidates,
                         expectedYear: expectedYear
                     )
@@ -247,6 +249,7 @@ class StremioAddonManager: ObservableObject {
                             season: season,
                             episode: episode,
                             anilistId: anilistId,
+                            playbackContext: playbackContext,
                             titleCandidates: titleCandidates,
                             expectedYear: expectedYear
                         )
@@ -267,6 +270,7 @@ class StremioAddonManager: ObservableObject {
         season: Int?,
         episode: Int?,
         anilistId: Int? = nil,
+        playbackContext: EpisodePlaybackContext? = nil,
         titleCandidates: [String] = [],
         expectedYear: Int? = nil
     ) async -> [StremioStream] {
@@ -279,6 +283,7 @@ class StremioAddonManager: ObservableObject {
             season: season,
             episode: episode,
             anilistId: anilistId,
+            playbackContext: playbackContext,
             titleCandidates: titleCandidates,
             expectedYear: expectedYear
         )
@@ -295,6 +300,7 @@ class StremioAddonManager: ObservableObject {
         season: Int?,
         episode: Int?,
         anilistId: Int?,
+        playbackContext: EpisodePlaybackContext?,
         titleCandidates: [String],
         expectedYear: Int?
     ) async -> (StremioAddon, [StremioStream])? {
@@ -307,6 +313,7 @@ class StremioAddonManager: ObservableObject {
             season: season,
             episode: episode,
             anilistId: anilistId,
+            playbackContext: playbackContext,
             titleCandidates: titleCandidates,
             expectedYear: expectedYear
         )
@@ -322,6 +329,7 @@ class StremioAddonManager: ObservableObject {
         season: Int?,
         episode: Int?,
         anilistId: Int?,
+        playbackContext: EpisodePlaybackContext?,
         titleCandidates: [String],
         expectedYear: Int?
     ) async -> [StremioStream] {
@@ -334,6 +342,10 @@ class StremioAddonManager: ObservableObject {
             season: season,
             episode: episode,
             anilistId: anilistId,
+            anilistSeason: animeLocalStremioSeason(from: playbackContext),
+            anilistEpisode: animeLocalStremioEpisode(from: playbackContext),
+            alternateSeason: animeLocalSeriesSeason(from: playbackContext),
+            alternateEpisode: animeLocalSeriesEpisode(from: playbackContext),
             addon: addon
         )
 
@@ -369,6 +381,7 @@ class StremioAddonManager: ObservableObject {
             requestedType: type,
             season: season,
             episode: episode,
+            playbackContext: playbackContext,
             titleCandidates: titleCandidates,
             expectedYear: expectedYear
         )
@@ -385,6 +398,7 @@ class StremioAddonManager: ObservableObject {
         requestedType: String,
         season: Int?,
         episode: Int?,
+        playbackContext: EpisodePlaybackContext?,
         titleCandidates: [String],
         expectedYear: Int?
     ) async -> [StremioStream] {
@@ -453,7 +467,8 @@ class StremioAddonManager: ObservableObject {
                 client: client,
                 requestedType: requestedType,
                 season: season,
-                episode: episode
+                episode: episode,
+                playbackContext: playbackContext
             )
             if !streams.isEmpty {
                 Logger.shared.log("Stremio: Catalog fallback resolved \(streams.count) stream(s) from \(candidate.meta.name)", type: "Stremio")
@@ -472,10 +487,11 @@ class StremioAddonManager: ObservableObject {
         client: StremioClient,
         requestedType: String,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        playbackContext: EpisodePlaybackContext?
     ) async -> [StremioStream] {
         let streamType = preview.type ?? catalog.type
-        let directPreviewStreams = streamsFromMeta(preview, season: season, episode: episode)
+        let directPreviewStreams = streamsFromMeta(preview, season: season, episode: episode, playbackContext: playbackContext)
         if !directPreviewStreams.isEmpty {
             return directPreviewStreams
         }
@@ -485,7 +501,7 @@ class StremioAddonManager: ObservableObject {
             do {
                 if let fetched = try await client.fetchMeta(baseURL: addon.configuredURL, type: streamType, id: preview.id) {
                     meta = fetched
-                    let metaStreams = streamsFromMeta(fetched, season: season, episode: episode)
+                    let metaStreams = streamsFromMeta(fetched, season: season, episode: episode, playbackContext: playbackContext)
                     if !metaStreams.isEmpty {
                         return metaStreams
                     }
@@ -495,7 +511,7 @@ class StremioAddonManager: ObservableObject {
             }
         }
 
-        for contentId in streamIdsFromMeta(meta, requestedType: requestedType, season: season, episode: episode) {
+        for contentId in streamIdsFromMeta(meta, requestedType: requestedType, season: season, episode: episode, playbackContext: playbackContext) {
             do {
                 let streams = try await client.fetchStreams(
                     baseURL: addon.configuredURL,
@@ -513,12 +529,13 @@ class StremioAddonManager: ObservableObject {
         return []
     }
 
-    private static func streamsFromMeta(_ meta: StremioMetaPreview, season: Int?, episode: Int?) -> [StremioStream] {
+    private static func streamsFromMeta(_ meta: StremioMetaPreview, season: Int?, episode: Int?, playbackContext: EpisodePlaybackContext?) -> [StremioStream] {
         guard let videos = meta.videos else { return [] }
 
         let matchingVideos: [StremioVideo]
         if let season, let episode {
-            matchingVideos = videos.filter { $0.season == season && $0.episode == episode }
+            let exactMatches = videos.filter { $0.season == season && $0.episode == episode }
+            matchingVideos = exactMatches.isEmpty ? autoEpisodeMatches(videos: videos, playbackContext: playbackContext) : exactMatches
         } else if let defaultVideoId = meta.behaviorHints?.defaultVideoId,
                   let defaultVideo = videos.first(where: { $0.id == defaultVideoId }) {
             matchingVideos = [defaultVideo]
@@ -533,14 +550,24 @@ class StremioAddonManager: ObservableObject {
         )
     }
 
-    private static func streamIdsFromMeta(_ meta: StremioMetaPreview, requestedType: String, season: Int?, episode: Int?) -> [String] {
+    private static func streamIdsFromMeta(_ meta: StremioMetaPreview, requestedType: String, season: Int?, episode: Int?, playbackContext: EpisodePlaybackContext?) -> [String] {
         var candidates = [String]()
 
         if let season, let episode {
             if let videoId = meta.videos?.first(where: { $0.season == season && $0.episode == episode })?.id {
                 candidates.append(videoId)
             }
+            candidates.append(contentsOf: autoEpisodeMatches(videos: meta.videos ?? [], playbackContext: playbackContext).map(\.id))
             candidates.append("\(meta.id):\(season):\(episode)")
+            if let localSeason = animeLocalSeriesSeason(from: playbackContext),
+               let localEpisode = animeLocalSeriesEpisode(from: playbackContext) {
+                candidates.append("\(meta.id):\(localSeason):\(localEpisode)")
+            }
+            if shouldTrySeasonScopedAnimeMetaId(meta.id, playbackContext: playbackContext),
+               let localSeason = animeLocalStremioSeason(from: playbackContext),
+               let localEpisode = animeLocalStremioEpisode(from: playbackContext) {
+                candidates.append("\(meta.id):\(localSeason):\(localEpisode)")
+            }
         } else if requestedType == "movie" {
             candidates.append(meta.id)
         } else if let defaultVideoId = meta.behaviorHints?.defaultVideoId {
@@ -553,6 +580,84 @@ class StremioAddonManager: ObservableObject {
 
         var seen = Set<String>()
         return candidates.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private static func animeLocalStremioSeason(from context: EpisodePlaybackContext?) -> Int? {
+        guard let context,
+              !context.isSpecial,
+              !context.titleOnlySearch,
+              context.anilistMediaId != nil,
+              context.localEpisodeNumber > 0 else {
+            return nil
+        }
+        return 1
+    }
+
+    private static func animeLocalStremioEpisode(from context: EpisodePlaybackContext?) -> Int? {
+        guard let context,
+              !context.isSpecial,
+              !context.titleOnlySearch,
+              context.anilistMediaId != nil,
+              context.localEpisodeNumber > 0 else {
+            return nil
+        }
+        return context.localEpisodeNumber
+    }
+
+    private static func animeLocalSeriesSeason(from context: EpisodePlaybackContext?) -> Int? {
+        guard let context,
+              !context.isSpecial,
+              !context.titleOnlySearch,
+              context.anilistMediaId != nil,
+              context.localSeasonNumber > 0 else {
+            return nil
+        }
+        return context.localSeasonNumber
+    }
+
+    private static func animeLocalSeriesEpisode(from context: EpisodePlaybackContext?) -> Int? {
+        guard let context,
+              !context.isSpecial,
+              !context.titleOnlySearch,
+              context.anilistMediaId != nil,
+              context.localEpisodeNumber > 0 else {
+            return nil
+        }
+        return context.localEpisodeNumber
+    }
+
+    private static func shouldTrySeasonScopedAnimeMetaId(_ metaId: String, playbackContext: EpisodePlaybackContext?) -> Bool {
+        guard playbackContext?.anilistMediaId != nil else { return false }
+        let lowercased = metaId.lowercased()
+        return !lowercased.hasPrefix("tt") &&
+            !lowercased.hasPrefix("imdb:") &&
+            !lowercased.hasPrefix("tmdb:")
+    }
+
+    private static func autoEpisodeMatches(videos: [StremioVideo], playbackContext: EpisodePlaybackContext?) -> [StremioVideo] {
+        guard let context = playbackContext,
+              !context.isSpecial,
+              !context.titleOnlySearch,
+              let seasonEpisodeCount = context.animeSeasonEpisodeCount,
+              seasonEpisodeCount > 0,
+              context.localEpisodeNumber > 0 else {
+            return []
+        }
+
+        let episodeNumbers = videos.compactMap(\.episode)
+        guard let maxEpisode = episodeNumbers.max() else { return [] }
+
+        if let absoluteEpisode = context.animeAbsoluteEpisodeNumber,
+           absoluteEpisode > 0,
+           maxEpisode > seasonEpisodeCount {
+            return videos.filter { $0.episode == absoluteEpisode }
+        }
+
+        if maxEpisode <= seasonEpisodeCount {
+            return videos.filter { $0.episode == context.localEpisodeNumber }
+        }
+
+        return []
     }
 
     private static func metaMatchesRequestedType(_ meta: StremioMetaPreview, catalog: StremioCatalog, requestedType: String) -> Bool {
