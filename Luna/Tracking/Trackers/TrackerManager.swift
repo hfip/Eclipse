@@ -2670,23 +2670,34 @@ final class TrackerManager: NSObject, ObservableObject {
 
     private func fetchAniListAnimeProgressEntries(account: TrackerAccount) async throws -> [RemoteAnimeProgress] {
         let userId = try await resolvedAniListUserId(for: account)
-        var entries: [RemoteAnimeProgress] = []
-        var page = 1
-        var hasNext = true
+        var entriesByMediaId: [Int: RemoteAnimeProgress] = [:]
+        var orderedMediaIds: [Int] = []
+        var chunk = 1
+        var hasNextChunk = true
 
-        while hasNext {
+        while hasNextChunk {
             let query = """
-            query($userId: Int!, $page: Int!) {
-                Page(page: $page, perPage: 50) {
-                    pageInfo { hasNextPage }
-                    mediaList(userId: $userId, type: ANIME) {
+            query($userId: Int!, $chunk: Int!) {
+                MediaListCollection(
+                    userId: $userId,
+                    type: ANIME,
+                    chunk: $chunk,
+                    perChunk: 500,
+                    forceSingleCompletedList: true,
+                    status_in: [CURRENT, PLANNING, COMPLETED, PAUSED, DROPPED, REPEATING]
+                ) {
+                    hasNextChunk
+                    lists {
                         status
-                        progress
-                        media {
-                            id
-                            idMal
-                            title { romaji english native }
-                            episodes
+                        entries {
+                            status
+                            progress
+                            media {
+                                id
+                                idMal
+                                title { romaji english native }
+                                episodes
+                            }
                         }
                     }
                 }
@@ -2694,17 +2705,20 @@ final class TrackerManager: NSObject, ObservableObject {
             """
 
             struct Response: Codable {
-                let data: DataWrapper
-                struct DataWrapper: Codable { let Page: PageData }
-                struct PageData: Codable {
-                    let pageInfo: PageInfo
-                    let mediaList: [MediaList]
+                let data: DataWrapper?
+                struct DataWrapper: Codable { let MediaListCollection: CollectionData? }
+                struct CollectionData: Codable {
+                    let hasNextChunk: Bool
+                    let lists: [MediaListGroup]
                 }
-                struct PageInfo: Codable { let hasNextPage: Bool }
+                struct MediaListGroup: Codable {
+                    let status: String?
+                    let entries: [MediaList]
+                }
                 struct MediaList: Codable {
                     let status: String?
                     let progress: Int?
-                    let media: Media
+                    let media: Media?
                 }
                 struct Media: Codable {
                     let id: Int
@@ -2727,7 +2741,7 @@ final class TrackerManager: NSObject, ObservableObject {
                 "query": query,
                 "variables": [
                     "userId": userId,
-                    "page": page
+                    "chunk": chunk
                 ]
             ])
 
@@ -2739,24 +2753,37 @@ final class TrackerManager: NSObject, ObservableObject {
             }
 
             let decoded = try JSONDecoder().decode(Response.self, from: data)
-            entries.append(contentsOf: decoded.data.Page.mediaList.map { item in
-                if let malId = item.media.idMal {
-                    cacheMyAnimeListId(malId, forAniListId: item.media.id, mediaType: "ANIME")
+            guard let collection = decoded.data?.MediaListCollection else {
+                let message = graphQLErrorMessage(from: data) ?? "AniList anime list fetch returned no collection data."
+                throw NSError(domain: "AniList", code: response.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            }
+
+            for group in collection.lists {
+                for item in group.entries {
+                    guard let media = item.media else { continue }
+                    if let malId = media.idMal {
+                        cacheMyAnimeListId(malId, forAniListId: media.id, mediaType: "ANIME")
+                    }
+
+                    if entriesByMediaId[media.id] == nil {
+                        orderedMediaIds.append(media.id)
+                    }
+
+                    entriesByMediaId[media.id] = RemoteAnimeProgress(
+                        anilistId: media.id,
+                        malId: media.idMal,
+                        title: media.title.english ?? media.title.romaji ?? media.title.native ?? "Unknown",
+                        status: item.status ?? group.status ?? "CURRENT",
+                        progress: item.progress ?? 0,
+                        totalEpisodes: media.episodes
+                    )
                 }
-                return RemoteAnimeProgress(
-                    anilistId: item.media.id,
-                    malId: item.media.idMal,
-                    title: item.media.title.english ?? item.media.title.romaji ?? item.media.title.native ?? "Unknown",
-                    status: item.status ?? "CURRENT",
-                    progress: item.progress ?? 0,
-                    totalEpisodes: item.media.episodes
-                )
-            })
-            hasNext = decoded.data.Page.pageInfo.hasNextPage
-            page += 1
+            }
+            hasNextChunk = collection.hasNextChunk
+            chunk += 1
         }
 
-        return entries
+        return orderedMediaIds.compactMap { entriesByMediaId[$0] }
     }
 
     private func fetchMALAnimeProgressEntries(account: TrackerAccount) async throws -> [RemoteAnimeProgress] {
@@ -2844,23 +2871,34 @@ final class TrackerManager: NSObject, ObservableObject {
 
     private func fetchAniListMangaProgressEntries(account: TrackerAccount) async throws -> [RemoteMangaProgress] {
         let userId = try await resolvedAniListUserId(for: account)
-        var entries: [RemoteMangaProgress] = []
-        var page = 1
-        var hasNext = true
+        var entriesByMediaId: [Int: RemoteMangaProgress] = [:]
+        var orderedMediaIds: [Int] = []
+        var chunk = 1
+        var hasNextChunk = true
 
-        while hasNext {
+        while hasNextChunk {
             let query = """
-            query($userId: Int!, $page: Int!) {
-                Page(page: $page, perPage: 50) {
-                    pageInfo { hasNextPage }
-                    mediaList(userId: $userId, type: MANGA) {
+            query($userId: Int!, $chunk: Int!) {
+                MediaListCollection(
+                    userId: $userId,
+                    type: MANGA,
+                    chunk: $chunk,
+                    perChunk: 500,
+                    forceSingleCompletedList: true,
+                    status_in: [CURRENT, PLANNING, COMPLETED, PAUSED, DROPPED, REPEATING]
+                ) {
+                    hasNextChunk
+                    lists {
                         status
-                        progress
-                        media {
-                            id
-                            idMal
-                            title { romaji english native }
-                            chapters
+                        entries {
+                            status
+                            progress
+                            media {
+                                id
+                                idMal
+                                title { romaji english native }
+                                chapters
+                            }
                         }
                     }
                 }
@@ -2868,17 +2906,20 @@ final class TrackerManager: NSObject, ObservableObject {
             """
 
             struct Response: Codable {
-                let data: DataWrapper
-                struct DataWrapper: Codable { let Page: PageData }
-                struct PageData: Codable {
-                    let pageInfo: PageInfo
-                    let mediaList: [MediaList]
+                let data: DataWrapper?
+                struct DataWrapper: Codable { let MediaListCollection: CollectionData? }
+                struct CollectionData: Codable {
+                    let hasNextChunk: Bool
+                    let lists: [MediaListGroup]
                 }
-                struct PageInfo: Codable { let hasNextPage: Bool }
+                struct MediaListGroup: Codable {
+                    let status: String?
+                    let entries: [MediaList]
+                }
                 struct MediaList: Codable {
                     let status: String?
                     let progress: Int?
-                    let media: Media
+                    let media: Media?
                 }
                 struct Media: Codable {
                     let id: Int
@@ -2901,7 +2942,7 @@ final class TrackerManager: NSObject, ObservableObject {
                 "query": query,
                 "variables": [
                     "userId": userId,
-                    "page": page
+                    "chunk": chunk
                 ]
             ])
 
@@ -2913,24 +2954,37 @@ final class TrackerManager: NSObject, ObservableObject {
             }
 
             let decoded = try JSONDecoder().decode(Response.self, from: data)
-            entries.append(contentsOf: decoded.data.Page.mediaList.map { item in
-                if let malId = item.media.idMal {
-                    cacheMyAnimeListId(malId, forAniListId: item.media.id, mediaType: "MANGA")
+            guard let collection = decoded.data?.MediaListCollection else {
+                let message = graphQLErrorMessage(from: data) ?? "AniList manga list fetch returned no collection data."
+                throw NSError(domain: "AniList", code: response.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            }
+
+            for group in collection.lists {
+                for item in group.entries {
+                    guard let media = item.media else { continue }
+                    if let malId = media.idMal {
+                        cacheMyAnimeListId(malId, forAniListId: media.id, mediaType: "MANGA")
+                    }
+
+                    if entriesByMediaId[media.id] == nil {
+                        orderedMediaIds.append(media.id)
+                    }
+
+                    entriesByMediaId[media.id] = RemoteMangaProgress(
+                        anilistId: media.id,
+                        malId: media.idMal,
+                        title: media.title.english ?? media.title.romaji ?? media.title.native ?? "Unknown",
+                        status: item.status ?? group.status ?? "CURRENT",
+                        progress: item.progress ?? 0,
+                        totalChapters: media.chapters
+                    )
                 }
-                return RemoteMangaProgress(
-                    anilistId: item.media.id,
-                    malId: item.media.idMal,
-                    title: item.media.title.english ?? item.media.title.romaji ?? item.media.title.native ?? "Unknown",
-                    status: item.status ?? "CURRENT",
-                    progress: item.progress ?? 0,
-                    totalChapters: item.media.chapters
-                )
-            })
-            hasNext = decoded.data.Page.pageInfo.hasNextPage
-            page += 1
+            }
+            hasNextChunk = collection.hasNextChunk
+            chunk += 1
         }
 
-        return entries
+        return orderedMediaIds.compactMap { entriesByMediaId[$0] }
     }
 
     private func fetchMALMangaProgressEntries(account: TrackerAccount) async throws -> [RemoteMangaProgress] {
