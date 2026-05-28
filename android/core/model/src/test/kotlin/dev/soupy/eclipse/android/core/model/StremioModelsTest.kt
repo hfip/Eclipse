@@ -76,6 +76,45 @@ class StremioModelsTest {
     }
 
     @Test
+    fun buildsAnimeContentIdsWithAlternateSeasonAniListAndKitsuFallbacks() {
+        val manifest = StremioManifest(
+            id = "addon",
+            name = "Addon",
+            idPrefixes = listOf("tt", "tmdb:", "anilist:", "kitsu:"),
+        )
+
+        val ids = manifest.buildContentIds(
+            StremioContentIdRequest(
+                tmdbId = 100,
+                imdbId = "tt1234567",
+                type = "series",
+                season = 2,
+                episode = 5,
+                anilistId = 999,
+                anilistSeason = 1,
+                anilistEpisode = 17,
+                kitsuId = 555,
+                kitsuEpisode = 17,
+                alternateSeason = 1,
+                alternateEpisode = 5,
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "tt1234567:2:5",
+                "tt1234567:1:5",
+                "tmdb:100:2:5",
+                "tmdb:100:1:5",
+                "anilist:999:1:17",
+                "anilist:999:2:5",
+                "kitsu:555:17",
+            ),
+            ids,
+        )
+    }
+
+    @Test
     fun streamResourcePrefixesOverrideManifestPrefixes() {
         val manifest = StremioManifest(
             id = "addon",

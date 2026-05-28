@@ -58,21 +58,26 @@ class LibraryRepository(
     }
 
     suspend fun toggleSaved(draft: LibraryItemDraft): Result<LibrarySnapshot> = runCatching {
-        val snapshot = libraryStore.read()
+        val snapshot = libraryStore.read().withDefaultCollections()
         val key = draft.detailTarget.storageKey()
-        val alreadySaved = snapshot.savedItems.any { it.id == key }
-        val updatedSaved = if (alreadySaved) {
-            snapshot.savedItems.filterNot { it.id == key }
-        } else {
-            listOf(draft.toRecord(key)) + snapshot.savedItems.filterNot { it.id == key }
+        val alreadyBookmarked = snapshot.collections.any { collection ->
+            collection.isBookmarksCollection() && key in collection.itemIds
         }
-        val updatedCollections = if (alreadySaved) {
-            snapshot.collections
+        val updatedCollections = if (alreadyBookmarked) {
+            snapshot.collections.withoutItemInCollection(BookmarksCollectionId, key)
         } else {
             snapshot.collections.withItemInCollection(
                 collectionId = BookmarksCollectionId,
                 itemId = key,
             )
+        }
+        val updatedSaved = when {
+            alreadyBookmarked && !updatedCollections.containsItem(key) ->
+                snapshot.savedItems.filterNot { it.id == key }
+            alreadyBookmarked ->
+                snapshot.savedItems
+            else ->
+                listOf(draft.toRecord(key)) + snapshot.savedItems.filterNot { it.id == key }
         }
 
         writeSnapshot(snapshot.copy(savedItems = updatedSaved, collections = updatedCollections))
@@ -129,16 +134,17 @@ class LibraryRepository(
     }
 
     suspend fun removeSaved(id: String): Result<LibrarySnapshot> = runCatching {
-        val snapshot = libraryStore.read()
+        val snapshot = libraryStore.read().withDefaultCollections()
+        val updatedCollections = snapshot.collections.withoutItemInCollection(BookmarksCollectionId, id)
+        val updatedSavedItems = if (updatedCollections.containsItem(id)) {
+            snapshot.savedItems
+        } else {
+            snapshot.savedItems.filterNot { it.id == id }
+        }
         writeSnapshot(
             snapshot.copy(
-                savedItems = snapshot.savedItems.filterNot { it.id == id },
-                collections = snapshot.collections.map { collection ->
-                    collection.copy(
-                        itemIds = collection.itemIds.filterNot { it == id },
-                        updatedAt = System.currentTimeMillis(),
-                    )
-                },
+                savedItems = updatedSavedItems,
+                collections = updatedCollections,
             ),
         )
     }
@@ -327,7 +333,7 @@ private fun List<MediaLibraryCollection>.withItemInCollection(
     collectionId: String,
     itemId: String,
 ): List<MediaLibraryCollection> = map { collection ->
-    if (collection.id == collectionId || collection.name.equals("Bookmarks", ignoreCase = true) && collectionId == BookmarksCollectionId) {
+    if (collection.matchesCollection(collectionId)) {
         collection.copy(
             itemIds = (listOf(itemId) + collection.itemIds.filterNot { it == itemId }).distinct(),
             updatedAt = System.currentTimeMillis(),
@@ -336,6 +342,29 @@ private fun List<MediaLibraryCollection>.withItemInCollection(
         collection
     }
 }
+
+private fun List<MediaLibraryCollection>.withoutItemInCollection(
+    collectionId: String,
+    itemId: String,
+): List<MediaLibraryCollection> = map { collection ->
+    if (collection.matchesCollection(collectionId)) {
+        collection.copy(
+            itemIds = collection.itemIds.filterNot { it == itemId },
+            updatedAt = System.currentTimeMillis(),
+        )
+    } else {
+        collection
+    }
+}
+
+private fun List<MediaLibraryCollection>.containsItem(itemId: String): Boolean =
+    any { collection -> itemId in collection.itemIds }
+
+private fun MediaLibraryCollection.matchesCollection(collectionId: String): Boolean =
+    id == collectionId || isBookmarksCollection() && collectionId == BookmarksCollectionId
+
+private fun MediaLibraryCollection.isBookmarksCollection(): Boolean =
+    id == BookmarksCollectionId || name.equals("Bookmarks", ignoreCase = true)
 
 private fun List<MediaLibraryCollection>.withRemoteStatusCollections(
     drafts: List<AniListLibraryImportDraft>,

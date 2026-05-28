@@ -4518,9 +4518,25 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let aniSkipEnabled = UserDefaults.standard.object(forKey: "aniSkipEnabled") as? Bool ?? true
             let introDBEnabled = UserDefaults.standard.object(forKey: "introDBEnabled") as? Bool ?? true
             let introDBAppEnabled = UserDefaults.standard.object(forKey: "introDBAppEnabled") as? Bool ?? true
+            var selectedSkipProvider: String?
+
+            Logger.shared.log(
+                "SkipData: provider flow=\(isAnime ? "AniSkip -> TheIntroDB -> IntroDB" : "TheIntroDB -> IntroDB") settings AniSkip=\(aniSkipEnabled) TheIntroDB=\(introDBEnabled) IntroDB=\(introDBAppEnabled) duration=\(self.secondsText(durationAtFetch))",
+                type: "Skip"
+            )
 
             // ── Anime content: try AniSkip first (better anime coverage) ──
-            if aniSkipEnabled, isAnime, let ep = episodeNumber {
+            if !aniSkipEnabled {
+                Logger.shared.log("SkipData: AniSkip skipped: disabled in Settings", type: "Skip")
+            } else if !isAnime {
+                Logger.shared.log("SkipData: AniSkip skipped: non-anime content", type: "Skip")
+            } else if episodeNumber == nil {
+                Logger.shared.log("SkipData: AniSkip skipped: missing episode number", type: "Skip")
+            } else if let ep = episodeNumber {
+                Logger.shared.log(
+                    "SkipData: AniSkip attempt tmdbId=\(tmdbId) s=\(seasonNumber ?? -1) ep=\(ep) duration=\(self.secondsText(durationAtFetch))",
+                    type: "Skip"
+                )
                 segments = await self.fetchAniSkipSegments(
                     tmdbId: tmdbId,
                     seasonNumber: seasonNumber ?? 1,
@@ -4529,8 +4545,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     duration: durationAtFetch
                 )
 
+                Logger.shared.log("SkipData: AniSkip returned \(segments.count) segments", type: "Skip")
                 if !segments.isEmpty {
-                    Logger.shared.log("SkipData: AniSkip returned \(segments.count) segments", type: "Skip")
+                    selectedSkipProvider = "AniSkip"
                 }
             }
 
@@ -4538,7 +4555,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             // For anime, use original TMDB S/E (pre-AniList restructuring) since TheIntroDB uses TMDB numbering
             let introDBSeason = self.originalTMDBSeasonNumber ?? seasonNumber
             let introDBEpisode = self.originalTMDBEpisodeNumber ?? episodeNumber
-            if introDBEnabled, segments.isEmpty {
+            if !introDBEnabled {
+                Logger.shared.log("SkipData: TheIntroDB skipped: disabled in Settings", type: "Skip")
+            } else if !segments.isEmpty {
+                Logger.shared.log("SkipData: TheIntroDB skipped: \(selectedSkipProvider ?? "earlier provider") already returned \(segments.count) segments", type: "Skip")
+            } else {
+                Logger.shared.log(
+                    "SkipData: TheIntroDB attempt tmdbId=\(tmdbId) s=\(introDBSeason ?? -1) ep=\(introDBEpisode ?? -1) duration=\(self.secondsText(durationAtFetch))",
+                    type: "Skip"
+                )
                 do {
                     let introDBSegments = try await IntroDBService.shared.fetchSkipTimes(
                         tmdbId: tmdbId,
@@ -4546,18 +4571,27 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                         episodeNumber: introDBEpisode,
                         episodeDuration: durationAtFetch
                     )
+                    Logger.shared.log("SkipData: TheIntroDB returned \(introDBSegments.count) segments", type: "Skip")
                     if !introDBSegments.isEmpty {
                         segments = introDBSegments
-                        Logger.shared.log("SkipData: TheIntroDB returned \(segments.count) segments", type: "Skip")
+                        selectedSkipProvider = "TheIntroDB"
                     }
                 } catch {
                     Logger.shared.log("SkipData: TheIntroDB fetch failed: \(error.localizedDescription)", type: "Error")
                 }
             }
 
-            if introDBAppEnabled, segments.isEmpty {
+            if !introDBAppEnabled {
+                Logger.shared.log("SkipData: IntroDB skipped: disabled in Settings", type: "Skip")
+            } else if !segments.isEmpty {
+                Logger.shared.log("SkipData: IntroDB skipped: \(selectedSkipProvider ?? "earlier provider") already returned \(segments.count) segments", type: "Skip")
+            } else {
                 let introDBIMDbId = await self.resolveSkipDataIMDbId(tmdbId: tmdbId, type: mediaType, currentIMDbId: self.imdbId)
                 if let introDBIMDbId {
+                    Logger.shared.log(
+                        "SkipData: IntroDB attempt imdbId=\(introDBIMDbId) s=\(introDBSeason ?? -1) ep=\(introDBEpisode ?? -1) duration=\(self.secondsText(durationAtFetch))",
+                        type: "Skip"
+                    )
                     do {
                         let introDBAppSegments = try await IntroDBAppService.shared.fetchSkipTimes(
                             imdbId: introDBIMDbId,
@@ -4565,9 +4599,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                             episodeNumber: introDBEpisode,
                             episodeDuration: durationAtFetch
                         )
+                        Logger.shared.log("SkipData: IntroDB returned \(introDBAppSegments.count) segments", type: "Skip")
                         if !introDBAppSegments.isEmpty {
                             segments = introDBAppSegments
-                            Logger.shared.log("SkipData: IntroDB returned \(segments.count) segments", type: "Skip")
+                            selectedSkipProvider = "IntroDB"
                         }
                     } catch {
                         Logger.shared.log("SkipData: IntroDB fetch failed: \(error.localizedDescription)", type: "Error")
@@ -4593,6 +4628,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
             // Store segments and normalize for progress bar
             await MainActor.run {
+                Logger.shared.log("SkipData: using \(selectedSkipProvider ?? "unknown provider") with \(segments.count) segments", type: "Skip")
                 self.skipSegments = segments
                 let liveDuration = self.cachedDuration
                 guard liveDuration > 0 else { return }

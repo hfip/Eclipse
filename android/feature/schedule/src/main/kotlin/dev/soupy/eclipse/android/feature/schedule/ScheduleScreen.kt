@@ -16,8 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -61,23 +62,8 @@ fun ScheduleRoute(
             .fillMaxSize()
             .statusBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(18.dp),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "SCHEDULE",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.tertiary,
-                )
-                Text(
-                    text = "Upcoming anime airings from AniList.",
-                    style = MaterialTheme.typography.displayMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-        }
-
         if (state.isLoading && state.days.isEmpty()) {
             item {
                 LoadingPanel(
@@ -184,10 +170,26 @@ private fun TimeZoneToggleRow(
                     )
                 }
             }
-            Switch(
-                checked = showLocalScheduleTime,
-                onCheckedChange = onShowLocalScheduleTimeChanged,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (showLocalScheduleTime) {
+                    Button(onClick = { onShowLocalScheduleTimeChanged(true) }) {
+                        Text("Local")
+                    }
+                } else {
+                    OutlinedButton(onClick = { onShowLocalScheduleTimeChanged(true) }) {
+                        Text("Local")
+                    }
+                }
+                if (!showLocalScheduleTime) {
+                    Button(onClick = { onShowLocalScheduleTimeChanged(false) }) {
+                        Text("UTC")
+                    }
+                } else {
+                    OutlinedButton(onClick = { onShowLocalScheduleTimeChanged(false) }) {
+                        Text("UTC")
+                    }
+                }
+            }
         }
     }
 }
@@ -223,13 +225,13 @@ private fun DayChip(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                text = day.title.takeIf { it.length <= 5 } ?: day.title.take(3),
+                text = day.chipTitle ?: day.title.takeIf { it.length <= 5 } ?: day.title.take(3),
                 style = MaterialTheme.typography.labelLarge,
                 color = content,
                 maxLines = 1,
             )
             Text(
-                text = day.subtitle?.substringAfterLast(" ").orEmpty(),
+                text = day.dayNumber ?: day.subtitle?.substringAfterLast(" ").orEmpty(),
                 style = MaterialTheme.typography.titleLarge,
                 color = content,
                 maxLines = 1,
@@ -252,7 +254,7 @@ private fun ScheduleDayColumn(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeading(
             title = day.title,
-            subtitle = if (classic) day.subtitle else "${day.items.size} airing",
+            subtitle = if (classic) day.subtitle else "${day.items.size} airing${if (day.items.size == 1) "" else "s"}",
         )
         if (day.items.isEmpty()) {
             GlassPanel(modifier = Modifier.fillMaxWidth()) {
@@ -312,6 +314,18 @@ private fun ScheduleItemCard(
                     text = item.subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                )
+            }
+            item.timeLabel?.let { time ->
+                Text(
+                    text = time,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    maxLines = 1,
                 )
             }
         }

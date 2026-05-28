@@ -64,7 +64,8 @@ internal fun AniListAiringScheduleEntry.toScheduleEntryCard(
     return ScheduleEntryCard(
         id = "airing-$id",
         title = media.airingMediaDisplayTitle,
-        subtitle = "Episode $episode | $timeText",
+        subtitle = media.format.scheduleEpisodeLabel(episode),
+        timeLabel = timeText,
         imageUrl = media.coverImage.bestAvailableUrl,
         detailTarget = DetailTarget.AniListMediaTarget(media.id),
     )
@@ -77,4 +78,13 @@ internal fun String.stripHtmlTags(): String =
         .replace("&amp;", "&")
         .replace(Regex("\\s+"), " ")
         .trim()
+
+private fun String?.scheduleEpisodeLabel(episode: Int): String = when (this?.uppercase(Locale.US)) {
+    "MOVIE" -> "Movie"
+    "OVA" -> "OVA"
+    "ONA" -> "ONA Ep. $episode"
+    "SPECIAL" -> "Special"
+    "MUSIC" -> "Music"
+    else -> "Ep. $episode"
+}
 

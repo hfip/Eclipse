@@ -51,6 +51,7 @@ data class ScheduleEntryCard(
     val id: String,
     val title: String,
     val subtitle: String,
+    val timeLabel: String? = null,
     val imageUrl: String? = null,
     val detailTarget: DetailTarget,
 )
@@ -59,6 +60,8 @@ data class ScheduleDaySection(
     val id: String,
     val title: String,
     val subtitle: String? = null,
+    val chipTitle: String? = null,
+    val dayNumber: String? = null,
     val items: List<ScheduleEntryCard> = emptyList(),
 )
 

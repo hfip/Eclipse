@@ -28,14 +28,23 @@ import dev.soupy.eclipse.android.core.model.searchableCatalogs
 import dev.soupy.eclipse.android.core.model.supportsResource
 import dev.soupy.eclipse.android.core.model.warningTextFor
 import dev.soupy.eclipse.android.core.network.AniListService
+import dev.soupy.eclipse.android.core.network.EclipseHttpClient
 import dev.soupy.eclipse.android.core.network.EclipseJson
+import dev.soupy.eclipse.android.core.network.NetworkResult
 import dev.soupy.eclipse.android.core.network.StremioService
 import dev.soupy.eclipse.android.core.network.TmdbService
 import dev.soupy.eclipse.android.core.storage.AppSettings
 import dev.soupy.eclipse.android.core.storage.SettingsStore
 import dev.soupy.eclipse.android.core.storage.StremioAddonDao
 import dev.soupy.eclipse.android.core.storage.StremioAddonEntity
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -71,6 +80,7 @@ data class StreamEpisodeSelection(
     val localSeasonNumber: Int = seasonNumber ?: 0,
     val localEpisodeNumber: Int = episodeNumber ?: 1,
     val anilistMediaId: Int? = null,
+    val kitsuMediaId: Int? = null,
     val tmdbEpisodeOffset: Int? = null,
     val animeAbsoluteEpisodeNumber: Int? = null,
     val animeSeasonEpisodeCount: Int? = null,
@@ -170,7 +180,7 @@ class StreamResolutionRepository(
                             requestSummary = request.summary,
                             requestTitles = request.matchTitles,
                             contentId = resolvedStream.contentId,
-                            playbackContext = request.playbackContext,
+                            playbackContext = resolution.playbackContext ?: request.playbackContext,
                             similarityAlgorithm = settings.selectedSimilarityAlgorithm,
                             sourceWarning = sourceWarning,
                             index = index,
@@ -362,39 +372,50 @@ class StreamResolutionRepository(
         manifest: StremioManifest,
         request: StremioRequest,
     ): StremioAddonResolution {
-        val contentIds = manifest.buildContentIds(request.toContentIdRequest())
+        val effectiveRequest = request.enrichedForKitsuIfNeeded(manifest)
+        val contentIds = manifest.buildContentIds(effectiveRequest.toContentIdRequest())
         var rejectedTorrentCount = 0
         val pendingDirectResults = mutableListOf<ResolvedStremioStream>()
 
         for (contentId in contentIds) {
             val directResult = stremioService.fetchStreams(
                 transportUrl = addon.transportUrl,
-                type = request.type,
+                type = effectiveRequest.type,
                 id = contentId,
             ).orNull()
                 ?.streams
                 .orEmpty()
                 .toResolvedStremioStreams(contentId)
             rejectedTorrentCount += directResult.rejectedTorrentCount
-            if (directResult.streams.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
-                return directResult.copy(rejectedTorrentCount = rejectedTorrentCount)
-            }
             pendingDirectResults += directResult.streams
+        }
+
+        val mergedDirectResults = pendingDirectResults.dedupeResolvedStreams()
+        if (mergedDirectResults.any { resolvedStream -> resolvedStream.stream.isDirectHttp }) {
+            return StremioAddonResolution(
+                streams = mergedDirectResults,
+                rejectedTorrentCount = rejectedTorrentCount,
+                playbackContext = effectiveRequest.playbackContext,
+            )
         }
 
         val fallbackResult = fetchStreamsByCatalogSearch(
             addon = addon,
             manifest = manifest,
-            request = request,
+            request = effectiveRequest,
         )
         rejectedTorrentCount += fallbackResult.rejectedTorrentCount
         if (fallbackResult.streams.isNotEmpty()) {
-            return fallbackResult.copy(rejectedTorrentCount = rejectedTorrentCount)
+            return fallbackResult.copy(
+                rejectedTorrentCount = rejectedTorrentCount,
+                playbackContext = effectiveRequest.playbackContext,
+            )
         }
 
         return StremioAddonResolution(
-            streams = pendingDirectResults,
+            streams = mergedDirectResults,
             rejectedTorrentCount = rejectedTorrentCount,
+            playbackContext = effectiveRequest.playbackContext,
         )
     }
 
@@ -771,12 +792,117 @@ internal data class StremioRequest(
         season = season,
         episode = episode,
         anilistId = anilistMediaId,
+        anilistSeason = animeLocalStremioSeason(),
+        anilistEpisode = animeLocalStremioEpisode(),
+        kitsuId = playbackContext?.kitsuMediaId,
+        kitsuEpisode = animeLocalKitsuEpisode(),
+        alternateSeason = animeLocalSeriesSeason(),
+        alternateEpisode = animeLocalSeriesEpisode(),
     )
+}
+
+private suspend fun StremioRequest.enrichedForKitsuIfNeeded(
+    manifest: StremioManifest,
+): StremioRequest {
+    val context = playbackContext ?: return this
+    if (type != "series" ||
+        context.kitsuMediaId != null ||
+        context.anilistMediaId == null ||
+        context.isSpecial ||
+        context.titleOnlySearch ||
+        !manifest.supportsKitsuContentIds()
+    ) {
+        return this
+    }
+
+    val titleCandidates = catalogSearchTitles()
+    if (titleCandidates.isEmpty()) return this
+
+    val kitsuId = KitsuAnimeIdLookup.resolveAnimeId(
+        titleCandidates = titleCandidates,
+        expectedEpisodeCount = context.animeSeasonEpisodeCount,
+        expectedYear = expectedYear,
+        cacheHint = context.anilistMediaId,
+    ) ?: return this
+
+    return copy(playbackContext = context.copy(kitsuMediaId = kitsuId))
+}
+
+private fun StremioRequest.animeLocalStremioSeason(): Int? {
+    val context = playbackContext ?: return null
+    if (context.isSpecial ||
+        context.titleOnlySearch ||
+        context.anilistMediaId == null ||
+        context.localEpisodeNumber <= 0
+    ) {
+        return null
+    }
+    return 1
+}
+
+private fun StremioRequest.animeLocalStremioEpisode(): Int? {
+    val context = playbackContext ?: return null
+    if (context.isSpecial ||
+        context.titleOnlySearch ||
+        context.anilistMediaId == null ||
+        context.localEpisodeNumber <= 0
+    ) {
+        return null
+    }
+    return context.localEpisodeNumber
+}
+
+private fun StremioRequest.animeLocalKitsuEpisode(): Int? {
+    val context = playbackContext ?: return null
+    if (context.isSpecial ||
+        context.titleOnlySearch ||
+        context.kitsuMediaId == null ||
+        context.localEpisodeNumber <= 0
+    ) {
+        return null
+    }
+    return context.localEpisodeNumber
+}
+
+private fun StremioRequest.animeLocalSeriesSeason(): Int? {
+    val context = playbackContext ?: return null
+    if (context.isSpecial ||
+        context.titleOnlySearch ||
+        context.anilistMediaId == null ||
+        context.localSeasonNumber <= 0
+    ) {
+        return null
+    }
+    return context.localSeasonNumber
+}
+
+private fun StremioRequest.animeLocalSeriesEpisode(): Int? {
+    val context = playbackContext ?: return null
+    if (context.isSpecial ||
+        context.titleOnlySearch ||
+        context.anilistMediaId == null ||
+        context.localEpisodeNumber <= 0
+    ) {
+        return null
+    }
+    return context.localEpisodeNumber
+}
+
+private fun StremioManifest.supportsKitsuContentIds(): Boolean {
+    val streamPrefixes = resources
+        .filter { resource -> resource.name.equals("stream", ignoreCase = true) }
+        .flatMap { resource -> resource.idPrefixes }
+        .filter(String::isNotBlank)
+        .ifEmpty { idPrefixes }
+        .map { prefix -> prefix.lowercase() }
+    return streamPrefixes.isEmpty() ||
+        streamPrefixes.any { prefix -> prefix == "kitsu" || prefix == "kitsu:" }
 }
 
 private data class StremioAddonResolution(
     val streams: List<ResolvedStremioStream> = emptyList(),
     val rejectedTorrentCount: Int = 0,
+    val playbackContext: EpisodePlaybackContext? = null,
 )
 
 private data class ResolvedStremioStream(
@@ -807,6 +933,11 @@ private fun List<StremioStream>.toResolvedStremioStreams(contentId: String): Str
     )
 }
 
+private fun List<ResolvedStremioStream>.dedupeResolvedStreams(): List<ResolvedStremioStream> =
+    distinctBy { resolvedStream ->
+        resolvedStream.stream.url ?: resolvedStream.stream.infoHash ?: resolvedStream.stream.title ?: resolvedStream.contentId
+    }
+
 private fun streamsFromMeta(
     meta: StremioMetaPreview,
     request: StremioRequest,
@@ -834,7 +965,7 @@ private fun streamsFromMeta(
     )
 }
 
-private fun streamIdsFromMeta(
+internal fun streamIdsFromMeta(
     meta: StremioMetaPreview,
     request: StremioRequest,
 ): List<String> {
@@ -844,11 +975,34 @@ private fun streamIdsFromMeta(
         val matchingVideos = matchingMetaVideosForRequest(meta, request)
         matchingVideos.forEach { video ->
             video.id.takeIf(String::isNotBlank)?.let(candidates::add)
-            val videoSeason = video.season ?: request.season
-            val videoEpisode = video.episode ?: request.episode
-            candidates += "${meta.id}:$videoSeason:$videoEpisode"
+            if (meta.id.isKitsuMetaId()) {
+                val kitsuEpisode = request.animeLocalKitsuEpisode() ?: video.episode ?: request.episode
+                candidates += meta.id.kitsuStreamId(kitsuEpisode)
+            } else {
+                val videoSeason = video.season ?: request.season
+                val videoEpisode = video.episode ?: request.episode
+                candidates += "${meta.id}:$videoSeason:$videoEpisode"
+            }
         }
-        candidates += "${meta.id}:${request.season}:${request.episode}"
+        if (meta.id.isKitsuMetaId()) {
+            val kitsuEpisode = request.animeLocalKitsuEpisode() ?: request.episode
+            candidates += meta.id.kitsuStreamId(kitsuEpisode)
+        } else {
+            candidates += "${meta.id}:${request.season}:${request.episode}"
+            val localSeason = request.animeLocalSeriesSeason()
+            val localEpisode = request.animeLocalSeriesEpisode()
+            if (localSeason != null && localEpisode != null) {
+                candidates += "${meta.id}:$localSeason:$localEpisode"
+            }
+            val anilistSeason = request.animeLocalStremioSeason()
+            val anilistEpisode = request.animeLocalStremioEpisode()
+            if (meta.id.shouldTrySeasonScopedAnimeMetaId(request) &&
+                anilistSeason != null &&
+                anilistEpisode != null
+            ) {
+                candidates += "${meta.id}:$anilistSeason:$anilistEpisode"
+            }
+        }
     } else if (request.type == "movie") {
         candidates += meta.id
     } else {
@@ -860,6 +1014,23 @@ private fun streamIdsFromMeta(
     }
 
     return candidates.filter(String::isNotBlank).distinct()
+}
+
+private fun String.isKitsuMetaId(): Boolean =
+    startsWith("kitsu:", ignoreCase = true)
+
+private fun String.kitsuStreamId(episode: Int): String {
+    val parts = split(':')
+    return if (parts.size >= 3 && parts.lastOrNull()?.toIntOrNull() != null) this else "$this:$episode"
+}
+
+private fun String.shouldTrySeasonScopedAnimeMetaId(request: StremioRequest): Boolean {
+    if (request.playbackContext?.anilistMediaId == null) return false
+    val lower = lowercase()
+    return !lower.startsWith("tt") &&
+        !lower.startsWith("imdb:") &&
+        !lower.startsWith("tmdb:") &&
+        !lower.startsWith("kitsu:")
 }
 
 internal fun matchingMetaVideosForRequest(
@@ -967,10 +1138,197 @@ private fun normalizedSearchQueries(values: List<String>): List<String> {
         .filter { value -> seen.add(value.normalizedCatalogTitle()) }
 }
 
+private object KitsuAnimeIdLookup {
+    private const val endpoint = "https://kitsu.io/api/edge/anime"
+    private const val minimumSpacingMillis = 400L
+
+    private val httpClient = EclipseHttpClient()
+    private val lock = Mutex()
+    private val positiveCacheByHint = mutableMapOf<Int, Int>()
+    private val queryCache = mutableMapOf<String, Int?>()
+    private var nextAvailableAtMillis = 0L
+
+    suspend fun resolveAnimeId(
+        titleCandidates: List<String>,
+        expectedEpisodeCount: Int?,
+        expectedYear: Int?,
+        cacheHint: Int?,
+    ): Int? {
+        lock.withLock {
+            if (cacheHint != null) {
+                positiveCacheByHint[cacheHint]?.let { cached -> return cached }
+            }
+        }
+
+        val queries = normalizedSearchQueries(titleCandidates).take(5)
+        for (query in queries) {
+            val cacheKey = listOf(
+                query.normalizedCatalogTitle(),
+                expectedEpisodeCount?.toString() ?: "-",
+                expectedYear?.toString() ?: "-",
+            ).joinToString("|")
+
+            val cached = lock.withLock {
+                if (queryCache.containsKey(cacheKey)) queryCache[cacheKey] else null
+            }
+            if (cached != null) {
+                if (cacheHint != null) {
+                    lock.withLock { positiveCacheByHint[cacheHint] = cached }
+                }
+                return cached
+            }
+            if (lock.withLock { queryCache.containsKey(cacheKey) && queryCache[cacheKey] == null }) {
+                continue
+            }
+
+            val response = fetchKitsuSearch(query) ?: continue
+            val match = bestMatch(
+                items = response.data,
+                titleCandidates = titleCandidates,
+                expectedEpisodeCount = expectedEpisodeCount,
+                expectedYear = expectedYear,
+            )
+
+            lock.withLock {
+                queryCache[cacheKey] = match?.id
+                if (cacheHint != null && match != null) {
+                    positiveCacheByHint[cacheHint] = match.id
+                }
+            }
+
+            if (match != null) return match.id
+        }
+
+        return null
+    }
+
+    private suspend fun fetchKitsuSearch(query: String): KitsuSearchResponse? {
+        waitForSlot()
+        val url = "$endpoint?" +
+            "filter%5Btext%5D=${query.urlEncodedValue()}&" +
+            "page%5Blimit%5D=5&" +
+            "fields%5Banime%5D=slug%2CcanonicalTitle%2Ctitles%2CstartDate%2CepisodeCount"
+        return when (
+            val result = httpClient.get(
+                url = url,
+                headers = mapOf("Accept" to "application/vnd.api+json"),
+            )
+        ) {
+            is NetworkResult.Success -> runCatching {
+                EclipseJson.decodeFromString<KitsuSearchResponse>(result.value)
+            }.getOrNull()
+            is NetworkResult.Failure -> null
+        }
+    }
+
+    private suspend fun waitForSlot() {
+        val waitMillis = lock.withLock {
+            val now = System.currentTimeMillis()
+            val wait = (nextAvailableAtMillis - now).coerceAtLeast(0L)
+            nextAvailableAtMillis = maxOf(now, nextAvailableAtMillis) + minimumSpacingMillis
+            wait
+        }
+        if (waitMillis > 0) {
+            delay(waitMillis)
+        }
+    }
+
+    private fun bestMatch(
+        items: List<KitsuAnime>,
+        titleCandidates: List<String>,
+        expectedEpisodeCount: Int?,
+        expectedYear: Int?,
+    ): KitsuMatch? =
+        items.mapNotNull { item ->
+            val id = item.id.toIntOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+            val titles = item.attributes.matchableTitles()
+            if (titles.isEmpty()) return@mapNotNull null
+
+            val titleScore = titleCandidates
+                .flatMap { candidate -> titles.map { title -> catalogTitleSimilarity(candidate, title) } }
+                .maxOrNull()
+                ?: 0.0
+            if (titleScore < 0.82) return@mapNotNull null
+
+            var score = titleScore
+            val actualEpisodeCount = item.attributes.episodeCount
+            if (expectedEpisodeCount != null &&
+                expectedEpisodeCount > 0 &&
+                actualEpisodeCount != null &&
+                actualEpisodeCount > 0
+            ) {
+                val distance = kotlin.math.abs(actualEpisodeCount - expectedEpisodeCount)
+                score += when {
+                    distance == 0 -> 0.08
+                    distance == 1 -> 0.03
+                    distance > maxOf(2, expectedEpisodeCount / 4) -> -0.12
+                    else -> 0.0
+                }
+            }
+
+            val actualYear = item.attributes.startDate?.take(4)?.toIntOrNull()
+            if (expectedYear != null && actualYear != null) {
+                val distance = kotlin.math.abs(actualYear - expectedYear)
+                score += when {
+                    distance == 0 -> 0.05
+                    distance > 2 -> -0.08
+                    else -> 0.0
+                }
+            }
+
+            if (score < 0.84) return@mapNotNull null
+            KitsuMatch(id = id, title = item.attributes.displayTitle(), score = score.coerceIn(0.0, 1.0))
+        }
+            .sortedWith(
+                compareByDescending<KitsuMatch> { match -> match.score }
+                    .thenBy { match -> match.title.length },
+            )
+            .firstOrNull()
+
+    @Serializable
+    private data class KitsuSearchResponse(
+        val data: List<KitsuAnime> = emptyList(),
+    )
+
+    @Serializable
+    private data class KitsuAnime(
+        val id: String = "",
+        val attributes: KitsuAnimeAttributes = KitsuAnimeAttributes(),
+    )
+
+    @Serializable
+    private data class KitsuAnimeAttributes(
+        val slug: String? = null,
+        val canonicalTitle: String? = null,
+        val titles: Map<String, String?>? = null,
+        val startDate: String? = null,
+        val episodeCount: Int? = null,
+    ) {
+        fun displayTitle(): String =
+            canonicalTitle ?: titles?.values?.filterNotNull()?.firstOrNull() ?: slug ?: "unknown"
+
+        fun matchableTitles(): List<String> {
+            val seen = mutableSetOf<String>()
+            return (listOf(canonicalTitle, slug) + titles.orEmpty().values)
+                .mapNotNull { title -> title?.trim()?.takeIf(String::isNotBlank) }
+                .filter { title -> seen.add(title.lowercase()) }
+        }
+    }
+
+    private data class KitsuMatch(
+        val id: Int,
+        val title: String,
+        val score: Double,
+    )
+}
+
 private fun String.normalizedCatalogTitle(): String =
     lowercase()
         .replace(Regex("[^a-z0-9]+"), " ")
         .trim()
+
+private fun String.urlEncodedValue(): String =
+    URLEncoder.encode(this, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
 private fun String.stripEpisodeSuffix(): String {
     val patterns = listOf(
@@ -1271,6 +1629,7 @@ private fun StreamEpisodeSelection.toPlaybackContext(): EpisodePlaybackContext =
     localSeasonNumber = localSeasonNumber,
     localEpisodeNumber = localEpisodeNumber,
     anilistMediaId = anilistMediaId,
+    kitsuMediaId = kitsuMediaId,
     tmdbSeasonNumber = seasonNumber.takeUnless { titleOnlySearch },
     tmdbEpisodeNumber = episodeNumber.takeUnless { titleOnlySearch },
     tmdbEpisodeOffset = tmdbEpisodeOffset,
@@ -1371,6 +1730,7 @@ private fun ServiceEpisodeLink.toStreamEpisodeSelection(
         localSeasonNumber = localSeason,
         localEpisodeNumber = localEpisode,
         anilistMediaId = fallback?.anilistMediaId ?: request.anilistMediaId,
+        kitsuMediaId = fallback?.kitsuMediaId ?: request.playbackContext?.kitsuMediaId,
         tmdbEpisodeOffset = fallback?.tmdbEpisodeOffset,
         animeAbsoluteEpisodeNumber = fallback?.animeAbsoluteEpisodeNumber,
         animeSeasonEpisodeCount = fallback?.animeSeasonEpisodeCount,

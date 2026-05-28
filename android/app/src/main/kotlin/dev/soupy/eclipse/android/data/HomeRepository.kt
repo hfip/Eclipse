@@ -85,6 +85,9 @@ class HomeRepository(
             val animeCatalogsDeferred = async { aniListService.fetchHomeCatalogs() }
 
             val enabledCatalogs = enabledCatalogsDeferred.await()
+            if (!tmdbEnabled && enabledCatalogs.any { catalog -> catalog.resolvedSource.equals("TMDB", ignoreCase = true) }) {
+                error("TMDB home catalogs are not configured. Add TMDB_API_KEY to android/local.properties or Build.xcconfig and rebuild the app.")
+            }
             val sections = run {
                 val trending = trendingDeferred.await().orEmptyList()
                     .withoutFilteredHorror(settings.filterHorrorContent)

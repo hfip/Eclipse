@@ -8,6 +8,7 @@ data class EpisodePlaybackContext(
     val localSeasonNumber: Int,
     val localEpisodeNumber: Int,
     val anilistMediaId: Int? = null,
+    val kitsuMediaId: Int? = null,
     val tmdbSeasonNumber: Int? = null,
     val tmdbEpisodeNumber: Int? = null,
     val tmdbEpisodeOffset: Int? = null,
@@ -21,6 +22,9 @@ data class EpisodePlaybackContext(
 
     val resolvedTMDBEpisodeNumber: Int
         get() = tmdbEpisodeNumber ?: (localEpisodeNumber + (tmdbEpisodeOffset ?: 0))
+
+    val hasAnimeMediaId: Boolean
+        get() = anilistMediaId != null || kitsuMediaId != null
 
     fun forEpisodeNumber(episodeNumber: Int): EpisodePlaybackContext {
         val delta = episodeNumber - localEpisodeNumber

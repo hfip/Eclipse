@@ -1,5 +1,6 @@
 package dev.soupy.eclipse.android.feature.downloads
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -85,7 +86,6 @@ data class DownloadsScreenState(
 private enum class DownloadsTab(val label: String) {
     Active("Downloads"),
     Completed("Library"),
-    Failed("Failed"),
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -115,11 +115,14 @@ fun DownloadsRoute(
     playbackSettings: PlaybackSettingsSnapshot = PlaybackSettingsSnapshot(),
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(DownloadsTab.Active) }
+    var showManagement by rememberSaveable { mutableStateOf(false) }
+    val activeItems = state.items.filter { it.statusLabel in setOf("Queued", "Downloading", "Paused") }
+    val failedItems = state.items.filter { it.statusLabel == "Failed" }
+    val completedItems = state.items.filter { it.statusLabel == "Completed" }
     val visibleItems = state.items.filter { item ->
         when (selectedTab) {
-            DownloadsTab.Active -> item.statusLabel in setOf("Queued", "Downloading", "Paused")
-            DownloadsTab.Completed -> item.statusLabel == "Completed"
-            DownloadsTab.Failed -> item.statusLabel == "Failed"
+            DownloadsTab.Active -> item in activeItems || item in failedItems
+            DownloadsTab.Completed -> item in completedItems
         }
     }
 
@@ -130,15 +133,6 @@ fun DownloadsRoute(
         verticalArrangement = Arrangement.spacedBy(18.dp),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
     ) {
-        item {
-            HeroBackdrop(
-                title = state.heroTitle,
-                subtitle = state.heroSubtitle,
-                imageUrl = state.heroImageUrl,
-                supportingText = state.heroSupportingText,
-            )
-        }
-
         if (state.isLoading) {
             item {
                 LoadingPanel(
@@ -171,12 +165,6 @@ fun DownloadsRoute(
             }
         }
 
-        if (state.metrics.isNotEmpty()) {
-            item {
-                DownloadMetrics(metrics = state.metrics)
-            }
-        }
-
         state.playerSource?.let { source ->
             item {
                 SectionHeading(
@@ -195,56 +183,70 @@ fun DownloadsRoute(
             }
         }
 
+        item {
+            Text(
+                text = "Downloads",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+
         if (state.items.isNotEmpty()) {
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    SectionHeading(
-                        title = "Queue",
-                        subtitle = "Active, completed, and failed downloads.",
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        DownloadsTab.entries.forEach { tab ->
-                            if (selectedTab == tab) {
-                                Button(onClick = { selectedTab = tab }) {
-                                    Text(tab.label)
-                                }
-                            } else {
-                                OutlinedButton(onClick = { selectedTab = tab }) {
-                                    Text(tab.label)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            DownloadsTab.entries.forEach { tab ->
+                                if (selectedTab == tab) {
+                                    Button(onClick = { selectedTab = tab }) {
+                                        Text(tab.label)
+                                    }
+                                } else {
+                                    OutlinedButton(onClick = { selectedTab = tab }) {
+                                        Text(tab.label)
+                                    }
                                 }
                             }
                         }
+                        OutlinedButton(onClick = { showManagement = !showManagement }) {
+                            Text("Manage")
+                        }
                     }
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        OutlinedButton(onClick = onPauseAll) {
-                            Text("Pause All")
-                        }
-                        OutlinedButton(onClick = onResumeAll) {
-                            Text("Resume All")
-                        }
-                        OutlinedButton(onClick = onRetryFailed) {
-                            Text("Retry Failed")
-                        }
-                        OutlinedButton(onClick = onCancelActive) {
-                            Text("Cancel Active")
-                        }
-                        OutlinedButton(onClick = onClearCompleted) {
-                            Text("Clear Completed")
-                        }
-                        OutlinedButton(onClick = onClearAll) {
-                            Text("Clear All")
-                        }
-                        OutlinedButton(onClick = onCleanupOrphans) {
-                            Text("Clean Orphans")
-                        }
-                        OutlinedButton(onClick = onVerifyFiles) {
-                            Text("Verify Files")
+                    if (showManagement) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            OutlinedButton(onClick = onPauseAll) {
+                                Text("Pause All")
+                            }
+                            OutlinedButton(onClick = onResumeAll) {
+                                Text("Resume All")
+                            }
+                            OutlinedButton(onClick = onRetryFailed) {
+                                Text("Retry Failed")
+                            }
+                            OutlinedButton(onClick = onCancelActive) {
+                                Text("Cancel Active")
+                            }
+                            OutlinedButton(onClick = onClearCompleted) {
+                                Text("Clear Completed")
+                            }
+                            OutlinedButton(onClick = onClearAll) {
+                                Text("Clear All")
+                            }
+                            OutlinedButton(onClick = onCleanupOrphans) {
+                                Text("Clean Orphans")
+                            }
+                            OutlinedButton(onClick = onVerifyFiles) {
+                                Text("Verify Files")
+                            }
                         }
                     }
                 }
@@ -260,32 +262,51 @@ fun DownloadsRoute(
                     }
                 }
             } else if (selectedTab == DownloadsTab.Completed) {
-                visibleItems
-                    .groupBy { it.detailTarget }
-                    .forEach { (_, groupItems) ->
-                        val first = groupItems.first()
-                        item("downloaded-group-${first.id}") {
-                            SectionHeading(
-                                title = first.title,
-                                subtitle = "${groupItems.size} offline item${if (groupItems.size == 1) "" else "s"}",
-                            )
-                        }
-                        items(groupItems, key = { it.id }) { item ->
-                            DownloadCard(
-                                item = item,
-                                onOpen = { onSelect(item.detailTarget) },
-                                onPause = { onPause(item.id) },
-                                onResume = { onResume(item.id) },
-                                onPlayOffline = { onPlayOffline(item.id) },
-                                onMarkComplete = { onMarkComplete(item.id) },
-                                onRemoveLocalFile = { onRemoveLocalFile(item.id) },
-                                onRemove = { onRemove(item.id) },
-                                onClearTarget = { onClearTarget(item.detailTarget) },
-                            )
-                        }
-                    }
+                items(
+                    visibleItems.groupBy { it.detailTarget }.entries.toList(),
+                    key = { entry -> "downloaded-group-${entry.key}" },
+                ) { entry ->
+                    val groupItems = entry.value.sortedBy { it.subtitle ?: it.title }
+                    val first = groupItems.first()
+                    DownloadedGroupCard(
+                        item = first,
+                        itemCount = groupItems.size,
+                        onOpen = { onSelect(first.detailTarget) },
+                        onPlayFirst = { onPlayOffline(first.id) },
+                        onClearTarget = { onClearTarget(first.detailTarget) },
+                    )
+                }
             } else {
-                items(visibleItems, key = { it.id }) { item ->
+                if (activeItems.isNotEmpty()) {
+                    item {
+                        SectionHeading(
+                            title = "Active",
+                            subtitle = "${activeItems.size} in progress",
+                        )
+                    }
+                }
+                items(activeItems, key = { it.id }) { item ->
+                    DownloadCard(
+                        item = item,
+                        onOpen = { onSelect(item.detailTarget) },
+                        onPause = { onPause(item.id) },
+                        onResume = { onResume(item.id) },
+                        onPlayOffline = { onPlayOffline(item.id) },
+                        onMarkComplete = { onMarkComplete(item.id) },
+                        onRemoveLocalFile = { onRemoveLocalFile(item.id) },
+                        onRemove = { onRemove(item.id) },
+                        onClearTarget = { onClearTarget(item.detailTarget) },
+                    )
+                }
+                if (failedItems.isNotEmpty()) {
+                    item {
+                        SectionHeading(
+                            title = "Failed",
+                            subtitle = "${failedItems.size} need attention",
+                        )
+                    }
+                }
+                items(failedItems, key = { it.id }) { item ->
                     DownloadCard(
                         item = item,
                         onOpen = { onSelect(item.detailTarget) },
@@ -306,12 +327,12 @@ fun DownloadsRoute(
                 GlassPanel {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "No downloads queued",
+                            text = "No Downloads",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = "Open a detail page, resolve a direct source, and queue it for offline storage.",
+                            text = "Download movies and episodes to watch offline. Use the download button on any media page.",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
                         )
@@ -355,6 +376,75 @@ private fun DownloadMetrics(
                 }
                 if (rowMetrics.size == 1) {
                     Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadedGroupCard(
+    item: DownloadRow,
+    itemCount: Int,
+    onOpen: () -> Unit,
+    onPlayFirst: () -> Unit,
+    onClearTarget: () -> Unit,
+) {
+    GlassPanel(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
+        contentPadding = PaddingValues(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PosterImage(
+                imageUrl = item.imageUrl ?: item.backdropUrl,
+                contentDescription = item.title,
+                modifier = Modifier
+                    .width(55.dp)
+                    .aspectRatio(2f / 3f),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (itemCount == 1) {
+                        item.subtitle ?: "1 offline item"
+                    } else {
+                        "$itemCount offline items"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                item.bytesLabel?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onPlayFirst) {
+                    Text("Play")
+                }
+                OutlinedButton(onClick = onClearTarget) {
+                    Text("Delete")
                 }
             }
         }

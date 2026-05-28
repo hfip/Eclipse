@@ -47,6 +47,12 @@ data class DetailEpisodeEntry(
     val serviceHref: String? = null,
 )
 
+data class DetailSeasonEntry(
+    val seasonNumber: Int,
+    val title: String,
+    val posterUrl: String? = null,
+)
+
 data class DetailCastEntry(
     val id: String,
     val name: String,
@@ -71,6 +77,7 @@ data class DetailContent(
     val contentRating: String? = null,
     val cast: List<DetailCastEntry> = emptyList(),
     val episodesTitle: String? = null,
+    val seasons: List<DetailSeasonEntry> = emptyList(),
     val episodes: List<DetailEpisodeEntry> = emptyList(),
     val isMovie: Boolean = false,
     val isAnime: Boolean = false,
@@ -228,6 +235,7 @@ class DetailRepository(
             contentRating = contentRating,
             cast = creditsDeferred.await().toDetailCastEntries(),
             episodesTitle = animeBundle?.episodesTitle ?: seasonDetails.title(show.name),
+            seasons = animeBundle?.seasons ?: show.seasons.toDetailSeasonEntries(show.fullPosterUrl),
             episodes = animeBundle?.episodes ?: seasonDetails.flatMap { seasonDetail ->
                 seasonDetail.episodes.map { it.toDetailEpisodeEntry() }
             },
@@ -264,11 +272,17 @@ class DetailRepository(
 
         var absoluteEpisode = 1
         val episodes = mutableListOf<DetailEpisodeEntry>()
+        val seasonEntries = mutableListOf<DetailSeasonEntry>()
         animeSeasons.forEachIndexed { index, anime ->
             val localSeason = index + 1
             val episodeCount = anime.effectiveEpisodeCount()
                 ?: (tmdbEpisodesByAbsolute.size - absoluteEpisode + 1).takeIf { it > 0 }
                 ?: 12
+            seasonEntries += DetailSeasonEntry(
+                seasonNumber = localSeason,
+                title = anime.displayTitle.ifBlank { "Season $localSeason" },
+                posterUrl = anime.posterUrl ?: show.fullPosterUrl,
+            )
             (1..episodeCount.coerceIn(1, 200)).forEach { localEpisode ->
                 val tmdbEpisode = tmdbEpisodesByAbsolute[absoluteEpisode]
                 episodes += DetailEpisodeEntry(
@@ -283,8 +297,9 @@ class DetailRepository(
                         tmdbEpisode?.runtime?.takeIf { it > 0 }?.let { add(formatRuntime(it)) }
                         tmdbEpisode?.airDate?.takeIf { it.isNotBlank() }?.let(::add)
                     }.joinToString(" | "),
-                    imageUrl = tmdbEpisode?.fullStillUrl ?: anime.posterUrl,
-                    overview = tmdbEpisode?.overview,
+                    imageUrl = tmdbEpisode?.fullStillUrl ?: anime.posterUrl ?: show.fullPosterUrl,
+                    overview = tmdbEpisode?.overview?.takeIf { it.isNotBlank() }
+                        ?: anime.description?.stripHtmlTags(),
                     seasonNumber = localSeason,
                     episodeNumber = localEpisode,
                     runtimeMinutes = tmdbEpisode?.runtime,
@@ -307,6 +322,7 @@ class DetailRepository(
             episodesTitle = "Episodes",
             seasonCount = animeSeasons.size,
             totalEpisodes = episodes.size + specialEpisodes.size,
+            seasons = seasonEntries,
             episodes = episodes + specialEpisodes,
         )
     }
@@ -520,6 +536,7 @@ private data class AnimeSeasonBundle(
     val episodesTitle: String,
     val seasonCount: Int,
     val totalEpisodes: Int,
+    val seasons: List<DetailSeasonEntry>,
     val episodes: List<DetailEpisodeEntry>,
 )
 
@@ -623,6 +640,18 @@ private suspend fun AniListMedia.toDetailContent(
         contentRating = tmdbShowMetadata?.contentRating,
         cast = tmdbShowMetadata?.cast.orEmpty(),
         episodesTitle = tmdbShowMetadata?.episodesTitle ?: syntheticEpisodes.takeIf { it.isNotEmpty() }?.let { "Episodes" },
+        seasons = syntheticEpisodes
+            .takeIf { it.isNotEmpty() }
+            ?.let {
+                listOf(
+                    DetailSeasonEntry(
+                        seasonNumber = 1,
+                        title = displayTitle,
+                        posterUrl = posterUrl,
+                    ),
+                )
+            }
+            .orEmpty(),
         episodes = tmdbShowMetadata?.episodes ?: syntheticEpisodes,
         isAnime = true,
         primaryAniListId = id,
@@ -708,7 +737,7 @@ private fun AniListMedia.syntheticAnimeEpisodes(): List<DetailEpisodeEntry> {
             title = "Episode $episode",
             subtitle = "Episode $episode",
             imageUrl = posterUrl,
-            overview = null,
+            overview = description?.stripHtmlTags(),
             seasonNumber = 1,
             episodeNumber = episode,
             anilistMediaId = id,
@@ -758,8 +787,8 @@ private fun AniListMedia.toAnimeDetailEpisodeEntries(
                 tmdbEpisode?.runtime?.takeIf { it > 0 }?.let { add(formatRuntime(it)) }
                 tmdbEpisode?.airDate?.takeIf { it.isNotBlank() }?.let(::add)
             }.joinToString(" | "),
-            imageUrl = tmdbEpisode?.fullStillUrl,
-            overview = tmdbEpisode?.overview,
+            imageUrl = tmdbEpisode?.fullStillUrl ?: posterUrl,
+            overview = tmdbEpisode?.overview?.takeIf { it.isNotBlank() } ?: description?.stripHtmlTags(),
             seasonNumber = localSeasonNumber,
             episodeNumber = localEpisodeNumber,
             runtimeMinutes = tmdbEpisode?.runtime,
@@ -784,7 +813,23 @@ private fun String?.specialFormatLabel(): String =
         ?.replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase() else char.toString() }
         ?: "Special"
 
-private fun tmdbPosterUrl(path: String): String = "https://image.tmdb.org/t/p/w780$path"
+private fun List<TMDBSeason>.toDetailSeasonEntries(showPosterUrl: String?): List<DetailSeasonEntry> =
+    filter { season -> season.seasonNumber > 0 && season.episodeCount > 0 }
+        .sortedBy(TMDBSeason::seasonNumber)
+        .map { season ->
+            DetailSeasonEntry(
+                seasonNumber = season.seasonNumber,
+                title = season.name.ifBlank { "Season ${season.seasonNumber}" },
+                posterUrl = season.posterPath?.let(::tmdbPosterUrl) ?: showPosterUrl,
+            )
+        }
+
+private fun tmdbPosterUrl(path: String): String =
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+        path
+    } else {
+        "https://image.tmdb.org/t/p/w780$path"
+    }
 
 private fun animeYearAlignmentScore(animeYear: Int?, tmdbYear: Int?): Double {
     if (animeYear == null || tmdbYear == null) return 0.0

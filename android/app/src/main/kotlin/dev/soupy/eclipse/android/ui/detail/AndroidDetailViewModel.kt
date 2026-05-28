@@ -38,6 +38,7 @@ import dev.soupy.eclipse.android.core.model.progressPercent
 import dev.soupy.eclipse.android.feature.detail.DetailCastRow
 import dev.soupy.eclipse.android.feature.detail.DetailEpisodeRow
 import dev.soupy.eclipse.android.feature.detail.DetailFactRow
+import dev.soupy.eclipse.android.feature.detail.DetailSeasonRow
 import dev.soupy.eclipse.android.feature.detail.DetailScreenState
 import dev.soupy.eclipse.android.feature.detail.DetailStreamRow
 import dev.soupy.eclipse.android.core.network.AniSkipService
@@ -1023,6 +1024,13 @@ private fun DetailContent.toUiState(
         )
     },
     episodesTitle = episodesTitle,
+    seasons = seasons.map {
+        DetailSeasonRow(
+            seasonNumber = it.seasonNumber,
+            title = it.title,
+            posterUrl = it.posterUrl,
+        )
+    },
     episodes = episodes.map {
         DetailEpisodeRow(
             id = it.id,

@@ -2,6 +2,7 @@ package dev.soupy.eclipse.android.feature.search
 
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,12 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -77,18 +76,12 @@ fun SearchRoute(
         state.mediaColumnsPortrait
     }.coerceIn(2, 8)
     var selectedFilter by rememberSaveable { mutableStateOf(SearchFilter.ALL) }
+    var filterMenuExpanded by rememberSaveable { mutableStateOf(false) }
     val results = state.sections.flatMap { it.items }
-    val selectedSource = state.sourceOptions.firstOrNull { it.id == state.selectedSourceId }
-        ?: state.sourceOptions.firstOrNull()
-    val isTmdbSearch = selectedSource?.isTmdb != false
-    val filteredResults = if (!isTmdbSearch) {
-        results
-    } else {
-        when (selectedFilter) {
-            SearchFilter.ALL -> results
-            SearchFilter.MOVIES -> results.filter { it.detailTarget is DetailTarget.TmdbMovie }
-            SearchFilter.TV -> results.filter { it.detailTarget is DetailTarget.TmdbShow }
-        }
+    val filteredResults = when (selectedFilter) {
+        SearchFilter.ALL -> results
+        SearchFilter.MOVIES -> results.filter { it.detailTarget is DetailTarget.TmdbMovie }
+        SearchFilter.TV -> results.filter { it.detailTarget is DetailTarget.TmdbShow }
     }
 
     LazyColumn(
@@ -103,11 +96,11 @@ fun SearchRoute(
                 OutlinedTextField(
                     value = state.query,
                     onValueChange = onQueryChange,
-                    label = { Text("Search ${selectedSource?.label ?: "TMDB"}") },
+                    label = { Text("Search...") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSearch() }),
                 )
                 Button(
                     onClick = onSearch,
@@ -115,44 +108,25 @@ fun SearchRoute(
                 ) {
                     Text("Search")
                 }
-            }
-        }
-
-        if (state.sourceOptions.isNotEmpty()) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionHeading(
-                        title = "Source",
-                        subtitle = selectedSource?.subtitle,
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(state.sourceOptions, key = { it.id }) { source ->
-                            if (source.id == state.selectedSourceId) {
-                                Button(onClick = { onSourceSelected(source.id) }) {
-                                    Text(source.label)
-                                }
-                            } else {
-                                androidx.compose.material3.OutlinedButton(onClick = { onSourceSelected(source.id) }) {
-                                    Text(source.label)
-                                }
-                            }
+                if (results.isNotEmpty()) {
+                    Box {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { filterMenuExpanded = true },
+                        ) {
+                            Text(selectedFilter.label)
                         }
-                    }
-                }
-            }
-        }
-
-        if (results.isNotEmpty() && isTmdbSearch) {
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(SearchFilter.entries, key = { it.name }) { filter ->
-                        if (filter == selectedFilter) {
-                            Button(onClick = { selectedFilter = filter }) {
-                                Text(filter.label)
-                            }
-                        } else {
-                            androidx.compose.material3.OutlinedButton(onClick = { selectedFilter = filter }) {
-                                Text(filter.label)
+                        DropdownMenu(
+                            expanded = filterMenuExpanded,
+                            onDismissRequest = { filterMenuExpanded = false },
+                        ) {
+                            SearchFilter.entries.forEach { filter ->
+                                DropdownMenuItem(
+                                    text = { Text(filter.label) },
+                                    onClick = {
+                                        selectedFilter = filter
+                                        filterMenuExpanded = false
+                                    },
+                                )
                             }
                         }
                     }
@@ -203,11 +177,7 @@ fun SearchRoute(
             item {
                 LoadingPanel(
                     title = "Searching",
-                    message = if (isTmdbSearch) {
-                        "Looking across movies and TV shows."
-                    } else {
-                        "Asking ${selectedSource.label}."
-                    },
+                    message = "Looking across movies and TV shows.",
                 )
             }
         }
@@ -226,12 +196,17 @@ fun SearchRoute(
         if (state.query.isBlank() && state.sections.isEmpty()) {
             item {
                 ErrorPanel(
-                    title = "Start with a title",
-                    message = if (isTmdbSearch) {
-                        "Search for a movie or TV show."
-                    } else {
-                        "Search the selected service source."
-                    },
+                    title = "Search Movies & TV Shows",
+                    message = "Search for a movie or TV show.",
+                )
+            }
+        }
+
+        if (state.query.isNotBlank() && !state.isSearching && state.errorMessage == null && results.isEmpty()) {
+            item {
+                ErrorPanel(
+                    title = "No results found",
+                    message = "Try searching for a different movie or TV show.",
                 )
             }
         }
@@ -249,12 +224,8 @@ fun SearchRoute(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeading(
-                        title = if (isTmdbSearch) "Search Results" else "${selectedSource.label} Results",
-                        subtitle = if (isTmdbSearch) {
-                            "${filteredResults.size} ${selectedFilter.label.lowercase()} result${if (filteredResults.size == 1) "" else "s"}"
-                        } else {
-                            "${filteredResults.size} service result${if (filteredResults.size == 1) "" else "s"}"
-                        },
+                        title = "Search Results",
+                        subtitle = "${filteredResults.size} ${selectedFilter.label.lowercase()} result${if (filteredResults.size == 1) "" else "s"}",
                     )
                     filteredResults.chunked(columnCount).forEach { rowItems ->
                         Row(

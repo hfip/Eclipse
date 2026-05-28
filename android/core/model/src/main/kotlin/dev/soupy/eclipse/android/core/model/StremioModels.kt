@@ -185,6 +185,12 @@ data class StremioContentIdRequest(
     val season: Int? = null,
     val episode: Int? = null,
     val anilistId: Int? = null,
+    val anilistSeason: Int? = null,
+    val anilistEpisode: Int? = null,
+    val kitsuId: Int? = null,
+    val kitsuEpisode: Int? = null,
+    val alternateSeason: Int? = null,
+    val alternateEpisode: Int? = null,
 )
 
 val StremioStream.isDirectHttp: Boolean
@@ -230,6 +236,10 @@ fun StremioManifest.buildContentIds(
     val supportsAniList = supportsAny || prefixes.any { prefix ->
         prefix == "anilist" || prefix == "anilist:"
     }
+    val supportsKitsu = supportsAny || prefixes.any { prefix ->
+        prefix == "kitsu" || prefix == "kitsu:"
+    }
+    val seriesTuples = request.seriesTuples()
     val candidates = mutableListOf<String>()
 
     if (supportsImdb) {
@@ -237,40 +247,72 @@ fun StremioManifest.buildContentIds(
             if (value.startsWith("tt")) value else "tt$value"
         }
         if (imdb != null) {
-            val imdbId = if (request.type == "series" && request.season != null && request.episode != null) {
-                "$imdb:${request.season}:${request.episode}"
+            if (request.type == "series" && seriesTuples.isNotEmpty()) {
+                seriesTuples.forEach { (season, episode) ->
+                    candidates += "$imdb:$season:$episode"
+                }
             } else {
-                imdb
+                candidates += imdb
             }
-            candidates += imdbId
 
             if (supportsImdbNamespace) {
-                candidates += if (request.type == "series" && request.season != null && request.episode != null) {
-                    "imdb:$imdb:${request.season}:${request.episode}"
+                if (request.type == "series" && seriesTuples.isNotEmpty()) {
+                    seriesTuples.forEach { (season, episode) ->
+                        candidates += "imdb:$imdb:$season:$episode"
+                    }
                 } else {
-                    "imdb:$imdb"
+                    candidates += "imdb:$imdb"
                 }
             }
         }
     }
 
     if (supportsTmdb) {
-        candidates += if (request.type == "series" && request.season != null && request.episode != null) {
-            "tmdb:${request.tmdbId}:${request.season}:${request.episode}"
+        if (request.type == "series" && seriesTuples.isNotEmpty()) {
+            seriesTuples.forEach { (season, episode) ->
+                candidates += "tmdb:${request.tmdbId}:$season:$episode"
+            }
         } else {
-            "tmdb:${request.tmdbId}"
+            candidates += "tmdb:${request.tmdbId}"
         }
     }
 
     if (supportsAniList && request.anilistId != null) {
-        candidates += if (request.type == "series" && request.season != null && request.episode != null) {
-            "anilist:${request.anilistId}:${request.season}:${request.episode}"
+        if (request.type == "series") {
+            if (request.anilistSeason != null && request.anilistEpisode != null) {
+                candidates += "anilist:${request.anilistId}:${request.anilistSeason}:${request.anilistEpisode}"
+            }
+            if (request.season != null && request.episode != null) {
+                candidates += "anilist:${request.anilistId}:${request.season}:${request.episode}"
+            }
         } else {
-            "anilist:${request.anilistId}"
+            candidates += "anilist:${request.anilistId}"
+        }
+    }
+
+    if (supportsKitsu && request.kitsuId != null && request.kitsuId > 0) {
+        if (request.type == "series" && request.kitsuEpisode != null && request.kitsuEpisode > 0) {
+            candidates += "kitsu:${request.kitsuId}:${request.kitsuEpisode}"
+        } else {
+            candidates += "kitsu:${request.kitsuId}"
         }
     }
 
     return candidates.distinct()
+}
+
+private fun StremioContentIdRequest.seriesTuples(): List<Pair<Int, Int>> {
+    if (type != "series") return emptyList()
+    return listOfNotNull(
+        season?.let { selectedSeason ->
+            episode?.let { selectedEpisode -> selectedSeason to selectedEpisode }
+        },
+        alternateSeason?.let { selectedSeason ->
+            alternateEpisode?.let { selectedEpisode -> selectedSeason to selectedEpisode }
+        },
+    )
+        .filter { (season, episode) -> season > 0 && episode > 0 }
+        .distinct()
 }
 
 val StremioSubtitle.displayLabel: String

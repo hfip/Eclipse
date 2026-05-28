@@ -7,11 +7,35 @@ val localProperties = Properties().apply {
     }
 }
 
+fun appleBuildConfigProperties(path: String): List<Pair<String, String>> =
+    rootProject.file(path)
+        .takeIf { it.isFile }
+        ?.readLines()
+        ?.mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank() || trimmed.startsWith("//") || !trimmed.contains("=")) {
+                null
+            } else {
+                val name = trimmed.substringBefore("=").trim()
+                val value = trimmed.substringAfter("=").substringBefore("//").trim()
+                name.takeIf { it.isNotBlank() }?.let { it to value }
+            }
+        }
+        .orEmpty()
+
+val appleBuildConfigProperties: Map<String, String> = listOf(
+    "../Build.xcconfig",
+    "../Build.local.xcconfig",
+)
+    .flatMap(::appleBuildConfigProperties)
+    .toMap()
+
 fun secretProperty(name: String): String =
     providers.gradleProperty(name)
         .orElse(providers.environmentVariable(name))
         .orElse(localProperties.getProperty(name, ""))
         .get()
+        .ifBlank { appleBuildConfigProperties[name].orEmpty() }
 
 fun buildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""

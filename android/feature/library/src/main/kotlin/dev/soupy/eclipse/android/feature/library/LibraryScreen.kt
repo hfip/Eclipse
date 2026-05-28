@@ -1,7 +1,10 @@
 package dev.soupy.eclipse.android.feature.library
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,17 +20,25 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
@@ -102,19 +113,60 @@ fun LibraryRoute(
     onRemoveFromCollection: (String, String) -> Unit,
 ) {
     var collectionName by rememberSaveable { mutableStateOf("") }
+    var showingCreateCollection by rememberSaveable { mutableStateOf(false) }
     var selectedCollectionId by rememberSaveable { mutableStateOf<String?>(null) }
     val bookmarks = state.collections.firstOrNull { it.name.equals("Bookmarks", ignoreCase = true) }
-    val bookmarkItems = bookmarks?.items?.takeIf { it.isNotEmpty() } ?: state.savedItems
+    val bookmarkItems = bookmarks?.items.orEmpty()
     val visibleCollections = state.collections.filterNot { it.name.equals("Bookmarks", ignoreCase = true) }
     val selectedCollection = selectedCollectionId?.let { id -> state.collections.firstOrNull { it.id == id } }
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding(),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-    ) {
-        if (selectedCollection != null) {
+    BackHandler(enabled = selectedCollection != null) {
+        selectedCollectionId = null
+    }
+    if (showingCreateCollection) {
+        AlertDialog(
+            onDismissRequest = { showingCreateCollection = false },
+            title = { Text("Create Collection") },
+            text = {
+                OutlinedTextField(
+                    value = collectionName,
+                    onValueChange = { collectionName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Collection name") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onCreateCollection(collectionName)
+                        collectionName = ""
+                        showingCreateCollection = false
+                    },
+                    enabled = collectionName.isNotBlank(),
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        collectionName = ""
+                        showingCreateCollection = false
+                    },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+    if (selectedCollection != null) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        ) {
             item {
                 OutlinedButton(onClick = { selectedCollectionId = null }) {
                     Text("Back to Library")
@@ -131,7 +183,17 @@ fun LibraryRoute(
                     onRemoveItem = { itemId -> onRemoveFromCollection(selectedCollection.id, itemId) },
                 )
             }
-        } else if (state.isLoading) {
+        }
+        return
+    }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding(),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+    ) {
+        if (state.isLoading) {
             item {
                 LoadingPanel(
                     title = "Loading library",
@@ -151,26 +213,31 @@ fun LibraryRoute(
             }
         }
 
-        if (state.continueWatching.isNotEmpty()) {
-            item {
-                SectionHeading(
-                    title = "Continue Watching",
-                    subtitle = "Resume entries sync from playback and tracker imports.",
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Library",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
-            }
-            items(state.continueWatching, key = { it.id }) { item ->
-                ContinueWatchingCard(
-                    item = item,
-                    onOpen = { onSelect(item.detailTarget) },
-                    onRemove = { onRemoveContinueWatching(item.id) },
-                )
+                IconButton(onClick = { showingCreateCollection = true }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = "Create collection",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
             }
         }
 
         item {
             SectionHeading(
                 title = "Bookmarks",
-                subtitle = "${bookmarkItems.size} saved title${if (bookmarkItems.size == 1) "" else "s"}.",
+                subtitle = "${bookmarkItems.size} item${if (bookmarkItems.size == 1) "" else "s"}.",
             )
         }
 
@@ -199,36 +266,29 @@ fun LibraryRoute(
         }
 
         item {
-            SectionHeading(
-                title = "Collections",
-                subtitle = "${visibleCollections.size} custom collection${if (visibleCollections.size == 1) "" else "s"}.",
-            )
-        }
-
-        item {
-            GlassPanel {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "Create Collection",
+                        text = "Collections",
                         style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
-                    OutlinedTextField(
-                        value = collectionName,
-                        onValueChange = { collectionName = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Collection name") },
-                        singleLine = true,
+                    Text(
+                        text = "${visibleCollections.size} collection${if (visibleCollections.size == 1) "" else "s"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f),
                     )
-                    Button(
-                        onClick = {
-                            onCreateCollection(collectionName)
-                            collectionName = ""
-                        },
-                        enabled = collectionName.isNotBlank(),
-                    ) {
-                        Text("Create")
-                    }
+                }
+                IconButton(onClick = { showingCreateCollection = true }) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = "Create collection",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                    )
                 }
             }
         }
@@ -240,31 +300,14 @@ fun LibraryRoute(
                         CollectionPreviewCard(
                             row = collection,
                             onOpen = { selectedCollectionId = collection.id },
-                            onDelete = { onDeleteCollection(collection.id) },
                         )
                     }
                 }
             }
         }
 
-        if (state.savedItems.isNotEmpty()) {
-            item {
-                SectionHeading(
-                    title = "Saved",
-                    subtitle = "Pinned titles stay separate from playback progress, matching the Luna direction.",
-                )
-            }
-            items(state.savedItems, key = { it.id }) { item ->
-                SavedLibraryCard(
-                    item = item,
-                    onOpen = { onSelect(item.detailTarget) },
-                    onRemove = { onRemoveSaved(item.id) },
-                )
-            }
-        }
-
         if (!state.isLoading && state.errorMessage == null &&
-            state.continueWatching.isEmpty() && state.savedItems.isEmpty() && state.collections.all { it.items.isEmpty() }
+            state.savedItems.isEmpty() && state.collections.all { it.items.isEmpty() }
         ) {
             item {
                 GlassPanel {
@@ -318,33 +361,59 @@ private fun LibraryPosterTile(
 private fun CollectionPreviewCard(
     row: LibraryCollectionRow,
     onOpen: () -> Unit,
-    onDelete: () -> Unit,
 ) {
     GlassPanel(
         modifier = Modifier
-            .width(250.dp)
+            .width(160.dp)
             .clickable(onClick = onOpen),
         contentPadding = PaddingValues(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val preview = row.items.take(3)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                val preview = row.items.takeLast(4)
                 if (preview.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .width(132.dp)
-                            .aspectRatio(16 / 9f),
+                    Text(
+                        text = "Empty",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                } else if (preview.size == 1) {
+                    val item = preview.first()
+                    PosterImage(
+                        imageUrl = item.imageUrl ?: item.backdropUrl,
+                        contentDescription = item.title,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    preview.forEach { item ->
-                        PosterImage(
-                            imageUrl = item.imageUrl ?: item.backdropUrl,
-                            contentDescription = item.title,
-                            modifier = Modifier
-                                .width(64.dp)
-                                .aspectRatio(2f / 3f)
-                                .clip(RoundedCornerShape(10.dp)),
-                        )
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        preview.chunked(2).take(2).forEach { previewRow ->
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                previewRow.forEach { item ->
+                                    PosterImage(
+                                        imageUrl = item.imageUrl ?: item.backdropUrl,
+                                        contentDescription = item.title,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxSize(),
+                                    )
+                                }
+                                repeat(2 - previewRow.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -360,17 +429,11 @@ private fun CollectionPreviewCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
             )
-            OutlinedButton(
-                onClick = onDelete,
-                enabled = row.canDelete,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Delete")
-            }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CollectionCard(
     row: LibraryCollectionRow,
@@ -378,11 +441,36 @@ private fun CollectionCard(
     onDelete: () -> Unit,
     onRemoveItem: (String) -> Unit,
 ) {
-    GlassPanel {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    var pendingRemoval by remember(row.id) { mutableStateOf<LibrarySavedItemRow?>(null) }
+    pendingRemoval?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove From Collection?") },
+            text = { Text("Remove ${item.title} from ${row.name}.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemoveItem(item.id)
+                        pendingRemoval = null
+                    },
+                ) {
+                    Text("Remove")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoval = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        GlassPanel {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
@@ -406,36 +494,70 @@ private fun CollectionCard(
                     Text("Delete")
                 }
             }
-            if (row.items.isEmpty()) {
+        }
+        if (row.items.isEmpty()) {
+            GlassPanel {
                 Text(
-                    text = "No saved media in this collection yet.",
+                    text = "No items in this collection yet.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                 )
-            } else {
-                row.items.forEach { item ->
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                row.items.chunked(3).forEach { rowItems ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        Text(
-                            text = item.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Button(onClick = { onSelect(item.detailTarget) }) {
-                            Text("Open")
+                        rowItems.forEach { item ->
+                            CollectionDetailPosterTile(
+                                item = item,
+                                onOpen = { onSelect(item.detailTarget) },
+                                onRemoveRequest = { pendingRemoval = item },
+                                modifier = Modifier.weight(1f),
+                            )
                         }
-                        OutlinedButton(onClick = { onRemoveItem(item.id) }) {
-                            Text("Remove")
+                        repeat(3 - rowItems.size) {
+                            Spacer(modifier = Modifier.weight(1f))
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CollectionDetailPosterTile(
+    item: LibrarySavedItemRow,
+    onOpen: () -> Unit,
+    onRemoveRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.combinedClickable(
+            onClick = onOpen,
+            onLongClick = onRemoveRequest,
+        ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        PosterImage(
+            imageUrl = item.imageUrl ?: item.backdropUrl,
+            contentDescription = item.title,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(10.dp)),
+        )
+        Text(
+            text = item.title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

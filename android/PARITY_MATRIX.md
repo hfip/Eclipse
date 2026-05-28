@@ -1,6 +1,6 @@
 # Android iOS Parity Matrix
 
-Last updated: 2026-05-22
+Last updated: 2026-05-27
 
 Scope: Android should match the iOS app's user-visible behavior except embedded mpv and iOS-only platform APIs. Rows marked "Runtime smoke pending" are implemented in code and covered by build or unit checks where possible, but still need a device or emulator pass.
 
@@ -11,7 +11,7 @@ Scope: Android should match the iOS app's user-visible behavior except embedded 
 | Auto Mode quality | Ask, Auto, Highest, 2160p, 1080p, 720p, 480p, Lowest. | Implemented. | `ServicesAutoModeQualityPreference` stores iOS raw values and drives candidate sorting/selection. |
 | Manual source picking | Non Auto Mode and Ask should keep source selection visible. | Implemented, runtime smoke pending. | Manual paths leave `selectedSource` empty when multiple playable candidates exist and surface stream cards. |
 | Bundled anime seasons | Auto Mode can infer absolute episodes for services that bundle seasons, manual mode still asks. | Implemented and unit-tested. | Stremio meta matching and custom service episode matching are gated by Auto Mode. |
-| Stremio catalog/meta fallback | Search catalog/meta when direct stream IDs miss. | Implemented. | Android keeps direct stream lookup first, then uses catalog and meta fallback for add-ons. |
+| Stremio catalog/meta fallback | Search catalog/meta when direct stream IDs miss, including anime-local AniList/Kitsu episode IDs. | Implemented. | Android keeps direct stream lookup first, merges direct ID hits, enriches Kitsu IDs when needed, then uses catalog/meta fallback. |
 | Torrent safety | Direct HTTP(S) playback only. | Implemented and unit-tested. | Torrent/magnet results are rejected and reported. |
 | Header proxy | iOS VLC proxy handles HLS playlists, range requests, redirects, cookies, tokens, subtitles, and keys. | Implemented and unit-tested, runtime smoke pending. | Android VLC proxy has focused tests for playlist rewriting and header forwarding. |
 | OpenSubtitles fallback | VLC can fetch subtitle fallback when provider tracks miss. | Implemented. | Stream resolution adds OpenSubtitles tracks for VLC when enabled. |
@@ -25,7 +25,7 @@ Scope: Android should match the iOS app's user-visible behavior except embedded 
 | Detail section customization | iOS media detail element order and hidden sections. | Implemented. | Settings persist order/hidden rows and detail rendering follows them. |
 | Hero banner selection | Catalog selection plus Static, Carousel, and Launch behavior. | Implemented. | Home repository selects hero candidates from configured catalog and behavior. |
 | Atmosphere visuals | Gradient/solid/custom color style controls where Android has equivalents. | Implemented. | Background consumes atmosphere style/source/color settings. |
-| Tracker auth and sync | OAuth/manual tokens, refresh, imports, deep links, preview/sync flows. | Implemented, runtime smoke pending. | Unit tests cover token request/refresh body behavior; deep links need device validation. |
+| Tracker auth and sync | OAuth/manual tokens, refresh, imports, deep links, preview/sync flows. | Implemented, runtime smoke pending. | Unit tests cover token request/refresh body behavior; AniList library imports now use chunked `MediaListCollection`; deep links need device validation. |
 | Progress and resume | Movies, shows, episodes, downloads, service-backed playback. | Implemented, runtime smoke pending. | Progress repository and player callbacks persist episode/movie progress. |
 | Kanzen modules | Add/update/toggle modules, resolve details, backup-compatible records. | Implemented, runtime smoke pending. | Manga/novel repositories load modules through the runtime and preserve backup records. |
 | Kanzen reader | Webtoon/paged/novel display, gestures, chapter navigation, settings, cache/preload, offline reuse. | Implemented baseline, polish and runtime smoke pending. | Reader panels include settings, next/previous, cache, preload, orientation, zoom, and auto-scroll controls. |

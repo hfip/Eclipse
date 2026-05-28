@@ -104,7 +104,7 @@ class AndroidSearchViewModel(
 
         viewModelScope.launch {
             _state.update { it.copy(isSearching = true, errorMessage = null) }
-            repository.search(query, sourceId = _state.value.selectedSourceId)
+            repository.search(query, sourceId = TmdbSearchSourceId)
                 .onSuccess { result ->
                     _state.update {
                         it.copy(

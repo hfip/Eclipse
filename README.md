@@ -107,7 +107,7 @@ Secrets and API keys are loaded from ignored local configuration files instead o
 
 For iOS, copy `Build.local.xcconfig.example` to `Build.local.xcconfig` and fill in the values you need.
 
-For Android, copy `android/local.properties.example` to `android/local.properties` and fill in the values you need. Gradle also accepts matching environment variables or Gradle properties.
+For Android, copy `android/local.properties.example` to `android/local.properties` and fill in the values you need. Gradle also accepts matching environment variables or Gradle properties, and can fall back to matching values in `Build.xcconfig` or `Build.local.xcconfig`.
 
 Configured keys include:
 

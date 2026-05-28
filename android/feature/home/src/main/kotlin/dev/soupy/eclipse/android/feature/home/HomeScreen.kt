@@ -1,5 +1,6 @@
 package dev.soupy.eclipse.android.feature.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,10 @@ fun HomeRoute(
     }
     val selectedSection = selectedChildSection
         ?: selectedSectionId?.let { id -> state.sections.firstOrNull { it.id == id } }
+    BackHandler(enabled = selectedSection != null) {
+        selectedChildSection = null
+        selectedSectionId = null
+    }
     if (selectedSection != null) {
         HomeDiscoverSection(
             section = selectedSection,

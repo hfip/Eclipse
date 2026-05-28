@@ -117,14 +117,14 @@ class SearchRepository(
             )
         }
 
+        require(tmdbEnabled) {
+            "TMDB search is not configured. Add TMDB_API_KEY to android/local.properties and rebuild the app."
+        }
+
         val settings = settingsStore.settings.first()
         tmdbService.setLanguage(settings.tmdbLanguage)
-        val firstTmdbPage = if (tmdbEnabled) {
-            tmdbService.searchMulti(query = query, page = 1).orThrow()
-        } else {
-            dev.soupy.eclipse.android.core.model.TMDBSearchResponse(results = emptyList())
-        }
-        val extraTmdbPages = if (tmdbEnabled && firstTmdbPage.totalPages > 1) {
+        val firstTmdbPage = tmdbService.searchMulti(query = query, page = 1).orThrow()
+        val extraTmdbPages = if (firstTmdbPage.totalPages > 1) {
             (2..minOf(firstTmdbPage.totalPages, 3))
                 .flatMap { page -> tmdbService.searchMulti(query = query, page = page).orEmptyResponse().results }
         } else {

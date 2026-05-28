@@ -1,5 +1,6 @@
 package dev.soupy.eclipse.android
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
@@ -258,6 +259,7 @@ fun EclipseAndroidApp(
 
     var selectedDetailTarget by remember { mutableStateOf<DetailTarget?>(null) }
     var settingsReturnRoute by remember { mutableStateOf("home") }
+    var detailReturnRoute by remember { mutableStateOf("home") }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(lifecycleOwner, settingsViewModel, servicesViewModel) {
@@ -314,6 +316,35 @@ fun EclipseAndroidApp(
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentDestination = navBackStackEntry?.destination
             val currentRoute = currentDestination?.route
+
+            fun openDetail(target: DetailTarget) {
+                currentRoute
+                    ?.takeUnless { route -> route == "detail" || route == "settings" }
+                    ?.let { route -> detailReturnRoute = route }
+                selectedDetailTarget = target
+                if (currentRoute != "detail") {
+                    navController.navigate("detail") {
+                        launchSingleTop = true
+                    }
+                }
+            }
+
+            fun closeDetail() {
+                selectedDetailTarget = null
+                if (!navController.popBackStack(detailReturnRoute, inclusive = false)) {
+                    navController.navigate(detailReturnRoute) {
+                        launchSingleTop = true
+                        restoreState = true
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                    }
+                }
+            }
+
+            BackHandler(enabled = currentRoute == "detail") {
+                closeDetail()
+            }
 
             LaunchedEffect(settingsState.showKanzen) {
                 navController.navigate(if (settingsState.showKanzen) "manga" else "home") {
@@ -414,10 +445,7 @@ fun EclipseAndroidApp(
                         HomeRoute(
                             state = homeState,
                             onRefresh = homeViewModel::refresh,
-                            onSelect = { target ->
-                                selectedDetailTarget = target
-                                navController.navigate("detail")
-                            },
+                            onSelect = ::openDetail,
                         )
                     }
                     composable("search") {
@@ -429,13 +457,11 @@ fun EclipseAndroidApp(
                             onClearRecentQueries = searchViewModel::clearRecentQueries,
                             onRemoveRecentQuery = searchViewModel::removeRecentQuery,
                             onSourceSelected = searchViewModel::selectSource,
-                            onSelect = { target ->
-                                selectedDetailTarget = target
-                                navController.navigate("detail")
-                            },
+                            onSelect = ::openDetail,
                         )
                     }
                     composable("detail") {
+                        BackHandler { closeDetail() }
                         val currentLibraryDraft = detailViewModel.currentLibraryItemDraft()
                         DetailRoute(
                             state = detailState.copy(
@@ -525,13 +551,13 @@ fun EclipseAndroidApp(
                             ),
                             onRefresh = { scheduleViewModel.refresh(settingsState.showLocalScheduleTime) },
                             onShowLocalScheduleTimeChanged = settingsViewModel::setShowLocalScheduleTime,
-                            onSelect = { target ->
-                                selectedDetailTarget = target
-                                navController.navigate("detail")
-                            },
+                            onSelect = ::openDetail,
                         )
                     }
                     composable("services") {
+                        BackHandler {
+                            navController.popBackStack()
+                        }
                         ServicesRoute(
                             state = servicesState,
                             onAutoModeChanged = servicesViewModel::setAutoModeEnabled,
@@ -559,10 +585,7 @@ fun EclipseAndroidApp(
                         LibraryRoute(
                             state = libraryState,
                             onRefresh = libraryViewModel::refresh,
-                            onSelect = { target ->
-                                selectedDetailTarget = target
-                                navController.navigate("detail")
-                            },
+                            onSelect = ::openDetail,
                             onRemoveSaved = libraryViewModel::removeSaved,
                             onRemoveContinueWatching = libraryViewModel::removeContinueWatching,
                             onCreateCollection = libraryViewModel::createCollection,
@@ -574,10 +597,7 @@ fun EclipseAndroidApp(
                         DownloadsRoute(
                             state = downloadsState,
                             onRefresh = downloadsViewModel::refresh,
-                            onSelect = { target ->
-                                selectedDetailTarget = target
-                                navController.navigate("detail")
-                            },
+                            onSelect = ::openDetail,
                             onPause = downloadsViewModel::pause,
                             onResume = downloadsViewModel::resume,
                             onPlayOffline = downloadsViewModel::playOffline,

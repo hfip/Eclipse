@@ -31,6 +31,7 @@ private struct IntroDBAppResponse: Decodable {
     let imdbId: String?
     let season: Int?
     let episode: Int?
+    let segments: IntroDBAppSegmentList?
     let intro: IntroDBAppSegmentList?
     let recap: IntroDBAppSegmentList?
     let outro: IntroDBAppSegmentList?
@@ -41,16 +42,47 @@ private struct IntroDBAppResponse: Decodable {
         case imdbId = "imdb_id"
         case season
         case episode
+        case segments
         case intro
         case recap
         case outro
         case credits
         case preview
     }
+
+    init(from decoder: Decoder) throws {
+        if let list = try? decoder.singleValueContainer().decode([IntroDBAppSegment].self) {
+            imdbId = nil
+            season = nil
+            episode = nil
+            segments = IntroDBAppSegmentList(segments: list)
+            intro = nil
+            recap = nil
+            outro = nil
+            credits = nil
+            preview = nil
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        imdbId = try? container.decodeIfPresent(String.self, forKey: .imdbId)
+        season = try? container.decodeIfPresent(Int.self, forKey: .season)
+        episode = try? container.decodeIfPresent(Int.self, forKey: .episode)
+        segments = try? container.decodeIfPresent(IntroDBAppSegmentList.self, forKey: .segments)
+        intro = try? container.decodeIfPresent(IntroDBAppSegmentList.self, forKey: .intro)
+        recap = try? container.decodeIfPresent(IntroDBAppSegmentList.self, forKey: .recap)
+        outro = try? container.decodeIfPresent(IntroDBAppSegmentList.self, forKey: .outro)
+        credits = try? container.decodeIfPresent(IntroDBAppSegmentList.self, forKey: .credits)
+        preview = try? container.decodeIfPresent(IntroDBAppSegmentList.self, forKey: .preview)
+    }
 }
 
 private struct IntroDBAppSegmentList: Decodable {
     let segments: [IntroDBAppSegment]
+
+    init(segments: [IntroDBAppSegment]) {
+        self.segments = segments
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -58,8 +90,29 @@ private struct IntroDBAppSegmentList: Decodable {
             segments = []
         } else if let list = try? container.decode([IntroDBAppSegment].self) {
             segments = list
+        } else if let wrapper = try? container.decode(IntroDBAppSegmentWrapper.self) {
+            segments = wrapper.segments
         } else if let segment = try? container.decode(IntroDBAppSegment.self) {
-            segments = [segment]
+            segments = segment.hasAnyTimestamp ? [segment] : []
+        } else {
+            segments = []
+        }
+    }
+}
+
+private struct IntroDBAppSegmentWrapper: Decodable {
+    let segments: [IntroDBAppSegment]
+
+    enum CodingKeys: String, CodingKey {
+        case segments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let list = try? container.decode([IntroDBAppSegment].self, forKey: .segments) {
+            segments = list
+        } else if let segment = try? container.decode(IntroDBAppSegment.self, forKey: .segments) {
+            segments = segment.hasAnyTimestamp ? [segment] : []
         } else {
             segments = []
         }
@@ -67,6 +120,7 @@ private struct IntroDBAppSegmentList: Decodable {
 }
 
 private struct IntroDBAppSegment: Decodable {
+    let segmentType: String?
     let startSec: Double?
     let endSec: Double?
     let startMs: Int?
@@ -75,22 +129,73 @@ private struct IntroDBAppSegment: Decodable {
     let submissionCount: Int?
 
     enum CodingKeys: String, CodingKey {
+        case segmentType = "segment_type"
+        case type
         case startSec = "start_sec"
+        case startSecCamel = "startSec"
         case endSec = "end_sec"
+        case endSecCamel = "endSec"
         case startMs = "start_ms"
+        case startMsCamel = "startMs"
         case endMs = "end_ms"
+        case endMsCamel = "endMs"
         case confidence
         case submissionCount = "submission_count"
+        case submissionCountCamel = "submissionCount"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        startSec = Self.decodeSeconds(from: container, key: .startSec)
-        endSec = Self.decodeSeconds(from: container, key: .endSec)
-        startMs = try? container.decodeIfPresent(Int.self, forKey: .startMs)
-        endMs = try? container.decodeIfPresent(Int.self, forKey: .endMs)
+        segmentType = (try? container.decodeIfPresent(String.self, forKey: .segmentType))
+            ?? (try? container.decodeIfPresent(String.self, forKey: .type))
+        startSec = Self.decodeSeconds(from: container, keys: [.startSec, .startSecCamel])
+        endSec = Self.decodeSeconds(from: container, keys: [.endSec, .endSecCamel])
+        startMs = Self.decodeInteger(from: container, keys: [.startMs, .startMsCamel])
+        endMs = Self.decodeInteger(from: container, keys: [.endMs, .endMsCamel])
         confidence = try? container.decodeIfPresent(Double.self, forKey: .confidence)
-        submissionCount = try? container.decodeIfPresent(Int.self, forKey: .submissionCount)
+        submissionCount = Self.decodeInteger(from: container, keys: [.submissionCount, .submissionCountCamel])
+    }
+
+    var hasAnyTimestamp: Bool {
+        startSec != nil || endSec != nil || startMs != nil || endMs != nil
+    }
+
+    var resolvedSkipType: SkipType? {
+        guard let normalizedType = segmentType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !normalizedType.isEmpty else {
+            return nil
+        }
+        switch normalizedType {
+        case "intro", "op", "opening":
+            return .intro
+        case "outro", "credits", "ed", "ending":
+            return .outro
+        case "recap":
+            return .recap
+        case "preview":
+            return .preview
+        default:
+            return nil
+        }
+    }
+
+    var debugSummary: String {
+        [
+            "type=\(segmentType ?? "nil")",
+            "startSec=\(startSec.map(formatDebugNumber) ?? "nil")",
+            "endSec=\(endSec.map(formatDebugNumber) ?? "nil")",
+            "startMs=\(startMs.map(String.init) ?? "nil")",
+            "endMs=\(endMs.map(String.init) ?? "nil")"
+        ].joined(separator: " ")
+    }
+
+    private static func decodeSeconds(from container: KeyedDecodingContainer<CodingKeys>, keys: [CodingKeys]) -> Double? {
+        for key in keys {
+            if let value = decodeSeconds(from: container, key: key) {
+                return value
+            }
+        }
+        return nil
     }
 
     private static func decodeSeconds(from container: KeyedDecodingContainer<CodingKeys>, key: CodingKeys) -> Double? {
@@ -104,6 +209,22 @@ private struct IntroDBAppSegment: Decodable {
             return nil
         }
         return parseClockOrSeconds(raw)
+    }
+
+    private static func decodeInteger(from container: KeyedDecodingContainer<CodingKeys>, keys: [CodingKeys]) -> Int? {
+        for key in keys {
+            if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return Int(value.rounded())
+            }
+            if let raw = try? container.decodeIfPresent(String.self, forKey: key),
+               let value = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return Int(value.rounded())
+            }
+        }
+        return nil
     }
 
     private static func parseClockOrSeconds(_ raw: String) -> Double? {
@@ -120,6 +241,12 @@ private struct IntroDBAppSegment: Decodable {
         }
         return parts[0] * 3600 + parts[1] * 60 + parts[2]
     }
+
+    private func formatDebugNumber(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(value))
+            : String(format: "%.3f", value)
+    }
 }
 
 // MARK: - TheIntroDB Service
@@ -127,7 +254,7 @@ private struct IntroDBAppSegment: Decodable {
 final class IntroDBService {
     static let shared = IntroDBService()
 
-    private let baseURL = "https://api.theintrodb.org/v2"
+    private let baseURL = "https://api.theintrodb.org/v3"
     private let session: URLSession
 
     private init() {
@@ -152,13 +279,17 @@ final class IntroDBService {
         if let episode = episodeNumber {
             urlString += "&episode=\(episode)"
         }
+        let durationIsUsable = episodeDuration.isFinite && episodeDuration > 0
+        if durationIsUsable {
+            urlString += "&duration_ms=\(Int((episodeDuration * 1000).rounded()))"
+        }
 
         guard let url = URL(string: urlString) else {
             Logger.shared.log("IntroDBService: Invalid URL: \(urlString)", type: "Error")
             return []
         }
 
-        Logger.shared.log("IntroDBService: Fetching skip times for tmdbId=\(tmdbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1)", type: "IntroDB")
+        Logger.shared.log("IntroDBService: Fetching skip times for tmdbId=\(tmdbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1) duration=\(formatSeconds(episodeDuration))", type: "IntroDB")
 
         let (data, response) = try await session.data(from: url)
 
@@ -222,15 +353,24 @@ final class IntroDBService {
         return segments
     }
 
-    /// Converts an IntroDB segment (milliseconds, nullable) into a SkipSegment (seconds).
+    /// Converts a TheIntroDB segment (milliseconds, nullable) into a SkipSegment (seconds).
+    /// Intro/recap ranges may omit the start when they begin at 0, but need an end.
+    /// Credits/preview ranges need a start and may omit the end when they run to media end.
     private func parseSegment(_ seg: IntroDBSegment, type: SkipType, maxDuration: Double?) -> SkipSegment? {
-        let startSec = seg.start_ms.map { Double($0) / 1000.0 } ?? 0
+        let startSec: Double
+        if let rawStart = seg.start_ms {
+            startSec = Double(rawStart) / 1000.0
+        } else if type.allowsMissingStart {
+            startSec = 0
+        } else {
+            return nil
+        }
         guard startSec.isFinite else { return nil }
 
         let endSec: Double
         if let rawEnd = seg.end_ms {
             endSec = Double(rawEnd) / 1000.0
-        } else if let maxDuration {
+        } else if type.allowsMissingEnd, let maxDuration {
             endSec = maxDuration
         } else {
             return nil
@@ -286,7 +426,7 @@ final class IntroDBAppService {
             return []
         }
 
-        Logger.shared.log("IntroDBAppService: Fetching skip times for imdbId=\(cleanIMDbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1)", type: "IntroDB")
+        Logger.shared.log("IntroDBAppService: Fetching skip times for imdbId=\(cleanIMDbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1) duration=\(formatSeconds(episodeDuration))", type: "IntroDB")
 
         let (data, response) = try await session.data(from: url)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -299,10 +439,15 @@ final class IntroDBAppService {
             return []
         }
 
+        if let body = String(data: data, encoding: .utf8) {
+            Logger.shared.log("IntroDBAppService: Raw response preview \(body.prefix(700))", type: "IntroDB")
+        }
+
         let decoded = try JSONDecoder().decode(IntroDBAppResponse.self, from: data)
         let maxDuration = episodeDuration.isFinite && episodeDuration > 0 ? episodeDuration : nil
 
         var segments: [SkipSegment] = []
+        segments.append(contentsOf: parseTypedSegments(decoded.segments, maxDuration: maxDuration))
         segments.append(contentsOf: parseSegments(decoded.intro, type: .intro, maxDuration: maxDuration))
         segments.append(contentsOf: parseSegments(decoded.recap, type: .recap, maxDuration: maxDuration))
         segments.append(contentsOf: parseSegments(decoded.outro, type: .outro, maxDuration: maxDuration))
@@ -319,18 +464,43 @@ final class IntroDBAppService {
     }
 
     private func parseSegments(_ list: IntroDBAppSegmentList?, type: SkipType, maxDuration: Double?) -> [SkipSegment] {
-        (list?.segments ?? []).compactMap { parseSegment($0, type: type, maxDuration: maxDuration) }
+        (list?.segments ?? []).enumerated().compactMap { index, segment in
+            let parsed = parseSegment(segment, type: type, maxDuration: maxDuration)
+            logParsedSegment(segment, parsed: parsed, label: type.rawValue, index: index)
+            return parsed
+        }
+    }
+
+    private func parseTypedSegments(_ list: IntroDBAppSegmentList?, maxDuration: Double?) -> [SkipSegment] {
+        (list?.segments ?? []).enumerated().compactMap { index, segment in
+            guard let type = segment.resolvedSkipType else {
+                Logger.shared.log("IntroDBAppService: Dropped typed segment[\(index)] unknown type raw={\(segment.debugSummary)}", type: "IntroDB")
+                return nil
+            }
+            let parsed = parseSegment(segment, type: type, maxDuration: maxDuration)
+            logParsedSegment(segment, parsed: parsed, label: "typed-\(type.rawValue)", index: index)
+            return parsed
+        }
     }
 
     private func parseSegment(_ seg: IntroDBAppSegment, type: SkipType, maxDuration: Double?) -> SkipSegment? {
-        let startSec = seg.startSec ?? seg.startMs.map { Double($0) / 1000.0 } ?? 0
-        let endSec = seg.endSec ?? seg.endMs.map { Double($0) / 1000.0 }
+        let decodedStart = seg.startSec ?? seg.startMs.map { Double($0) / 1000.0 }
+        let decodedEnd = seg.endSec ?? seg.endMs.map { Double($0) / 1000.0 }
+
+        let startSec: Double
+        if let decodedStart {
+            startSec = decodedStart
+        } else if type.allowsMissingStart {
+            startSec = 0
+        } else {
+            return nil
+        }
         guard startSec.isFinite else { return nil }
 
         let resolvedEnd: Double
-        if let endSec {
-            resolvedEnd = endSec
-        } else if let maxDuration {
+        if let decodedEnd {
+            resolvedEnd = decodedEnd
+        } else if type.allowsMissingEnd, let maxDuration {
             resolvedEnd = maxDuration
         } else {
             return nil
@@ -344,6 +514,11 @@ final class IntroDBAppService {
         return SkipSegment(startTime: clampedStart, endTime: clampedEnd, type: type)
     }
 
+    private func logParsedSegment(_ raw: IntroDBAppSegment, parsed: SkipSegment?, label: String, index: Int) {
+        let parsedText = parsed.map { "\($0.type.rawValue) \(formatSeconds($0.startTime))-\(formatSeconds($0.endTime))s" } ?? "nil"
+        Logger.shared.log("IntroDBAppService: Parsed \(label)[\(index)] raw={\(raw.debugSummary)} -> \(parsedText)", type: "IntroDB")
+    }
+
     private func dedupe(_ segments: [SkipSegment]) -> [SkipSegment] {
         var seen = Set<String>()
         return segments.filter { segment in
@@ -355,5 +530,25 @@ final class IntroDBAppService {
     private func formatSeconds(_ value: Double) -> String {
         guard value.isFinite else { return "nil" }
         return "\(Int(value.rounded()))"
+    }
+}
+
+private extension SkipType {
+    var allowsMissingStart: Bool {
+        switch self {
+        case .intro, .recap:
+            return true
+        case .outro, .preview:
+            return false
+        }
+    }
+
+    var allowsMissingEnd: Bool {
+        switch self {
+        case .intro, .recap:
+            return false
+        case .outro, .preview:
+            return true
+        }
     }
 }

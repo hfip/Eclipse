@@ -101,6 +101,47 @@ class StreamResolutionRepositoryEpisodeMatchingTest {
     }
 
     @Test
+    fun streamIdsForKitsuMetaUseEpisodeOnlySuffix() {
+        val request = animeRequest(
+            season = 2,
+            episode = 1,
+            localSeason = 2,
+            localEpisode = 1,
+            absoluteEpisode = 13,
+            seasonEpisodeCount = 13,
+            autoMode = true,
+        ).let { base ->
+            base.copy(playbackContext = base.playbackContext?.copy(kitsuMediaId = 555))
+        }
+        val meta = StremioMetaPreview(id = "kitsu:555")
+
+        val ids = streamIdsFromMeta(meta, request)
+
+        assertEquals(listOf("kitsu:555:1"), ids)
+    }
+
+    @Test
+    fun streamIdsForAnimeMetaIncludeSeasonScopedLocalEpisodeFallback() {
+        val request = animeRequest(
+            season = 2,
+            episode = 1,
+            localSeason = 2,
+            localEpisode = 1,
+            absoluteEpisode = 13,
+            seasonEpisodeCount = 13,
+            autoMode = true,
+        )
+        val meta = StremioMetaPreview(id = "anime-addon-id")
+
+        val ids = streamIdsFromMeta(meta, request)
+
+        assertEquals(
+            listOf("anime-addon-id:2:1", "anime-addon-id:1:1"),
+            ids,
+        )
+    }
+
+    @Test
     fun autoModeUsesAbsoluteEpisodeForBundledCustomServiceEpisodes() {
         val selection = animeSelection(
             season = 2,

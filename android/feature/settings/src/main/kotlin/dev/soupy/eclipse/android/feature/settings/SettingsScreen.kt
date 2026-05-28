@@ -1597,13 +1597,6 @@ private fun PlayerPreferencesCard(
                 options = VlcLanguageOptions,
                 onSelected = onPreferredAnimeAudioLanguageChanged,
             )
-            OutlinedTextField(
-                value = state.externalPlayer,
-                onValueChange = onExternalPlayerChanged,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("External Player Package") },
-                singleLine = true,
-            )
             ReaderValueSlider(
                 title = "Default Playback Speed",
                 valueLabel = "%.2fx".format(state.defaultPlaybackSpeed),

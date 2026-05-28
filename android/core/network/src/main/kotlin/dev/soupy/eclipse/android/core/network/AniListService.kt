@@ -1,8 +1,11 @@
 package dev.soupy.eclipse.android.core.network
 
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.math.min
 import dev.soupy.eclipse.android.core.model.AniListAiringScheduleEntry
 import dev.soupy.eclipse.android.core.model.AniListMedia
+import dev.soupy.eclipse.android.core.model.AniListPageInfo
 import dev.soupy.eclipse.android.core.model.AniListPageResponse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -341,70 +344,103 @@ class AniListService(
             }
             ?: return NetworkResult.Failure.Http(401, "AniList username could not be resolved from this token.")
 
-        val body = EclipseJson.encodeToString(
-            AniListRequest.serializer(),
-            AniListRequest(
-                query = query,
-                variables = AniListVariables(userName = resolvedUsername),
-            ),
-        )
+        val entriesByMediaId = linkedMapOf<Int, LibraryEntry>()
+        var chunk = 1
+        var hasNextChunk = true
 
-        return when (val result = httpClient.postJson(baseUrl, body, token.authorizationHeaders())) {
-            is NetworkResult.Success -> try {
-                val response = EclipseJson.decodeFromString(MediaListCollectionEnvelope.serializer(), result.value)
-                NetworkResult.Success(
-                    response.data.collection.lists.flatMap { list ->
-                        list.entries.mapNotNull { entry ->
-                            entry.media?.let { media ->
-                                LibraryEntry(
-                                    media = media,
-                                    status = entry.status ?: list.status ?: list.name,
-                                    progress = entry.progress,
-                                    progressVolumes = entry.progressVolumes,
-                                    score = entry.score,
-                                    updatedAtEpochSeconds = entry.updatedAt,
-                                )
-                            }
+        while (hasNextChunk) {
+            val body = EclipseJson.encodeToString(
+                AniListRequest.serializer(),
+                AniListRequest(
+                    query = query,
+                    variables = AniListVariables(
+                        userName = resolvedUsername,
+                        chunk = chunk,
+                        perChunk = 500,
+                    ),
+                ),
+            )
+
+            when (val result = httpClient.postJson(baseUrl, body, token.authorizationHeaders())) {
+                is NetworkResult.Success -> try {
+                    val response = EclipseJson.decodeFromString(MediaListCollectionEnvelope.serializer(), result.value)
+                    val collection = response.data?.collection
+                        ?: return NetworkResult.Failure.Serialization(
+                            IllegalStateException("AniList library fetch returned no collection data."),
+                        )
+
+                    collection.lists.forEach { list ->
+                        list.entries.forEach { entry ->
+                            val media = entry.media ?: return@forEach
+                            entriesByMediaId[media.id] = LibraryEntry(
+                                media = media,
+                                status = entry.status ?: list.status ?: list.name,
+                                progress = entry.progress,
+                                progressVolumes = entry.progressVolumes,
+                                score = entry.score,
+                                updatedAtEpochSeconds = entry.updatedAt,
+                            )
                         }
-                    }.distinctBy { it.media.id },
-                )
-            } catch (error: SerializationException) {
-                NetworkResult.Failure.Serialization(error)
-            }
+                    }
+                    hasNextChunk = collection.hasNextChunk
+                    chunk += 1
+                } catch (error: SerializationException) {
+                    return NetworkResult.Failure.Serialization(error)
+                }
 
-            is NetworkResult.Failure -> result
+                is NetworkResult.Failure -> return result
+            }
         }
+
+        return NetworkResult.Success(entriesByMediaId.values.toList())
     }
 
     suspend fun fetchAiringSchedule(
         daysAhead: Int = 7,
         perPage: Int = 100,
     ): NetworkResult<List<AniListAiringScheduleEntry>> {
-        val now = (System.currentTimeMillis() / 1000L).toInt()
-        val until = now + daysAhead * 24 * 60 * 60
-        val body = EclipseJson.encodeToString(
-            AniListRequest.serializer(),
-            AniListRequest(
-                query = AIRING_SCHEDULE_QUERY,
-                variables = AniListVariables(
-                    page = 1,
-                    perPage = min(perPage, 100),
-                    airingAtGreater = now,
-                    airingAtLesser = until,
+        val zoneId = ZoneId.systemDefault()
+        val start = LocalDate.now(zoneId).atStartOfDay(zoneId).toEpochSecond().toInt()
+        val end = LocalDate.now(zoneId)
+            .plusDays(maxOf(daysAhead, 1).toLong() + 1L)
+            .atStartOfDay(zoneId)
+            .toEpochSecond()
+            .toInt()
+        val allSchedules = mutableListOf<AniListAiringScheduleEntry>()
+        var page = 1
+        var hasNextPage = true
+        val pageSize = min(perPage, 100)
+        val maxPages = 10
+
+        while (hasNextPage && page <= maxPages) {
+            val body = EclipseJson.encodeToString(
+                AniListRequest.serializer(),
+                AniListRequest(
+                    query = AIRING_SCHEDULE_QUERY,
+                    variables = AniListVariables(
+                        page = page,
+                        perPage = pageSize,
+                        airingAtGreater = start - 1,
+                        airingAtLesser = end,
+                    ),
                 ),
-            ),
-        )
+            )
 
-        return when (val result = httpClient.postJson(baseUrl, body)) {
-            is NetworkResult.Success -> try {
-                val response = EclipseJson.decodeFromString(AiringScheduleEnvelope.serializer(), result.value)
-                NetworkResult.Success(response.data.page.airingSchedules)
-            } catch (error: SerializationException) {
-                NetworkResult.Failure.Serialization(error)
+            when (val result = httpClient.postJson(baseUrl, body)) {
+                is NetworkResult.Success -> try {
+                    val response = EclipseJson.decodeFromString(AiringScheduleEnvelope.serializer(), result.value)
+                    allSchedules += response.data.page.airingSchedules
+                    hasNextPage = response.data.page.pageInfo.hasNextPage
+                    page += 1
+                } catch (error: SerializationException) {
+                    return NetworkResult.Failure.Serialization(error)
+                }
+
+                is NetworkResult.Failure -> return result
             }
-
-            is NetworkResult.Failure -> result
         }
+
+        return NetworkResult.Success(allSchedules)
     }
 
     private suspend fun fetchViewer(accessToken: String): NetworkResult<AniListViewer> {
@@ -441,6 +477,8 @@ class AniListService(
         val perPage: Int = 20,
         val id: Int? = null,
         val userName: String? = null,
+        val chunk: Int? = null,
+        val perChunk: Int? = null,
         val airingAtGreater: Int? = null,
         val airingAtLesser: Int? = null,
     )
@@ -504,6 +542,7 @@ class AniListService(
 
     @Serializable
     private data class AiringSchedulePage(
+        val pageInfo: AniListPageInfo = AniListPageInfo(),
         @SerialName("airingSchedules") val airingSchedules: List<AniListAiringScheduleEntry> = emptyList(),
     )
 
@@ -525,16 +564,17 @@ class AniListService(
 
     @Serializable
     private data class MediaListCollectionEnvelope(
-        val data: MediaListCollectionData,
+        val data: MediaListCollectionData? = null,
     )
 
     @Serializable
     private data class MediaListCollectionData(
-        @SerialName("MediaListCollection") val collection: MediaListCollection,
+        @SerialName("MediaListCollection") val collection: MediaListCollection? = null,
     )
 
     @Serializable
     private data class MediaListCollection(
+        val hasNextChunk: Boolean = false,
         val lists: List<MediaListGroup> = emptyList(),
     )
 
@@ -566,8 +606,16 @@ class AniListService(
         """
 
         const val ANIME_LIBRARY_QUERY = """
-            query AnimeLibrary(${'$'}userName: String) {
-              MediaListCollection(userName: ${'$'}userName, type: ANIME) {
+            query AnimeLibrary(${'$'}userName: String, ${'$'}chunk: Int, ${'$'}perChunk: Int) {
+              MediaListCollection(
+                userName: ${'$'}userName,
+                type: ANIME,
+                chunk: ${'$'}chunk,
+                perChunk: ${'$'}perChunk,
+                forceSingleCompletedList: true,
+                status_in: [CURRENT, PLANNING, COMPLETED, PAUSED, DROPPED, REPEATING]
+              ) {
+                hasNextChunk
                 lists {
                   name
                   status
@@ -616,8 +664,16 @@ class AniListService(
         """
 
         const val MANGA_LIBRARY_QUERY = """
-            query MangaLibrary(${'$'}userName: String) {
-              MediaListCollection(userName: ${'$'}userName, type: MANGA) {
+            query MangaLibrary(${'$'}userName: String, ${'$'}chunk: Int, ${'$'}perChunk: Int) {
+              MediaListCollection(
+                userName: ${'$'}userName,
+                type: MANGA,
+                chunk: ${'$'}chunk,
+                perChunk: ${'$'}perChunk,
+                forceSingleCompletedList: true,
+                status_in: [CURRENT, PLANNING, COMPLETED, PAUSED, DROPPED, REPEATING]
+              ) {
+                hasNextChunk
                 lists {
                   name
                   status
@@ -1260,6 +1316,9 @@ class AniListService(
         const val AIRING_SCHEDULE_QUERY = """
             query AiringSchedule(${'$'}page: Int, ${'$'}perPage: Int, ${'$'}airingAtGreater: Int, ${'$'}airingAtLesser: Int) {
               Page(page: ${'$'}page, perPage: ${'$'}perPage) {
+                pageInfo {
+                  hasNextPage
+                }
                 airingSchedules(
                   airingAt_greater: ${'$'}airingAtGreater,
                   airingAt_lesser: ${'$'}airingAtLesser,

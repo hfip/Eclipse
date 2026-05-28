@@ -97,6 +97,12 @@ data class DetailEpisodeRow(
     val serviceHref: String? = null,
 )
 
+data class DetailSeasonRow(
+    val seasonNumber: Int,
+    val title: String,
+    val posterUrl: String? = null,
+)
+
 data class DetailCastRow(
     val id: String,
     val name: String,
@@ -151,6 +157,7 @@ data class DetailScreenState(
     val canSyncRatingToMyAnimeList: Boolean = false,
     val cast: List<DetailCastRow> = emptyList(),
     val episodesTitle: String? = null,
+    val seasons: List<DetailSeasonRow> = emptyList(),
     val episodes: List<DetailEpisodeRow> = emptyList(),
     val isMovie: Boolean = false,
     val isResolvingStreams: Boolean = false,
@@ -223,10 +230,20 @@ fun DetailRoute(
     val activeSpecialGroup = specialEpisodeGroups.firstOrNull {
         it.key == (selectedSpecialGroupKey ?: if (regularEpisodes.isEmpty()) specialEpisodeGroups.firstOrNull()?.key else null)
     }
-    val episodeSeasons = regularEpisodes
+    val episodeSeasons = (state.seasons.map { it.seasonNumber }.takeIf { it.isNotEmpty() } ?: regularEpisodes
         .mapNotNull { it.seasonNumber ?: it.tmdbSeasonNumber }
-        .distinct()
+        .distinct())
         .sorted()
+    val seasonRows = episodeSeasons.map { seasonNumber ->
+        state.seasons.firstOrNull { it.seasonNumber == seasonNumber }
+            ?: DetailSeasonRow(
+                seasonNumber = seasonNumber,
+                title = seasonLabel(seasonNumber),
+                posterUrl = regularEpisodes.firstOrNull {
+                    (it.seasonNumber ?: it.tmdbSeasonNumber) == seasonNumber
+                }?.imageUrl ?: state.posterUrl,
+            )
+    }
     var selectedSeason by remember(state.title, episodeSeasons) {
         mutableStateOf(episodeSeasons.firstOrNull { it > 0 } ?: episodeSeasons.firstOrNull())
     }
@@ -464,7 +481,7 @@ fun DetailRoute(
                                 }
                                 item {
                                     StyledSeasonSelector(
-                                        episodeSeasons = episodeSeasons,
+                                        seasons = seasonRows,
                                         selectedSeason = selectedSeason,
                                         onSelectSeason = {
                                             selectedSpecialGroupKey = null
@@ -490,7 +507,7 @@ fun DetailRoute(
                                     title = activeSpecialGroup?.title ?: title,
                                     isSeasonedShow = isSeasonedShow,
                                     seasonMenu = state.seasonMenu,
-                                    episodeSeasons = episodeSeasons,
+                                    seasons = seasonRows,
                                     selectedSeason = selectedSeason,
                                     visibleEpisodeIds = visibleEpisodes.map { it.id },
                                     onSelectSeason = {
@@ -1097,7 +1114,7 @@ private fun EpisodesHeader(
     title: String,
     isSeasonedShow: Boolean,
     seasonMenu: Boolean,
-    episodeSeasons: List<Int>,
+    seasons: List<DetailSeasonRow>,
     selectedSeason: Int?,
     visibleEpisodeIds: List<String>,
     onSelectSeason: (Int) -> Unit,
@@ -1119,7 +1136,7 @@ private fun EpisodesHeader(
         )
         if (isSeasonedShow && seasonMenu) {
             SeasonDropdown(
-                episodeSeasons = episodeSeasons,
+                seasons = seasons,
                 selectedSeason = selectedSeason,
                 onSelectSeason = onSelectSeason,
             )
@@ -1143,24 +1160,25 @@ private fun EpisodesHeader(
 
 @Composable
 private fun SeasonDropdown(
-    episodeSeasons: List<Int>,
+    seasons: List<DetailSeasonRow>,
     selectedSeason: Int?,
     onSelectSeason: (Int) -> Unit,
 ) {
-    var expanded by remember(episodeSeasons, selectedSeason) { mutableStateOf(false) }
+    var expanded by remember(seasons, selectedSeason) { mutableStateOf(false) }
     Box {
         OutlinedButton(onClick = { expanded = true }) {
-            Text(seasonLabel(selectedSeason ?: episodeSeasons.firstOrNull() ?: 1))
+            val selected = selectedSeason?.let { season -> seasons.firstOrNull { it.seasonNumber == season } }
+            Text(selected?.title ?: seasonLabel(selectedSeason ?: seasons.firstOrNull()?.seasonNumber ?: 1))
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            episodeSeasons.forEach { season ->
+            seasons.forEach { season ->
                 DropdownMenuItem(
-                    text = { Text(seasonLabel(season)) },
+                    text = { Text(season.title) },
                     onClick = {
-                        onSelectSeason(season)
+                        onSelectSeason(season.seasonNumber)
                         expanded = false
                     },
                 )
@@ -1171,7 +1189,7 @@ private fun SeasonDropdown(
 
 @Composable
 private fun StyledSeasonSelector(
-    episodeSeasons: List<Int>,
+    seasons: List<DetailSeasonRow>,
     selectedSeason: Int?,
     onSelectSeason: (Int) -> Unit,
 ) {
@@ -1179,12 +1197,12 @@ private fun StyledSeasonSelector(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(horizontal = 20.dp),
     ) {
-        items(episodeSeasons, key = { it }) { season ->
-            val selected = season == selectedSeason
+        items(seasons, key = { it.seasonNumber }) { season ->
+            val selected = season.seasonNumber == selectedSeason
             Column(
                 modifier = Modifier
                     .width(82.dp)
-                    .clickable { onSelectSeason(season) },
+                    .clickable { onSelectSeason(season.seasonNumber) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -1208,15 +1226,22 @@ private fun StyledSeasonSelector(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = if (season == 0) "OVA" else "S$season",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                    PosterImage(
+                        imageUrl = season.posterUrl,
+                        contentDescription = season.title,
+                        modifier = Modifier.fillMaxSize(),
                     )
+                    if (season.posterUrl == null) {
+                        Text(
+                            text = if (season.seasonNumber == 0) "OVA" else "S${season.seasonNumber}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                    }
                 }
                 Text(
-                    text = seasonLabel(season),
+                    text = season.title,
                     style = MaterialTheme.typography.labelMedium,
                     color = if (selected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
