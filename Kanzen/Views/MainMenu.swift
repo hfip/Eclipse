@@ -10,9 +10,12 @@ import SwiftUI
 #if !os(tvOS)
 struct KanzenMenu: View {
     let kanzen = KanzenEngine()
+    private let onStartupReady: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var moduleManager: ModuleManager
-    init() {
+
+    init(onStartupReady: @escaping () -> Void = {}) {
+        self.onStartupReady = onStartupReady
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.06, alpha: 0.92)
@@ -28,7 +31,7 @@ struct KanzenMenu: View {
     }
     var body: some View {
         TabView {
-            KanzenHomeView()
+            KanzenHomeView(onStartupReady: onStartupReady)
                 .tabItem {
                     Label("Home", systemImage: "house")
                 }

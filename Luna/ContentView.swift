@@ -26,8 +26,10 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
     @Namespace private var heroNamespace
+    private let onStartupReady: () -> Void
     
-    init() {
+    init(onStartupReady: @escaping () -> Void = {}) {
+        self.onStartupReady = onStartupReady
         configureTabBarAppearance()
     }
     
@@ -189,7 +191,7 @@ struct ContentView: View {
     private var modernTabView: some View {
         TabView(selection: $selectedTab) {
             Tab("Home", systemImage: "house.fill", value: AppTab.home) {
-                HomeView()
+                HomeView(onStartupReady: onStartupReady)
             }
             
             Tab("Schedule", systemImage: "calendar", value: AppTab.schedule) {
@@ -285,7 +287,7 @@ struct ContentView: View {
 
     private var olderTabView: some View {
         TabView(selection: $selectedTab) {
-            HomeView()
+            HomeView(onStartupReady: onStartupReady)
                 .tabItem {
                     Image(systemName: "house.fill")
                     Text("Home")

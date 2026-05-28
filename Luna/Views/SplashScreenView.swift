@@ -10,6 +10,7 @@ import SwiftUI
 struct SplashScreenView: View {
     // External signal: set true when the app content is ready
     @Binding var isFinished: Bool
+    var onDismissed: () -> Void = {}
 
     // MARK: - Animation state
     @State private var moonScale: CGFloat = 0.3
@@ -137,6 +138,9 @@ struct SplashScreenView: View {
         guard minimumTimeElapsed, isFinished, !dismissing else { return }
         withAnimation(.easeIn(duration: 0.35)) {
             dismissing = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            onDismissed()
         }
     }
 }

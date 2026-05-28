@@ -10,12 +10,18 @@ import Kingfisher
 
 #if !os(tvOS)
 struct KanzenHomeView: View {
+    private let onStartupReady: () -> Void
     @StateObject private var homeViewModel = MangaHomeViewModel()
     @StateObject private var catalogManager = MangaCatalogManager.shared
     @State private var scrollOffset: CGFloat = 0
+    @State private var didReportStartupReady = false
 
     private var enabledCatalogs: [MangaCatalog] {
         catalogManager.getEnabledCatalogs()
+    }
+
+    init(onStartupReady: @escaping () -> Void = {}) {
+        self.onStartupReady = onStartupReady
     }
 
     var body: some View {
@@ -85,9 +91,30 @@ struct KanzenHomeView: View {
             .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.large)
         }
+        .onAppear {
+            if homeViewModel.hasLoadedContent || !homeViewModel.isLoading {
+                reportStartupReadyIfNeeded()
+            }
+        }
         .task {
             homeViewModel.loadContent(catalogManager: catalogManager)
         }
+        .onChange(of: homeViewModel.hasLoadedContent) { hasLoadedContent in
+            if hasLoadedContent {
+                reportStartupReadyIfNeeded()
+            }
+        }
+        .onChange(of: homeViewModel.isLoading) { isLoading in
+            if !isLoading {
+                reportStartupReadyIfNeeded()
+            }
+        }
+    }
+
+    private func reportStartupReadyIfNeeded() {
+        guard !didReportStartupReady else { return }
+        didReportStartupReady = true
+        onStartupReady()
     }
 }
 

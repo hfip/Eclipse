@@ -72,15 +72,7 @@ final class HomeViewModel: ObservableObject {
                 airingTodayTV, topRatedTV, topRatedM
             )
 
-            // Fetch all anime catalogs in a single AniList query (1 API call instead of 5)
-            let animeCatalogs = await self.loadAnimeCatalogs(tmdbService: tmdbService)
-            let trendingAnime = animeCatalogs[.trending] ?? []
-            let popularAnime = animeCatalogs[.popular] ?? []
-            let topRatedAnime = animeCatalogs[.topRated] ?? []
-            let airingAnime = animeCatalogs[.airing] ?? []
-            let upcomingAnime = animeCatalogs[.upcoming] ?? []
-
-            let loadedCatalogs: [String: [TMDBSearchResult]] = [
+            let tmdbLoadedCatalogs: [String: [TMDBSearchResult]] = [
                 "trending": tmdbResults.0,
                 "popularMovies": tmdbResults.1.map { self.movieSearchResult($0) },
                 "nowPlayingMovies": tmdbResults.2.map { self.movieSearchResult($0) },
@@ -89,13 +81,36 @@ final class HomeViewModel: ObservableObject {
                 "onTheAirTV": tmdbResults.5.map { self.tvSearchResult($0) },
                 "airingTodayTV": tmdbResults.6.map { self.tvSearchResult($0) },
                 "topRatedTVShows": tmdbResults.7.map { self.tvSearchResult($0) },
-                "topRatedMovies": tmdbResults.8.map { self.movieSearchResult($0) },
+                "topRatedMovies": tmdbResults.8.map { self.movieSearchResult($0) }
+            ]
+            let tmdbLoadedCatalogCount = tmdbLoadedCatalogs.values.filter { !$0.isEmpty }.count
+
+            if tmdbLoadedCatalogCount > 0 {
+                await MainActor.run {
+                    self.catalogResults = tmdbLoadedCatalogs
+                    self.applyHeroBannerSelection()
+                    self.isLoading = false
+                    self.hasLoadedContent = true
+                    self.errorMessage = nil
+                }
+            }
+
+            // Fetch all anime catalogs in a single AniList query (1 API call instead of 5)
+            let animeCatalogs = await self.loadAnimeCatalogs(tmdbService: tmdbService)
+            let trendingAnime = animeCatalogs[.trending] ?? []
+            let popularAnime = animeCatalogs[.popular] ?? []
+            let topRatedAnime = animeCatalogs[.topRated] ?? []
+            let airingAnime = animeCatalogs[.airing] ?? []
+            let upcomingAnime = animeCatalogs[.upcoming] ?? []
+
+            let animeLoadedCatalogs: [String: [TMDBSearchResult]] = [
                 "trendingAnime": trendingAnime,
                 "popularAnime": popularAnime,
                 "topRatedAnime": topRatedAnime,
                 "airingAnime": airingAnime,
                 "upcomingAnime": upcomingAnime
             ]
+            let loadedCatalogs = tmdbLoadedCatalogs.merging(animeLoadedCatalogs) { _, anime in anime }
             let loadedCatalogCount = loadedCatalogs.values.filter { !$0.isEmpty }.count
 
             await MainActor.run {

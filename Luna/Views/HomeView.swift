@@ -16,10 +16,12 @@ func homeImageDecodeSize(width: CGFloat, height: CGFloat) -> CGSize {
 }
 
 struct HomeView: View {
+    private let onStartupReady: () -> Void
     @State private var showingSettings = false
     @State private var isHoveringWatchNow = false
     @State private var isHoveringWatchlist = false
     @State private var continueWatchingItems: [ContinueWatchingItem] = []
+    @State private var didReportStartupReady = false
     @ObservedObject private var libraryManager = LibraryManager.shared
     @State private var scrollOffset: CGFloat = 0
     
@@ -34,6 +36,10 @@ struct HomeView: View {
     @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
 
     private let heroCarouselTimer = Timer.publish(every: 12, on: .main, in: .common).autoconnect()
+
+    init(onStartupReady: @escaping () -> Void = {}) {
+        self.onStartupReady = onStartupReady
+    }
     
     private var enabledCatalogs: [Catalog] {
         return catalogManager.getEnabledCatalogs()
@@ -100,8 +106,21 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .onAppear {
             refreshContinueWatchingItems()
+            if homeViewModel.hasLoadedContent || !homeViewModel.isLoading {
+                reportStartupReadyIfNeeded()
+            }
             if !homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
+            }
+        }
+        .onChange(of: homeViewModel.hasLoadedContent) { hasLoadedContent in
+            if hasLoadedContent {
+                reportStartupReadyIfNeeded()
+            }
+        }
+        .onChange(of: homeViewModel.isLoading) { isLoading in
+            if !isLoading {
+                reportStartupReadyIfNeeded()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
@@ -488,6 +507,12 @@ struct HomeView: View {
 
     private func refreshContinueWatchingItems() {
         continueWatchingItems = ProgressManager.shared.getContinueWatchingItems()
+    }
+
+    private func reportStartupReadyIfNeeded() {
+        guard !didReportStartupReady else { return }
+        didReportStartupReady = true
+        onStartupReady()
     }
 
 }

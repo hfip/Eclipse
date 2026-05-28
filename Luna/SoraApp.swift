@@ -32,8 +32,10 @@ struct SoraApp: App {
     @StateObject private var moduleManager = ModuleManager.shared
     @StateObject private var favouriteManager = FavouriteManager.shared
 
-    @State private var splashFinished = false
+    @State private var startupReady = false
+    @State private var startupFallbackScheduled = false
     @State private var showSplash = true
+    private let startupFallbackDelay: TimeInterval = 8
 
 #if !os(tvOS)
     @AppStorage("showKanzen") private var showKanzen: Bool = false
@@ -56,35 +58,45 @@ struct SoraApp: App {
         WindowGroup {
             ZStack {
 #if os(tvOS)
-                ContentView()
-                    .onAppear { splashFinished = true }
+                ContentView(onStartupReady: markStartupReady)
+                    .onAppear { scheduleStartupFallback() }
 #else
                 if showKanzen {
-                    KanzenMenu().environmentObject(settings).environmentObject(moduleManager).environmentObject(favouriteManager)
+                    KanzenMenu(onStartupReady: markStartupReady)
+                        .environmentObject(settings)
+                        .environmentObject(moduleManager)
+                        .environmentObject(favouriteManager)
                         .environment(\.managedObjectContext, favouriteManager.container.viewContext)
                         .accentColor(settings.accentColor)
-                        .onAppear { splashFinished = true }
+                        .onAppear { scheduleStartupFallback() }
                 } else {
-                    ContentView()
-                        .onAppear { splashFinished = true }
+                    ContentView(onStartupReady: markStartupReady)
+                        .onAppear { scheduleStartupFallback() }
                 }
 #endif
 
                 if showSplash {
-                    SplashScreenView(isFinished: $splashFinished)
-                        .ignoresSafeArea()
-                        .zIndex(1)
-                        .onDisappear { showSplash = false }
-                }
-            }
-            .onChange(of: splashFinished) { finished in
-                if finished {
-                    // Give the dismiss animation time to play, then remove the splash layer
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    SplashScreenView(isFinished: $startupReady) {
                         showSplash = false
                     }
+                        .ignoresSafeArea()
+                        .zIndex(1)
                 }
             }
+        }
+    }
+
+    private func markStartupReady() {
+        guard !startupReady else { return }
+        startupReady = true
+    }
+
+    private func scheduleStartupFallback() {
+        guard !startupFallbackScheduled else { return }
+        startupFallbackScheduled = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + startupFallbackDelay) {
+            markStartupReady()
         }
     }
 }
