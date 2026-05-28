@@ -68,6 +68,9 @@ internal fun AniListAiringScheduleEntry.toScheduleEntryCard(
         timeLabel = timeText,
         imageUrl = media.coverImage.bestAvailableUrl,
         detailTarget = DetailTarget.AniListMediaTarget(media.id),
+        mediaId = media.id,
+        format = media.format,
+        titleCandidates = media.title.scheduleTitleCandidates(media.airingMediaDisplayTitle),
     )
 }
 
@@ -86,5 +89,14 @@ private fun String?.scheduleEpisodeLabel(episode: Int): String = when (this?.upp
     "SPECIAL" -> "Special"
     "MUSIC" -> "Music"
     else -> "Ep. $episode"
+}
+
+private fun dev.soupy.eclipse.android.core.model.AniListTitle.scheduleTitleCandidates(
+    fallback: String,
+): List<String> {
+    val seen = linkedSetOf<String>()
+    return listOf(english, romaji, native, userPreferred, fallback)
+        .mapNotNull { title -> title?.trim()?.takeIf(String::isNotBlank) }
+        .filter { title -> seen.add(title.lowercase(Locale.US)) }
 }
 

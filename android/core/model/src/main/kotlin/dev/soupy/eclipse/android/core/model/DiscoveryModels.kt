@@ -54,6 +54,9 @@ data class ScheduleEntryCard(
     val timeLabel: String? = null,
     val imageUrl: String? = null,
     val detailTarget: DetailTarget,
+    val mediaId: Int = 0,
+    val format: String? = null,
+    val titleCandidates: List<String> = emptyList(),
 )
 
 data class ScheduleDaySection(

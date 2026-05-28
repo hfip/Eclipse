@@ -735,6 +735,24 @@ private final class MPVHeaderProxyCore {
         private var responseHeadersSent = false
         private var finished = false
         private var streamedByteCount = 0
+        private var lastSlowSendLogAt: CFTimeInterval = 0
+
+        private final class SendResult {
+            private let lock = NSLock()
+            private var error: NWError?
+
+            func set(_ error: NWError?) {
+                lock.lock()
+                self.error = error
+                lock.unlock()
+            }
+
+            func get() -> NWError? {
+                lock.lock()
+                defer { lock.unlock() }
+                return error
+            }
+        }
 
         init(
             proxy: MPVHeaderProxyCore,
@@ -774,7 +792,7 @@ private final class MPVHeaderProxyCore {
                 configuration.httpCookieAcceptPolicy = .never
                 configuration.httpCookieStorage = nil
                 configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-                configuration.timeoutIntervalForRequest = 30
+                configuration.timeoutIntervalForRequest = 120
                 configuration.timeoutIntervalForResource = 6 * 60 * 60
 
                 let urlSession = URLSession(configuration: configuration, delegate: self, delegateQueue: callbackQueue)
@@ -965,18 +983,39 @@ private final class MPVHeaderProxyCore {
             if suspendBeforeSend {
                 dataTask.suspend()
             }
-            proxy.sendData(data, on: connection) { [weak self] error in
-                guard let self else { return }
-                if let error {
-                    Logger.shared.log("\(self.proxy?.logPrefix ?? "MPVHeaderProxy")[\(self.requestId)]: downstream send failed afterBytes=\(self.streamedByteCount) chunkBytes=\(data.count) error=\(error)", type: self.errorLogType)
-                    dataTask.cancel()
-                    self.connection.cancel()
-                    self.finish()
-                    return
-                }
-                self.streamedByteCount += data.count
-                dataTask.resume()
+            let sendStartedAt = CFAbsoluteTimeGetCurrent()
+            let sendResult = SendResult()
+            let sendSemaphore = DispatchSemaphore(value: 0)
+            proxy.sendData(data, on: connection) { error in
+                sendResult.set(error)
+                sendSemaphore.signal()
             }
+
+            let waitResult = sendSemaphore.wait(timeout: .now() + .seconds(120))
+            if waitResult == .timedOut {
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream send timed out afterBytes=\(streamedByteCount) chunkBytes=\(data.count) target=\(proxy.logURLSummary(targetURL))", type: errorLogType)
+                dataTask.cancel()
+                connection.cancel()
+                finish()
+                return
+            }
+
+            if let error = sendResult.get() {
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream send failed afterBytes=\(streamedByteCount) chunkBytes=\(data.count) error=\(error)", type: errorLogType)
+                dataTask.cancel()
+                connection.cancel()
+                finish()
+                return
+            }
+
+            streamedByteCount += data.count
+            let sendMs = (CFAbsoluteTimeGetCurrent() - sendStartedAt) * 1000.0
+            let now = CFAbsoluteTimeGetCurrent()
+            if sendMs > 250, now - lastSlowSendLogAt > 2.0 {
+                lastSlowSendLogAt = now
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream slow send chunkBytes=\(data.count) sendMs=\(String(format: "%.0f", sendMs)) streamedBytes=\(streamedByteCount) target=\(proxy.logURLSummary(targetURL))", type: logType)
+            }
+            dataTask.resume()
         }
 
         private func finish() {

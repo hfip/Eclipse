@@ -862,6 +862,23 @@ final class VLCHeaderProxy {
         private var pendingDownstreamSends = 0
         private var pendingStreamCompletionStatusCode: Int?
 
+        private final class SendResult {
+            private let lock = NSLock()
+            private var error: NWError?
+
+            func set(_ error: NWError?) {
+                lock.lock()
+                self.error = error
+                lock.unlock()
+            }
+
+            func get() -> NWError? {
+                lock.lock()
+                defer { lock.unlock() }
+                return error
+            }
+        }
+
         init(
             proxy: VLCHeaderProxy,
             request: URLRequest,
@@ -894,7 +911,7 @@ final class VLCHeaderProxy {
                 configuration.httpCookieAcceptPolicy = .never
                 configuration.httpCookieStorage = nil
                 configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-                configuration.timeoutIntervalForRequest = 30
+                configuration.timeoutIntervalForRequest = 120
                 configuration.timeoutIntervalForResource = 6 * 60 * 60
 
                 let urlSession = URLSession(configuration: configuration, delegate: self, delegateQueue: callbackQueue)
@@ -1109,17 +1126,29 @@ final class VLCHeaderProxy {
             }
             pendingDownstreamSends += 1
             let sendStartedAt = CFAbsoluteTimeGetCurrent()
-            proxy.sendData(data, on: connection) { [weak self] error in
-                self?.callbackQueue.addOperation { [weak self] in
-                    guard let self else { return }
-                    self.handleStreamSendCompletion(
-                        data: data,
-                        dataTask: dataTask,
-                        sendStartedAt: sendStartedAt,
-                        error: error
-                    )
-                }
+            let sendResult = SendResult()
+            let sendSemaphore = DispatchSemaphore(value: 0)
+            proxy.sendData(data, on: connection) { error in
+                sendResult.set(error)
+                sendSemaphore.signal()
             }
+
+            let waitResult = sendSemaphore.wait(timeout: .now() + .seconds(120))
+            if waitResult == .timedOut {
+                pendingDownstreamSends = max(0, pendingDownstreamSends - 1)
+                Logger.shared.log("VLCHeaderProxy[\(requestId)]: downstream send timed out kind=\(proxy.requestKind(for: targetURL)) chunkBytes=\(data.count) recvBytes=\(upstreamBytes) sentBytes=\(downstreamBytes) pending=\(pendingDownstreamSends) target=\(proxy.logURLSummary(targetURL))", type: "Error")
+                dataTask.cancel()
+                connection.cancel()
+                finish()
+                return
+            }
+
+            handleStreamSendCompletion(
+                data: data,
+                dataTask: dataTask,
+                sendStartedAt: sendStartedAt,
+                error: sendResult.get()
+            )
         }
 
         private func handleStreamSendCompletion(

@@ -16,10 +16,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,8 +39,8 @@ import dev.soupy.eclipse.android.core.design.GlassPanel
 import dev.soupy.eclipse.android.core.design.LoadingPanel
 import dev.soupy.eclipse.android.core.design.PosterImage
 import dev.soupy.eclipse.android.core.design.SectionHeading
-import dev.soupy.eclipse.android.core.model.DetailTarget
 import dev.soupy.eclipse.android.core.model.ScheduleDaySection
+import dev.soupy.eclipse.android.core.model.ScheduleEntryCard
 
 data class ScheduleScreenState(
     val isLoading: Boolean = false,
@@ -45,6 +48,8 @@ data class ScheduleScreenState(
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
     val days: List<ScheduleDaySection> = emptyList(),
+    val loadingItemId: String? = null,
+    val noTmdbEntryTitle: String? = null,
 )
 
 @Composable
@@ -52,10 +57,24 @@ fun ScheduleRoute(
     state: ScheduleScreenState,
     onRefresh: () -> Unit,
     onShowLocalScheduleTimeChanged: (Boolean) -> Unit,
-    onSelect: (DetailTarget) -> Unit,
+    onSelect: (ScheduleEntryCard) -> Unit,
+    onDismissNoTmdbEntry: () -> Unit,
 ) {
     var selectedDayIndex by rememberSaveable { mutableIntStateOf(0) }
     val selectedDay = state.days.getOrNull(selectedDayIndex) ?: state.days.firstOrNull()
+
+    state.noTmdbEntryTitle?.let { title ->
+        AlertDialog(
+            onDismissRequest = onDismissNoTmdbEntry,
+            title = { Text("No TMDB Entry") },
+            text = { Text("\"$title\" does not have a TMDB entry and cannot be opened.") },
+            confirmButton = {
+                TextButton(onClick = onDismissNoTmdbEntry) {
+                    Text("OK")
+                }
+            },
+        )
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -99,6 +118,7 @@ fun ScheduleRoute(
                 ScheduleDayColumn(
                     day = day,
                     classic = true,
+                    loadingItemId = state.loadingItemId,
                     onSelect = onSelect,
                 )
             }
@@ -120,6 +140,7 @@ fun ScheduleRoute(
                     ScheduleDayColumn(
                         day = day,
                         classic = false,
+                        loadingItemId = state.loadingItemId,
                         onSelect = onSelect,
                     )
                 }
@@ -249,7 +270,8 @@ private fun DayChip(
 private fun ScheduleDayColumn(
     day: ScheduleDaySection,
     classic: Boolean,
-    onSelect: (DetailTarget) -> Unit,
+    loadingItemId: String?,
+    onSelect: (ScheduleEntryCard) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeading(
@@ -269,6 +291,7 @@ private fun ScheduleDayColumn(
                 ScheduleItemCard(
                     item = item,
                     classic = classic,
+                    loading = loadingItemId == item.id,
                     onSelect = onSelect,
                 )
             }
@@ -278,54 +301,64 @@ private fun ScheduleDayColumn(
 
 @Composable
 private fun ScheduleItemCard(
-    item: dev.soupy.eclipse.android.core.model.ScheduleEntryCard,
+    item: ScheduleEntryCard,
     classic: Boolean,
-    onSelect: (DetailTarget) -> Unit,
+    loading: Boolean,
+    onSelect: (ScheduleEntryCard) -> Unit,
 ) {
     GlassPanel(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelect(item.detailTarget) },
+            .clickable(enabled = !loading) { onSelect(item) },
         contentPadding = if (classic) PaddingValues(16.dp) else PaddingValues(10.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            PosterImage(
-                imageUrl = item.imageUrl,
-                contentDescription = item.title,
-                modifier = Modifier
-                    .width(if (classic) 54.dp else 54.dp)
-                    .height(if (classic) 76.dp else 76.dp),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text(
-                    text = item.title,
-                    style = if (classic) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = item.subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
-                )
-            }
-            item.timeLabel?.let { time ->
-                Text(
-                    text = time,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                PosterImage(
+                    imageUrl = item.imageUrl,
+                    contentDescription = item.title,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
-                    maxLines = 1,
+                        .width(if (classic) 54.dp else 54.dp)
+                        .height(if (classic) 76.dp else 76.dp),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = item.title,
+                        style = if (classic) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = item.subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                    )
+                }
+                item.timeLabel?.let { time ->
+                    Text(
+                        text = time,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    color = MaterialTheme.colorScheme.tertiary,
+                    strokeWidth = 2.dp,
                 )
             }
         }

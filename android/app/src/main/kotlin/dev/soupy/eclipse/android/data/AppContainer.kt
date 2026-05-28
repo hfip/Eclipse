@@ -191,6 +191,8 @@ class EclipseAppContainer(
     )
     val scheduleRepository: ScheduleRepository = ScheduleRepository(
         aniListService = aniListService,
+        tmdbService = tmdbService,
+        tmdbEnabled = tmdbApiKey.isNotBlank(),
     )
     val libraryRepository: LibraryRepository = LibraryRepository(
         libraryStore = libraryStore,

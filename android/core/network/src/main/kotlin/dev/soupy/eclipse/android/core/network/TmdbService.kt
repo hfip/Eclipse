@@ -36,6 +36,26 @@ class TmdbService(
         )
     }
 
+    suspend fun searchMovies(
+        query: String,
+        page: Int = 1,
+        includeAdult: Boolean = false,
+    ): NetworkResult<TMDBSearchResponse> = decode {
+        httpClient.get(
+            "$baseUrl/search/movie?api_key=$apiKey&query=${query.urlEncode()}&language=$language&page=$page&include_adult=$includeAdult",
+        )
+    }
+
+    suspend fun searchTvShows(
+        query: String,
+        page: Int = 1,
+        includeAdult: Boolean = false,
+    ): NetworkResult<TMDBSearchResponse> = decode {
+        httpClient.get(
+            "$baseUrl/search/tv?api_key=$apiKey&query=${query.urlEncode()}&language=$language&page=$page&include_adult=$includeAdult",
+        )
+    }
+
     suspend fun tvShowDetail(showId: Int): NetworkResult<TMDBTVShowDetail> = decode {
         httpClient.get("$baseUrl/tv/$showId?api_key=$apiKey&language=$language&append_to_response=external_ids")
     }

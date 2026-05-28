@@ -27,6 +27,7 @@ data class TMDBSearchResult(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("first_air_date") val firstAirDate: String? = null,
     @SerialName("genre_ids") val genreIds: List<Int> = emptyList(),
+    val popularity: Double = 0.0,
 )
 
 val TMDBSearchResult.displayTitle: String
