@@ -106,20 +106,15 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .onAppear {
             refreshContinueWatchingItems()
-            if homeViewModel.hasLoadedContent || !homeViewModel.isLoading {
+            if homeViewModel.hasCompletedInitialLoad {
                 reportStartupReadyIfNeeded()
             }
             if !homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
             }
         }
-        .onChange(of: homeViewModel.hasLoadedContent) { hasLoadedContent in
-            if hasLoadedContent {
-                reportStartupReadyIfNeeded()
-            }
-        }
-        .onChange(of: homeViewModel.isLoading) { isLoading in
-            if !isLoading {
+        .onChange(of: homeViewModel.hasCompletedInitialLoad) { hasCompletedInitialLoad in
+            if hasCompletedInitialLoad {
                 reportStartupReadyIfNeeded()
             }
         }

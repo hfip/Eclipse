@@ -685,6 +685,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var containerTapGesture: UITapGestureRecognizer?
     private var leftDoubleTapGesture: UITapGestureRecognizer?
     private var rightDoubleTapGesture: UITapGestureRecognizer?
+    private var pendingContainerTapWorkItem: DispatchWorkItem?
+    private let containerTapDoubleTapGraceInterval: TimeInterval = 0.22
 #if !os(tvOS)
     private var brightnessPanGesture: UIPanGestureRecognizer?
     private var volumePanGesture: UIPanGestureRecognizer?
@@ -3181,12 +3183,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         rightDoubleTap.delegate = self
         rightDoubleTapGesture = rightDoubleTap
         playerGestureSurfaceView.addGestureRecognizer(rightDoubleTap)
-        
-        if !isMPVRenderer, let tap = containerTapGesture {
-            tap.require(toFail: leftDoubleTap)
-            tap.require(toFail: rightDoubleTap)
-        }
-        
+
         #if !os(tvOS)
         if isTwoFingerTapEnabled {
             let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(twoFingerTapped))
@@ -3202,6 +3199,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let location = gesture.location(in: videoContainer)
         let isLeftSide = location.x < videoContainer.bounds.width / 2
         guard isLeftSide else { return }
+        pendingContainerTapWorkItem?.cancel()
         logSharedPlayerControl("left double-tap seek by -\(String(format: "%.1f", playerSeekSeconds))")
         rendererSeek(by: -playerSeekSeconds)
         animateButtonTap(skipBackwardButton)
@@ -3212,6 +3210,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let location = gesture.location(in: videoContainer)
         let isRightSide = location.x >= videoContainer.bounds.width / 2
         guard isRightSide else { return }
+        pendingContainerTapWorkItem?.cancel()
         logSharedPlayerControl("right double-tap seek by \(String(format: "%.1f", playerSeekSeconds))")
         rendererSeek(by: playerSeekSeconds)
         animateButtonTap(skipForwardButton)
@@ -5322,18 +5321,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard isRemoteHTTPURL(originalURL), !isLocalProxyURL(originalURL) else { return (originalURL, headers) }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers ?? [:])
-        let shouldBridge = !proxyHeaders.isEmpty || playbackLaunchContext?.sourceKind == .stremio
-        guard shouldBridge else { return (originalURL, headers) }
-
-        guard let proxyURL = MPVHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders, logType: "MPV") else {
-            Logger.shared.log("[PlayerVC.PlaybackStart] proactive MPV bridge URL creation failed; using direct MPV headers", type: "MPV")
-            return (originalURL, headers)
-        }
-
-        mpvTransportBridgeFallbackTried = true
-        isMPVTransportBridgePlaybackActive = true
-        Logger.shared.log("[PlayerVC.PlaybackStart] proactive MPV bridge activated target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
-        return (proxyURL, nil)
+        Logger.shared.log("[PlayerVC.PlaybackStart] MPV direct HTTP playback target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
+        return (originalURL, proxyHeaders.isEmpty ? headers : proxyHeaders)
     }
 
     private func proxySubtitleURLs(_ urls: [String], headers: [String: String]) -> [String] {
@@ -6864,6 +6853,20 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     @objc private func containerTapped() {
+        pendingContainerTapWorkItem?.cancel()
+        guard !isMPVRenderer, isDoubleTapSeekEnabled else {
+            performContainerTapToggle()
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            self?.performContainerTapToggle()
+        }
+        pendingContainerTapWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + containerTapDoubleTapGraceInterval, execute: work)
+    }
+
+    private func performContainerTapToggle() {
         logSharedPlayerControl("container tapped controlsVisible=\(controlsVisible)")
         if controlsVisible {
             hideControls()

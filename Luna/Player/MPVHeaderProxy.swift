@@ -40,6 +40,8 @@ private final class MPVHeaderProxyCore {
     private let maxHeaderBytes = 64 * 1024
     private let maxPlaylistBytes = 5 * 1024 * 1024
     private let playlistProbeBytes = 4 * 1024
+    private let maxPendingStreamBytes = 8 * 1024 * 1024
+    private let maxPendingStreamSends = 8
     fileprivate let logPrefix: String
     private let playlistMode: MPVHeaderProxyPlaylistMode
     private let gracefulResponseClose: Bool
@@ -318,7 +320,7 @@ private final class MPVHeaderProxyCore {
             let normalizedRange = request.value(forHTTPHeaderField: "Range")?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
-            if isLikelyPlaylistURL(targetURL) || normalizedRange == "bytes=0-" {
+            if isLikelyPlaylistURL(targetURL), normalizedRange == "bytes=0-" {
                 request.setValue(nil, forHTTPHeaderField: "Range")
             }
         }
@@ -736,23 +738,9 @@ private final class MPVHeaderProxyCore {
         private var finished = false
         private var streamedByteCount = 0
         private var lastSlowSendLogAt: CFTimeInterval = 0
-
-        private final class SendResult {
-            private let lock = NSLock()
-            private var error: NWError?
-
-            func set(_ error: NWError?) {
-                lock.lock()
-                self.error = error
-                lock.unlock()
-            }
-
-            func get() -> NWError? {
-                lock.lock()
-                defer { lock.unlock() }
-                return error
-            }
-        }
+        private var pendingDownstreamSends = 0
+        private var pendingDownstreamBytes = 0
+        private var pendingStreamCompletionStatusCode: Int?
 
         init(
             proxy: MPVHeaderProxyCore,
@@ -934,11 +922,16 @@ private final class MPVHeaderProxyCore {
                 proxy.sendResponse(connection, statusCode: responseStatus, headers: headers, body: body)
             case .stream:
                 let expected = http.expectedContentLength >= 0 ? String(http.expectedContentLength) : "unknown"
-                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream stream complete bytes=\(streamedByteCount) expected=\(expected) target=\(proxy.logURLSummary(targetURL))", type: logType)
-                proxy.finishResponse(on: connection)
+                pendingStreamCompletionStatusCode = http.statusCode
+                if pendingDownstreamSends > 0 {
+                    Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream stream complete waiting for downstream sends pending=\(pendingDownstreamSends) pendingBytes=\(pendingDownstreamBytes) bytes=\(streamedByteCount) expected=\(expected) target=\(proxy.logURLSummary(targetURL))", type: logType)
+                }
+                finishStreamIfReady(expected: expected)
             }
 
-            finish()
+            if mode != .stream {
+                finish()
+            }
         }
 
         private func startStreamingBufferedData(dataTask: URLSessionDataTask) {
@@ -983,25 +976,46 @@ private final class MPVHeaderProxyCore {
             if suspendBeforeSend {
                 dataTask.suspend()
             }
+            pendingDownstreamSends += 1
+            pendingDownstreamBytes += data.count
             let sendStartedAt = CFAbsoluteTimeGetCurrent()
-            let sendResult = SendResult()
-            let sendSemaphore = DispatchSemaphore(value: 0)
-            proxy.sendData(data, on: connection) { error in
-                sendResult.set(error)
-                sendSemaphore.signal()
+            let shouldThrottle = pendingDownstreamBytes >= proxy.maxPendingStreamBytes
+                || pendingDownstreamSends >= proxy.maxPendingStreamSends
+
+            proxy.sendData(data, on: connection) { [weak self] error in
+                self?.callbackQueue.addOperation { [weak self] in
+                    self?.handleStreamSendCompletion(
+                        data: data,
+                        dataTask: dataTask,
+                        sendStartedAt: sendStartedAt,
+                        resumeDataTask: shouldThrottle,
+                        error: error
+                    )
+                }
             }
 
-            let waitResult = sendSemaphore.wait(timeout: .now() + .seconds(120))
-            if waitResult == .timedOut {
-                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream send timed out afterBytes=\(streamedByteCount) chunkBytes=\(data.count) target=\(proxy.logURLSummary(targetURL))", type: errorLogType)
+            if !shouldThrottle {
+                dataTask.resume()
+            }
+        }
+
+        private func handleStreamSendCompletion(
+            data: Data,
+            dataTask: URLSessionDataTask,
+            sendStartedAt: CFTimeInterval,
+            resumeDataTask: Bool,
+            error: NWError?
+        ) {
+            guard let proxy else {
                 dataTask.cancel()
-                connection.cancel()
                 finish()
                 return
             }
 
-            if let error = sendResult.get() {
-                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream send failed afterBytes=\(streamedByteCount) chunkBytes=\(data.count) error=\(error)", type: errorLogType)
+            pendingDownstreamSends = max(0, pendingDownstreamSends - 1)
+            pendingDownstreamBytes = max(0, pendingDownstreamBytes - data.count)
+            if let error {
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream send failed afterBytes=\(streamedByteCount) chunkBytes=\(data.count) pending=\(pendingDownstreamSends) pendingBytes=\(pendingDownstreamBytes) error=\(error)", type: errorLogType)
                 dataTask.cancel()
                 connection.cancel()
                 finish()
@@ -1013,9 +1027,31 @@ private final class MPVHeaderProxyCore {
             let now = CFAbsoluteTimeGetCurrent()
             if sendMs > 250, now - lastSlowSendLogAt > 2.0 {
                 lastSlowSendLogAt = now
-                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream slow send chunkBytes=\(data.count) sendMs=\(String(format: "%.0f", sendMs)) streamedBytes=\(streamedByteCount) target=\(proxy.logURLSummary(targetURL))", type: logType)
+                Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: downstream slow send chunkBytes=\(data.count) sendMs=\(String(format: "%.0f", sendMs)) streamedBytes=\(streamedByteCount) pending=\(pendingDownstreamSends) pendingBytes=\(pendingDownstreamBytes) target=\(proxy.logURLSummary(targetURL))", type: logType)
             }
-            dataTask.resume()
+
+            if pendingStreamCompletionStatusCode == nil, resumeDataTask, !finished {
+                dataTask.resume()
+            }
+
+            let expected = httpResponse.flatMap { http -> String? in
+                http.expectedContentLength >= 0 ? String(http.expectedContentLength) : "unknown"
+            } ?? "unknown"
+            finishStreamIfReady(expected: expected)
+        }
+
+        private func finishStreamIfReady(expected: String) {
+            guard let proxy,
+                  pendingStreamCompletionStatusCode != nil,
+                  pendingDownstreamSends == 0,
+                  !finished else {
+                return
+            }
+
+            pendingStreamCompletionStatusCode = nil
+            Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: upstream stream complete bytes=\(streamedByteCount) expected=\(expected) target=\(proxy.logURLSummary(targetURL))", type: logType)
+            proxy.finishResponse(on: connection)
+            finish()
         }
 
         private func finish() {

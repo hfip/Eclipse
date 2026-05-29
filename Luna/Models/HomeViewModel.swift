@@ -15,6 +15,7 @@ final class HomeViewModel: ObservableObject {
     @Published var heroContent: TMDBSearchResult?
     @Published var ambientColor: Color = Color.black
     @Published var hasLoadedContent = false
+    @Published var hasCompletedInitialLoad = false
     @Published var widgetData: [String: [TMDBSearchResult]] = [:]
     @Published var becauseYouWatchedTitle: String = ""
     private var heroCarouselItems: [TMDBSearchResult] = []
@@ -37,6 +38,7 @@ final class HomeViewModel: ObservableObject {
         
         isLoading = true
         errorMessage = nil
+        hasCompletedInitialLoad = false
         
         Task {
             async let trending: [TMDBSearchResult] = self.loadHomeCatalog("trending") {
@@ -118,6 +120,7 @@ final class HomeViewModel: ObservableObject {
                 self.applyHeroBannerSelection()
                 self.isLoading = false
                 self.hasLoadedContent = loadedCatalogCount > 0
+                self.hasCompletedInitialLoad = true
                 self.errorMessage = loadedCatalogCount == 0
                     ? "Unable to load home catalogs. Check your internet connection and API configuration, then try again."
                     : nil
@@ -407,6 +410,7 @@ final class HomeViewModel: ObservableObject {
         heroContent = nil
         heroLaunchSelectionCatalogId = nil
         hasLoadedContent = false
+        hasCompletedInitialLoad = false
         featuredGenreName = ""
         becauseYouWatchedTitle = ""
         RecommendationEngine.shared.invalidateCache()

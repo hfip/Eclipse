@@ -35,7 +35,7 @@ struct SoraApp: App {
     @State private var startupReady = false
     @State private var startupFallbackScheduled = false
     @State private var showSplash = true
-    private let startupFallbackDelay: TimeInterval = 8
+    private let startupFallbackDelay: TimeInterval = 20
 
 #if !os(tvOS)
     @AppStorage("showKanzen") private var showKanzen: Bool = false
