@@ -23,6 +23,7 @@ protocol VLCRendererDelegate: AnyObject {
     func renderer(_ renderer: VLCRenderer, getSubtitleForTime time: Double) -> NSAttributedString?
     func renderer(_ renderer: VLCRenderer, getSubtitleStyle: Void) -> SubtitleStyle
     func renderer(_ renderer: VLCRenderer, subtitleTrackDidChange trackId: Int)
+    func renderer(_ renderer: VLCRenderer, didChangeInternalReload active: Bool, reason: String)
     func rendererDidChangeTracks(_ renderer: VLCRenderer)
 }
 
@@ -70,6 +71,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var currentPlaybackSpeed: Double = 1.0
 
     private var currentSubtitleStyle: SubtitleStyle = .default
+    private var loadedMediaSubtitleStyleSignature: String?
+    private var subtitleStyleReloadWorkItem: DispatchWorkItem?
+    private var pendingSubtitleTrackRestore: Int32?
+    private var pauseAfterSubtitleStyleReload = false
     private var lastLoggedStateCode: Int?
     private var lastProgressLogBucket = -1
     private var lastProgressAnomalyKey: String?
@@ -370,6 +375,11 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         isStopping = true
         loadGeneration += 1
         proxyResumeAttemptID += 1
+        subtitleStyleReloadWorkItem?.cancel()
+        subtitleStyleReloadWorkItem = nil
+        pendingSubtitleTrackRestore = nil
+        pauseAfterSubtitleStyleReload = false
+        notifyInternalReload(active: false, reason: "stop")
         stopProgressPolling()
 
         eventQueue.async { [weak self] in
@@ -388,6 +398,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 self.mediaPlayer = nil
 
                 self.currentMedia = nil
+                self.loadedMediaSubtitleStyleSignature = nil
                 self.isReadyToSeek = false
                 self.isPaused = true
                 self.isLoading = false
@@ -429,6 +440,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         currentPreset = preset
         loadGeneration += 1
         proxyResumeAttemptID += 1
+        subtitleStyleReloadWorkItem?.cancel()
+        subtitleStyleReloadWorkItem = nil
         needsProxyReloadAfterBackground = false
         let initialSeek = preparedInitialSeek
         preparedInitialSeek = nil
@@ -495,6 +508,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
             // Apply subtitle styling options (best effort; depends on libvlc text renderer support)
             self.applySubtitleStyleOptions(to: media)
+            self.loadedMediaSubtitleStyleSignature = self.subtitleStyleMediaOptionSignature(self.currentSubtitleStyle)
 
             if let initialSeek, initialSeek > 0 {
                 Logger.shared.log("[VLCRenderer.load] queued initial seek \(Int(initialSeek))s", type: "Progress")
@@ -523,7 +537,11 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             self.ensureAudioSessionActive()
             self.logVLC("load configured media; calling play snapshot={\(self.playerSnapshot(player))}", type: "Stream")
             player.play()
+            if self.currentPlaybackSpeed != 1.0 {
+                player.rate = Float(self.currentPlaybackSpeed)
+            }
             self.startProgressPolling()
+            self.schedulePendingSubtitleTrackRestoreChecks(generation: self.loadGeneration)
             self.scheduleLoadingSanityChecks()
             self.logVLC("load submitted play snapshot={\(self.playerSnapshot(player))}", type: "Stream")
         }
@@ -1143,6 +1161,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     
     func getSubtitleTracks() -> [(Int, String)] {
         guard let player = mediaPlayer else { return [] }
+        restorePendingSubtitleTrackIfNeeded(on: player, reason: "get-tracks")
         
         var result: [(Int, String)] = []
         
@@ -1211,6 +1230,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     }
 
     func applySubtitleStyle(_ style: SubtitleStyle) {
+        let styleSignature = subtitleStyleMediaOptionSignature(style)
         currentSubtitleStyle = style
         logVLC("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         eventQueue.async { [weak self] in
@@ -1220,15 +1240,18 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 self.applySubtitleStyleOptions(to: media)
             }
 
-            if let player = self.mediaPlayer {
-                self.applyLiveSubtitleStyle(to: player)
-            }
-
             // Best-effort live re-apply: toggle current subtitle track to force renderer refresh.
             if let player = self.mediaPlayer {
                 let currentTrack = player.currentVideoSubTitleIndex
                 if currentTrack >= 0 {
                     player.currentVideoSubTitleIndex = currentTrack
+                    if styleSignature != self.loadedMediaSubtitleStyleSignature {
+                        self.scheduleSubtitleStyleMediaReloadIfNeeded(
+                            for: player,
+                            selectedSubtitleTrack: currentTrack,
+                            styleSignature: styleSignature
+                        )
+                    }
                 }
             }
         }
@@ -1246,16 +1269,147 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         media.addOption(":freetype-fontsize=\(fontSize)")
     }
 
-    private func applyLiveSubtitleStyle(to player: VLCMediaPlayer) {
-        let fontSize = max(12, Int(round(currentSubtitleStyle.fontSize)))
-        let fontSelector = NSSelectorFromString("setTextRendererFontSize:")
-        guard player.responds(to: fontSelector) else {
-            logVLC("live subtitle font-size selector unavailable; media options will apply on next load")
+    private func scheduleSubtitleStyleMediaReloadIfNeeded(
+        for player: VLCMediaPlayer,
+        selectedSubtitleTrack: Int32,
+        styleSignature: String
+    ) {
+        guard selectedSubtitleTrack >= 0,
+              currentMedia != nil,
+              currentURL != nil,
+              currentPreset != nil,
+              isRunning,
+              !isStopping else {
             return
         }
 
-        _ = player.perform(fontSelector, with: NSNumber(value: fontSize))
-        logVLC("applied live subtitle font size=\(fontSize)")
+        guard !isLoading, isReadyToSeek || hasUsablePlaybackSignal(player) else {
+            logVLC("subtitle style media reload skipped until player is ready track=\(selectedSubtitleTrack) snapshot={\(playerSnapshot(player))}", type: "Player")
+            return
+        }
+
+        let generation = loadGeneration
+        subtitleStyleReloadWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self, weak player] in
+            guard let self,
+                  let player,
+                  self.mediaPlayer === player,
+                  self.loadGeneration == generation,
+                  self.loadedMediaSubtitleStyleSignature != styleSignature,
+                  self.isRunning,
+                  !self.isStopping,
+                  !self.isLoading else {
+                return
+            }
+            self.reloadCurrentMediaForSubtitleStyle(
+                player: player,
+                selectedSubtitleTrack: selectedSubtitleTrack,
+                styleSignature: styleSignature
+            )
+        }
+        subtitleStyleReloadWorkItem = workItem
+        logVLC("subtitle style media reload scheduled track=\(selectedSubtitleTrack) font=\(Int(round(currentSubtitleStyle.fontSize)))", type: "Player")
+        eventQueue.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+    }
+
+    private func reloadCurrentMediaForSubtitleStyle(
+        player: VLCMediaPlayer,
+        selectedSubtitleTrack: Int32,
+        styleSignature: String
+    ) {
+        guard let url = currentURL,
+              let preset = currentPreset else {
+            return
+        }
+
+        let progress = resolvedPlaybackProgress(from: player)
+        let resumePosition = progress.position
+        let preservedDuration = max(progress.duration, cachedDuration)
+        let wasPaused = isPaused || isVLCPlayerPausedState(player.state)
+        let mediaURL: URL
+        if isVLCHeaderProxyURL(url),
+           let refreshedURL = VLCHeaderProxy.shared.refreshedProxyURL(
+                from: url,
+                restartListener: false,
+                reason: "subtitle-style-reload"
+           ) {
+            mediaURL = refreshedURL
+        } else {
+            mediaURL = url
+        }
+
+        pendingSubtitleTrackRestore = selectedSubtitleTrack
+        pauseAfterSubtitleStyleReload = wasPaused
+        preparedInitialSeek = resumePosition
+        pendingAbsoluteSeek = resumePosition
+
+        logVLC("subtitle style media reload begin track=\(selectedSubtitleTrack) resume=\(secondsText(resumePosition)) paused=\(wasPaused) oldSignature=\(loadedMediaSubtitleStyleSignature ?? "nil") newSignature=\(styleSignature)", type: "Player")
+        notifyInternalReload(active: true, reason: "subtitle-style")
+        loadMedia(url: mediaURL, with: preset, headers: currentHeaders)
+        cachedPosition = resumePosition
+        if preservedDuration >= minimumReliableDuration {
+            cachedDuration = preservedDuration
+        }
+    }
+
+    private func schedulePendingSubtitleTrackRestoreChecks(generation: Int) {
+        guard pendingSubtitleTrackRestore != nil else { return }
+        for delay in [0.25, 0.75, 1.5] {
+            eventQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      self.loadGeneration == generation,
+                      let player = self.mediaPlayer else {
+                    return
+                }
+                self.restorePendingSubtitleTrackIfNeeded(on: player, reason: "delayed-\(String(format: "%.2f", delay))")
+            }
+        }
+    }
+
+    private func restorePendingSubtitleTrackIfNeeded(on player: VLCMediaPlayer, reason: String) {
+        guard let track = pendingSubtitleTrackRestore else { return }
+
+        if let subtitleIndexes = player.videoSubTitlesIndexes as? [Int],
+           !subtitleIndexes.contains(Int(track)) {
+            logVLC("subtitle style reload waiting for track=\(track) reason=\(reason) available=\(subtitleIndexes)", type: "Player")
+            return
+        }
+
+        player.currentVideoSubTitleIndex = track
+        pendingSubtitleTrackRestore = nil
+        logVLC("subtitle style reload restored track=\(track) reason=\(reason) snapshot={\(playerSnapshot(player))}", type: "Player")
+        notifyInternalReload(active: false, reason: "subtitle-style-restored")
+
+        if pauseAfterSubtitleStyleReload {
+            pauseAfterSubtitleStyleReload = false
+            player.pause()
+            isPaused = true
+            stopProgressPolling()
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.delegate?.renderer(self, subtitleTrackDidChange: Int(track))
+            self.delegate?.rendererDidChangeTracks(self)
+            if self.isPaused {
+                self.delegate?.renderer(self, didChangePause: true)
+            }
+        }
+    }
+
+    private func subtitleStyleMediaOptionSignature(_ style: SubtitleStyle) -> String {
+        let foregroundHex = vlcHexRGB(style.foregroundColor)
+        let strokeHex = vlcHexRGB(style.strokeColor)
+        let fontSize = max(12, Int(round(style.fontSize)))
+        let outline = max(0, Int(round(style.strokeWidth * 2.0)))
+        return "\(foregroundHex)|\(strokeHex)|\(outline)|\(fontSize)"
+    }
+
+    private func notifyInternalReload(active: Bool, reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.delegate?.renderer(self, didChangeInternalReload: active, reason: reason)
+        }
     }
 
     private func vlcHexRGB(_ color: UIColor) -> String {
@@ -1466,6 +1620,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             lastLoggedStateCode = code
             logVLC("stateChanged \(describeState(state))(\(code)) snapshot={\(playerSnapshot(player))}", type: "Stream")
         }
+        restorePendingSubtitleTrackIfNeeded(on: player, reason: "state-\(describeState(state))")
         
         if isErrorState(state) {
             let urlString = currentURL?.absoluteString ?? "nil"
@@ -1779,6 +1934,7 @@ protocol VLCRendererDelegate: AnyObject {
     func renderer(_ renderer: VLCRenderer, getSubtitleForTime time: Double) -> NSAttributedString?
     func renderer(_ renderer: VLCRenderer, getSubtitleStyle: Void) -> SubtitleStyle
     func renderer(_ renderer: VLCRenderer, subtitleTrackDidChange trackId: Int)
+    func renderer(_ renderer: VLCRenderer, didChangeInternalReload active: Bool, reason: String)
     func rendererDidChangeTracks(_ renderer: VLCRenderer)
 }
 

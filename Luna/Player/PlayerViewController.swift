@@ -1099,6 +1099,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var canMutateVLCSubtitleTracks = false
     private var didHandleVLCReadyToSeekForCurrentLoad = false
     private var didLogDuplicateVLCReadyToSeekForCurrentLoad = false
+    private var vlcSubtitleStyleReloadProgressGate: VLCSubtitleStyleReloadProgressGate?
+    private var vlcSubtitleStyleReloadProgressGateID = 0
     private var playbackReplacementGeneration = 0
     private var isReplacingVLCPlaybackInPlace = false
     private var pipController: PiPController?
@@ -1146,6 +1148,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private let backgroundRecoveryProgressSuppressionWindow: TimeInterval = 12.0
     private let backgroundRecoveryProgressMaxGuardWindow: TimeInterval = 60.0
     private let backgroundRecoveryProgressJumpTolerance: Double = 12.0
+    private struct VLCSubtitleStyleReloadProgressGate {
+        let id: Int
+        let armedAt: Date
+        var expiresAt: Date
+        let baselinePosition: Double
+        let baselineDuration: Double
+        var lastSuppressionLogBucket: Int = -1
+    }
     
     // Debounce timers for menu updates to avoid excessive rebuilds
     private var audioMenuDebounceTimer: Timer?
@@ -1367,6 +1377,72 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard let gate = backgroundRecoveryProgressGate else { return }
         backgroundRecoveryProgressGate = nil
         Logger.shared.log("[PlayerVC.Recovery] released progress gate id=\(gate.id) reason=\(reason) renderer=\(gate.rendererName) media=\(gate.mediaKey) armedSource=\(gate.source)", type: "Progress")
+    }
+
+    private func setVLCSubtitleStyleReloadProgressGate(active: Bool, reason: String) {
+        if active {
+            guard isVLCPlayer else { return }
+            vlcSubtitleStyleReloadProgressGateID += 1
+            let now = Date()
+            vlcSubtitleStyleReloadProgressGate = VLCSubtitleStyleReloadProgressGate(
+                id: vlcSubtitleStyleReloadProgressGateID,
+                armedAt: now,
+                expiresAt: now.addingTimeInterval(6.0),
+                baselinePosition: max(0, cachedPosition),
+                baselineDuration: max(0, cachedDuration)
+            )
+            Logger.shared.log("[PlayerVC.Subtitles] armed VLC subtitle style progress gate id=\(vlcSubtitleStyleReloadProgressGateID) reason=\(reason) baseline=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "Progress")
+        } else if var gate = vlcSubtitleStyleReloadProgressGate {
+            if reason.hasPrefix("subtitle-style") {
+                let settleExpiry = Date().addingTimeInterval(1.0)
+                if settleExpiry < gate.expiresAt {
+                    gate.expiresAt = settleExpiry
+                }
+                vlcSubtitleStyleReloadProgressGate = gate
+                Logger.shared.log("[PlayerVC.Subtitles] VLC subtitle style progress gate id=\(gate.id) entering settle window reason=\(reason)", type: "Progress")
+                return
+            }
+            vlcSubtitleStyleReloadProgressGate = nil
+            Logger.shared.log("[PlayerVC.Subtitles] released VLC subtitle style progress gate id=\(gate.id) reason=\(reason)", type: "Progress")
+        }
+    }
+
+    private func shouldPersistProgressDuringVLCSubtitleStyleReload(
+        safePosition: Double,
+        effectiveDuration: Double,
+        durationIsReliable: Bool
+    ) -> Bool {
+        guard var gate = vlcSubtitleStyleReloadProgressGate else { return true }
+        guard isVLCPlayer else {
+            vlcSubtitleStyleReloadProgressGate = nil
+            return true
+        }
+
+        let now = Date()
+        let advancedPastReloadPoint = durationIsReliable
+            && effectiveDuration > 0
+            && safePosition >= gate.baselinePosition + 1.0
+
+        if advancedPastReloadPoint {
+            vlcSubtitleStyleReloadProgressGate = nil
+            Logger.shared.log("[PlayerVC.Subtitles] released VLC subtitle style progress gate id=\(gate.id) reason=playback-advanced position=\(secondsText(safePosition))/\(secondsText(effectiveDuration)) baseline=\(secondsText(gate.baselinePosition))/\(secondsText(gate.baselineDuration))", type: "Progress")
+            return true
+        }
+
+        if now >= gate.expiresAt {
+            vlcSubtitleStyleReloadProgressGate = nil
+            Logger.shared.log("[PlayerVC.Subtitles] released VLC subtitle style progress gate id=\(gate.id) reason=expired position=\(secondsText(safePosition))/\(secondsText(effectiveDuration))", type: "Progress")
+            return true
+        }
+
+        let elapsed = max(0, now.timeIntervalSince(gate.armedAt))
+        let bucket = Int(elapsed / 2.0)
+        if gate.lastSuppressionLogBucket != bucket {
+            gate.lastSuppressionLogBucket = bucket
+            vlcSubtitleStyleReloadProgressGate = gate
+            Logger.shared.log("[PlayerVC.Subtitles] suppressing progress persistence during VLC subtitle style reload id=\(gate.id) elapsed=\(String(format: "%.1f", elapsed))s position=\(secondsText(safePosition))/\(secondsText(effectiveDuration)) baseline=\(secondsText(gate.baselinePosition))/\(secondsText(gate.baselineDuration))", type: "Progress")
+        }
+        return false
     }
 
     private func shouldPersistProgressAfterBackgroundRecovery(
@@ -2406,6 +2482,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         pendingInitialResumeTarget = nil
         pendingInitialResumeDeadline = nil
         releaseBackgroundRecoveryProgressGate(reason: "new-load")
+        setVLCSubtitleStyleReloadProgressGate(active: false, reason: "new-load")
         if let info = mediaInfo {
             prepareSeekToLastPosition(for: info)
         }
@@ -2414,6 +2491,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
         if !isVLCPlayer {
             preparePlaybackStartupMonitoring(for: playbackRequest.url, headers: playbackRequest.headers ?? headers ?? [:])
+        } else {
+            rendererApplySubtitleStyle(currentSubtitleStyle())
         }
         rendererLoad(url: playbackRequest.url, preset: preset, headers: playbackRequest.headers)
         applyDefaultPlaybackSpeed()
@@ -7429,6 +7508,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         ) else {
             return
         }
+        guard shouldPersistProgressDuringVLCSubtitleStyleReload(
+            safePosition: persistPosition,
+            effectiveDuration: effectiveDuration,
+            durationIsReliable: durationIsReliable
+        ) else {
+            return
+        }
         
         switch info {
         case .movie(let id, let title, _, _):
@@ -8619,6 +8705,14 @@ extension PlayerViewController: VLCRendererDelegate {
             self.updateVLCSubtitleOverlay(for: self.cachedPosition)
             self.updateSubtitleButtonAppearance()
             // VLC natively renders ASS subtitles
+        }
+    }
+
+    func renderer(_ renderer: VLCRenderer, didChangeInternalReload active: Bool, reason: String) {
+        if isClosing { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isClosing else { return }
+            self.setVLCSubtitleStyleReloadProgressGate(active: active, reason: reason)
         }
     }
 
