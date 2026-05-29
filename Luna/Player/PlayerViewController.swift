@@ -4520,6 +4520,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             // For anime, use original TMDB S/E (pre-AniList restructuring) since TheIntroDB uses TMDB numbering
             let introDBSeason = self.originalTMDBSeasonNumber ?? seasonNumber
             let introDBEpisode = self.originalTMDBEpisodeNumber ?? episodeNumber
+            // IntroDB.app's IMDb key follows the currently playing episode for regular anime seasons.
+            let introDBAppSeason = self.episodePlaybackContext?.isSpecial == true ? introDBSeason : seasonNumber
+            let introDBAppEpisode = self.episodePlaybackContext?.isSpecial == true ? introDBEpisode : episodeNumber
             if !introDBEnabled {
                 Logger.shared.log("SkipData: TheIntroDB skipped: disabled in Settings", type: "Skip")
             } else if !segments.isEmpty {
@@ -4554,14 +4557,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 let introDBIMDbId = await self.resolveSkipDataIMDbId(tmdbId: tmdbId, type: mediaType, currentIMDbId: self.imdbId)
                 if let introDBIMDbId {
                     Logger.shared.log(
-                        "SkipData: IntroDB attempt imdbId=\(introDBIMDbId) s=\(introDBSeason ?? -1) ep=\(introDBEpisode ?? -1) duration=\(self.secondsText(durationAtFetch))",
+                        "SkipData: IntroDB attempt imdbId=\(introDBIMDbId) s=\(introDBAppSeason ?? -1) ep=\(introDBAppEpisode ?? -1) duration=\(self.secondsText(durationAtFetch))",
                         type: "Skip"
                     )
                     do {
                         let introDBAppSegments = try await IntroDBAppService.shared.fetchSkipTimes(
                             imdbId: introDBIMDbId,
-                            seasonNumber: introDBSeason,
-                            episodeNumber: introDBEpisode,
+                            seasonNumber: introDBAppSeason,
+                            episodeNumber: introDBAppEpisode,
                             episodeDuration: durationAtFetch
                         )
                         Logger.shared.log("SkipData: IntroDB returned \(introDBAppSegments.count) segments", type: "Skip")

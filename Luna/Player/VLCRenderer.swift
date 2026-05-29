@@ -1220,6 +1220,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 self.applySubtitleStyleOptions(to: media)
             }
 
+            if let player = self.mediaPlayer {
+                self.applyLiveSubtitleStyle(to: player)
+            }
+
             // Best-effort live re-apply: toggle current subtitle track to force renderer refresh.
             if let player = self.mediaPlayer {
                 let currentTrack = player.currentVideoSubTitleIndex
@@ -1240,6 +1244,18 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         media.addOption(":freetype-outline-color=0x\(strokeHex)")
         media.addOption(":freetype-outline-thickness=\(outline)")
         media.addOption(":freetype-fontsize=\(fontSize)")
+    }
+
+    private func applyLiveSubtitleStyle(to player: VLCMediaPlayer) {
+        let fontSize = max(12, Int(round(currentSubtitleStyle.fontSize)))
+        let fontSelector = NSSelectorFromString("setTextRendererFontSize:")
+        guard player.responds(to: fontSelector) else {
+            logVLC("live subtitle font-size selector unavailable; media options will apply on next load")
+            return
+        }
+
+        _ = player.perform(fontSelector, with: NSNumber(value: fontSize))
+        logVLC("applied live subtitle font size=\(fontSize)")
     }
 
     private func vlcHexRGB(_ color: UIColor) -> String {
