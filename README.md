@@ -52,8 +52,9 @@ Eclipse was designed to bridge Luna services with Stremio addons in one polished
 - User ratings and private notes
 - Anime schedule integration through AniList
 - Episode descriptions in service result sheets
-- VLC playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
+- VLC/MPV playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
 - A redesigned interface built around browsing, watching, reading, and managing progress
+- And more!
 
 ## Install
 
@@ -74,7 +75,7 @@ SideStore is not required. Other sideloading options work too, and `r/sideloaded
 
 ## Notes
 
-- VLC is the preferred in-app player in this fork.
+- VLC and MPV are the main Players, use the one you prefer
 - VLC uses the Swift Package Manager `VLCKitSPM` build.
 - Picture in Picture is not enabled for VLC because of current VLCKit stability limits.
 - Use GitHub Issues for feature requests and bug reports.
