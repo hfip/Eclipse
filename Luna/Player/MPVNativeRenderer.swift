@@ -404,10 +404,7 @@ private final class MPVPiPBridge {
 
     private func targetRenderSize(for videoSize: CGSize) -> CGSize? {
         guard videoSize.width > 0, videoSize.height > 0 else { return nil }
-        let maxWidth: CGFloat = 1280
-        let maxHeight: CGFloat = 720
-        let scale = min(maxWidth / videoSize.width, maxHeight / videoSize.height, 1.0)
-        return CGSize(width: max(1, floor(videoSize.width * scale)), height: max(1, floor(videoSize.height * scale)))
+        return CGSize(width: max(1, floor(videoSize.width)), height: max(1, floor(videoSize.height)))
     }
 
     private func recreatePixelBufferPool(width: Int, height: Int) {
@@ -741,6 +738,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         let screen = UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen }
             .first ?? UIScreen.main
+        let nativeScale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale
         let configuredFPS = Settings.shared.mpvForegroundFPS
         let targetFPS = max(1, min(screen.maximumFramesPerSecond, configuredFPS))
         self.foregroundFramesPerSecond = targetFPS
@@ -754,10 +752,13 @@ final class MPVNativeRenderer: PlayerRenderer {
         glView.drawableDepthFormat = .format24
         glView.drawableStencilFormat = .format8
         glView.drawableMultisample = .multisampleNone
+        glView.contentScaleFactor = nativeScale
+        glView.layer.contentsScale = nativeScale
         glView.isUserInteractionEnabled = false
 
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
+        displayLayer.contentsScale = nativeScale
         displayLayer.isHidden = true
         displayLayer.opacity = 0.0
     }
@@ -788,7 +789,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "keep-open", value: "yes")
         setOption(name: "idle", value: "yes")
         setOption(name: "vo", value: "libmpv")
-        setOption(name: "profile", value: "fast")
         setOption(name: "hwdec", value: "videotoolbox-copy")
         setOption(name: "vd-lavc-dr", value: "no")
         setOption(name: "vd-lavc-software-fallback", value: "yes")
@@ -822,7 +822,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             observeProperties()
             installWakeupHandler()
             ensureAudioSessionActive()
-            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=yes")
+            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=yes quality=default nativeScale=\(String(format: "%.2f", glView.contentScaleFactor))")
             scheduleRender()
         } catch {
             logMPV("start failed after mpv_initialize: \(error)")
@@ -1637,6 +1637,12 @@ final class MPVNativeRenderer: PlayerRenderer {
             return videoSize
         }
 
+        if glView.drawableWidth > 0, glView.drawableHeight > 0 {
+            let drawableSize = CGSize(width: CGFloat(glView.drawableWidth), height: CGFloat(glView.drawableHeight))
+            logMPV("PiP render using GL drawable fallback size=\(String(format: "%.0fx%.0f", drawableSize.width, drawableSize.height))")
+            return drawableSize
+        }
+
         let viewSize = glView.bounds.size
         if viewSize.width > 0, viewSize.height > 0 {
             logMPV("PiP render using GL bounds fallback size=\(String(format: "%.0fx%.0f", viewSize.width, viewSize.height))")
@@ -1645,12 +1651,15 @@ final class MPVNativeRenderer: PlayerRenderer {
 
         let layerSize = displayLayer.bounds.size
         if layerSize.width > 0, layerSize.height > 0 {
-            logMPV("PiP render using displayLayer fallback size=\(String(format: "%.0fx%.0f", layerSize.width, layerSize.height))")
-            return layerSize
+            let fallbackScale = UIScreen.main.nativeScale > 0 ? UIScreen.main.nativeScale : UIScreen.main.scale
+            let layerScale = displayLayer.contentsScale > 1 ? displayLayer.contentsScale : fallbackScale
+            let scaledLayerSize = CGSize(width: layerSize.width * layerScale, height: layerSize.height * layerScale)
+            logMPV("PiP render using displayLayer fallback size=\(String(format: "%.0fx%.0f", scaledLayerSize.width, scaledLayerSize.height)) scale=\(String(format: "%.2f", layerScale))")
+            return scaledLayerSize
         }
 
-        logMPV("PiP render using default fallback size=640x360")
-        return CGSize(width: 640, height: 360)
+        logMPV("PiP render using default fallback size=1920x1080")
+        return CGSize(width: 1920, height: 1080)
     }
 
     private func refreshProperty(named name: String) {
@@ -2388,6 +2397,8 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     let preferredPiPFramesPerSecond: Int
     let reason: String
 
+    private static let fullQualityMaximumFrameSize = CGSize(width: 3840, height: 2160)
+
     var logDescription: String {
         let sizeText = "\(Int(maximumFrameSize.width))x\(Int(maximumFrameSize.height))"
         return "profile=\(name) maxFrame=\(sizeText) pipCap=\(preferredPiPFramesPerSecond) reason=\(reason)"
@@ -2401,7 +2412,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     static func sharp(reason: String) -> MPVMetalSampleBufferQualityProfile {
         MPVMetalSampleBufferQualityProfile(
             name: "Sharp",
-            maximumFrameSize: CGSize(width: 1920, height: 1080),
+            maximumFrameSize: fullQualityMaximumFrameSize,
             preferredPiPFramesPerSecond: 30,
             reason: reason
         )
@@ -2410,7 +2421,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     static func balanced(reason: String) -> MPVMetalSampleBufferQualityProfile {
         MPVMetalSampleBufferQualityProfile(
             name: "Balanced",
-            maximumFrameSize: CGSize(width: 1280, height: 720),
+            maximumFrameSize: fullQualityMaximumFrameSize,
             preferredPiPFramesPerSecond: 30,
             reason: reason
         )
@@ -2419,7 +2430,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     static func lowHeat(reason: String) -> MPVMetalSampleBufferQualityProfile {
         MPVMetalSampleBufferQualityProfile(
             name: "Low Heat",
-            maximumFrameSize: CGSize(width: 1024, height: 576),
+            maximumFrameSize: fullQualityMaximumFrameSize,
             preferredPiPFramesPerSecond: 24,
             reason: reason
         )
@@ -2465,6 +2476,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         let screen = UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen }
             .first ?? UIScreen.main
+        let nativeScale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale
         let configuration = Self.sampleBufferConfiguration(for: qualityProfile, screen: screen)
         let targetFPS = configuration.targetFPS
         let pipFramesPerSecond = configuration.pipFramesPerSecond
@@ -2475,6 +2487,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         placeholderView.isUserInteractionEnabled = false
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
+        displayLayer.contentsScale = nativeScale
     }
 
     func getRenderingView() -> UIView {

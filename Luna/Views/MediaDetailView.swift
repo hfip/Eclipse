@@ -138,6 +138,7 @@ struct MediaDetailView: View {
     @AppStorage("mediaDetailElementOrder") private var mediaDetailElementOrder = MediaDetailElement.defaultOrderRawValue
     @AppStorage("mediaDetailHiddenElements") private var mediaDetailHiddenElements = ""
     @AppStorage("showCastSection") private var legacyShowCastSection = true
+    @AppStorage("seasonMenu") private var useSeasonMenu = false
     private let nextEpisodeSheetPresentationDelay: TimeInterval = 1.2
 
     private var atmosphereColor: Color {
@@ -975,17 +976,54 @@ struct MediaDetailView: View {
                 .padding(.horizontal)
 
                 if !animeSpecialEntries.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(animeSpecialEntries) { entry in
-                                specialEntryButton(entry)
+                    if useSeasonMenu {
+                        specialsOVAMenu
+                            .padding(.horizontal)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(animeSpecialEntries) { entry in
+                                    specialEntryButton(entry)
+                                }
                             }
+                            .padding(.horizontal)
                         }
-                        .padding(.horizontal)
                     }
                 }
             }
             .padding(.top, 4)
+        }
+    }
+
+    private var specialsOVAMenu: some View {
+        Menu {
+            ForEach(animeSpecialEntries) { entry in
+                Button(action: {
+                    selectSpecialEntry(entry)
+                }) {
+                    HStack {
+                        Text("\(entry.preferredTitle) (\(entry.formatLabel))")
+                        if selectedSpecialEpisodeContext?.id == entry.id {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(selectedSpecialEpisodeContext?.title ?? "Select Special or OVA")
+                    .lineLimit(1)
+
+                Spacer()
+
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .applyLiquidGlassBackground(cornerRadius: 12)
         }
     }
 

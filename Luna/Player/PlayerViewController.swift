@@ -5598,7 +5598,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             sections.append(PlayerOverlayMenuSection(title: "OpenSubtitles", actions: openSubtitlesOverlayActions()))
         }
 
-        if Settings.shared.enableVLCSubtitleEditMenu {
+        if !isVLCPlayer && Settings.shared.enableVLCSubtitleEditMenu {
             sections.append(contentsOf: subtitleAppearanceOverlaySections())
         }
 
@@ -5900,7 +5900,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if let openSubtitlesMenu = openSubtitlesMenu() {
             menuChildren.append(openSubtitlesMenu)
         }
-        if Settings.shared.enableVLCSubtitleEditMenu {
+        if !isVLCPlayer && Settings.shared.enableVLCSubtitleEditMenu {
             let appearanceMenu = createAppearanceMenu()
             menuChildren.append(appearanceMenu)
         }
@@ -8898,6 +8898,10 @@ extension PlayerViewController: PiPControllerDelegate {
 
     private func scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: String, delay: TimeInterval = 0.35) {
         guard !isVLCPlayer, isMPVRenderer else { return }
+        guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
+            logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): disabled")
+            return
+        }
         mpvPendingAppExitPiPWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
@@ -8938,6 +8942,10 @@ extension PlayerViewController: PiPControllerDelegate {
         }
         guard isMPVRenderer else {
             logPictureInPicture("app-exit auto PiP skipped source=\(source): MPV renderer missing")
+            return
+        }
+        guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
+            logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): disabled")
             return
         }
         guard let pip = pipController else {

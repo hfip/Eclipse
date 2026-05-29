@@ -91,6 +91,12 @@ struct SplashScreenView: View {
                     )
                     .opacity(titleOpacity)
                     .offset(y: titleOffset)
+
+                ProgressView()
+                    .tint(Color(red: 0.75, green: 0.70, blue: 0.90))
+                    .opacity(minimumTimeElapsed && !isFinished ? 1 : 0)
+                    .frame(height: 20)
+                    .animation(.easeInOut(duration: 0.2), value: minimumTimeElapsed && !isFinished)
             }
         }
         .onAppear { runEntrance() }

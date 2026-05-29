@@ -130,7 +130,7 @@ struct AlternativeUIView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
                         
-                        Text("Use dropdown menu instead of horizontal scroll for seasons")
+                        Text("Use dropdown menus instead of horizontal scrolls for seasons, specials, and OVAs.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.leading)
@@ -180,7 +180,7 @@ struct AlternativeUIView: View {
             } header: {
                 Text("DISPLAY OPTIONS")
             } footer: {
-                Text("Classic schedule keeps the old all-days list. The alternative season menu uses a dropdown instead of a horizontal scroll for selecting seasons.")
+                Text("Classic schedule keeps the old all-days list. The alternative season menu uses dropdowns instead of horizontal scrolls for selecting seasons, specials, and OVAs.")
             }
 
             Section {

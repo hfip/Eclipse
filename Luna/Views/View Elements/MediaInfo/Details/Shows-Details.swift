@@ -121,6 +121,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     @State private var currentSeasonTitle: String?
     @State private var seasonLoadTask: Task<Void, Never>?
     @State private var seasonLoadGeneration = 0
+    @State private var selectedEpisodePageStartByKey: [String: Int] = [:]
     
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
@@ -156,6 +157,16 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         let index: Int
         let episode: TMDBEpisode
     }
+
+    private struct EpisodePage: Identifiable {
+        let startIndex: Int
+        let endIndex: Int
+
+        var id: Int { startIndex }
+        var title: String { "\(startIndex + 1)-\(endIndex)" }
+    }
+
+    private let episodePageSize = 100
 
     private func episodeRenderItems(for detail: TMDBSeasonDetail) -> [EpisodeRenderItem] {
         detail.episodes.enumerated().map { index, episode in
@@ -298,6 +309,10 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                                 .fontWeight(.bold)
                             
                             Spacer()
+
+                            if let activeSeasonDetail {
+                                episodePageMenu(for: activeSeasonDetail)
+                            }
                             
                             if activeSeasonDetail != nil && hasActiveSources {
                                 Button(action: startDownloadAllSeason) {
@@ -459,6 +474,10 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 .foregroundColor(.white)
             
             Spacer()
+
+            if let activeSeasonDetail {
+                episodePageMenu(for: activeSeasonDetail)
+            }
             
             if activeSeasonDetail != nil && hasActiveSources {
                 Button(action: startDownloadAllSeason) {
@@ -510,6 +529,35 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 .onAppear {
                     Logger.shared.log("TVShowSeasonsSection seasonMenu skipped: showId=\(tvShow.id) seasons=\(seasons.count)", type: "CrashProbe")
                 }
+        }
+    }
+
+    @ViewBuilder
+    private func episodePageMenu(for detail: TMDBSeasonDetail) -> some View {
+        let pages = episodePages(for: detail)
+        if pages.count > 1, let selectedPage = selectedEpisodePage(for: detail) {
+            Menu {
+                ForEach(pages) { page in
+                    Button(action: {
+                        selectedEpisodePageStartByKey[episodePageKey(for: detail)] = page.startIndex
+                    }) {
+                        HStack {
+                            Text(page.title)
+                            if page.id == selectedPage.id {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(selectedPage.title)
+                    Image(systemName: "chevron.down")
+                        .font(.caption)
+                }
+                .foregroundColor(.white)
+            }
         }
     }
     
@@ -587,8 +635,8 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     private var episodeListSection: some View {
         Group {
             if let detail = activeSeasonDetail {
-                let episodeItems = episodeRenderItems(for: detail)
-                let _ = Logger.shared.log("TVShowSeasonsSection construct episodeListSection with detail: showId=\(tvShow?.id ?? 0) season=\(detail.seasonNumber) count=\(episodeItems.count) horizontal=\(horizontalEpisodeList) special=\(specialEpisodeContext != nil)", type: "CrashProbe")
+                let episodeItems = visibleEpisodeRenderItems(for: detail)
+                let _ = Logger.shared.log("TVShowSeasonsSection construct episodeListSection with detail: showId=\(tvShow?.id ?? 0) season=\(detail.seasonNumber) visible=\(episodeItems.count) total=\(detail.episodes.count) range=\(selectedEpisodePage(for: detail)?.title ?? "all") horizontal=\(horizontalEpisodeList) special=\(specialEpisodeContext != nil)", type: "CrashProbe")
                 if horizontalEpisodeList {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(alignment: .top, spacing: 15) {
@@ -760,6 +808,36 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 }
             }
         }
+    }
+
+    private func episodePages(for detail: TMDBSeasonDetail) -> [EpisodePage] {
+        stride(from: 0, to: detail.episodes.count, by: episodePageSize).map { startIndex in
+            EpisodePage(
+                startIndex: startIndex,
+                endIndex: min(startIndex + episodePageSize, detail.episodes.count)
+            )
+        }
+    }
+
+    private func episodePageKey(for detail: TMDBSeasonDetail) -> String {
+        if let specialEpisodeContext {
+            return "special-\(specialEpisodeContext.id)"
+        }
+        return "season-\(detail.id)-\(detail.seasonNumber)"
+    }
+
+    private func selectedEpisodePage(for detail: TMDBSeasonDetail) -> EpisodePage? {
+        let pages = episodePages(for: detail)
+        let selectedStart = selectedEpisodePageStartByKey[episodePageKey(for: detail)] ?? 0
+        return pages.first(where: { $0.startIndex == selectedStart }) ?? pages.first
+    }
+
+    private func visibleEpisodeRenderItems(for detail: TMDBSeasonDetail) -> [EpisodeRenderItem] {
+        let items = episodeRenderItems(for: detail)
+        guard let page = selectedEpisodePage(for: detail), page.startIndex < page.endIndex else {
+            return items
+        }
+        return Array(items[page.startIndex..<page.endIndex])
     }
 
     private func nextDownloadedEpisode(

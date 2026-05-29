@@ -166,6 +166,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvMetalQualityProfile.rawValue, forKey: "mpvMetalQualityProfile") }
     }
 
+    @Published var mpvAppExitPictureInPictureEnabled: Bool {
+        didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
+    }
+
     init() {
         let savedDefaultSpeed = UserDefaults.standard.double(forKey: "defaultPlaybackSpeed")
         self.defaultPlaybackSpeed = savedDefaultSpeed > 0 ? savedDefaultSpeed : 1.0
@@ -263,6 +267,7 @@ final class PlayerSettingsStore: ObservableObject {
         self.mpvRenderBackend = MPVRenderBackend(rawValue: backendRaw) ?? .defaultBackend
         let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
         self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
+        self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
     }
 }
 
@@ -471,143 +476,145 @@ struct PlayerSettingsView: View {
                         Label("Subtitle Defaults", systemImage: "captions.bubble")
                     }
 
-                    DisclosureGroup {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Subtitle Text Color")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                Text("Default color for in-app subtitle rendering.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            Picker("", selection: subtitleTextColorBinding) {
-                                ForEach(subtitleTextColorOptions.map(\.name), id: \.self) { name in
-                                    Text(name).tag(name)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Subtitle Stroke Color")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                Text("Outline color for in-app subtitle rendering.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            Picker("", selection: subtitleStrokeColorBinding) {
-                                ForEach(subtitleStrokeColorOptions.map(\.name), id: \.self) { name in
-                                    Text(name).tag(name)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(String(format: "Subtitle Stroke Width: %.1f", subtitleStrokeWidthBinding.wrappedValue))
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                Text("Outline thickness for in-app subtitle rendering.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-#if os(tvOS)
-                            Picker("", selection: subtitleStrokeWidthBinding) {
-                                Text("0.0").tag(0.0)
-                                Text("0.5").tag(0.5)
-                                Text("1.0").tag(1.0)
-                                Text("1.5").tag(1.5)
-                                Text("2.0").tag(2.0)
-                            }
-                            .pickerStyle(.menu)
-#else
-                            Stepper("", value: subtitleStrokeWidthBinding, in: 0.0...2.0, step: 0.5)
-#endif
-                        }
-
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Subtitle Font Size")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                Text("Named size presets for in-app subtitle rendering.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            Picker("", selection: subtitleFontSizePresetBinding) {
-                                ForEach(subtitleFontSizeOptions.map(\.name), id: \.self) { name in
-                                    Text(name).tag(name)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(String(format: "Subtitle Vertical Offset: %.0f", subtitleVerticalOffsetBinding.wrappedValue))
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                Text("Numeric offset for subtitle height. Higher values place subtitles lower on screen.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-#if os(tvOS)
-                            Picker("", selection: subtitleVerticalOffsetBinding) {
-                                ForEach(Array(stride(from: -24, through: 24, by: 2)), id: \.self) { value in
-                                    Text("\(value)").tag(Double(value))
-                                }
-                            }
-                            .pickerStyle(.menu)
-#else
-                            Stepper("", value: subtitleVerticalOffsetBinding, in: -24...24, step: 1)
-#endif
-                        }
-
-                        Button(action: resetVLCSubtitleStyleDefaults) {
+                    if store.inAppPlayer != .vlc {
+                        DisclosureGroup {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Reset Subtitle Style")
+                                    Text("Subtitle Text Color")
                                         .font(.subheadline)
                                         .fontWeight(.medium)
 
-                                    Text("Restore default subtitle text color, stroke, width, and font size.")
+                                    Text("Default color for in-app subtitle rendering.")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.leading)
                                 }
 
                                 Spacer()
 
-                                Image(systemName: "arrow.counterclockwise")
-                                    .foregroundColor(accentColorManager.currentAccentColor)
+                                Picker("", selection: subtitleTextColorBinding) {
+                                    ForEach(subtitleTextColorOptions.map(\.name), id: \.self) { name in
+                                        Text(name).tag(name)
+                                    }
+                                }
+                                .pickerStyle(.menu)
                             }
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Subtitle Stroke Color")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+
+                                    Text("Outline color for in-app subtitle rendering.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Picker("", selection: subtitleStrokeColorBinding) {
+                                    ForEach(subtitleStrokeColorOptions.map(\.name), id: \.self) { name in
+                                        Text(name).tag(name)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                            }
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(String(format: "Subtitle Stroke Width: %.1f", subtitleStrokeWidthBinding.wrappedValue))
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+
+                                    Text("Outline thickness for in-app subtitle rendering.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+#if os(tvOS)
+                                Picker("", selection: subtitleStrokeWidthBinding) {
+                                    Text("0.0").tag(0.0)
+                                    Text("0.5").tag(0.5)
+                                    Text("1.0").tag(1.0)
+                                    Text("1.5").tag(1.5)
+                                    Text("2.0").tag(2.0)
+                                }
+                                .pickerStyle(.menu)
+#else
+                                Stepper("", value: subtitleStrokeWidthBinding, in: 0.0...2.0, step: 0.5)
+#endif
+                            }
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Subtitle Font Size")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+
+                                    Text("Named size presets for in-app subtitle rendering.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Picker("", selection: subtitleFontSizePresetBinding) {
+                                    ForEach(subtitleFontSizeOptions.map(\.name), id: \.self) { name in
+                                        Text(name).tag(name)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                            }
+
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(String(format: "Subtitle Vertical Offset: %.0f", subtitleVerticalOffsetBinding.wrappedValue))
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+
+                                    Text("Numeric offset for subtitle height. Higher values place subtitles lower on screen.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+#if os(tvOS)
+                                Picker("", selection: subtitleVerticalOffsetBinding) {
+                                    ForEach(Array(stride(from: -24, through: 24, by: 2)), id: \.self) { value in
+                                        Text("\(value)").tag(Double(value))
+                                    }
+                                }
+                                .pickerStyle(.menu)
+#else
+                                Stepper("", value: subtitleVerticalOffsetBinding, in: -24...24, step: 1)
+#endif
+                            }
+
+                            Button(action: resetVLCSubtitleStyleDefaults) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Reset Subtitle Style")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+
+                                        Text("Restore default subtitle text color, stroke, width, and font size.")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .multilineTextAlignment(.leading)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .foregroundColor(accentColorManager.currentAccentColor)
+                                }
+                            }
+                        } label: {
+                            Label("Subtitle Appearance", systemImage: "textformat.size")
                         }
-                    } label: {
-                        Label("Subtitle Appearance", systemImage: "textformat.size")
                     }
 
                     if store.inAppPlayer == .mpv {
@@ -684,6 +691,12 @@ struct PlayerSettingsView: View {
                                 }
                                 .pickerStyle(.menu)
                             }
+
+                            settingsToggleRow(
+                                title: "PiP When Leaving App",
+                                detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
+                                binding: $store.mpvAppExitPictureInPictureEnabled
+                            )
 
                         } label: {
                             Label("MPV Rendering", systemImage: "display")

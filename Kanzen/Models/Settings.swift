@@ -196,13 +196,13 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Starts Metal sample-buffer playback at 1080p and only lowers quality if iOS reports serious thermal pressure."
+            return "Keeps Metal sample-buffer playback at full frame quality and only changes pacing if iOS reports serious thermal pressure."
         case .balanced:
-            return "Renders up to 720p sample buffers, then lets iOS scale to the screen."
+            return "Keeps full-size sample buffers with standard frame pacing."
         case .lowHeat:
-            return "Renders up to 576p sample buffers to reduce heat on risky files or warm devices."
+            return "Keeps full-size sample buffers and lowers only PiP frame pacing to reduce heat."
         case .sharp:
-            return "Renders up to 1080p sample buffers for a cleaner image at higher power cost."
+            return "Keeps full-size sample buffers for the cleanest image at higher power cost."
         }
     }
 
@@ -435,6 +435,11 @@ class Settings: ObservableObject {
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "mpvMetalQualityProfile")
         }
+    }
+
+    var mpvAppExitPictureInPictureEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "mpvAppExitPictureInPictureEnabled") }
     }
 
     var smartInAppPlayerChoosingEnabled: Bool {
