@@ -803,6 +803,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "subs-fallback", value: "yes")
         setOption(name: "sub-ass-override", value: "yes")
         setOption(name: "sub-use-margins", value: "yes")
+        setOption(name: "sub-scale-by-window", value: "no")
+        setOption(name: "sub-scale-with-window", value: "no")
         applySubtitleStyle(lastAppliedSubtitleStyle)
 
         let initStatus = mpv_initialize(handle)
@@ -2325,6 +2327,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         lastAppliedSubtitleStyle = style
         logMPV("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         setProperty(name: "sub-visibility", value: style.isVisible ? "yes" : "no")
+        setProperty(name: "sub-scale-by-window", value: "no")
+        setProperty(name: "sub-scale-with-window", value: "no")
         setProperty(name: "sub-font-size", value: String(Int(max(10, min(style.fontSize, 72)))))
         setProperty(name: "sub-color", value: mpvColor(style.foregroundColor))
         setProperty(name: "sub-border-color", value: mpvColor(style.strokeColor))

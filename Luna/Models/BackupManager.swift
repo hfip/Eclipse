@@ -586,7 +586,7 @@ struct BackupData: Codable {
               let backend = MPVRenderBackend(rawValue: value) else {
             return MPVRenderBackend.defaultBackend.rawValue
         }
-        return backend.rawValue
+        return MPVRenderBackendSupport.effectiveBackend(requested: backend, hasMetalDevice: true).rawValue
     }
 
     static func sanitizedMPVMetalQualityProfile(_ value: String?) -> String {

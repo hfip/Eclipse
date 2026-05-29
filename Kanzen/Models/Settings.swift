@@ -213,6 +213,7 @@ struct MPVRenderBackendSupport {
     static let bundledMPVKitVersion = "0.41.0"
     static let bundledMPVKitRevision = "3257830892c6b8cf44e0007aca2a4cef8064bc90"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
+    static let metalRendererEnabled = false
 
     #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP
     static let forkExposesMetalSampleBufferPictureInPicture = true
@@ -246,7 +247,7 @@ struct MPVRenderBackendSupport {
     }
 
     static var metalIsFullySupported: Bool {
-        metalSampleBufferPictureInPictureAvailable
+        metalRendererEnabled && metalSampleBufferPictureInPictureAvailable
     }
 
     static var diagnosticsSummary: String {
@@ -256,6 +257,7 @@ struct MPVRenderBackendSupport {
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
             "forkMetalSampleBufferPiP=\(forkExposesMetalSampleBufferPictureInPicture)",
             "lunaMetalPiP=\(lunaImplementsMetalSampleBufferPictureInPicture)",
+            "metalRendererEnabled=\(metalRendererEnabled)",
             "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
             "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
             "liveQuality=\(metalLiveQualityReconfigurationAvailable)"
@@ -266,12 +268,18 @@ struct MPVRenderBackendSupport {
         if metalIsFullySupported {
             return "Applies to the next player session. Metal sample-buffer playback is experimental in this build; switch back to OpenGL if a stream misbehaves."
         }
+        if !metalRendererEnabled {
+            return "Applies to the next player session. OpenGL is active in this build."
+        }
         return "Applies to the next player session. OpenGL is active in this build; Metal is remembered but falls back until the MPVKit fork exposes full sample-buffer PiP."
     }
 
     static var settingsStatusLine: String {
         if metalIsFullySupported {
             return "Metal backend: experimental sample-buffer PiP available"
+        }
+        if !metalRendererEnabled {
+            return "Metal backend: hidden in this build"
         }
         return "Metal backend: waiting for MPVKit fork sample-buffer PiP"
     }
@@ -284,6 +292,7 @@ struct MPVRenderBackendSupport {
 
     static func fallbackReason(requested: MPVRenderBackend, hasMetalDevice: Bool) -> String? {
         guard requested == .metal else { return nil }
+        guard metalRendererEnabled else { return "Metal renderer hidden in this build" }
         guard hasMetalDevice else { return "Metal device unavailable" }
         guard forkExposesMetalSampleBufferPictureInPicture else {
             return "MPVKit \(bundledMPVKitVersion) bundled in this build does not expose Metal sample-buffer PiP frames"
@@ -409,7 +418,8 @@ class Settings: ObservableObject {
         get {
             let raw = UserDefaults.standard.string(forKey: "mpvRenderBackend")
                 ?? MPVRenderBackend.defaultBackend.rawValue
-            return MPVRenderBackend(rawValue: raw) ?? .defaultBackend
+            let requested = MPVRenderBackend(rawValue: raw) ?? .defaultBackend
+            return MPVRenderBackendSupport.effectiveBackend(requested: requested, hasMetalDevice: true)
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "mpvRenderBackend")

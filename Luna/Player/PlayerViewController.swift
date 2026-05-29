@@ -1154,7 +1154,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var mpvSilentStartupRetryKey: String?
     private var userSelectedAudioTrack = false
     private var userSelectedSubtitleTrack = false
-    private var attemptedAnimeAudioAutoSelectSignature: String?
+    private var attemptedAudioAutoSelectSignature: String?
     private var lastAudioTracksMenuLogSignature: String?
     private var lastSubtitleTracksMenuLogSignature: String?
     private var lastDefaultSubtitleChoiceLogSignature: String?
@@ -2425,7 +2425,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         userSelectedAudioTrack = false
         userSelectedSubtitleTrack = false
-        attemptedAnimeAudioAutoSelectSignature = nil
+        attemptedAudioAutoSelectSignature = nil
         lastAudioTracksMenuLogSignature = nil
         lastSubtitleTracksMenuLogSignature = nil
         lastDefaultSubtitleChoiceLogSignature = nil
@@ -4372,15 +4372,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("PlayerViewController: audio tracks count=\(tracks.count) isAnime=\(isAnime) userSelected=\(userSelectedAudioTrack) renderer=\(vlcRenderer != nil ? "VLC" : "MPV")", type: "Player")
         }
 
-        let shouldAutoSelectAnimeAudio = !tracks.isEmpty && isAnime && !userSelectedAudioTrack
-        if shouldAutoSelectAnimeAudio {
-            let preferredLang = Settings.shared.preferredAnimeAudioLanguage.lowercased()
+        let shouldAutoSelectAudio = !tracks.isEmpty && !userSelectedAudioTrack
+        if shouldAutoSelectAudio {
+            let preferredLang = (isAnime
+                                 ? Settings.shared.preferredAnimeAudioLanguage
+                                 : Settings.shared.defaultSubtitleLanguage).lowercased()
             let tokens = languageTokens(for: preferredLang)
             let autoSelectSignature = "\(preferredLang)|\(trackSignature)"
-            let shouldAttemptAutoSelect = attemptedAnimeAudioAutoSelectSignature != autoSelectSignature
+            let shouldAttemptAutoSelect = attemptedAudioAutoSelectSignature != autoSelectSignature
 
             if shouldAttemptAutoSelect {
-                attemptedAnimeAudioAutoSelectSignature = autoSelectSignature
+                attemptedAudioAutoSelectSignature = autoSelectSignature
             } else {
                 if usesOverlayPlayerMenus {
                     audioButton.menu = nil
@@ -4389,7 +4391,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
 
             if shouldAttemptAutoSelect, !preferredLang.isEmpty {
-                Logger.shared.log("PlayerViewController: Auto anime audio - preferredLang=\(preferredLang), tokens=\(tokens.joined(separator: ",")), detailedTracks=\(detailedTracks.count)", type: "Player")
+                Logger.shared.log("PlayerViewController: Auto audio - preferredLang=\(preferredLang), tokens=\(tokens.joined(separator: ",")), detailedTracks=\(detailedTracks.count), isAnime=\(isAnime)", type: "Player")
 
                 if let matching = detailedTracks.first(where: {
                     let langCode = $0.2.lowercased()
@@ -4398,14 +4400,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                         langCode.contains(token) || title.contains(token)
                     })
                 }) {
-                    Logger.shared.log("PlayerViewController: Auto-selected anime audio track: \(matching.1) (ID: \(matching.0))", type: "Player")
+                    Logger.shared.log("PlayerViewController: Auto-selected audio track: \(matching.1) (ID: \(matching.0))", type: "Player")
                     userSelectedAudioTrack = true
                     rendererSetAudioTrack(id: matching.0)
                 } else {
-                    Logger.shared.log("PlayerViewController: No matching anime audio track found for lang=\(preferredLang)", type: "Player")
+                    Logger.shared.log("PlayerViewController: No matching audio track found for lang=\(preferredLang)", type: "Player")
                 }
             } else if shouldAttemptAutoSelect {
-                Logger.shared.log("PlayerViewController: Auto anime audio skipped (preferred language empty)", type: "Player")
+                Logger.shared.log("PlayerViewController: Auto audio skipped (preferred language empty)", type: "Player")
             }
         }
 

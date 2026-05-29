@@ -2682,7 +2682,7 @@ final class AniListService {
         """
 
         let uniqueIds = Array(Set(ids))
-        let chunkSize = 25
+        let chunkSize = 20
         var result: [Int: AniListAnime] = [:]
         var start = 0
 

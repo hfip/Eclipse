@@ -87,6 +87,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var needsProxyReloadAfterBackground = false
     private var proxyResumeAttemptID = 0
     private var lifecycleObserversInstalled = false
+    private var subtitleStyleApplyGeneration = 0
     
     weak var delegate: VLCRendererDelegate?
     
@@ -513,7 +514,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 }
             } else {
                 // Reduce buffering while keeping resume/start reasonably responsive
-                media.addOption(":network-caching=12000")  // ~12s
+                media.addOption(":network-caching=4000")
             }
 
             self.currentMedia = media
@@ -1208,6 +1209,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
     func applySubtitleStyle(_ style: SubtitleStyle) {
         currentSubtitleStyle = style
+        subtitleStyleApplyGeneration += 1
+        let styleGeneration = subtitleStyleApplyGeneration
         logVLC("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         eventQueue.async { [weak self] in
             guard let self else { return }
@@ -1221,7 +1224,14 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 let currentTrack = player.currentVideoSubTitleIndex
                 if currentTrack >= 0 {
                     player.currentVideoSubTitleIndex = -1
-                    player.currentVideoSubTitleIndex = currentTrack
+                    self.eventQueue.asyncAfter(deadline: .now() + 0.08) { [weak self, player] in
+                        guard let self,
+                              self.mediaPlayer === player,
+                              self.subtitleStyleApplyGeneration == styleGeneration else {
+                            return
+                        }
+                        player.currentVideoSubTitleIndex = currentTrack
+                    }
                 }
             }
         }
