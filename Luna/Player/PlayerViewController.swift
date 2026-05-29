@@ -1106,6 +1106,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var pipController: PiPController?
     private var mpvPiPStartAttemptID = 0
     private var mpvAppExitPiPStartRequested = false
+    private var mpvPendingAppExitPiPWorkItem: DispatchWorkItem?
     private var initialURL: URL?
     private var initialPreset: PlayerPreset?
     private var initialHeaders: [String: String]?
@@ -8840,10 +8841,10 @@ extension PlayerViewController: PiPControllerDelegate {
             return
         }
         if Thread.isMainThread {
-            attemptMPVAppExitPictureInPictureStart(source: "will-resign-active")
+            scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "will-resign-active")
         } else {
             DispatchQueue.main.async { [weak self] in
-                self?.attemptMPVAppExitPictureInPictureStart(source: "will-resign-active")
+                self?.scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "will-resign-active")
             }
         }
     }
@@ -8855,6 +8856,7 @@ extension PlayerViewController: PiPControllerDelegate {
             armBackgroundRecoveryProgressGateIfNeeded(source: "scene-phase-\(phase)")
         } else if phase == "active" {
             markBackgroundRecoveryForegrounded(source: "scene-phase-active")
+            cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-phase-active")
         }
         if isVLCPlayer {
             if phase == "active" {
@@ -8869,18 +8871,20 @@ extension PlayerViewController: PiPControllerDelegate {
         switch phase {
         case "inactive":
             if Thread.isMainThread {
-                attemptMPVAppExitPictureInPictureStart(source: "scene-phase-inactive")
+                scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-phase-inactive")
             } else {
                 DispatchQueue.main.async { [weak self] in
-                    self?.attemptMPVAppExitPictureInPictureStart(source: "scene-phase-inactive")
+                    self?.scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-phase-inactive")
                 }
             }
         case "background":
             if Thread.isMainThread {
+                cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-phase-background")
                 attemptMPVAppExitPictureInPictureStart(source: "scene-phase-background")
                 scheduleMPVBackgroundAudioFallback(source: "scene-phase-background")
             } else {
                 DispatchQueue.main.async { [weak self] in
+                    self?.cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-phase-background")
                     self?.attemptMPVAppExitPictureInPictureStart(source: "scene-phase-background")
                     self?.scheduleMPVBackgroundAudioFallback(source: "scene-phase-background")
                 }
@@ -8889,6 +8893,41 @@ extension PlayerViewController: PiPControllerDelegate {
             restoreMPVForegroundIfNeeded(source: "scene-phase-active")
         default:
             break
+        }
+    }
+
+    private func scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: String, delay: TimeInterval = 0.35) {
+        guard !isVLCPlayer, isMPVRenderer else { return }
+        mpvPendingAppExitPiPWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.mpvPendingAppExitPiPWorkItem = nil
+            let appState = UIApplication.shared.applicationState
+            guard appState == .background else {
+                self.logPictureInPicture("MPV app-exit auto PiP canceled source=\(source): appState=\(self.applicationStateDescription(appState))")
+                return
+            }
+            self.attemptMPVAppExitPictureInPictureStart(source: "\(source)-confirmed-background")
+        }
+        mpvPendingAppExitPiPWorkItem = workItem
+        logPictureInPicture("MPV app-exit auto PiP pending source=\(source) delay=\(String(format: "%.2f", delay))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func cancelPendingMPVAppExitPictureInPictureStart(reason: String) {
+        guard mpvPendingAppExitPiPWorkItem != nil else { return }
+        mpvPendingAppExitPiPWorkItem?.cancel()
+        mpvPendingAppExitPiPWorkItem = nil
+        logPictureInPicture("MPV app-exit auto PiP pending canceled reason=\(reason)")
+    }
+
+    private func applicationStateDescription(_ state: UIApplication.State) -> String {
+        switch state {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .background: return "background"
+        @unknown default: return "unknown"
         }
     }
 
@@ -8911,13 +8950,7 @@ extension PlayerViewController: PiPControllerDelegate {
         let active = pip.isPictureInPictureActive
         let supported = pip.isPictureInPictureSupported
         let possible = pip.isPictureInPicturePossible
-        let appState: String
-        switch UIApplication.shared.applicationState {
-        case .active: appState = "active"
-        case .inactive: appState = "inactive"
-        case .background: appState = "background"
-        @unknown default: appState = "unknown"
-        }
+        let appState = applicationStateDescription(UIApplication.shared.applicationState)
 
         let shouldStart = isRunning
             && !isClosing
@@ -8970,22 +9003,16 @@ extension PlayerViewController: PiPControllerDelegate {
         }
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
         if metalMPVRenderer != nil {
-            logPictureInPicture("scene-will-deactivate delaying Metal sample-buffer PiP start until later lifecycle signal")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-                guard let self,
-                      self.metalMPVRenderer != nil,
-                      self.pipController?.isPictureInPictureActive != true,
-                      !self.mpvAppExitPiPStartRequested else { return }
-                self.attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate-delayed-metal")
-            }
+            logPictureInPicture("scene-will-deactivate pending Metal sample-buffer PiP until background confirmation")
+            scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate-metal", delay: 0.35)
             return
         }
 #endif
         if Thread.isMainThread {
-            attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
+            scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate")
         } else {
             DispatchQueue.main.async { [weak self] in
-                self?.attemptMPVAppExitPictureInPictureStart(source: "scene-will-deactivate")
+                self?.scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate")
             }
         }
     }
@@ -8998,10 +9025,12 @@ extension PlayerViewController: PiPControllerDelegate {
             return
         }
         if Thread.isMainThread {
+            cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-did-enter-background")
             attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
             scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background")
         } else {
             DispatchQueue.main.async { [weak self] in
+                self?.cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-did-enter-background")
                 self?.attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
                 self?.scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background")
             }
@@ -9042,6 +9071,7 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
 
+            self.cancelPendingMPVAppExitPictureInPictureStart(reason: "did-enter-background")
             self.attemptMPVAppExitPictureInPictureStart(source: "did-enter-background")
             self.scheduleMPVBackgroundAudioFallback(source: "did-enter-background")
         }
@@ -9050,6 +9080,7 @@ extension PlayerViewController: PiPControllerDelegate {
     @objc private func appWillEnterForeground() {
         logVLCForegroundSnapshot("will-enter-foreground notification")
         markBackgroundRecoveryForegrounded(source: "will-enter-foreground")
+        cancelPendingMPVAppExitPictureInPictureStart(reason: "will-enter-foreground")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.logVLCForegroundSnapshot("will-enter-foreground async start")
@@ -9079,6 +9110,7 @@ extension PlayerViewController: PiPControllerDelegate {
     private func restoreMPVForegroundIfNeeded(source: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.vlcRenderer == nil else { return }
+            self.cancelPendingMPVAppExitPictureInPictureStart(reason: source)
             guard let pip = self.pipController else { return }
             self.mpvPiPStartAttemptID += 1
             self.mpvAppExitPiPStartRequested = false
@@ -9094,6 +9126,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func sceneWillEnterForeground() {
         markBackgroundRecoveryForegrounded(source: "scene-will-enter-foreground")
+        cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-will-enter-foreground")
         if isVLCPlayer {
             logVLCForegroundSnapshot("scene-will-enter-foreground notification")
             scheduleVLCForegroundSnapshots("scene-will-enter-foreground followup", delays: [0.10, 0.75])
@@ -9104,6 +9137,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func appDidBecomeActive() {
         markBackgroundRecoveryForegrounded(source: "did-become-active")
+        cancelPendingMPVAppExitPictureInPictureStart(reason: "did-become-active")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.isVLCPlayer {
@@ -9119,6 +9153,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     @objc private func sceneDidActivate() {
         markBackgroundRecoveryForegrounded(source: "scene-did-activate")
+        cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-did-activate")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.isVLCPlayer {
