@@ -54,7 +54,7 @@ enum InAppPlayer: String, CaseIterable, Identifiable {
         case .vlc:
             return rawValue
         case .mpv:
-            return "MPV (Beta, Unstable)"
+            return "MPV"
         case .normal:
             return "Normal AVPlayer (Not recommended)"
         }
@@ -80,10 +80,6 @@ final class PlayerSettingsStore: ObservableObject {
     
     @Published var inAppPlayer: InAppPlayer {
         didSet { UserDefaults.standard.set(inAppPlayer.rawValue, forKey: "inAppPlayer") }
-    }
-
-    @Published var smartInAppPlayerChoosingEnabled: Bool {
-        didSet { UserDefaults.standard.set(smartInAppPlayerChoosingEnabled, forKey: "smartInAppPlayerChoosingEnabled") }
     }
 
     @Published var preferDownloadedMedia: Bool {
@@ -158,10 +154,6 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(vlcOpenSubtitlesAutoFallbackEnabled, forKey: "vlcOpenSubtitlesAutoFallbackEnabled") }
     }
 
-    @Published var playerPerformanceOverlayEnabled: Bool {
-        didSet { UserDefaults.standard.set(playerPerformanceOverlayEnabled, forKey: "playerPerformanceOverlayEnabled") }
-    }
-
     @Published var mpvForegroundFPS: Int {
         didSet { UserDefaults.standard.set(mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS") }
     }
@@ -188,7 +180,6 @@ final class PlayerSettingsStore: ObservableObject {
         
         let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.vlc.rawValue
         self.inAppPlayer = InAppPlayer(rawValue: inAppRaw) ?? .vlc
-        self.smartInAppPlayerChoosingEnabled = UserDefaults.standard.object(forKey: "smartInAppPlayerChoosingEnabled") as? Bool ?? true
 
         self.preferDownloadedMedia = UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
 
@@ -266,8 +257,6 @@ final class PlayerSettingsStore: ObservableObject {
         } else {
             self.vlcOpenSubtitlesAutoFallbackEnabled = UserDefaults.standard.bool(forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
         }
-
-        self.playerPerformanceOverlayEnabled = UserDefaults.standard.bool(forKey: "playerPerformanceOverlayEnabled")
 
         self.mpvForegroundFPS = UserDefaults.standard.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let backendRaw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
@@ -398,24 +387,6 @@ struct PlayerSettingsView: View {
 
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Smart Player Choosing")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("When MPV is selected, automatically uses VLC for risky 10-bit, HDR, remux, 4K, Dolby Vision, or AV1 media that MPV may crash or heat on. VLC selections stay on VLC. Turning this off can make MPV open risky media.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $store.smartInAppPlayerChoosingEnabled)
-                        .tint(accentColorManager.currentAccentColor)
-                }
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
                         Text("Prefer Downloaded Episodes")
                             .font(.subheadline)
                             .fontWeight(.medium)
@@ -434,7 +405,7 @@ struct PlayerSettingsView: View {
             }
             
             if store.inAppPlayer == .vlc || store.inAppPlayer == .mpv {
-                Section(header: Text(store.inAppPlayer == .mpv ? "MPV Player (Beta, Unstable)" : "VLC Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
+                Section(header: Text(store.inAppPlayer == .mpv ? "MPV Player" : "VLC Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
                     DisclosureGroup {
                         settingsToggleRow(
                             title: "Enable Subtitles by Default",
@@ -714,11 +685,6 @@ struct PlayerSettingsView: View {
                                 .pickerStyle(.menu)
                             }
 
-                            settingsToggleRow(
-                                title: "Performance Overlay",
-                                detail: "Show CPU, thermal state, and GPU availability while playing.",
-                                binding: $store.playerPerformanceOverlayEnabled
-                            )
                         } label: {
                             Label("MPV Rendering", systemImage: "display")
                         }

@@ -694,6 +694,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private let foregroundFramesPerSecond: Int
     private let pipFrameInterval: CFTimeInterval = 1.0 / 24.0
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
+    private var lastSubtitleViewportSize: CGSize = .zero
     private var loadGeneration = 0
     private var currentLoadStartedAt: Date?
     private var lastProgressLogBucket = -1
@@ -803,8 +804,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "subs-fallback", value: "yes")
         setOption(name: "sub-ass-override", value: "yes")
         setOption(name: "sub-use-margins", value: "yes")
-        setOption(name: "sub-scale-by-window", value: "no")
-        setOption(name: "sub-scale-with-window", value: "no")
         applySubtitleStyle(lastAppliedSubtitleStyle)
 
         let initStatus = mpv_initialize(handle)
@@ -1375,6 +1374,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     fileprivate func drawOpenGLFrame() {
         guard isRunning, !isStopping, currentMode == .openGL, let context = renderContext else { return }
         guard glView.bounds.width > 0, glView.bounds.height > 0 else { return }
+        refreshSubtitleStyleIfViewportChanged()
 
         lastForegroundRenderTime = CACurrentMediaTime()
         EAGLContext.setCurrent(glContext)
@@ -2327,14 +2327,33 @@ final class MPVNativeRenderer: PlayerRenderer {
         lastAppliedSubtitleStyle = style
         logMPV("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         setProperty(name: "sub-visibility", value: style.isVisible ? "yes" : "no")
-        setProperty(name: "sub-scale-by-window", value: "no")
-        setProperty(name: "sub-scale-with-window", value: "no")
-        setProperty(name: "sub-font-size", value: String(Int(max(10, min(style.fontSize, 72)))))
+        setProperty(name: "sub-font-size", value: String(adjustedSubtitleFontSize(for: style)))
         setProperty(name: "sub-color", value: mpvColor(style.foregroundColor))
         setProperty(name: "sub-border-color", value: mpvColor(style.strokeColor))
         setProperty(name: "sub-border-size", value: String(format: "%.2f", max(0, min(style.strokeWidth * 1.5, 5.0))))
         setProperty(name: "sub-shadow-offset", value: "0")
         setProperty(name: "sub-ass-override", value: "yes")
+    }
+
+    private func refreshSubtitleStyleIfViewportChanged() {
+        let size = glView.bounds.size
+        guard abs(size.width - lastSubtitleViewportSize.width) > 0.5 ||
+              abs(size.height - lastSubtitleViewportSize.height) > 0.5 else {
+            return
+        }
+        lastSubtitleViewportSize = size
+        applySubtitleStyle(lastAppliedSubtitleStyle)
+    }
+
+    private func adjustedSubtitleFontSize(for style: SubtitleStyle) -> Int {
+        let baseSize = max(10, min(style.fontSize, 72))
+        let viewport = glView.bounds.size
+        guard viewport.width > viewport.height, viewport.height > 0 else {
+            return Int(baseSize)
+        }
+
+        let multiplier = min(2.0, max(1.0, 720.0 / viewport.height))
+        return Int(max(10, min(baseSize * multiplier, 72)))
     }
 
     private func mpvColor(_ color: UIColor) -> String {

@@ -401,8 +401,8 @@ class Settings: ObservableObject {
     }
 
     var playerPerformanceOverlayEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "playerPerformanceOverlayEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "playerPerformanceOverlayEnabled") }
+        get { false }
+        set { UserDefaults.standard.set(false, forKey: "playerPerformanceOverlayEnabled") }
     }
 
     var mpvForegroundFPS: Int {
@@ -438,10 +438,8 @@ class Settings: ObservableObject {
     }
 
     var smartInAppPlayerChoosingEnabled: Bool {
-        get {
-            UserDefaults.standard.object(forKey: "smartInAppPlayerChoosingEnabled") as? Bool ?? true
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "smartInAppPlayerChoosingEnabled") }
+        get { false }
+        set { UserDefaults.standard.set(false, forKey: "smartInAppPlayerChoosingEnabled") }
     }
 
     var enableVLCSubtitleEditMenu: Bool {

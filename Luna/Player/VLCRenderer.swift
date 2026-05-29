@@ -87,7 +87,6 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var needsProxyReloadAfterBackground = false
     private var proxyResumeAttemptID = 0
     private var lifecycleObserversInstalled = false
-    private var subtitleStyleApplyGeneration = 0
     
     weak var delegate: VLCRendererDelegate?
     
@@ -471,21 +470,21 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
             let media = VLCMedia(url: mediaURL)
             if let headers = self.currentHeaders, !headers.isEmpty {
-                if let ua = headers["User-Agent"], !ua.isEmpty {
+                if let ua = self.headerValue("User-Agent", in: headers), !ua.isEmpty {
                     media.addOption(":http-user-agent=\(ua)")
                 }
-                if let referer = headers["Referer"], !referer.isEmpty {
+                if let referer = self.headerValue("Referer", in: headers), !referer.isEmpty {
                     media.addOption(":http-referrer=\(referer)")
                     media.addOption(":http-header=Referer: \(referer)")
                 }
-                if let cookie = headers["Cookie"], !cookie.isEmpty {
+                if let cookie = self.headerValue("Cookie", in: headers), !cookie.isEmpty {
                     media.addOption(":http-cookie=\(cookie)")
                 }
 
                 media.addOption(":http-reconnect=true")
 
-                let skippedKeys: Set<String> = ["User-Agent", "Referer", "Cookie"]
-                for (key, value) in headers where !skippedKeys.contains(key) {
+                let skippedKeys: Set<String> = ["user-agent", "referer", "cookie"]
+                for (key, value) in headers where !skippedKeys.contains(key.lowercased()) {
                     guard !value.isEmpty else { continue }
                     media.addOption(":http-header=\(key): \(value)")
                 }
@@ -514,7 +513,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 }
             } else {
                 // Reduce buffering while keeping resume/start reasonably responsive
-                media.addOption(":network-caching=4000")
+                media.addOption(":network-caching=2000")
             }
 
             self.currentMedia = media
@@ -528,6 +527,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             self.scheduleLoadingSanityChecks()
             self.logVLC("load submitted play snapshot={\(self.playerSnapshot(player))}", type: "Stream")
         }
+    }
+
+    private func headerValue(_ key: String, in headers: [String: String]) -> String? {
+        headers.first { $0.key.caseInsensitiveCompare(key) == .orderedSame }?.value
     }
     
     func reloadCurrentItem() {
@@ -1209,8 +1212,6 @@ final class VLCRenderer: NSObject, PlayerRenderer {
 
     func applySubtitleStyle(_ style: SubtitleStyle) {
         currentSubtitleStyle = style
-        subtitleStyleApplyGeneration += 1
-        let styleGeneration = subtitleStyleApplyGeneration
         logVLC("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
         eventQueue.async { [weak self] in
             guard let self else { return }
@@ -1223,15 +1224,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             if let player = self.mediaPlayer {
                 let currentTrack = player.currentVideoSubTitleIndex
                 if currentTrack >= 0 {
-                    player.currentVideoSubTitleIndex = -1
-                    self.eventQueue.asyncAfter(deadline: .now() + 0.08) { [weak self, player] in
-                        guard let self,
-                              self.mediaPlayer === player,
-                              self.subtitleStyleApplyGeneration == styleGeneration else {
-                            return
-                        }
-                        player.currentVideoSubTitleIndex = currentTrack
-                    }
+                    player.currentVideoSubTitleIndex = currentTrack
                 }
             }
         }

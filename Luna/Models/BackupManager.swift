@@ -50,7 +50,7 @@ struct BackupData: Codable {
     var mpvForegroundFPS: Int = 30
     var mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue
     var mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue
-    var smartInAppPlayerChoosingEnabled: Bool = true
+    var smartInAppPlayerChoosingEnabled: Bool = false
 
     // Subtitle Styling
     var subtitleForegroundColor: Data?
@@ -179,7 +179,7 @@ struct BackupData: Codable {
         mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(try container.decodeIfPresent(Int.self, forKey: .mpvForegroundFPS) ?? 30)
         mpvRenderBackend = Self.sanitizedMPVRenderBackend(try container.decodeIfPresent(String.self, forKey: .mpvRenderBackend))
         mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(try container.decodeIfPresent(String.self, forKey: .mpvMetalQualityProfile))
-        smartInAppPlayerChoosingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartInAppPlayerChoosingEnabled) ?? true
+        smartInAppPlayerChoosingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartInAppPlayerChoosingEnabled) ?? false
 
         // Subtitle styling
         subtitleForegroundColor = try Self.decodeColorData(from: container, forKey: .subtitleForegroundColor)
@@ -419,7 +419,7 @@ struct BackupData: Codable {
         mpvForegroundFPS: Int = 30,
         mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue,
         mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue,
-        smartInAppPlayerChoosingEnabled: Bool = true,
+        smartInAppPlayerChoosingEnabled: Bool = false,
 
         // Subtitle styling
         subtitleForegroundColor: Data? = nil,
@@ -789,11 +789,11 @@ class BackupManager {
         let vlcDoubleTapSeekSeconds = savedDoubleTapSeekSeconds > 0 ? savedDoubleTapSeekSeconds : 10.0
         let vlcOpenSubtitlesEnabled = userDefaults.bool(forKey: "vlcOpenSubtitlesEnabled")
         let vlcOpenSubtitlesAutoFallbackEnabled = userDefaults.object(forKey: "vlcOpenSubtitlesAutoFallbackEnabled") == nil ? true : userDefaults.bool(forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
-        let playerPerformanceOverlayEnabled = userDefaults.bool(forKey: "playerPerformanceOverlayEnabled")
+        let playerPerformanceOverlayEnabled = false
         let mpvForegroundFPS = userDefaults.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(userDefaults.string(forKey: "mpvRenderBackend"))
         let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(userDefaults.string(forKey: "mpvMetalQualityProfile"))
-        let smartInAppPlayerChoosingEnabled = userDefaults.object(forKey: "smartInAppPlayerChoosingEnabled") as? Bool ?? true
+        let smartInAppPlayerChoosingEnabled = false
 
         // Subtitle styling
         let subtitleForegroundColor = userDefaults.data(forKey: "subtitles_foregroundColor")
@@ -1097,7 +1097,7 @@ class BackupManager {
         let mpvForegroundFPS = mpvForegroundFPSRaw == 60 ? 60 : 30
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(json["mpvRenderBackend"] as? String)
         let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(json["mpvMetalQualityProfile"] as? String)
-        let smartInAppPlayerChoosingEnabled = json["smartInAppPlayerChoosingEnabled"] as? Bool ?? true
+        let smartInAppPlayerChoosingEnabled = false
 
         // Subtitle styling
         let subtitleForegroundColor = BackupData.backupColorData(from: json["subtitleForegroundColor"])
@@ -1393,11 +1393,11 @@ class BackupManager {
         userDefaults.set(backup.vlcDoubleTapSeekSeconds, forKey: "vlcDoubleTapSeekSeconds")
         userDefaults.set(backup.vlcOpenSubtitlesEnabled, forKey: "vlcOpenSubtitlesEnabled")
         userDefaults.set(backup.vlcOpenSubtitlesAutoFallbackEnabled, forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
-        userDefaults.set(backup.playerPerformanceOverlayEnabled, forKey: "playerPerformanceOverlayEnabled")
+        userDefaults.set(false, forKey: "playerPerformanceOverlayEnabled")
         userDefaults.set(backup.mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS")
         userDefaults.set(BackupData.sanitizedMPVRenderBackend(backup.mpvRenderBackend), forKey: "mpvRenderBackend")
         userDefaults.set(BackupData.sanitizedMPVMetalQualityProfile(backup.mpvMetalQualityProfile), forKey: "mpvMetalQualityProfile")
-        userDefaults.set(backup.smartInAppPlayerChoosingEnabled, forKey: "smartInAppPlayerChoosingEnabled")
+        userDefaults.set(false, forKey: "smartInAppPlayerChoosingEnabled")
 
         // Subtitle styling
         if let fgColor = backup.subtitleForegroundColor {

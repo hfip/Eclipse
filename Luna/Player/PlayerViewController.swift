@@ -218,7 +218,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private lazy var usesOverlayPlayerMenusForSession: Bool = {
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
         let requestedChoice = Settings.shared.playerChoice
-        guard smartInAppPlayerChoice(requested: requestedChoice).choice == .mpv else { return false }
+        guard requestedChoice == .mpv else { return false }
         let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(
             requested: Settings.shared.mpvRenderBackend,
             hasMetalDevice: MPVKitMetalRenderer.isAvailable
@@ -705,24 +705,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private let legacyTwoFingerSettingKey = "mpvTwoFingerTapEnabled"
     private let doubleTapSeekEnabledKey = "vlcDoubleTapSeekEnabled"
     private let playerSeekSecondsKey = "vlcDoubleTapSeekSeconds"
-    private let playerPerformanceOverlayKey = "playerPerformanceOverlayEnabled"
     
     private lazy var renderer: PlayerRenderer = {
-        let requestedPlayerChoice = Settings.shared.playerChoice
-        let smartChoice = smartInAppPlayerChoice(requested: requestedPlayerChoice)
-        let playerChoice = smartChoice.choice
+        let playerChoice = Settings.shared.playerChoice
         
         if playerChoice == .vlc {
-            if let reason = smartChoice.reason {
-                Logger.shared.log("[PlayerVC.SmartPlayer] using \(playerChoiceName(playerChoice)) instead of \(playerChoiceName(requestedPlayerChoice)) reason=\(reason)", type: "Player")
-            }
             let r = VLCRenderer(displayLayer: displayLayer)
             r.delegate = self
             return r
         } else {
-            if let reason = smartChoice.reason {
-                Logger.shared.log("[PlayerVC.SmartPlayer] using \(playerChoiceName(playerChoice)) instead of \(playerChoiceName(requestedPlayerChoice)) reason=\(reason)", type: "Player")
-            }
             let requestedBackend = Settings.shared.mpvRenderBackend
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
             let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable)
@@ -776,33 +767,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private var vlcRenderer: VLCRenderer? {
         return renderer as? VLCRenderer
-    }
-
-    private func smartInAppPlayerChoice(requested: Settings.PlayerChoice) -> (choice: Settings.PlayerChoice, reason: String?) {
-        guard Settings.shared.smartInAppPlayerChoosingEnabled else {
-            return (requested, nil)
-        }
-
-        let classification = smartPlayerMediaClassification()
-        switch requested {
-        case .mpv:
-            if let riskReason = classification.riskReason {
-                return (.vlc, riskReason)
-            }
-        case .vlc:
-            return (requested, nil)
-        }
-
-        return (requested, nil)
-    }
-
-    private func playerChoiceName(_ choice: Settings.PlayerChoice) -> String {
-        switch choice {
-        case .mpv:
-            return "MPV"
-        case .vlc:
-            return "VLC"
-        }
     }
 
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
@@ -2134,7 +2098,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return UserDefaults.standard.bool(forKey: "vlcVolumeGestureEnabled")
     }
     private var isPerformanceOverlayEnabled: Bool {
-        return UserDefaults.standard.bool(forKey: playerPerformanceOverlayKey)
+        return false
     }
     
     private var originalSpeed: Double = 1.0
@@ -5306,6 +5270,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard isRemoteHTTPURL(originalURL), !isLocalProxyURL(originalURL) else { return (originalURL, headers) }
         guard let headers, !headers.isEmpty else { return (originalURL, headers) }
 
+        if canVLCUseNativeHeaders(headers) {
+            Logger.shared.log("PlayerViewController: using direct VLC native headers headerKeys=[\(headers.keys.sorted().joined(separator: ","))]", type: "Stream")
+            return (originalURL, headers)
+        }
+
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
         let proxyReason = isReplacingVLCPlaybackInPlace ? "vlc-in-place-media-switch" : "fresh-vlc-main-media"
         let shouldRestartListener = !isReplacingVLCPlaybackInPlace
@@ -5334,6 +5303,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         Logger.shared.log("PlayerViewController: proactive VLC proxy activated reason=\(proxyReason) restartListener=\(shouldRestartListener) headerKeys=[\(headers.keys.sorted().joined(separator: ","))]", type: "Stream")
         return (proxyURL, nil)
+    }
+
+    private func canVLCUseNativeHeaders(_ headers: [String: String]) -> Bool {
+        let nativeHeaderKeys: Set<String> = ["user-agent", "referer", "cookie"]
+        let nonEmptyKeys = headers
+            .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { $0.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        return !nonEmptyKeys.isEmpty && nonEmptyKeys.allSatisfy { nativeHeaderKeys.contains($0) }
     }
 
     private func prepareMPVHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
