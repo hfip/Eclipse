@@ -4661,24 +4661,32 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
-    /// AniSkip fetch with 4-step AniList ID resolution (anime-only path).
+    /// AniSkip fetch with anime ID resolution, then conversion to the MAL ID the API expects.
     private func fetchAniSkipSegments(tmdbId: Int, seasonNumber: Int, episodeNumber: Int, showTitle: String?, duration: Double) async -> [SkipSegment] {
+        // Step 0: Prefer the playback context because it is tied to the selected anime season.
+        var animeProviderId = episodePlaybackContext?.anilistMediaId
+        if let id = animeProviderId {
+            Logger.shared.log("SkipData: AniSkip step 0 - playback context media ID \(id)", type: "Skip")
+        }
+
         // Step 1: Check season-specific cache
-        var anilistId = trackerManager.cachedAniListSeasonId(tmdbId: tmdbId, seasonNumber: seasonNumber)
-        if let id = anilistId {
-            Logger.shared.log("SkipData: AniSkip step 1 – cached season ID \(id)", type: "Skip")
+        if animeProviderId == nil {
+            animeProviderId = trackerManager.cachedAniListSeasonId(tmdbId: tmdbId, seasonNumber: seasonNumber)
+            if let id = animeProviderId {
+                Logger.shared.log("SkipData: AniSkip step 1 – cached season ID \(id)", type: "Skip")
+            }
         }
 
         // Step 2: Fall back to show-level cache
-        if anilistId == nil {
-            anilistId = trackerManager.cachedAniListId(for: tmdbId)
-            if let id = anilistId {
+        if animeProviderId == nil {
+            animeProviderId = trackerManager.cachedAniListId(for: tmdbId)
+            if let id = animeProviderId {
                 Logger.shared.log("SkipData: AniSkip step 2 – cached show ID \(id)", type: "Skip")
             }
         }
 
         // Step 3: Full AniList resolution via sequel chain
-        if anilistId == nil, let title = showTitle {
+        if animeProviderId == nil, let title = showTitle {
             Logger.shared.log("SkipData: AniSkip step 3 – resolving via AniListService for '\(title)'", type: "Skip")
             do {
                 let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -4690,31 +4698,40 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 )
                 let seasonMappings = animeData.seasons.map { (seasonNumber: $0.seasonNumber, anilistId: $0.anilistId) }
                 trackerManager.registerAniListAnimeData(tmdbId: tmdbId, seasons: seasonMappings)
-                anilistId = animeData.seasons.first(where: { $0.seasonNumber == seasonNumber })?.anilistId
+                animeProviderId = animeData.seasons.first(where: { $0.seasonNumber == seasonNumber })?.anilistId
             } catch {
                 Logger.shared.log("SkipData: AniSkip step 3 failed: \(error.localizedDescription)", type: "Skip")
             }
         }
 
         // Step 4: Last resort – simple title search
-        if anilistId == nil {
-            anilistId = await trackerManager.getAniListMediaId(tmdbId: tmdbId)
+        if animeProviderId == nil {
+            animeProviderId = await trackerManager.getAniListMediaId(tmdbId: tmdbId)
         }
 
-        guard let finalId = anilistId else {
-            Logger.shared.log("SkipData: No AniList ID found for tmdbId=\(tmdbId) — skipping AniSkip", type: "Skip")
-            return []
-        }
-        guard finalId > 0 else {
-            Logger.shared.log("SkipData: MAL fallback mediaId=\(abs(finalId)) is not an AniList ID; skipping AniSkip", type: "Skip")
+        guard let finalId = animeProviderId else {
+            Logger.shared.log("SkipData: No anime provider ID found for tmdbId=\(tmdbId) — skipping AniSkip", type: "Skip")
             return []
         }
 
-        Logger.shared.log("SkipData: AniSkip using anilistId=\(finalId) for ep=\(episodeNumber)", type: "Skip")
+        let malId: Int
+        if finalId < 0 {
+            malId = abs(finalId)
+            Logger.shared.log("SkipData: AniSkip using MAL fallback mediaId=\(malId)", type: "Skip")
+        } else {
+            guard let resolvedMALId = await trackerManager.resolveMyAnimeListAnimeId(fromAniListId: finalId) else {
+                Logger.shared.log("SkipData: AniSkip could not resolve MAL ID for AniList \(finalId)", type: "Skip")
+                return []
+            }
+            malId = resolvedMALId
+            Logger.shared.log("SkipData: AniSkip resolved AniList \(finalId) to MAL \(malId)", type: "Skip")
+        }
+
+        Logger.shared.log("SkipData: AniSkip using malId=\(malId) for ep=\(episodeNumber)", type: "Skip")
 
         do {
             return try await AniSkipService.shared.fetchSkipTimes(
-                anilistId: finalId,
+                malId: malId,
                 episodeNumber: episodeNumber,
                 episodeDuration: duration
             )

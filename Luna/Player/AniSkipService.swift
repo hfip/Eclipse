@@ -74,23 +74,23 @@ final class AniSkipService {
         self.session = URLSession(configuration: config)
     }
 
-    /// Fetches skip-time segments for an anime episode using AniList ID.
+    /// Fetches skip-time segments for an anime episode using MyAnimeList ID.
     /// - Parameters:
-    ///   - anilistId: The AniList media ID for the specific season / anime.
+    ///   - malId: The MyAnimeList media ID for the specific season / anime.
     ///   - episodeNumber: The episode number within that season.
     ///   - episodeDuration: The total duration in seconds (used for better matching).
     /// - Returns: Array of skip segments (intro, outro, recap).
-    func fetchSkipTimes(anilistId: Int, episodeNumber: Int, episodeDuration: Double) async throws -> [SkipSegment] {
+    func fetchSkipTimes(malId: Int, episodeNumber: Int, episodeDuration: Double) async throws -> [SkipSegment] {
         let durationIsUsable = episodeDuration.isFinite && episodeDuration > 0
         let durationParam = durationIsUsable ? "&episodeLength=\(Int(episodeDuration))" : ""
-        let urlString = "\(baseURL)/skip-times/\(anilistId)/\(episodeNumber)?types[]=op&types[]=ed&types[]=recap&types[]=mixed-op&types[]=mixed-ed\(durationParam)"
+        let urlString = "\(baseURL)/skip-times/\(malId)/\(episodeNumber)?types[]=op&types[]=ed&types[]=recap&types[]=mixed-op&types[]=mixed-ed\(durationParam)"
 
         guard let url = URL(string: urlString) else {
             Logger.shared.log("AniSkipService: Invalid URL: \(urlString)", type: "Error")
             return []
         }
 
-        Logger.shared.log("AniSkipService: Fetching skip times for anilistId=\(anilistId) ep=\(episodeNumber) duration=\(formatSeconds(episodeDuration))", type: "AniSkip")
+        Logger.shared.log("AniSkipService: Fetching skip times for malId=\(malId) ep=\(episodeNumber) duration=\(formatSeconds(episodeDuration))", type: "AniSkip")
 
         let (data, response) = try await session.data(from: url)
 
@@ -100,14 +100,14 @@ final class AniSkipService {
         }
 
         guard httpResponse.statusCode == 200 else {
-            Logger.shared.log("AniSkipService: HTTP \(httpResponse.statusCode) for anilistId=\(anilistId) ep=\(episodeNumber)", type: "AniSkip")
+            Logger.shared.log("AniSkipService: HTTP \(httpResponse.statusCode) for malId=\(malId) ep=\(episodeNumber)", type: "AniSkip")
             return []
         }
 
         let decoded = try JSONDecoder().decode(AniSkipResponse.self, from: data)
 
         guard decoded.found, let results = decoded.results else {
-            Logger.shared.log("AniSkipService: No skip times found for anilistId=\(anilistId) ep=\(episodeNumber)", type: "AniSkip")
+            Logger.shared.log("AniSkipService: No skip times found for malId=\(malId) ep=\(episodeNumber)", type: "AniSkip")
             return []
         }
 
@@ -133,7 +133,7 @@ final class AniSkipService {
         }
 
         Logger.shared.log(
-            "AniSkipService: Found \(segments.count) skip segments for anilistId=\(anilistId) ep=\(episodeNumber): "
+            "AniSkipService: Found \(segments.count) skip segments for malId=\(malId) ep=\(episodeNumber): "
             + segments.map { "\($0.type.rawValue) \(formatSeconds($0.startTime))-\(formatSeconds($0.endTime))s" }.joined(separator: ", "),
             type: "AniSkip"
         )

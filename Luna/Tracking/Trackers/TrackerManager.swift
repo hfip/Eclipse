@@ -1088,6 +1088,10 @@ final class TrackerManager: NSObject, ObservableObject {
         Logger.shared.log("Registered \(seasons.count) AniList season mappings for TMDB \(tmdbId)", type: "Tracker")
     }
 
+    func resolveMyAnimeListAnimeId(fromAniListId aniListId: Int) async -> Int? {
+        await getMyAnimeListId(fromAniListId: aniListId, mediaType: "ANIME")
+    }
+
     func syncMangaProgress(title: String, chapterNumber: Int) {
         guard trackerState.syncEnabled else {
             Logger.shared.log("Skipping manga sync (sync disabled) for \(title) ch \(chapterNumber)", type: "Tracker")

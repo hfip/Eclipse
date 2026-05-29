@@ -90,10 +90,10 @@ private struct IntroDBAppSegmentList: Decodable {
             segments = []
         } else if let list = try? container.decode([IntroDBAppSegment].self) {
             segments = list
+        } else if let segment = try? container.decode(IntroDBAppSegment.self), segment.hasAnyTimestamp {
+            segments = [segment]
         } else if let wrapper = try? container.decode(IntroDBAppSegmentWrapper.self) {
             segments = wrapper.segments
-        } else if let segment = try? container.decode(IntroDBAppSegment.self) {
-            segments = segment.hasAnyTimestamp ? [segment] : []
         } else {
             segments = []
         }
@@ -114,7 +114,10 @@ private struct IntroDBAppSegmentWrapper: Decodable {
         } else if let segment = try? container.decode(IntroDBAppSegment.self, forKey: .segments) {
             segments = segment.hasAnyTimestamp ? [segment] : []
         } else {
-            segments = []
+            throw DecodingError.keyNotFound(
+                CodingKeys.segments,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Missing IntroDB segments wrapper")
+            )
         }
     }
 }
