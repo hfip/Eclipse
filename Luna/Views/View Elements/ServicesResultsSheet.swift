@@ -2276,6 +2276,13 @@ struct ModulesSearchResultsSheet: View {
                 parts.append(firstLine)
             }
         }
+        let hasDisplayedSize = parts.joined(separator: " ").range(
+            of: #"\d+(?:\.\d+)?\s*(?:KB|MB|GB|TB)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        if !hasDisplayedSize, let size = stream.formattedVideoSize {
+            parts.append(size)
+        }
 
         return parts.isEmpty ? "Stream" : parts.joined(separator: " · ")
     }
@@ -2286,6 +2293,7 @@ struct ModulesSearchResultsSheet: View {
             stream.title,
             stream.description,
             stream.behaviorHints?.filename,
+            stream.formattedVideoSize,
             stremioStreamLabel(for: stream)
         ]
         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }

@@ -4021,6 +4021,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if wasVLC {
                 self.logVLCUI("replacePlayback begin transition=\(transitionId) generation=\(replacementGeneration) reason=\(reason) from={\(previousMedia)} to={\(nextMedia)} cached=\(self.secondsText(self.cachedPosition))/\(self.secondsText(self.cachedDuration)) running=\(self.isRunning) loading=\(self.isRendererLoading)", type: "VLCCrashProbe")
             }
+            if let mediaInfo = self.mediaInfo {
+                ProgressManager.shared.syncTraktProgressOnPlaybackClose(for: mediaInfo, playbackContext: self.episodePlaybackContext)
+            }
             self.dismissEpisodeBrowser(animated: true, reason: "\(reason)-replace-playback")
             self.controlsHideWorkItem?.cancel()
             self.playbackStartupWorkItem?.cancel()
@@ -7227,6 +7230,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func postPlayerDidCloseNotification() {
         var userInfo: [String: Any] = [:]
         if let mediaInfo {
+            ProgressManager.shared.syncTraktProgressOnPlaybackClose(for: mediaInfo, playbackContext: episodePlaybackContext)
             switch mediaInfo {
             case .movie(let id, _, _, _):
                 userInfo["tmdbId"] = id

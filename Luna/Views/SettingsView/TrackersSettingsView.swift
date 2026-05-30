@@ -12,6 +12,7 @@ struct TrackersSettingsView: View {
     @StateObject private var trackerManager = TrackerManager.shared
     @State private var showImportConfirmation = false
     @State private var showMALImportConfirmation = false
+    @State private var showTraktImportConfirmation = false
     @State private var showSyncTools = false
 
     @State private var scrollOffset: CGFloat = 0
@@ -108,6 +109,19 @@ struct TrackersSettingsView: View {
                         onConnect: { trackerManager.startTraktAuth() },
                         onDisconnect: { trackerManager.disconnectTracker(.trakt) }
                     )
+
+                    if trackerManager.trackerState.getAccount(for: .trakt) != nil {
+                        Toggle("Merge Trakt Continue Watching", isOn: Binding(
+                            get: { trackerManager.trackerState.mergeTraktContinueWatching },
+                            set: { trackerManager.setMergeTraktContinueWatching($0) }
+                        ))
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(12)
+
+                        traktImportSection
+                    }
                 }
                 .padding(.horizontal)
 
@@ -163,6 +177,14 @@ struct TrackersSettingsView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This will import your MAL lists as Eclipse collections and fill local watch/read progress without deleting or downgrading anything.")
+        }
+        .alert("Import Trakt Library", isPresented: $showTraktImportConfirmation) {
+            Button("Import", role: .none) {
+                trackerManager.importTraktToLibrary()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will import your Trakt watchlist and watched progress as Eclipse collections without deleting or downgrading anything.")
         }
         .sheet(isPresented: $showSyncTools) {
             TrackerSyncToolsSheet(trackerManager: trackerManager)
@@ -261,6 +283,56 @@ struct TrackersSettingsView: View {
             }
 
             if let error = trackerManager.malImportError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
+    }
+
+    @ViewBuilder
+    private var traktImportSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Import Trakt Library")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    Text("Import your watchlist and watched progress as collections")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                if trackerManager.isImportingTrakt {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                } else {
+                    Button(action: { showTraktImportConfirmation = true }) {
+                        Text("Import")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+
+            if let progress = trackerManager.traktImportProgress {
+                Text(progress)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            if let error = trackerManager.traktImportError {
                 Text(error)
                     .font(.caption2)
                     .foregroundColor(.orange)

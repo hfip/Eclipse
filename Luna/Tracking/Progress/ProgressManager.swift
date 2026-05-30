@@ -114,6 +114,9 @@ struct ContinueWatchingItem: Identifiable {
     let totalDuration: Double
     let playbackContext: EpisodePlaybackContext?
     let isAnime: Bool
+    let statusText: String?
+    let isWatchNext: Bool
+    let traktPlaybackId: Int?
     
     var remainingTime: String {
         let remaining = max(0, totalDuration - currentTime)
@@ -125,6 +128,10 @@ struct ContinueWatchingItem: Identifiable {
             let mins = minutes % 60
             return mins > 0 ? "\(hours)h \(mins)m left" : "\(hours)h left"
         }
+    }
+
+    var displayStatus: String {
+        statusText ?? remainingTime
     }
 }
 
@@ -304,6 +311,7 @@ final class ProgressManager: ObservableObject {
         accessQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             var entry = self.progressData.findMovie(id: movieId) ?? MovieProgressEntry(id: movieId, title: title)
+            let previousWatchedState = entry.isWatched
             guard let times = self.stableProgressTimes(
                 currentTime: currentTime,
                 totalDuration: totalDuration,
@@ -325,6 +333,14 @@ final class ProgressManager: ObservableObject {
 
             self.progressData.updateMovie(entry)
             self.publishCurrentData()
+
+            DispatchQueue.main.async {
+                TrackerManager.shared.syncTraktMoviePlaybackProgress(
+                    movieId: movieId,
+                    progress: entry.progress,
+                    force: !previousWatchedState && entry.isWatched
+                )
+            }
         }
         debouncedSave()
     }
@@ -428,6 +444,18 @@ final class ProgressManager: ObservableObject {
             
             self.publishCurrentData()
 
+            if !entry.isWatched {
+                DispatchQueue.main.async {
+                    TrackerManager.shared.syncTraktEpisodePlaybackProgress(
+                        showId: showId,
+                        seasonNumber: seasonNumber,
+                        episodeNumber: episodeNumber,
+                        progress: entry.progress,
+                        playbackContext: playbackContext?.forEpisodeNumber(episodeNumber)
+                    )
+                }
+            }
+
             // Sync to trackers if just reached watched threshold
             if !previousWatchedState && entry.isWatched {
                 DispatchQueue.main.async {
@@ -511,6 +539,48 @@ final class ProgressManager: ObservableObject {
                     playbackContext: playbackContext?.forEpisodeNumber(episodeNumber)
                 )
             }
+        }
+        saveProgressData()
+    }
+
+    /// Marks only the supplied episode numbers as watched locally without triggering tracker sync.
+    /// Trakt progress can contain gaps, so imports must not assume every earlier episode was watched.
+    func bulkMarkEpisodeNumbersAsWatched(showId: Int, seasonNumber: Int, episodeNumbers: [Int]) {
+        let episodeNumbers = Array(Set(episodeNumbers.filter { $0 >= 1 })).sorted()
+        guard !episodeNumbers.isEmpty else { return }
+        accessQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            for episodeNumber in episodeNumbers {
+                var entry = self.progressData.findEpisode(showId: showId, season: seasonNumber, episode: episodeNumber)
+                    ?? EpisodeProgressEntry(showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber)
+                guard !entry.isWatched else { continue }
+                let safeDuration = entry.totalDuration > 0 ? entry.totalDuration : max(entry.currentTime, 1)
+                entry.totalDuration = safeDuration
+                entry.isWatched = true
+                entry.currentTime = safeDuration
+                entry.lastUpdated = Date()
+                self.progressData.updateEpisode(entry)
+            }
+            self.publishCurrentData()
+            Logger.shared.log("Bulk marked \(episodeNumbers.count) exact episode(s) as watched for show \(showId) S\(seasonNumber) (import)", type: "Progress")
+        }
+        saveProgressData()
+    }
+
+    /// Marks a movie as watched locally during import without enqueueing tracker sync.
+    func markMovieAsWatchedForImport(movieId: Int, title: String, posterURL: String? = nil) {
+        accessQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            var entry = self.progressData.findMovie(id: movieId) ?? MovieProgressEntry(id: movieId, title: title)
+            let safeDuration = entry.totalDuration > 0 ? entry.totalDuration : max(entry.currentTime, 1)
+            entry.posterURL = posterURL ?? entry.posterURL
+            entry.totalDuration = safeDuration
+            entry.currentTime = safeDuration
+            entry.isWatched = true
+            entry.lastUpdated = Date()
+            self.progressData.updateMovie(entry)
+            self.publishCurrentData()
+            Logger.shared.log("Marked movie \(movieId) as watched locally (import)", type: "Progress")
         }
         saveProgressData()
     }
@@ -623,7 +693,10 @@ final class ProgressManager: ObservableObject {
                         currentTime: movie.currentTime,
                         totalDuration: movie.totalDuration,
                         playbackContext: nil,
-                        isAnime: false
+                        isAnime: false,
+                        statusText: nil,
+                        isWatchNext: false,
+                        traktPlaybackId: nil
                     )
                 }
             
@@ -655,7 +728,10 @@ final class ProgressManager: ObservableObject {
                     currentTime: episode.currentTime,
                     totalDuration: episode.totalDuration,
                     playbackContext: episode.playbackContext,
-                    isAnime: episode.isAnime == true || episode.playbackContext?.hasAnimeMediaId == true
+                    isAnime: episode.isAnime == true || episode.playbackContext?.hasAnimeMediaId == true,
+                    statusText: nil,
+                    isWatchNext: false,
+                    traktPlaybackId: nil
                 )
             }
             
@@ -668,12 +744,41 @@ final class ProgressManager: ObservableObject {
         return items
     }
 
+    func getWatchNextCandidates() -> [WatchNextCandidate] {
+        var candidates: [WatchNextCandidate] = []
+
+        accessQueue.sync {
+            let latestByShow = Dictionary(grouping: self.progressData.episodeProgress, by: \.showId)
+                .compactMapValues { episodes in
+                    episodes.max { $0.lastUpdated < $1.lastUpdated }
+                }
+
+            candidates = latestByShow.values.compactMap { episode in
+                guard episode.isWatched || episode.progress >= 0.85 else { return nil }
+                let showMeta = self.progressData.getShowMetadata(showId: episode.showId)
+                return WatchNextCandidate(
+                    tmdbId: episode.showId,
+                    title: showMeta?.title ?? "",
+                    posterURL: showMeta?.posterURL,
+                    seasonNumber: episode.seasonNumber,
+                    episodeNumber: episode.episodeNumber,
+                    lastUpdated: episode.lastUpdated,
+                    playbackContext: episode.playbackContext,
+                    isAnime: episode.isAnime == true || episode.playbackContext?.hasAnimeMediaId == true
+                )
+            }
+        }
+
+        return candidates
+    }
+
     func markContinueWatchingItemAsWatched(_ item: ContinueWatchingItem) {
         accessQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
 
             if item.isMovie {
-                guard var entry = self.progressData.findMovie(id: item.tmdbId) else { return }
+                var entry = self.progressData.findMovie(id: item.tmdbId)
+                    ?? MovieProgressEntry(id: item.tmdbId, title: item.title)
                 let safeDuration = entry.totalDuration > 0 ? entry.totalDuration : max(entry.currentTime, 1)
                 entry.totalDuration = safeDuration
                 entry.currentTime = safeDuration
@@ -681,6 +786,9 @@ final class ProgressManager: ObservableObject {
                 entry.lastUpdated = Date()
                 self.progressData.updateMovie(entry)
                 Logger.shared.log("Marked continue-watching movie as watched: \(entry.title)", type: "Progress")
+                DispatchQueue.main.async {
+                    TrackerManager.shared.syncTraktMoviePlaybackProgress(movieId: item.tmdbId, progress: 1.0, force: true)
+                }
             } else {
                 guard let seasonNumber = item.seasonNumber,
                       let episodeNumber = item.episodeNumber else { return }
@@ -692,6 +800,7 @@ final class ProgressManager: ObservableObject {
                 entry.isWatched = true
                 entry.lastUpdated = Date()
                 self.progressData.updateEpisode(entry)
+                self.progressData.updateShowMetadata(showId: item.tmdbId, title: item.title, posterURL: item.posterURL)
                 Logger.shared.log("Marked continue-watching episode as watched: showId=\(item.tmdbId) S\(seasonNumber)E\(episodeNumber)", type: "Progress")
 
                 DispatchQueue.main.async {
@@ -742,6 +851,28 @@ final class ProgressManager: ObservableObject {
 
     // MARK: - AVPlayer Extension
 
+    func syncTraktProgressOnPlaybackClose(for mediaInfo: MediaInfo, playbackContext: EpisodePlaybackContext? = nil) {
+        switch mediaInfo {
+        case .movie(let id, _, _, _):
+            let progress = accessQueue.sync {
+                self.progressData.findMovie(id: id)?.progress ?? 0
+            }
+            TrackerManager.shared.syncTraktMoviePlaybackProgress(movieId: id, progress: progress, force: true)
+        case .episode(let showId, let seasonNumber, let episodeNumber, _, _, _):
+            let progress = accessQueue.sync {
+                self.progressData.findEpisode(showId: showId, season: seasonNumber, episode: episodeNumber)?.progress ?? 0
+            }
+            TrackerManager.shared.syncTraktEpisodePlaybackProgress(
+                showId: showId,
+                seasonNumber: seasonNumber,
+                episodeNumber: episodeNumber,
+                progress: progress,
+                playbackContext: playbackContext?.forEpisodeNumber(episodeNumber),
+                force: true
+            )
+        }
+    }
+
     func addPeriodicTimeObserver(to player: AVPlayer, for mediaInfo: MediaInfo, playbackContext: EpisodePlaybackContext? = nil) -> Any? {
         let interval = CMTime(seconds: 1.0, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
 
@@ -777,6 +908,18 @@ final class ProgressManager: ObservableObject {
             }
         }
     }
+
+}
+
+struct WatchNextCandidate {
+    let tmdbId: Int
+    let title: String
+    let posterURL: String?
+    let seasonNumber: Int
+    let episodeNumber: Int
+    let lastUpdated: Date
+    let playbackContext: EpisodePlaybackContext?
+    let isAnime: Bool
 }
 
 
@@ -843,6 +986,8 @@ struct EpisodePlaybackContext: Codable, Equatable {
         let absoluteEpisodeNumber = animeAbsoluteEpisodeNumber.map {
             max(1, $0 - localEpisodeNumber + episodeNumber)
         }
+        let translatedTMDBEpisodeNumber = tmdbEpisodeOffset.map { $0 + episodeNumber }
+            ?? (episodeNumber == localEpisodeNumber ? tmdbEpisodeNumber : nil)
 
         return EpisodePlaybackContext(
             localSeasonNumber: localSeasonNumber,
@@ -850,7 +995,7 @@ struct EpisodePlaybackContext: Codable, Equatable {
             anilistMediaId: anilistMediaId,
             kitsuMediaId: kitsuMediaId,
             tmdbSeasonNumber: tmdbSeasonNumber,
-            tmdbEpisodeNumber: tmdbEpisodeOffset.map { $0 + episodeNumber } ?? tmdbEpisodeNumber,
+            tmdbEpisodeNumber: translatedTMDBEpisodeNumber,
             tmdbEpisodeOffset: tmdbEpisodeOffset,
             animeAbsoluteEpisodeNumber: absoluteEpisodeNumber,
             animeSeasonEpisodeCount: animeSeasonEpisodeCount,

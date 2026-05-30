@@ -59,6 +59,7 @@ class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {
     private func postPlayerDidCloseNotification() {
         var userInfo: [String: Any] = [:]
         if let mediaInfo {
+            ProgressManager.shared.syncTraktProgressOnPlaybackClose(for: mediaInfo, playbackContext: episodePlaybackContext)
             switch mediaInfo {
             case .movie(let id, _, _, _):
                 userInfo["tmdbId"] = id

@@ -150,6 +150,12 @@ final class TrackerManager: NSObject, ObservableObject {
     private var recentWatchSyncKeys: [String: Date] = [:]
     private let recentWatchSyncQueue = DispatchQueue(label: "com.luna.recentWatchSync")
     private let watchSyncDedupeInterval: TimeInterval = 60
+    private var recentTraktPlaybackSyncKeys: [String: Date] = [:]
+    private let recentTraktPlaybackSyncQueue = DispatchQueue(label: "com.luna.recentTraktPlaybackSync")
+    private let traktPlaybackSyncInterval: TimeInterval = 30
+    private var traktMediaIdCache: [String: Int] = [:]
+    private let traktMediaIdCacheQueue = DispatchQueue(label: "com.luna.traktMediaIdCache")
+    private var traktTokenRefreshTask: Task<TrackerAccount, Error>?
 
     // OAuth config is supplied by ignored local build settings.
     private func bundledCredential(_ key: String) -> String {
@@ -227,6 +233,11 @@ final class TrackerManager: NSObject, ObservableObject {
 
     func setAutoSyncRatings(_ enabled: Bool) {
         trackerState.autoSyncRatings = enabled
+        saveTrackerState()
+    }
+
+    func setMergeTraktContinueWatching(_ enabled: Bool) {
+        trackerState.mergeTraktContinueWatching = enabled
         saveTrackerState()
     }
 
@@ -378,6 +389,55 @@ final class TrackerManager: NSObject, ObservableObject {
         }
         Logger.shared.log("MAL token refreshed before tracker library operation", type: "Tracker")
         return accountToSave
+    }
+
+    @MainActor
+    private func refreshedTraktAccountIfNeeded(_ account: TrackerAccount, force: Bool = false) async throws -> TrackerAccount {
+        guard account.service == .trakt else { return account }
+        let latestAccount = trackerState.getAccount(for: .trakt) ?? account
+        if !force {
+            guard let expiresAt = latestAccount.expiresAt else { return latestAccount }
+            guard expiresAt.timeIntervalSinceNow <= tokenRefreshLeeway else { return latestAccount }
+        }
+
+        guard let refreshToken = latestAccount.refreshToken, !refreshToken.isEmpty else {
+            throw NSError(
+                domain: "TraktAuth",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "Trakt session expired. Reconnect Trakt in Settings."]
+            )
+        }
+
+        if let traktTokenRefreshTask {
+            return try await traktTokenRefreshTask.value
+        }
+
+        let refreshTask = Task { [weak self] () throws -> TrackerAccount in
+            guard let self else {
+                throw NSError(domain: "TraktAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Tracker manager unavailable"])
+            }
+            let token = try await self.refreshTraktToken(refreshToken)
+            var refreshedAccount = latestAccount
+            refreshedAccount.updateTokens(
+                access: token.accessToken,
+                refresh: token.refreshToken,
+                expiresAt: Date().addingTimeInterval(TimeInterval(token.expiresIn))
+            )
+            return refreshedAccount
+        }
+        traktTokenRefreshTask = refreshTask
+
+        do {
+            let refreshedAccount = try await refreshTask.value
+            trackerState.addOrUpdateAccount(refreshedAccount)
+            saveTrackerState()
+            traktTokenRefreshTask = nil
+            Logger.shared.log("Trakt token refreshed before tracker operation", type: "Tracker")
+            return refreshedAccount
+        } catch {
+            traktTokenRefreshTask = nil
+            throw error
+        }
     }
 
     private func formURLEncodedBody(_ values: [String: String]) -> Data? {
@@ -1007,6 +1067,37 @@ final class TrackerManager: NSObject, ObservableObject {
         }
     }
 
+    private func refreshTraktToken(_ refreshToken: String) async throws -> TraktAuthResponse {
+        guard !traktClientId.isEmpty, !traktClientSecret.isEmpty else {
+            throw NSError(domain: "TraktAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Trakt credentials are not configured."])
+        }
+
+        let url = URL(string: "https://api.trakt.tv/oauth/token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "refresh_token": refreshToken,
+            "client_id": traktClientId,
+            "client_secret": traktClientSecret,
+            "redirect_uri": traktRedirectUri,
+            "grant_type": "refresh_token"
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard statusCode == 200 else {
+            let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw NSError(
+                domain: "TraktAuth",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Trakt token refresh failed with status \(statusCode): \(bodyPreview)"]
+            )
+        }
+
+        return try JSONDecoder().decode(TraktAuthResponse.self, from: data)
+    }
+
     private func fetchTraktUser(token: String) async throws -> TraktUser {
         guard !traktClientId.isEmpty else {
             throw NSError(domain: "TraktAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "TRAKT_CLIENT_ID is not configured."])
@@ -1549,15 +1640,12 @@ final class TrackerManager: NSObject, ObservableObject {
                         await syncToMyAnimeList(account: account, showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: progress)
                     }
                 case .trakt:
-                    if let playbackContext, playbackContext.isSpecial {
-                        if let tmdbSeason = playbackContext.resolvedTMDBSeasonNumber,
-                           let tmdbEpisode = playbackContext.resolvedTMDBEpisodeNumber {
-                            await syncToTrakt(account: account, showId: showId, seasonNumber: tmdbSeason, episodeNumber: tmdbEpisode, progress: progress)
-                        } else {
-                            Logger.shared.log("Skipping Trakt sync for special without TMDB episode mapping: TMDB \(showId) S\(seasonNumber)E\(episodeNumber)", type: "Tracker")
-                        }
-                    } else {
-                        await syncToTrakt(account: account, showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: progress)
+                    if let resolved = resolvedTraktEpisodeNumbers(
+                        seasonNumber: seasonNumber,
+                        episodeNumber: episodeNumber,
+                        playbackContext: playbackContext
+                    ) {
+                        await syncToTrakt(account: account, showId: showId, seasonNumber: resolved.season, episodeNumber: resolved.episode, progress: progress)
                     }
                 }
             }
@@ -1736,121 +1824,482 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
 
-    private func syncToTrakt(account: TrackerAccount, showId: Int, seasonNumber: Int, episodeNumber: Int, progress: Double) async {
-        // First, get the Trakt ID from TMDB ID
-        guard let traktId = await getTraktIdFromTmdbId(showId) else {
-            Logger.shared.log("Could not find Trakt ID for TMDB ID \(showId)", type: "Tracker")
-            return
+    private enum TraktMediaType: String {
+        case show
+        case movie
+    }
+
+    private struct TraktIDs: Decodable {
+        let trakt: Int?
+        let tmdb: Int?
+    }
+
+    private struct TraktShow: Decodable {
+        let title: String
+        let ids: TraktIDs
+        let airedEpisodes: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case title, ids
+            case airedEpisodes = "aired_episodes"
+        }
+    }
+
+    private struct TraktMovie: Decodable {
+        let title: String
+        let ids: TraktIDs
+    }
+
+    private struct TraktEpisode: Decodable {
+        let season: Int
+        let number: Int
+        let ids: TraktIDs?
+    }
+
+    private struct TraktShowProgress: Decodable {
+        let aired: Int
+        let completed: Int
+        let lastWatchedAt: String?
+        let nextEpisode: TraktEpisode?
+
+        enum CodingKeys: String, CodingKey {
+            case aired, completed
+            case lastWatchedAt = "last_watched_at"
+            case nextEpisode = "next_episode"
+        }
+    }
+
+    private struct TraktUpNextResponse: Decodable {
+        let progress: TraktShowProgress
+        let show: TraktShow
+    }
+
+    private struct TraktWatchlistShowResponse: Decodable {
+        let show: TraktShow
+    }
+
+    private struct TraktWatchlistMovieResponse: Decodable {
+        let movie: TraktMovie
+    }
+
+    private struct TraktWatchedMovieResponse: Decodable {
+        let movie: TraktMovie
+    }
+
+    private struct TraktWatchedShowResponse: Decodable {
+        let show: TraktShow
+        let seasons: [Season]?
+
+        struct Season: Decodable {
+            let number: Int
+            let episodes: [Episode]
+
+            struct Episode: Decodable {
+                let number: Int
+            }
+        }
+    }
+
+    private struct TraktMoviePlaybackResponse: Decodable {
+        let progress: Double
+        let pausedAt: String
+        let id: Int
+        let movie: TraktMovie
+
+        enum CodingKeys: String, CodingKey {
+            case progress
+            case pausedAt = "paused_at"
+            case id
+            case movie
+        }
+    }
+
+    private func resolvedTraktEpisodeNumbers(
+        seasonNumber: Int,
+        episodeNumber: Int,
+        playbackContext: EpisodePlaybackContext?
+    ) -> (season: Int, episode: Int)? {
+        guard let playbackContext else {
+            return (seasonNumber, episodeNumber)
         }
 
-        let traktProgress = progress <= 1.0 ? progress * 100.0 : progress
-
-        // Only mark as watched if progress >= 85% (following NuvioStreaming pattern)
-        guard traktProgress >= 85 else {
-            // For progress < 85%, use scrobble pause instead
-            await scrobblePause(account: account, traktId: traktId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: traktProgress)
-            return
+        if let tmdbSeason = playbackContext.resolvedTMDBSeasonNumber,
+           let tmdbEpisode = playbackContext.resolvedTMDBEpisodeNumber {
+            return (tmdbSeason, tmdbEpisode)
         }
 
-        // Mark episode as watched with proper payload structure
-        let watchedAt = ISO8601DateFormatter().string(from: Date())
-        let payload: [String: Any] = [
-            "shows": [
-                [
-                    "ids": [
-                        "trakt": traktId
-                    ],
-                    "seasons": [
-                        [
-                            "number": seasonNumber,
-                            "episodes": [
-                                [
-                                    "number": episodeNumber,
-                                    "watched_at": watchedAt
-                                ]
-                            ]
-                        ]
-                    ]
-                ]
-            ]
-        ]
+        if playbackContext.isSpecial || playbackContext.hasAnimeMediaId {
+            Logger.shared.log("Skipping Trakt sync for anime episode without TMDB episode mapping: local S\(seasonNumber)E\(episodeNumber)", type: "Tracker")
+            return nil
+        }
+
+        return (seasonNumber, episodeNumber)
+    }
+
+    func syncTraktEpisodePlaybackProgress(
+        showId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        progress: Double,
+        playbackContext: EpisodePlaybackContext? = nil,
+        force: Bool = false
+    ) {
+        guard !isBackupRestoreSyncSuppressed(), trackerState.syncEnabled else { return }
+        guard progress.isFinite, progress > 0 else { return }
+        guard let account = trackerState.getAccount(for: .trakt) else { return }
+
+        guard let resolved = resolvedTraktEpisodeNumbers(
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber,
+            playbackContext: playbackContext
+        ) else { return }
+
+        let key = "episode|\(showId)|\(resolved.season)|\(resolved.episode)"
+        guard shouldStartTraktPlaybackSync(key: key, force: force) else { return }
+        Task {
+            await syncToTrakt(
+                account: account,
+                showId: showId,
+                seasonNumber: resolved.season,
+                episodeNumber: resolved.episode,
+                progress: progress
+            )
+        }
+    }
+
+    func syncTraktMoviePlaybackProgress(movieId: Int, progress: Double, force: Bool = false) {
+        guard !isBackupRestoreSyncSuppressed(), trackerState.syncEnabled else { return }
+        guard progress.isFinite, progress > 0 else { return }
+        guard let account = trackerState.getAccount(for: .trakt) else { return }
+
+        let key = "movie|\(movieId)"
+        guard shouldStartTraktPlaybackSync(key: key, force: force) else { return }
+        Task {
+            await syncMovieToTrakt(account: account, movieId: movieId, progress: progress)
+        }
+    }
+
+    func fetchTraktContinueWatchingItems() async -> [ContinueWatchingItem] {
+        guard trackerState.mergeTraktContinueWatching,
+              let account = trackerState.getAccount(for: .trakt) else {
+            return []
+        }
 
         do {
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
             guard !traktClientId.isEmpty else {
-                Logger.shared.log("Skipping Trakt sync because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
+                Logger.shared.log("Skipping Trakt Continue Watching fetch because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
+                return []
+            }
+
+            async let upNextData = fetchTraktPlaybackData(path: "sync/progress/up_next", account: refreshedAccount)
+            async let movieData = fetchTraktPlaybackData(path: "sync/playback/movies", account: refreshedAccount)
+            let (upNextPlaybackData, moviePlaybackData) = try await (upNextData, movieData)
+
+            let shows = try JSONDecoder().decode([TraktUpNextResponse].self, from: upNextPlaybackData).compactMap { item in
+                guard let tmdbId = item.show.ids.tmdb,
+                      let episode = item.progress.nextEpisode else { return nil }
+                return ContinueWatchingItem(
+                    id: "trakt_up_next_\(tmdbId)",
+                    tmdbId: tmdbId,
+                    isMovie: false,
+                    title: item.show.title,
+                    posterURL: nil,
+                    progress: 0,
+                    lastUpdated: item.progress.lastWatchedAt.flatMap(traktDate(from:)) ?? Date.distantPast,
+                    seasonNumber: episode.season,
+                    episodeNumber: episode.number,
+                    currentTime: 0,
+                    totalDuration: 1,
+                    playbackContext: nil,
+                    isAnime: false,
+                    statusText: "Watch next",
+                    isWatchNext: true,
+                    traktPlaybackId: nil
+                )
+            }
+            let movies = try JSONDecoder().decode([TraktMoviePlaybackResponse].self, from: moviePlaybackData).compactMap { playback in
+                guard let tmdbId = playback.movie.ids.tmdb else { return nil }
+                let normalizedProgress = min(max(playback.progress / 100.0, 0), 1)
+                return ContinueWatchingItem(
+                    id: "trakt_movie_\(playback.id)",
+                    tmdbId: tmdbId,
+                    isMovie: true,
+                    title: playback.movie.title,
+                    posterURL: nil,
+                    progress: normalizedProgress,
+                    lastUpdated: traktDate(from: playback.pausedAt) ?? Date.distantPast,
+                    seasonNumber: nil,
+                    episodeNumber: nil,
+                    currentTime: normalizedProgress,
+                    totalDuration: 1,
+                    playbackContext: nil,
+                    isAnime: false,
+                    statusText: "\(Int(playback.progress.rounded()))% watched",
+                    isWatchNext: false,
+                    traktPlaybackId: playback.id
+                )
+            }
+            return shows + movies
+        } catch {
+            Logger.shared.log("Failed to fetch Trakt Continue Watching: \(error.localizedDescription)", type: "Error")
+            return []
+        }
+    }
+
+    private func fetchTraktPlaybackData(path: String, account: TrackerAccount, allowsRefreshRetry: Bool = true) async throws -> Data {
+        let url = URL(string: "https://api.trakt.tv/\(path)")!
+        var request = URLRequest(url: url)
+        request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
+        request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("2", forHTTPHeaderField: "trakt-api-version")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        if statusCode == 401, allowsRefreshRetry {
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account, force: true)
+            return try await fetchTraktPlaybackData(path: path, account: refreshedAccount, allowsRefreshRetry: false)
+        }
+        guard statusCode == 200 else {
+            let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw NSError(domain: "Trakt", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Trakt \(path) returned status \(statusCode): \(bodyPreview)"])
+        }
+        return data
+    }
+
+    private func fetchAllTraktPages(path: String, account: TrackerAccount, limit: Int = 100) async throws -> [Data] {
+        var pages: [Data] = []
+        var page = 1
+
+        while true {
+            let separator = path.contains("?") ? "&" : "?"
+            let data = try await fetchTraktPlaybackData(
+                path: "\(path)\(separator)page=\(page)&limit=\(limit)",
+                account: account
+            )
+            pages.append(data)
+
+            let count = (try JSONSerialization.jsonObject(with: data) as? [Any])?.count ?? 0
+            guard count >= limit else { return pages }
+            page += 1
+        }
+    }
+
+    func removeTraktContinueWatchingItem(_ playbackId: Int, completion: (() -> Void)? = nil) {
+        guard let account = trackerState.getAccount(for: .trakt) else { return }
+
+        Task {
+            do {
+                let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+                guard !traktClientId.isEmpty else { return }
+                try await deleteTraktPlaybackItem(playbackId, account: refreshedAccount)
+                if let completion {
+                    await MainActor.run {
+                        completion()
+                    }
+                }
+            } catch {
+                Logger.shared.log("Failed to remove Trakt playback item: \(error.localizedDescription)", type: "Error")
+            }
+        }
+    }
+
+    private func deleteTraktPlaybackItem(_ playbackId: Int, account: TrackerAccount, allowsRefreshRetry: Bool = true) async throws {
+        let url = URL(string: "https://api.trakt.tv/sync/playback/\(playbackId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
+        request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("2", forHTTPHeaderField: "trakt-api-version")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        if statusCode == 401, allowsRefreshRetry {
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account, force: true)
+            return try await deleteTraktPlaybackItem(playbackId, account: refreshedAccount, allowsRefreshRetry: false)
+        }
+        guard (200...299).contains(statusCode) else {
+            let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw NSError(domain: "Trakt", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Trakt playback remove returned status \(statusCode): \(bodyPreview)"])
+        }
+    }
+
+    private func shouldStartTraktPlaybackSync(key: String, force: Bool) -> Bool {
+        let now = Date()
+        var shouldStart = true
+        recentTraktPlaybackSyncQueue.sync {
+            recentTraktPlaybackSyncKeys = recentTraktPlaybackSyncKeys.filter {
+                now.timeIntervalSince($0.value) < traktPlaybackSyncInterval * 10
+            }
+            if !force,
+               let previous = recentTraktPlaybackSyncKeys[key],
+               now.timeIntervalSince(previous) < traktPlaybackSyncInterval {
+                shouldStart = false
+            } else {
+                recentTraktPlaybackSyncKeys[key] = now
+            }
+        }
+        return shouldStart
+    }
+
+    private func syncToTrakt(account: TrackerAccount, showId: Int, seasonNumber: Int, episodeNumber: Int, progress: Double) async {
+        do {
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+            guard let traktId = await getTraktIdFromTmdbId(showId, mediaType: .show) else {
+                Logger.shared.log("Could not find Trakt ID for TMDB show ID \(showId)", type: "Tracker")
+                return
+            }
+            guard let traktEpisodeId = await getTraktEpisodeId(
+                showTraktId: traktId,
+                seasonNumber: seasonNumber,
+                episodeNumber: episodeNumber,
+                account: refreshedAccount
+            ) else {
                 return
             }
 
-            let url = URL(string: "https://api.trakt.tv/sync/history")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
-            request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("2", forHTTPHeaderField: "trakt-api-version")
-
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-            
-            if statusCode == 201 {
-                // Log the response to see what was actually added
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    Logger.shared.log("Trakt sync response: \(json)", type: "Tracker")
-                }
-                Logger.shared.log("Synced to Trakt: S\(seasonNumber)E\(episodeNumber) (watched)", type: "Tracker")
-            } else {
-                let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-                Logger.shared.log("Trakt sync returned status \(statusCode): \(bodyPreview)", type: "Tracker")
+            let traktProgress = progress <= 1.0 ? progress * 100.0 : progress
+            guard traktProgress >= 85 else {
+                await scrobblePause(account: refreshedAccount, traktEpisodeId: traktEpisodeId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: traktProgress)
+                return
             }
+
+            let watchedAt = ISO8601DateFormatter().string(from: Date())
+            let payload: [String: Any] = [
+                "episodes": [
+                    [
+                        "watched_at": watchedAt,
+                        "ids": ["trakt": traktEpisodeId]
+                    ]
+                ]
+            ]
+            let data = try await postTraktJSON(path: "sync/history", account: refreshedAccount, payload: payload)
+            Logger.shared.log("Trakt sync response: \(String(data: data, encoding: .utf8) ?? "<non-utf8>")", type: "Tracker")
+            Logger.shared.log("Synced to Trakt: S\(seasonNumber)E\(episodeNumber) (watched)", type: "Tracker")
         } catch {
             Logger.shared.log("Failed to sync to Trakt: \(error.localizedDescription)", type: "Error")
         }
     }
 
-    private func scrobblePause(account: TrackerAccount, traktId: Int, seasonNumber: Int, episodeNumber: Int, progress: Double) async {
-        let payload: [String: Any] = [
-            "progress": progress,
-            "episode": [
-                "season": seasonNumber,
-                "number": episodeNumber
-            ]
-        ]
-
+    private func syncMovieToTrakt(account: TrackerAccount, movieId: Int, progress: Double) async {
         do {
-            guard !traktClientId.isEmpty else {
-                Logger.shared.log("Skipping Trakt scrobble because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+            guard let traktId = await getTraktIdFromTmdbId(movieId, mediaType: .movie) else {
+                Logger.shared.log("Could not find Trakt ID for TMDB movie ID \(movieId)", type: "Tracker")
                 return
             }
 
-            let url = URL(string: "https://api.trakt.tv/scrobble/pause")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
-            request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("2", forHTTPHeaderField: "trakt-api-version")
-
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if (response as? HTTPURLResponse)?.statusCode == 201 {
-                Logger.shared.log("Scrobbled to Trakt: S\(seasonNumber)E\(episodeNumber) \(Int(progress))%", type: "Tracker")
+            let traktProgress = progress <= 1.0 ? progress * 100.0 : progress
+            guard traktProgress >= 85 else {
+                guard let detail = try? await TMDBService.shared.getMovieDetails(id: movieId),
+                      let releaseDate = detail.releaseDate,
+                      let year = Int(releaseDate.prefix(4)) else {
+                    Logger.shared.log("Skipping Trakt movie scrobble because TMDB movie \(movieId) has no release year", type: "Tracker")
+                    return
+                }
+                await scrobbleMoviePause(
+                    account: refreshedAccount,
+                    traktId: traktId,
+                    title: detail.title,
+                    year: year,
+                    progress: traktProgress
+                )
+                return
             }
+
+            let payload: [String: Any] = [
+                "movies": [
+                    [
+                        "ids": ["trakt": traktId],
+                        "watched_at": ISO8601DateFormatter().string(from: Date())
+                    ]
+                ]
+            ]
+            _ = try await postTraktJSON(path: "sync/history", account: refreshedAccount, payload: payload)
+            Logger.shared.log("Synced movie to Trakt: TMDB \(movieId) (watched)", type: "Tracker")
+        } catch {
+            Logger.shared.log("Failed to sync movie to Trakt: \(error.localizedDescription)", type: "Error")
+        }
+    }
+
+    private func scrobblePause(account: TrackerAccount, traktEpisodeId: Int, seasonNumber: Int, episodeNumber: Int, progress: Double) async {
+        let payload: [String: Any] = [
+            "progress": normalizedTraktScrobbleProgress(progress),
+            "episode": ["ids": ["trakt": traktEpisodeId]]
+        ]
+
+        do {
+            _ = try await postTraktJSON(path: "scrobble/pause", account: account, payload: payload)
+            Logger.shared.log("Scrobbled to Trakt: S\(seasonNumber)E\(episodeNumber) \(Int(progress))%", type: "Tracker")
         } catch {
             Logger.shared.log("Failed to scrobble to Trakt: \(error.localizedDescription)", type: "Error")
         }
     }
 
-    private func getTraktIdFromTmdbId(_ tmdbId: Int) async -> Int? {
+    private func scrobbleMoviePause(account: TrackerAccount, traktId: Int, title: String, year: Int, progress: Double) async {
+        do {
+            _ = try await postTraktJSON(
+                path: "scrobble/pause",
+                account: account,
+                payload: [
+                    "progress": normalizedTraktScrobbleProgress(progress),
+                    "movie": [
+                        "title": title,
+                        "year": year,
+                        "ids": ["trakt": traktId]
+                    ]
+                ]
+            )
+            Logger.shared.log("Scrobbled movie to Trakt: \(Int(progress))%", type: "Tracker")
+        } catch {
+            Logger.shared.log("Failed to scrobble movie to Trakt: \(error.localizedDescription)", type: "Error")
+        }
+    }
+
+    private func normalizedTraktScrobbleProgress(_ progress: Double) -> Int {
+        Int(min(max(progress.rounded(), 0), 100))
+    }
+
+    private func postTraktJSON(path: String, account: TrackerAccount, payload: [String: Any], allowsRefreshRetry: Bool = true) async throws -> Data {
+        guard !traktClientId.isEmpty else {
+            throw NSError(domain: "Trakt", code: -1, userInfo: [NSLocalizedDescriptionKey: "TRAKT_CLIENT_ID is not configured."])
+        }
+
+        let url = URL(string: "https://api.trakt.tv/\(path)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
+        request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("2", forHTTPHeaderField: "trakt-api-version")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        if statusCode == 401, allowsRefreshRetry {
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account, force: true)
+            return try await postTraktJSON(path: path, account: refreshedAccount, payload: payload, allowsRefreshRetry: false)
+        }
+        guard (200...299).contains(statusCode) else {
+            let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw NSError(domain: "Trakt", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Trakt \(path) returned status \(statusCode): \(bodyPreview)"])
+        }
+        return data
+    }
+
+    private func getTraktIdFromTmdbId(_ tmdbId: Int, mediaType: TraktMediaType) async -> Int? {
+        let cacheKey = "\(mediaType.rawValue)|\(tmdbId)"
+        if let cached = traktMediaIdCacheQueue.sync(execute: { traktMediaIdCache[cacheKey] }) {
+            return cached
+        }
+
         do {
             guard !traktClientId.isEmpty else {
                 Logger.shared.log("Skipping Trakt TMDB lookup because TRAKT_CLIENT_ID is not configured.", type: "Tracker")
                 return nil
             }
 
-            let url = URL(string: "https://api.trakt.tv/search/tmdb/\(tmdbId)?type=show")!
+            let url = URL(string: "https://api.trakt.tv/search/tmdb/\(tmdbId)?type=\(mediaType.rawValue)")!
             var request = URLRequest(url: url)
             request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
             request.setValue("2", forHTTPHeaderField: "trakt-api-version")
@@ -1862,23 +2311,65 @@ final class TrackerManager: NSObject, ObservableObject {
                 return nil
             }
 
-            struct SearchResult: Codable {
-                let show: ShowData?
-                struct ShowData: Codable {
+            struct SearchResult: Decodable {
+                let show: MediaData?
+                let movie: MediaData?
+
+                struct MediaData: Decodable {
                     let ids: IDData
-                    struct IDData: Codable { let trakt: Int }
+
+                    struct IDData: Decodable {
+                        let trakt: Int
+                    }
                 }
             }
 
-            if let results = try JSONDecoder().decode([SearchResult].self, from: data).first,
-               let traktId = results.show?.ids.trakt {
-                return traktId
+            guard let result = try JSONDecoder().decode([SearchResult].self, from: data).first else {
+                return nil
             }
-            return nil
+            let traktId = mediaType == .show ? result.show?.ids.trakt : result.movie?.ids.trakt
+            if let traktId {
+                traktMediaIdCacheQueue.sync {
+                    traktMediaIdCache[cacheKey] = traktId
+                }
+            }
+            return traktId
         } catch {
             Logger.shared.log("Failed to get Trakt ID: \(error.localizedDescription)", type: "Error")
             return nil
         }
+    }
+
+    private func getTraktEpisodeId(showTraktId: Int, seasonNumber: Int, episodeNumber: Int, account: TrackerAccount) async -> Int? {
+        let cacheKey = "episode|\(showTraktId)|\(seasonNumber)|\(episodeNumber)"
+        if let cached = traktMediaIdCacheQueue.sync(execute: { traktMediaIdCache[cacheKey] }) {
+            return cached
+        }
+
+        do {
+            let data = try await fetchTraktPlaybackData(
+                path: "shows/\(showTraktId)/seasons/\(seasonNumber)/episodes/\(episodeNumber)",
+                account: account
+            )
+            let episode = try JSONDecoder().decode(TraktEpisode.self, from: data)
+            guard let traktEpisodeId = episode.ids?.trakt else {
+                Logger.shared.log("Trakt episode lookup returned no ID for show \(showTraktId) S\(seasonNumber)E\(episodeNumber)", type: "Tracker")
+                return nil
+            }
+            traktMediaIdCacheQueue.sync {
+                traktMediaIdCache[cacheKey] = traktEpisodeId
+            }
+            return traktEpisodeId
+        } catch {
+            Logger.shared.log("Failed to resolve Trakt episode ID for show \(showTraktId) S\(seasonNumber)E\(episodeNumber): \(error.localizedDescription)", type: "Error")
+            return nil
+        }
+    }
+
+    private func traktDate(from raw: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
     }
 
 
@@ -3675,6 +4166,9 @@ final class TrackerManager: NSObject, ObservableObject {
     @Published var isImportingMAL = false
     @Published var malImportError: String?
     @Published var malImportProgress: String?
+    @Published var isImportingTrakt = false
+    @Published var traktImportError: String?
+    @Published var traktImportProgress: String?
 
     func importAniListToLibrary() {
         guard let account = trackerState.getAccount(for: .anilist), account.isConnected else {
@@ -3779,6 +4273,203 @@ final class TrackerManager: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    func importTraktToLibrary() {
+        guard let account = trackerState.getAccount(for: .trakt), account.isConnected else {
+            traktImportError = "No connected Trakt account"
+            return
+        }
+
+        guard !isImportingTrakt else { return }
+
+        Task { @MainActor in
+            isImportingTrakt = true
+            traktImportError = nil
+            traktImportProgress = "Fetching your Trakt library..."
+        }
+
+        Task {
+            setBackupRestoreSyncSuppressed(true)
+            defer { setBackupRestoreSyncSuppressed(false) }
+
+            do {
+                let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+                async let watchlistShowPages = fetchAllTraktPages(path: "users/me/watchlist/shows?extended=full", account: refreshedAccount)
+                async let watchlistMoviePages = fetchAllTraktPages(path: "users/me/watchlist/movies?extended=full", account: refreshedAccount)
+                async let watchedShowData = fetchTraktPlaybackData(path: "users/me/watched/shows", account: refreshedAccount)
+                async let watchedMovieData = fetchTraktPlaybackData(path: "users/me/watched/movies", account: refreshedAccount)
+                let (watchlistShowsRaw, watchlistMoviesRaw, watchedShowsRaw, watchedMoviesRaw) = try await (
+                    watchlistShowPages,
+                    watchlistMoviePages,
+                    watchedShowData,
+                    watchedMovieData
+                )
+
+                let decoder = JSONDecoder()
+                let watchlistShows = try watchlistShowsRaw.flatMap { try decoder.decode([TraktWatchlistShowResponse].self, from: $0) }
+                let watchlistMovies = try watchlistMoviesRaw.flatMap { try decoder.decode([TraktWatchlistMovieResponse].self, from: $0) }
+                let watchedShows = try decoder.decode([TraktWatchedShowResponse].self, from: watchedShowsRaw)
+                let watchedMovies = try decoder.decode([TraktWatchedMovieResponse].self, from: watchedMoviesRaw)
+                let showIds = Array(Set((watchlistShows.compactMap { $0.show.ids.tmdb }) + (watchedShows.compactMap { $0.show.ids.tmdb }))).sorted()
+                let movieIds = Array(Set((watchlistMovies.compactMap { $0.movie.ids.tmdb }) + (watchedMovies.compactMap { $0.movie.ids.tmdb }))).sorted()
+
+                await MainActor.run {
+                    traktImportProgress = "Matching \(showIds.count) shows and \(movieIds.count) movies to TMDB..."
+                }
+
+                var mappedShows: [Int: TMDBSearchResult] = [:]
+                for tmdbId in showIds {
+                    if let detail = try? await TMDBService.shared.getTVShowDetails(id: tmdbId) {
+                        mappedShows[tmdbId] = Self.tmdbSearchResult(from: detail)
+                    }
+                }
+
+                var mappedMovies: [Int: TMDBSearchResult] = [:]
+                for tmdbId in movieIds {
+                    if let detail = try? await TMDBService.shared.getMovieDetails(id: tmdbId) {
+                        mappedMovies[tmdbId] = Self.tmdbSearchResult(from: detail)
+                    }
+                }
+
+                await MainActor.run {
+                    traktImportProgress = "Adding matched items and exact watched episodes to Eclipse..."
+                }
+
+                let counts = await MainActor.run { () -> (added: Int, advanced: Int, skipped: Int) in
+                    let library = LibraryManager.shared
+                    var added = 0
+                    var advanced = 0
+                    var skipped = 0
+
+                    func collection(named name: String) -> LibraryCollection {
+                        if let existing = library.collections.first(where: { $0.name == name }) {
+                            return existing
+                        }
+                        library.createCollection(name: name, description: "Imported from Trakt")
+                        return library.collections.first(where: { $0.name == name })!
+                    }
+
+                    func add(_ result: TMDBSearchResult, to collectionName: String) {
+                        let collection = collection(named: collectionName)
+                        let item = LibraryItem(searchResult: result)
+                        if !library.isItemInCollection(collection.id, item: item) {
+                            library.addItem(to: collection.id, item: item)
+                            added += 1
+                        }
+                    }
+
+                    for entry in watchlistShows {
+                        guard let tmdbId = entry.show.ids.tmdb, let result = mappedShows[tmdbId] else {
+                            skipped += 1
+                            continue
+                        }
+                        add(result, to: "Trakt Watchlist")
+                    }
+
+                    for entry in watchlistMovies {
+                        guard let tmdbId = entry.movie.ids.tmdb, let result = mappedMovies[tmdbId] else {
+                            skipped += 1
+                            continue
+                        }
+                        add(result, to: "Trakt Watchlist")
+                    }
+
+                    for entry in watchedShows {
+                        guard let tmdbId = entry.show.ids.tmdb, let result = mappedShows[tmdbId] else {
+                            skipped += 1
+                            continue
+                        }
+                        let watchedEpisodeCount = (entry.seasons ?? []).reduce(0) { $0 + $1.episodes.count }
+                        let collectionName = (entry.show.airedEpisodes ?? 0) > 0 && watchedEpisodeCount >= (entry.show.airedEpisodes ?? 0)
+                            ? "Trakt Completed"
+                            : "Trakt Watching"
+                        add(result, to: collectionName)
+
+                        var didAdvance = false
+                        for season in entry.seasons ?? [] {
+                            let watchedEpisodes = season.episodes.map(\.number)
+                            guard !watchedEpisodes.isEmpty else { continue }
+                            ProgressManager.shared.bulkMarkEpisodeNumbersAsWatched(
+                                showId: tmdbId,
+                                seasonNumber: season.number,
+                                episodeNumbers: watchedEpisodes
+                            )
+                            didAdvance = true
+                        }
+                        if didAdvance {
+                            advanced += 1
+                        }
+                    }
+
+                    for entry in watchedMovies {
+                        guard let tmdbId = entry.movie.ids.tmdb, let result = mappedMovies[tmdbId] else {
+                            skipped += 1
+                            continue
+                        }
+                        add(result, to: "Trakt Completed")
+                        ProgressManager.shared.markMovieAsWatchedForImport(
+                            movieId: tmdbId,
+                            title: result.displayTitle,
+                            posterURL: result.fullPosterURL
+                        )
+                        advanced += 1
+                    }
+
+                    return (added: added, advanced: advanced, skipped: skipped)
+                }
+
+                await MainActor.run {
+                    isImportingTrakt = false
+                    traktImportProgress = nil
+                    traktImportError = nil
+                    Logger.shared.log("Trakt import completed: \(counts.added) collection additions, \(counts.advanced) progress updates, \(counts.skipped) skipped entries", type: "Tracker")
+                }
+            } catch {
+                await MainActor.run {
+                    isImportingTrakt = false
+                    traktImportProgress = nil
+                    traktImportError = "Import failed: \(error.localizedDescription)"
+                    Logger.shared.log("Trakt import failed: \(error.localizedDescription)", type: "Error")
+                }
+            }
+        }
+    }
+
+    private static func tmdbSearchResult(from detail: TMDBTVShowDetail) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: detail.id,
+            mediaType: "tv",
+            title: nil,
+            name: detail.name,
+            overview: detail.overview,
+            posterPath: detail.posterPath,
+            backdropPath: detail.backdropPath,
+            releaseDate: nil,
+            firstAirDate: detail.firstAirDate,
+            voteAverage: detail.voteAverage,
+            popularity: detail.popularity,
+            adult: detail.adult,
+            genreIds: detail.genres.map(\.id)
+        )
+    }
+
+    private static func tmdbSearchResult(from detail: TMDBMovieDetail) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: detail.id,
+            mediaType: "movie",
+            title: detail.title,
+            name: nil,
+            overview: detail.overview,
+            posterPath: detail.posterPath,
+            backdropPath: detail.backdropPath,
+            releaseDate: detail.releaseDate,
+            firstAirDate: nil,
+            voteAverage: detail.voteAverage,
+            popularity: detail.popularity,
+            adult: detail.adult,
+            genreIds: detail.genres.map(\.id)
+        )
     }
 }
 

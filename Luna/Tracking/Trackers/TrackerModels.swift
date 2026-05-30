@@ -66,12 +66,14 @@ struct TrackerState: Codable {
     var accounts: [TrackerAccount] = []
     var syncEnabled: Bool = true
     var autoSyncRatings: Bool = false
+    var mergeTraktContinueWatching: Bool = false
     var lastSyncDate: Date?
 
     enum CodingKeys: String, CodingKey {
         case accounts
         case syncEnabled
         case autoSyncRatings
+        case mergeTraktContinueWatching
         case lastSyncDate
     }
 
@@ -82,6 +84,7 @@ struct TrackerState: Codable {
         accounts = try container.decodeIfPresent([TrackerAccount].self, forKey: .accounts) ?? []
         syncEnabled = try container.decodeIfPresent(Bool.self, forKey: .syncEnabled) ?? true
         autoSyncRatings = try container.decodeIfPresent(Bool.self, forKey: .autoSyncRatings) ?? false
+        mergeTraktContinueWatching = try container.decodeIfPresent(Bool.self, forKey: .mergeTraktContinueWatching) ?? false
         lastSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastSyncDate)
     }
 

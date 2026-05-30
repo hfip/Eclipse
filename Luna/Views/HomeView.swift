@@ -21,8 +21,10 @@ struct HomeView: View {
     @State private var isHoveringWatchNow = false
     @State private var isHoveringWatchlist = false
     @State private var continueWatchingItems: [ContinueWatchingItem] = []
+    @State private var continueWatchingRefreshID = UUID()
     @State private var didReportStartupReady = false
     @ObservedObject private var libraryManager = LibraryManager.shared
+    @ObservedObject private var trackerManager = TrackerManager.shared
     @State private var scrollOffset: CGFloat = 0
     
     @AppStorage("tmdbLanguage") private var selectedLanguage = "en-US"
@@ -119,6 +121,14 @@ struct HomeView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            refreshContinueWatchingItems()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .playerDidClose)) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                refreshContinueWatchingItems()
+            }
+        }
+        .onChangeComp(of: trackerManager.trackerState.mergeTraktContinueWatching) { _, _ in
             refreshContinueWatchingItems()
         }
         .onChangeComp(of: contentFilter.filterHorror) { _, _ in
@@ -501,8 +511,163 @@ struct HomeView: View {
     }
 
     private func refreshContinueWatchingItems() {
-        continueWatchingItems = ProgressManager.shared.getContinueWatchingItems()
+        let refreshID = UUID()
+        continueWatchingRefreshID = refreshID
+        let localItems = ProgressManager.shared.getContinueWatchingItems()
+        continueWatchingItems = localItems
+
+        Task { @MainActor in
+            async let traktItems = trackerManager.fetchTraktContinueWatchingItems()
+            async let watchNextItems = resolveWatchNextItems()
+            let mergedItems = mergeContinueWatchingItems(
+                localItems: localItems,
+                traktItems: await traktItems,
+                watchNextItems: await watchNextItems
+            )
+            guard continueWatchingRefreshID == refreshID else { return }
+            continueWatchingItems = mergedItems
+        }
     }
+
+    private func resolveWatchNextItems() async -> [ContinueWatchingItem] {
+        var items: [ContinueWatchingItem] = []
+        for candidate in ProgressManager.shared.getWatchNextCandidates().prefix(10) {
+            if let item = await resolveWatchNextItem(candidate) {
+                items.append(item)
+            }
+        }
+        return items
+    }
+
+    private func resolveWatchNextItem(_ candidate: WatchNextCandidate) async -> ContinueWatchingItem? {
+        if let playbackContext = candidate.playbackContext,
+           playbackContext.hasAnimeMediaId {
+            guard !playbackContext.isSpecial,
+                  let episodeCount = playbackContext.animeSeasonEpisodeCount,
+                  candidate.episodeNumber < episodeCount else {
+                return nil
+            }
+            return makeWatchNextItem(
+                candidate: candidate,
+                seasonNumber: candidate.seasonNumber,
+                episodeNumber: candidate.episodeNumber + 1,
+                playbackContext: playbackContext.forEpisodeNumber(candidate.episodeNumber + 1)
+            )
+        }
+
+        do {
+            let season = try await tmdbService.getSeasonDetails(
+                tvShowId: candidate.tmdbId,
+                seasonNumber: candidate.seasonNumber
+            )
+            if let nextEpisode = season.episodes
+                .filter({ $0.episodeNumber > candidate.episodeNumber && episodeHasAired($0) })
+                .min(by: { $0.episodeNumber < $1.episodeNumber }) {
+                return makeWatchNextItem(
+                    candidate: candidate,
+                    seasonNumber: nextEpisode.seasonNumber,
+                    episodeNumber: nextEpisode.episodeNumber,
+                    playbackContext: candidate.playbackContext?.forEpisodeNumber(nextEpisode.episodeNumber)
+                )
+            }
+
+            let show = try await tmdbService.getTVShowWithSeasons(id: candidate.tmdbId)
+            for nextSeason in show.seasons
+                .filter({ $0.seasonNumber > candidate.seasonNumber && $0.seasonNumber > 0 && $0.episodeCount > 0 })
+                .sorted(by: { $0.seasonNumber < $1.seasonNumber }) {
+                let season = try await tmdbService.getSeasonDetails(
+                    tvShowId: candidate.tmdbId,
+                    seasonNumber: nextSeason.seasonNumber
+                )
+                if let firstEpisode = season.episodes
+                    .filter({ episodeHasAired($0) })
+                    .min(by: { $0.episodeNumber < $1.episodeNumber }) {
+                    return makeWatchNextItem(
+                        candidate: candidate,
+                        seasonNumber: firstEpisode.seasonNumber,
+                        episodeNumber: firstEpisode.episodeNumber,
+                        playbackContext: nil
+                    )
+                }
+            }
+        } catch {
+            Logger.shared.log("HomeView: Watch Next lookup failed for TMDB \(candidate.tmdbId): \(error.localizedDescription)", type: "TMDB")
+        }
+
+        return nil
+    }
+
+    private func makeWatchNextItem(
+        candidate: WatchNextCandidate,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        playbackContext: EpisodePlaybackContext?
+    ) -> ContinueWatchingItem {
+        ContinueWatchingItem(
+            id: "watch_next_\(candidate.tmdbId)_s\(seasonNumber)_e\(episodeNumber)",
+            tmdbId: candidate.tmdbId,
+            isMovie: false,
+            title: candidate.title,
+            posterURL: candidate.posterURL,
+            progress: 0,
+            lastUpdated: candidate.lastUpdated,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber,
+            currentTime: 0,
+            totalDuration: 1,
+            playbackContext: playbackContext,
+            isAnime: candidate.isAnime,
+            statusText: "Watch next",
+            isWatchNext: true,
+            traktPlaybackId: nil
+        )
+    }
+
+    private func episodeHasAired(_ episode: TMDBEpisode) -> Bool {
+        guard let airDate = episode.airDate,
+              let parsedDate = Self.tmdbDateFormatter.date(from: airDate) else {
+            return true
+        }
+        return parsedDate <= Date()
+    }
+
+    private func mergeContinueWatchingItems(
+        localItems: [ContinueWatchingItem],
+        traktItems: [ContinueWatchingItem],
+        watchNextItems: [ContinueWatchingItem],
+        limit: Int = 10
+    ) -> [ContinueWatchingItem] {
+        var itemByMediaKey: [String: ContinueWatchingItem] = [:]
+
+        for item in watchNextItems + localItems + traktItems {
+            let key = "\(item.isMovie ? "movie" : "show")|\(item.tmdbId)"
+            guard let existing = itemByMediaKey[key] else {
+                itemByMediaKey[key] = item
+                continue
+            }
+
+            if existing.isWatchNext != item.isWatchNext {
+                if existing.isWatchNext {
+                    itemByMediaKey[key] = item
+                }
+            } else if item.lastUpdated > existing.lastUpdated {
+                itemByMediaKey[key] = item
+            }
+        }
+
+        return itemByMediaKey.values
+            .sorted { $0.lastUpdated > $1.lastUpdated }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    private static let tmdbDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 
     private func reportStartupReadyIfNeeded() {
         guard !didReportStartupReady else { return }
@@ -885,7 +1050,7 @@ struct ContinueWatchingCard: View {
                         }
                         .frame(height: isTvOS ? 6 : 4)
 
-                        Text(item.remainingTime)
+                        Text(item.displayStatus)
                             .font(.caption2)
                             .fontWeight(.medium)
                             .foregroundColor(.white.opacity(0.8))
@@ -949,10 +1114,12 @@ struct ContinueWatchingCard: View {
                 Label("Mark as Watched", systemImage: "checkmark.circle")
             }
 
-            Button(role: .destructive) {
-                removeFromContinueWatching()
-            } label: {
-                Label("Remove", systemImage: "trash")
+            if !item.isWatchNext {
+                Button(role: .destructive) {
+                    removeFromContinueWatching()
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
             }
         }
         .background(
@@ -1308,7 +1475,14 @@ struct ContinueWatchingCard: View {
     }
 
     private func removeFromContinueWatching() {
-        ProgressManager.shared.removeContinueWatchingItem(item)
+        if let traktPlaybackId = item.traktPlaybackId {
+            TrackerManager.shared.removeTraktContinueWatchingItem(traktPlaybackId) {
+                onDataChanged()
+            }
+            return
+        } else {
+            ProgressManager.shared.removeContinueWatchingItem(item)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             onDataChanged()
         }

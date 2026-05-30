@@ -371,6 +371,11 @@ struct StremioStream: Codable, Identifiable, Hashable {
     var proxyHeaders: [String: String]? {
         behaviorHints?.proxyHeaders?.request
     }
+
+    var formattedVideoSize: String? {
+        guard let videoSize = behaviorHints?.videoSize, videoSize > 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: videoSize, countStyle: .file)
+    }
 }
 
 struct StremioStreamBehaviorHints: Codable, Hashable {
@@ -378,9 +383,10 @@ struct StremioStreamBehaviorHints: Codable, Hashable {
     let bingeGroup: String?
     let proxyHeaders: StremioProxyHeaders?
     let filename: String?
+    let videoSize: Int64?
 
     enum CodingKeys: String, CodingKey {
-        case notWebReady, bingeGroup, proxyHeaders, filename
+        case notWebReady, bingeGroup, proxyHeaders, filename, videoSize
     }
 
     init(from decoder: Decoder) throws {
@@ -396,6 +402,15 @@ struct StremioStreamBehaviorHints: Codable, Hashable {
         bingeGroup = try? container.decodeIfPresent(String.self, forKey: .bingeGroup)
         proxyHeaders = try? container.decodeIfPresent(StremioProxyHeaders.self, forKey: .proxyHeaders)
         filename = try? container.decodeIfPresent(String.self, forKey: .filename)
+        if let size = try? container.decodeIfPresent(Int64.self, forKey: .videoSize) {
+            videoSize = size
+        } else if let size = try? container.decodeIfPresent(Double.self, forKey: .videoSize) {
+            videoSize = Int64(size)
+        } else if let size = try? container.decodeIfPresent(String.self, forKey: .videoSize) {
+            videoSize = Int64(size)
+        } else {
+            videoSize = nil
+        }
     }
 }
 
