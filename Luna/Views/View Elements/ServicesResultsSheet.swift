@@ -184,6 +184,26 @@ struct ModulesSearchResultsSheet: View {
         }
         return stripped
     }
+    private var normalizedAnimeSequelTitle: String? {
+        guard isAnimeContent || animeSeasonTitle != nil,
+              let seasonNumber = selectedEpisode?.seasonNumber,
+              seasonNumber > 1 else {
+            return nil
+        }
+
+        let trimmedTitle = effectiveTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = String(seasonNumber)
+        guard trimmedTitle.hasSuffix(suffix) else { return nil }
+
+        let attachedBaseTitle = String(trimmedTitle.dropLast(suffix.count))
+        guard let lastCharacter = attachedBaseTitle.last,
+              lastCharacter.isLetter else {
+            return nil
+        }
+
+        let baseTitle = attachedBaseTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(baseTitle) Season \(seasonNumber)"
+    }
     private var fallbackAnimeSearchQuery: String? {
         guard let strippedAnimeFallbackTitle else { return nil }
         if let episode = selectedEpisode {
@@ -196,6 +216,13 @@ struct ModulesSearchResultsSheet: View {
             return "\(strippedAnimeFallbackTitle) S\(episode.seasonNumber)E\(episode.episodeNumber)"
         }
         return strippedAnimeFallbackTitle
+    }
+    private var normalizedAnimeSequelSearchQuery: String? {
+        guard let normalizedAnimeSequelTitle else { return nil }
+        if let episode = selectedEpisode, !specialTitleOnlySearch {
+            return "\(normalizedAnimeSequelTitle) E\(episode.episodeNumber)"
+        }
+        return normalizedAnimeSequelTitle
     }
 
     private var displayTitle: String {
@@ -914,6 +941,7 @@ struct ModulesSearchResultsSheet: View {
             sheetTitleBaseForMatching,
             effectiveTitle,
             mediaTitle,
+            normalizedAnimeSequelTitle,
             strippedAnimeFallbackTitle,
             originalTitle
         ]
@@ -928,6 +956,7 @@ struct ModulesSearchResultsSheet: View {
             sheetTitleBaseForMatching,
             effectiveTitle,
             mediaTitle,
+            normalizedAnimeSequelTitle,
             strippedAnimeFallbackTitle
         ]
 
@@ -1491,6 +1520,10 @@ struct ModulesSearchResultsSheet: View {
         }
 
         var queries = [primary]
+        if let normalizedAnimeSequelSearchQuery,
+           normalizedAnimeSequelSearchQuery.caseInsensitiveCompare(primary) != .orderedSame {
+            queries.append(normalizedAnimeSequelSearchQuery)
+        }
         if let fallbackAnimeSearchQuery,
            fallbackAnimeSearchQuery.caseInsensitiveCompare(primary) != .orderedSame {
             queries.append(fallbackAnimeSearchQuery)
@@ -1891,7 +1924,8 @@ struct ModulesSearchResultsSheet: View {
             searchQuery = effectiveTitle
         }
         
-        let baseTitleQuery = fallbackAnimeSearchQuery
+        let baseTitleQuery = normalizedAnimeSequelSearchQuery
+            ?? fallbackAnimeSearchQuery
             ?? (searchQuery.caseInsensitiveCompare(effectiveTitle) == .orderedSame ? nil : effectiveTitle)
         let hasAlternativeTitle = originalTitle.map { !$0.isEmpty && $0.lowercased() != effectiveTitle.lowercased() } ?? false
         
