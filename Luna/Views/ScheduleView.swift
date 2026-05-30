@@ -12,6 +12,7 @@ import Kingfisher
 struct ScheduleView: View {
     @AppStorage("showLocalScheduleTime") private var showLocalScheduleTime = true
     @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
+    @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
     @StateObject private var viewModel = ScheduleViewModel()
     @StateObject private var accentColorManager = AccentColorManager.shared
     
@@ -19,11 +20,19 @@ struct ScheduleView: View {
     @State private var showingMediaDetail = false
     @State private var showNoTMDBAlert = false
     @State private var noTMDBAlertTitle = ""
-    @State private var loadingItemId: Int?
+    @State private var loadingItemId: String?
     @State private var scrollOffset: CGFloat = 0
     @State private var selectedScheduleDate: Date?
+    @State private var selectedScheduleMode: ScheduleMode
     
+    private let isActive: Bool
     private let dayChangeTimer = Timer.publish(every: 300, on: .main, in: .common).autoconnect()
+
+    init(isActive: Bool = true) {
+        self.isActive = isActive
+        let savedMode = UserDefaults.standard.string(forKey: "defaultScheduleMode")
+        _selectedScheduleMode = State(initialValue: ScheduleMode.sanitized(savedMode))
+    }
     
     var body: some View {
         if #available(iOS 16.0, *) {
@@ -55,18 +64,37 @@ struct ScheduleView: View {
         }
         .navigationTitle("Schedule")
         .task {
-            if viewModel.scheduleEntries.isEmpty {
-                await viewModel.loadSchedule(localTimeZone: showLocalScheduleTime)
+            if isActive, viewModel.scheduleEntries.isEmpty {
+                await viewModel.loadSchedule(mode: selectedScheduleMode, localTimeZone: showLocalScheduleTime)
             }
         }
         .refreshable {
-            await viewModel.loadSchedule(localTimeZone: showLocalScheduleTime)
+            await viewModel.loadSchedule(mode: selectedScheduleMode, localTimeZone: showLocalScheduleTime, forceRefresh: true)
+        }
+        .onChange(of: selectedScheduleMode) { newValue in
+            selectedScheduleDate = nil
+            Task {
+                await viewModel.loadSchedule(mode: newValue, localTimeZone: showLocalScheduleTime)
+            }
+        }
+        .onChange(of: isActive) { active in
+            guard active else { return }
+            let defaultMode = ScheduleMode.sanitized(defaultScheduleModeRaw)
+            if selectedScheduleMode != defaultMode {
+                selectedScheduleMode = defaultMode
+            } else if viewModel.scheduleEntries.isEmpty {
+                Task {
+                    await viewModel.loadSchedule(mode: defaultMode, localTimeZone: showLocalScheduleTime)
+                }
+            }
         }
         .onChange(of: showLocalScheduleTime) { newValue in
             viewModel.regroupBuckets(localTimeZone: newValue)
         }
         .onReceive(dayChangeTimer) { _ in
-            Task { await viewModel.handleDayChangeIfNeeded(localTimeZone: showLocalScheduleTime) }
+            Task {
+                await viewModel.handleDayChangeIfNeeded(mode: selectedScheduleMode, localTimeZone: showLocalScheduleTime)
+            }
         }
         .background(
             Group {
@@ -103,7 +131,7 @@ struct ScheduleView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("Loading schedule...")
+            Text("Loading \(selectedScheduleMode.displayName.lowercased()) schedule...")
                 .font(.headline)
                 .foregroundColor(.secondary)
         }
@@ -121,7 +149,9 @@ struct ScheduleView: View {
                 .foregroundColor(.secondary)
                 .padding(.horizontal)
             Button("Retry") {
-                Task { await viewModel.loadSchedule(localTimeZone: showLocalScheduleTime) }
+                Task {
+                    await viewModel.loadSchedule(mode: selectedScheduleMode, localTimeZone: showLocalScheduleTime, forceRefresh: true)
+                }
             }
             .buttonStyle(.bordered)
             .tint(accentColorManager.currentAccentColor)
@@ -137,7 +167,7 @@ struct ScheduleView: View {
             Text("No Upcoming Episodes")
                 .font(.title2)
                 .fontWeight(.bold)
-            Text("No episodes scheduled in the next week.")
+            Text("No \(selectedScheduleMode.displayName.lowercased()) episodes scheduled in the next week.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
@@ -147,6 +177,8 @@ struct ScheduleView: View {
     private var mainScheduleView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                scheduleModePickerSection
+
                 if useClassicScheduleUI {
                     classicTimeZoneToggleSection
 
@@ -181,6 +213,26 @@ struct ScheduleView: View {
             return bucket
         }
         return viewModel.dayBuckets.first(where: { !$0.items.isEmpty }) ?? viewModel.dayBuckets.first
+    }
+
+    private var scheduleModePickerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Schedule")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+
+            Picker("Schedule", selection: $selectedScheduleMode) {
+                ForEach(ScheduleMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(LunaTheme.shared.cardBackground)
+        .cornerRadius(10)
+        .padding(.horizontal)
     }
 
     private var timeZoneToggleSection: some View {
@@ -331,7 +383,7 @@ struct ScheduleView: View {
         }
     }
     
-    private func scheduleItemCard(item: AniListAiringScheduleEntry) -> some View {
+    private func scheduleItemCard(item: ScheduleEntry) -> some View {
         Button {
             guard loadingItemId == nil else { return }
             loadingItemId = item.id
@@ -367,7 +419,7 @@ struct ScheduleView: View {
         .disabled(loadingItemId != nil)
     }
     
-    private func scheduleItemContent(item: AniListAiringScheduleEntry) -> some View {
+    private func scheduleItemContent(item: ScheduleEntry) -> some View {
         HStack(spacing: 12) {
             if let coverURL = item.coverImage, let url = URL(string: coverURL) {
                 KFImage(url)
@@ -390,6 +442,10 @@ struct ScheduleView: View {
                 Text(item.title)
                     .font(.headline)
                     .lineLimit(2)
+
+                Text(item.source.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(accentColorManager.currentAccentColor)
                 
                 HStack(spacing: 8) {
                     Text(formatLabel(for: item))
@@ -412,7 +468,7 @@ struct ScheduleView: View {
         .cornerRadius(16)
     }
 
-    private func compactScheduleItemContent(item: AniListAiringScheduleEntry) -> some View {
+    private func compactScheduleItemContent(item: ScheduleEntry) -> some View {
         HStack(spacing: 12) {
             schedulePoster(urlString: item.coverImage)
 
@@ -422,9 +478,15 @@ struct ScheduleView: View {
                     .foregroundColor(.white)
                     .lineLimit(2)
 
-                Text(formatLabel(for: item))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Text(item.source.displayName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(accentColorManager.currentAccentColor)
+
+                    Text(formatLabel(for: item))
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Spacer(minLength: 8)
@@ -464,7 +526,14 @@ struct ScheduleView: View {
     
     // MARK: - Helpers
     
-    private func formatLabel(for item: AniListAiringScheduleEntry) -> String {
+    private func formatLabel(for item: ScheduleEntry) -> String {
+        if item.source == .western {
+            if let season = item.season, item.episode > 0 {
+                return "S\(season) Ep. \(item.episode)"
+            }
+            return item.episode > 0 ? "Ep. \(item.episode)" : "New episode"
+        }
+
         switch item.format?.uppercased() {
         case "MOVIE":
             return "Movie"

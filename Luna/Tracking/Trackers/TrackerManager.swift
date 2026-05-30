@@ -1996,7 +1996,7 @@ final class TrackerManager: NSObject, ObservableObject {
             async let movieData = fetchTraktPlaybackData(path: "sync/playback/movies", account: refreshedAccount)
             let (upNextPlaybackData, moviePlaybackData) = try await (upNextData, movieData)
 
-            let shows = try JSONDecoder().decode([TraktUpNextResponse].self, from: upNextPlaybackData).compactMap { item in
+            let shows: [ContinueWatchingItem] = try JSONDecoder().decode([TraktUpNextResponse].self, from: upNextPlaybackData).compactMap { item -> ContinueWatchingItem? in
                 guard let tmdbId = item.show.ids.tmdb,
                       let episode = item.progress.nextEpisode else { return nil }
                 return ContinueWatchingItem(
@@ -2018,7 +2018,7 @@ final class TrackerManager: NSObject, ObservableObject {
                     traktPlaybackId: nil
                 )
             }
-            let movies = try JSONDecoder().decode([TraktMoviePlaybackResponse].self, from: moviePlaybackData).compactMap { playback in
+            let movies: [ContinueWatchingItem] = try JSONDecoder().decode([TraktMoviePlaybackResponse].self, from: moviePlaybackData).compactMap { playback -> ContinueWatchingItem? in
                 guard let tmdbId = playback.movie.ids.tmdb else { return nil }
                 let normalizedProgress = min(max(playback.progress / 100.0, 0), 1)
                 return ContinueWatchingItem(

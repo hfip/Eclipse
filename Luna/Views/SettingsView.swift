@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage("githubReleaseUpdateAvailable") private var githubReleaseUpdateAvailable = false
     @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
     @AppStorage("githubReleaseURL") private var githubReleaseURL = ""
+    @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
 
     @StateObject private var algorithmManager = AlgorithmManager.shared
     @AppStorage("showKanzen") private var showKanzen: Bool = false
@@ -23,6 +24,10 @@ struct SettingsView: View {
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Luna")!
     private let originalProjectURL = URL(string: "https://github.com/cranci1/Luna")!
     private let licenseURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
+
+    private var defaultScheduleMode: ScheduleMode {
+        ScheduleMode.sanitized(defaultScheduleModeRaw)
+    }
     
     let languages = [
         ("en-US", "English (US)"),
@@ -160,6 +165,22 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         
+                        GlassDivider()
+
+                        NavigationLink(destination: ScheduleSettingsView()) {
+                            GlassSettingsRow(icon: "calendar", iconColor: .red, title: "Schedule") {
+                                HStack(spacing: 4) {
+                                    Text(defaultScheduleMode.displayName)
+                                        .font(.subheadline)
+                                        .foregroundColor(.white.opacity(0.5))
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+
                         GlassDivider()
                         
                         NavigationLink(destination: CatalogsSettingsView()) {
@@ -355,6 +376,7 @@ struct SettingsView: View {
         Section {
             NavigationLink(destination: PlayerSettingsView()) { Text("Media Player") }
             NavigationLink(destination: AlternativeUIView()) { Text("Appearance") }
+            NavigationLink(destination: ScheduleSettingsView()) { Text("Schedule") }
             NavigationLink(destination: CatalogsSettingsView()) { Text("Catalogs") }
             NavigationLink(destination: ServicesView()) { Text("Services") }
             NavigationLink(destination: TrackersSettingsView()) { Text("Trackers") }
@@ -414,6 +436,45 @@ struct SettingsView: View {
                 isCheckingGitHubRelease = false
             }
         }
+    }
+}
+
+struct ScheduleSettingsView: View {
+    @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
+
+    private var selectedMode: Binding<ScheduleMode> {
+        Binding(
+            get: { ScheduleMode.sanitized(defaultScheduleModeRaw) },
+            set: { defaultScheduleModeRaw = $0.rawValue }
+        )
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Default schedule", selection: selectedMode) {
+                    ForEach(ScheduleMode.allCases) { mode in
+                        VStack(alignment: .leading) {
+                            Text(mode.displayName)
+                            Text(mode.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+            } header: {
+                Text("Schedule Tab")
+            } footer: {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Choose which schedule opens first when you select the Schedule tab. You can still switch modes inside the tab.")
+                    Link("Western schedule data by TVmaze", destination: URL(string: "https://www.tvmaze.com")!)
+                }
+            }
+        }
+        .navigationTitle("Schedule")
+        .lunaSettingsStyle()
     }
 }
 

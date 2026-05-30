@@ -26,6 +26,7 @@ struct BackupData: Codable {
     var inAppPlayer: String
     var showScheduleTab: Bool
     var showLocalScheduleTime: Bool
+    var defaultScheduleMode: String = ScheduleMode.anime.rawValue
 
     // Player Settings
     var defaultPlaybackSpeed: Double = 1.0
@@ -123,7 +124,7 @@ struct BackupData: Codable {
 
     enum CodingKeys: String, CodingKey {
         case version, createdDate
-        case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime
+        case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime, defaultScheduleMode
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
         case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
@@ -156,6 +157,7 @@ struct BackupData: Codable {
             ?? "VLC"
         showScheduleTab = try container.decodeIfPresent(Bool.self, forKey: .showScheduleTab) ?? true
         showLocalScheduleTime = try container.decodeIfPresent(Bool.self, forKey: .showLocalScheduleTime) ?? true
+        defaultScheduleMode = ScheduleMode.sanitizedRawValue(try container.decodeIfPresent(String.self, forKey: .defaultScheduleMode))
 
         // Player settings
         defaultPlaybackSpeed = try container.decodeIfPresent(Double.self, forKey: .defaultPlaybackSpeed) ?? 1.0
@@ -305,6 +307,7 @@ struct BackupData: Codable {
         try container.encode(inAppPlayer, forKey: .inAppPlayer)
         try container.encode(showScheduleTab, forKey: .showScheduleTab)
         try container.encode(showLocalScheduleTime, forKey: .showLocalScheduleTime)
+        try container.encode(ScheduleMode.sanitizedRawValue(defaultScheduleMode), forKey: .defaultScheduleMode)
 
         // Player settings
         try container.encode(defaultPlaybackSpeed, forKey: .defaultPlaybackSpeed)
@@ -398,6 +401,7 @@ struct BackupData: Codable {
         inAppPlayer: String,
         showScheduleTab: Bool,
         showLocalScheduleTime: Bool,
+        defaultScheduleMode: String = ScheduleMode.anime.rawValue,
 
         // Player settings
         defaultPlaybackSpeed: Double = 1.0,
@@ -489,6 +493,7 @@ struct BackupData: Codable {
         self.inAppPlayer = inAppPlayer
         self.showScheduleTab = showScheduleTab
         self.showLocalScheduleTime = showLocalScheduleTime
+        self.defaultScheduleMode = ScheduleMode.sanitizedRawValue(defaultScheduleMode)
 
         self.defaultPlaybackSpeed = defaultPlaybackSpeed
         self.holdSpeedPlayer = holdSpeedPlayer
@@ -765,6 +770,7 @@ class BackupManager {
         let tmdbLanguage = userDefaults.string(forKey: "tmdbLanguage") ?? "en-US"
         let showScheduleTab = userDefaults.bool(forKey: "showScheduleTab")
         let showLocalScheduleTime = userDefaults.bool(forKey: "showLocalScheduleTime")
+        let defaultScheduleMode = ScheduleMode.sanitizedRawValue(userDefaults.string(forKey: "defaultScheduleMode"))
         
         // Player settings
         let savedDefaultPlaybackSpeed = userDefaults.double(forKey: "defaultPlaybackSpeed")
@@ -940,6 +946,7 @@ class BackupManager {
             inAppPlayer: inAppPlayer,
             showScheduleTab: showScheduleTab,
             showLocalScheduleTime: showLocalScheduleTime,
+            defaultScheduleMode: defaultScheduleMode,
 
             defaultPlaybackSpeed: defaultPlaybackSpeed,
             holdSpeedPlayer: holdSpeedPlayer,
@@ -1079,6 +1086,7 @@ class BackupManager {
         let inAppPlayer = json["inAppPlayer"] as? String ?? json["playerChoice"] as? String ?? "VLC"
         let showScheduleTab = json["showScheduleTab"] as? Bool ?? true
         let showLocalScheduleTime = json["showLocalScheduleTime"] as? Bool ?? true
+        let defaultScheduleMode = ScheduleMode.sanitizedRawValue(json["defaultScheduleMode"] as? String)
 
         // Player settings
         let defaultPlaybackSpeed = json["defaultPlaybackSpeed"] as? Double ?? 1.0
@@ -1289,6 +1297,7 @@ class BackupManager {
             inAppPlayer: inAppPlayer,
             showScheduleTab: showScheduleTab,
             showLocalScheduleTime: showLocalScheduleTime,
+            defaultScheduleMode: defaultScheduleMode,
             defaultPlaybackSpeed: defaultPlaybackSpeed,
             holdSpeedPlayer: holdSpeedPlayer,
             externalPlayer: externalPlayer,
@@ -1381,6 +1390,7 @@ class BackupManager {
         userDefaults.set(backup.inAppPlayer, forKey: "inAppPlayer")
         userDefaults.set(backup.showScheduleTab, forKey: "showScheduleTab")
         userDefaults.set(backup.showLocalScheduleTime, forKey: "showLocalScheduleTime")
+        userDefaults.set(ScheduleMode.sanitizedRawValue(backup.defaultScheduleMode), forKey: "defaultScheduleMode")
 
         // Player settings
         userDefaults.set(backup.defaultPlaybackSpeed, forKey: "defaultPlaybackSpeed")

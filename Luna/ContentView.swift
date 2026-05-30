@@ -195,7 +195,7 @@ struct ContentView: View {
             }
             
             Tab("Schedule", systemImage: "calendar", value: AppTab.schedule) {
-                ScheduleView()
+                ScheduleView(isActive: selectedTab == .schedule)
             }
             
             Tab("Downloads", systemImage: "arrow.down.circle.fill", value: AppTab.downloads) {
@@ -294,7 +294,7 @@ struct ContentView: View {
                 }
                 .tag(AppTab.home)
             
-            ScheduleView()
+            ScheduleView(isActive: selectedTab == .schedule)
                 .tabItem {
                     Image(systemName: "calendar")
                     Text("Schedule")
