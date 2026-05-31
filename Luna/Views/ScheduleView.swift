@@ -56,7 +56,7 @@ struct ScheduleView: View {
                 loadingView
             } else if let errorMessage = viewModel.errorMessage {
                 errorView(errorMessage)
-            } else if viewModel.dayBuckets.isEmpty {
+            } else if viewModel.dayBuckets.allSatisfy({ $0.items.isEmpty }) {
                 emptyStateView
             } else {
                 mainScheduleView
@@ -298,7 +298,7 @@ struct ScheduleView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
             } else {
-                VStack(spacing: 12) {
+                LazyVStack(spacing: 12) {
                     ForEach(bucket.items) { item in
                         scheduleItemCard(item: item)
                     }
@@ -443,10 +443,6 @@ struct ScheduleView: View {
                     .font(.headline)
                     .lineLimit(2)
 
-                Text(item.source.displayName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(accentColorManager.currentAccentColor)
-                
                 HStack(spacing: 8) {
                     Text(formatLabel(for: item))
                         .font(.subheadline)
@@ -455,7 +451,7 @@ struct ScheduleView: View {
                     Text("•")
                         .foregroundColor(.secondary)
                     
-                    Label(formattedTime(item.airingAt), systemImage: "clock")
+                    Label(formattedTime(for: item), systemImage: "clock")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -478,20 +474,14 @@ struct ScheduleView: View {
                     .foregroundColor(.white)
                     .lineLimit(2)
 
-                HStack(spacing: 6) {
-                    Text(item.source.displayName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(accentColorManager.currentAccentColor)
-
-                    Text(formatLabel(for: item))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
+                Text(formatLabel(for: item))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
             }
 
             Spacer(minLength: 8)
 
-            Text(formattedTime(item.airingAt))
+            Text(formattedTime(for: item))
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 8)
@@ -527,7 +517,7 @@ struct ScheduleView: View {
     // MARK: - Helpers
     
     private func formatLabel(for item: ScheduleEntry) -> String {
-        if item.source == .western {
+        if item.source != .anime {
             if let season = item.season, item.episode > 0 {
                 return "S\(season) Ep. \(item.episode)"
             }
@@ -603,6 +593,10 @@ struct ScheduleView: View {
         formatter.dateStyle = .none
         formatter.timeZone = showLocalScheduleTime ? .current : TimeZone(secondsFromGMT: 0)
         return formatter.string(from: date)
+    }
+
+    private func formattedTime(for item: ScheduleEntry) -> String {
+        item.hasKnownAiringTime ? formattedTime(item.airingAt) : "Time TBA"
     }
 }
 

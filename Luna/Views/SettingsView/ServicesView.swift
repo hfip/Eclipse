@@ -22,6 +22,7 @@ struct ServicesView: View {
     @State private var stremioError: String?
     @State private var showStremioError = false
     @State private var servicesAutoModeEnabled: Bool = UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
+    @State private var servicesAutoSelectEpisodesEnabled: Bool = UserDefaults.standard.bool(forKey: "servicesAutoSelectEpisodesEnabled")
     @State private var selectedAutoModeSourceIds: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceIds") ?? [])
     @State private var autoModeSourceOrderIds: [String] = UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceOrderIds") ?? []
     @State private var autoModeQualityPreference: AutoModeQualityPreference = .current
@@ -178,6 +179,11 @@ struct ServicesView: View {
                         UserDefaults.standard.set(newValue, forKey: "servicesAutoModeEnabled")
                     }
 
+                Toggle("Auto-Select Episodes", isOn: $servicesAutoSelectEpisodesEnabled)
+                    .onChange(of: servicesAutoSelectEpisodesEnabled) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "servicesAutoSelectEpisodesEnabled")
+                    }
+
                 if servicesAutoModeEnabled {
                     Toggle("Auto Quality", isOn: $autoModeQualityEnabled)
                         .onChange(of: autoModeQualityEnabled) { enabled in
@@ -245,7 +251,7 @@ struct ServicesView: View {
                     }
                 }
             } footer: {
-                Text("Auto Mode checks enabled sources from top to bottom. Drag to set priority, and turn Auto Quality off when you want to choose stream quality yourself.")
+                Text("Auto-Select Episodes also applies when choosing a source manually. Auto Mode checks enabled sources from top to bottom. Drag to set priority, and turn Auto Quality off when you want to choose stream quality yourself.")
             }
 
             Section(header: unifiedSectionHeader) {

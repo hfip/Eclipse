@@ -413,6 +413,7 @@ struct TMDBTVShowDetail: Codable, Identifiable {
     let type: String?
     let contentRatings: TMDBContentRatings?
     let externalIds: TMDBExternalIds?
+    let nextEpisodeToAir: TMDBEpisode?
     
     enum CodingKeys: String, CodingKey {
         case id, name, overview, popularity, genres, tagline, status, adult, languages, type
@@ -431,6 +432,7 @@ struct TMDBTVShowDetail: Codable, Identifiable {
         case originCountry = "origin_country"
         case contentRatings = "content_ratings"
         case externalIds = "external_ids"
+        case nextEpisodeToAir = "next_episode_to_air"
     }
     
     var fullPosterURL: String? {

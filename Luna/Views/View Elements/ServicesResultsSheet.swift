@@ -863,6 +863,7 @@ struct ModulesSearchResultsSheet: View {
         let result: SearchItem
         let initialSimilarity: Double
         let titleSimilarity: Double
+        let animeSeasonPreference: Int
         let tieBreakScore: Int
     }
 
@@ -873,6 +874,7 @@ struct ModulesSearchResultsSheet: View {
                 result: result,
                 initialSimilarity: resultSimilarity(result),
                 titleSimilarity: titleRankingScore(result),
+                animeSeasonPreference: animeSeasonPreferenceScore(result),
                 tieBreakScore: resultTieBreakScore(result)
             )
         }
@@ -882,6 +884,11 @@ struct ModulesSearchResultsSheet: View {
 
             if lhsEligible != rhsEligible {
                 return lhsEligible && !rhsEligible
+            }
+
+            if lhsEligible && rhsEligible,
+               lhs.animeSeasonPreference != rhs.animeSeasonPreference {
+                return lhs.animeSeasonPreference > rhs.animeSeasonPreference
             }
 
             if lhsEligible && rhsEligible,
@@ -1040,6 +1047,101 @@ struct ModulesSearchResultsSheet: View {
         titleMatchCandidates()
             .map { algorithmManager.calculateSimilarity(original: $0, result: result.title) }
             .max() ?? 0.0
+    }
+
+    private enum AnimeSeasonPreferenceMarker: Hashable {
+        case season(Int)
+        case part(Int)
+    }
+
+    private func animeSeasonPreferenceScore(_ result: SearchItem) -> Int {
+        guard isAnimeContent || animeSeasonTitle != nil,
+              let seasonNumber = selectedEpisode?.seasonNumber,
+              seasonNumber > 1 else {
+            return 0
+        }
+
+        let expectedTitle = stripEpisodeSuffix(from: effectiveTitle)
+        let expectedMarkers = animeSeasonPreferenceMarkers(
+            in: expectedTitle,
+            terminalSeasonNumber: seasonNumber
+        )
+        guard !expectedMarkers.isEmpty else { return 0 }
+
+        let resultTitle = stripEpisodeSuffix(from: result.title)
+        return expectedMarkers.allSatisfy { animeResultTitle(resultTitle, matches: $0) } ? 1 : 0
+    }
+
+    private func animeSeasonPreferenceMarkers(
+        in title: String,
+        terminalSeasonNumber: Int? = nil
+    ) -> Set<AnimeSeasonPreferenceMarker> {
+        let normalized = normalizeTitle(title)
+        let tokens = normalized.split(separator: " ").map(String.init)
+        var markers = Set<AnimeSeasonPreferenceMarker>()
+
+        for (index, token) in tokens.enumerated() {
+            let nextToken = index + 1 < tokens.count ? tokens[index + 1] : nil
+
+            if token == "season", let nextToken, let number = Int(nextToken) {
+                markers.insert(.season(number))
+            } else if let number = markerNumber(after: "season", in: token) {
+                markers.insert(.season(number))
+            }
+
+            if token == "part", let nextToken, let number = Int(nextToken) {
+                markers.insert(.part(number))
+            } else if let number = markerNumber(after: "part", in: token) {
+                markers.insert(.part(number))
+            }
+
+            if nextToken == "season", let number = ordinalNumber(from: token) {
+                markers.insert(.season(number))
+            }
+        }
+
+        if markers.isEmpty,
+           let terminalSeasonNumber,
+           titleContainsTerminalAnimeSeasonNumber(normalized, seasonNumber: terminalSeasonNumber) {
+            markers.insert(.season(terminalSeasonNumber))
+        }
+
+        return markers
+    }
+
+    private func animeResultTitle(_ title: String, matches marker: AnimeSeasonPreferenceMarker) -> Bool {
+        let explicitMarkers = animeSeasonPreferenceMarkers(in: title)
+        if explicitMarkers.contains(marker) {
+            return true
+        }
+
+        guard explicitMarkers.isEmpty,
+              case let .season(seasonNumber) = marker else {
+            return false
+        }
+
+        return titleContainsTerminalAnimeSeasonNumber(title, seasonNumber: seasonNumber)
+    }
+
+    private func titleContainsTerminalAnimeSeasonNumber(_ title: String, seasonNumber: Int) -> Bool {
+        let patterns = [
+            "[a-z]\(seasonNumber)$",
+            "\\b\(seasonNumber)$"
+        ]
+        return patterns.contains { title.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    private func markerNumber(after prefix: String, in token: String) -> Int? {
+        guard token.hasPrefix(prefix) else { return nil }
+        let suffix = token.dropFirst(prefix.count)
+        return suffix.isEmpty ? nil : Int(suffix)
+    }
+
+    private func ordinalNumber(from token: String) -> Int? {
+        for suffix in ["st", "nd", "rd", "th"] where token.hasSuffix(suffix) {
+            return Int(token.dropLast(suffix.count))
+        }
+        return nil
     }
 
     private func resultTieBreakScore(_ result: SearchItem) -> Int {
@@ -1357,6 +1459,10 @@ struct ModulesSearchResultsSheet: View {
 
     private var shouldUseAutomaticResolution: Bool {
         viewModel.pendingPlaybackAutoMode || shouldForceAutoResolutionForDownload
+    }
+
+    private var shouldUseAutomaticEpisodeResolution: Bool {
+        shouldUseAutomaticResolution || UserDefaults.standard.bool(forKey: "servicesAutoSelectEpisodesEnabled")
     }
 
     @MainActor
@@ -2843,7 +2949,7 @@ struct ModulesSearchResultsSheet: View {
             seasonIndex: targetSeasonIndex,
             episodeNumber: targetEpisodeNumber,
             bundledEpisodeNumbers: bundledEpisodeNumbers,
-            allowAutomaticEpisodeResolution: shouldUseAutomaticResolution
+            allowAutomaticEpisodeResolution: shouldUseAutomaticEpisodeResolution
         ) {
             viewModel.streamFetchProgress = "Found episode, fetching stream..."
             fetchFinalStream(href: targetHref, jsController: jsController, service: service)
@@ -2884,7 +2990,7 @@ struct ModulesSearchResultsSheet: View {
         }
 
         guard allowAutomaticEpisodeResolution else {
-            Logger.shared.log("Episode auto-resolution skipped outside automatic source selection for S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
+            Logger.shared.log("Episode auto-resolution skipped because Auto-Select Episodes is disabled for S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
             return nil
         }
 
