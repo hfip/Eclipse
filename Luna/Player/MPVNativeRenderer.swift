@@ -679,6 +679,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var cachedPosition: Double = 0
     private var isPaused = true
     private var isLoading = false
+    private var isPausedForCache = false
     private var isRunning = false
     private var isStopping = false
     private var isReadyToSeek = false
@@ -794,6 +795,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "vd-lavc-software-fallback", value: "yes")
         setOption(name: "demuxer-thread", value: "yes")
         setOption(name: "cache", value: "yes")
+        setOption(name: "cache-pause-wait", value: "5")
         setOption(name: "demuxer-max-bytes", value: "80M")
         setOption(name: "demuxer-readahead-secs", value: "10")
         setOption(name: "video-sync", value: "audio")
@@ -822,7 +824,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             observeProperties()
             installWakeupHandler()
             ensureAudioSessionActive()
-            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=yes quality=default nativeScale=\(String(format: "%.2f", glView.contentScaleFactor))")
+            logMPV("start completed mode=openGL hwdec=videotoolbox-copy dr=no softwareFallback=yes quality=default cachePauseWait=5s nativeScale=\(String(format: "%.2f", glView.contentScaleFactor))")
             scheduleRender()
         } catch {
             logMPV("start failed after mpv_initialize: \(error)")
@@ -864,6 +866,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         isReadyToSeek = false
         isPaused = true
         isLoading = false
+        isPausedForCache = false
         cachedDuration = 0
         cachedPosition = 0
         currentLoadStartedAt = nil
@@ -891,6 +894,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         lastDurationLogValue = -1
         lastTrackSummary = ""
         lastPlaybackErrorMessage = nil
+        isPausedForCache = false
         resetHardwareDecodeFailureTracking()
         let generation = loadGeneration
         logMPV("load start gen=\(generation) target=\(describe(url: url)) preset=\(preset.id.rawValue) headerKeys=[\((headers ?? [:]).keys.sorted().joined(separator: ","))] pendingInitialSeek=\(pendingInitialSeek.map { String(format: "%.2f", $0) } ?? "nil")")
@@ -1170,6 +1174,7 @@ final class MPVNativeRenderer: PlayerRenderer {
             ("duration", MPV_FORMAT_DOUBLE),
             ("time-pos", MPV_FORMAT_DOUBLE),
             ("pause", MPV_FORMAT_FLAG),
+            ("paused-for-cache", MPV_FORMAT_FLAG),
             ("sid", MPV_FORMAT_NONE),
             ("aid", MPV_FORMAT_NONE),
             ("track-list", MPV_FORMAT_NONE)
@@ -1579,7 +1584,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     private func handleFileLoaded() {
         isReadyToSeek = true
-        setLoading(false)
+        setLoading(isPausedForCache)
         refreshVideoState()
         let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
         logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
@@ -1706,6 +1711,20 @@ final class MPVNativeRenderer: PlayerRenderer {
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
                         self.delegate?.renderer(self, didChangePause: newPaused)
+                    }
+                }
+            }
+        case "paused-for-cache":
+            var flag: Int32 = 0
+            if getProperty(handle: handle, name: name, format: MPV_FORMAT_FLAG, value: &flag) >= 0 {
+                let newPausedForCache = flag != 0
+                if newPausedForCache != isPausedForCache {
+                    isPausedForCache = newPausedForCache
+                    logMPV("cache buffering changed pausedForCache=\(newPausedForCache) \(cacheDiagnosticsSnapshot())")
+                    if newPausedForCache {
+                        setLoading(true)
+                    } else if isReadyToSeek {
+                        setLoading(false)
                     }
                 }
             }
@@ -1959,6 +1978,15 @@ final class MPVNativeRenderer: PlayerRenderer {
         if currentMode == .pictureInPicture, selectedVideo == nil {
             restoreSelectedVideoTrack(reason: "track-list-\(reason)")
         }
+    }
+
+    private func cacheDiagnosticsSnapshot() -> String {
+        guard let handle = mpv else { return "mpv=nil" }
+        let buffering = getStringProperty(handle: handle, name: "cache-buffering-state") ?? "nil"
+        let duration = getStringProperty(handle: handle, name: "demuxer-cache-duration") ?? "nil"
+        let speed = getStringProperty(handle: handle, name: "cache-speed") ?? "nil"
+        let idle = getStringProperty(handle: handle, name: "demuxer-cache-idle") ?? "nil"
+        return "cachePercent=\(buffering) cacheDuration=\(duration) cacheSpeed=\(speed) demuxerIdle=\(idle)"
     }
 
     private func shouldLogPlaybackDiagnostics(for progressBucket: Int) -> Bool {

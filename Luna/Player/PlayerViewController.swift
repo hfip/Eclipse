@@ -1095,6 +1095,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var isRendererLoading: Bool = false
     private var isClosing = false
     private var isRunning = false  // Track if renderer has been started
+    private var isIdleTimerDisabledForPlayback = false
     private var isVLCPlaybackStartupInProgress = false
     private var canMutateVLCSubtitleTracks = false
     private var didHandleVLCReadyToSeekForCurrentLoad = false
@@ -1234,6 +1235,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         renderer.stop()
         isRunning = false
+        refreshIdleTimerForPlayback(reason: "renderer-stop")
         isVLCPlaybackStartupInProgress = false
         canMutateVLCSubtitleTracks = false
         didHandleVLCReadyToSeekForCurrentLoad = false
@@ -1265,6 +1267,28 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logMPV("rendererTogglePause requested paused=\(rendererIsPausedState()) loading=\(isRendererLoading) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))")
         }
         renderer.togglePause()
+    }
+
+    private func refreshIdleTimerForPlayback(reason: String) {
+        let shouldDisable = isRunning
+            && !isClosing
+            && playbackDidStart
+            && !rendererIsPausedState()
+        setIdleTimerDisabledForPlayback(shouldDisable, reason: reason)
+    }
+
+    private func setIdleTimerDisabledForPlayback(_ disabled: Bool, reason: String) {
+        guard isIdleTimerDisabledForPlayback != disabled else { return }
+        isIdleTimerDisabledForPlayback = disabled
+        let apply = {
+            UIApplication.shared.isIdleTimerDisabled = disabled
+        }
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
+        }
+        logSharedPlayerControl("idle timer disabled=\(disabled) reason=\(reason)")
     }
 
     private func rendererSeek(to seconds: Double) {
@@ -2361,6 +2385,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     deinit {
         isClosing = true
+        setIdleTimerDisabledForPlayback(false, reason: "deinit")
         audioMenuDebounceTimer?.invalidate()
         subtitleMenuDebounceTimer?.invalidate()
         performanceOverlayTimer?.invalidate()
@@ -2507,6 +2532,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func preparePlaybackStartupMonitoring(for url: URL, headers: [String: String]) {
         playbackStartupWorkItem?.cancel()
         playbackDidStart = false
+        refreshIdleTimerForPlayback(reason: "startup-monitor-reset")
         playbackFailureHandled = false
         playbackSlowProbeCount = 0
         guard !url.isFileURL else {
@@ -2533,8 +2559,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func markPlaybackStarted(reason: String) {
-        guard !playbackDidStart else { return }
+        guard !playbackDidStart else {
+            refreshIdleTimerForPlayback(reason: "playback-continued-\(reason)")
+            return
+        }
         playbackDidStart = true
+        refreshIdleTimerForPlayback(reason: "playback-started-\(reason)")
         playbackStartupWorkItem?.cancel()
         Logger.shared.log("[PlayerVC.PlaybackStart] renderer=\(isVLCPlayer ? "VLC" : "MPV") started reason=\(reason) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) loading=\(isRendererLoading) context=\(playbackLaunchContext?.sourceName ?? "nil")", type: isVLCPlayer ? "VLCPlayback" : "MPV")
         if let context = playbackLaunchContext {
@@ -2657,6 +2687,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         playbackDidStart = false
+        refreshIdleTimerForPlayback(reason: "retry-reset")
         playbackFailureHandled = false
         playbackSlowProbeCount = 0
         vlcProxyFallbackTried = false
@@ -4028,6 +4059,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             self.controlsHideWorkItem?.cancel()
             self.playbackStartupWorkItem?.cancel()
             self.playbackDidStart = false
+            self.refreshIdleTimerForPlayback(reason: "replace-playback-reset")
             self.playbackFailureHandled = false
             self.playbackSlowProbeCount = 0
             self.vlcProxyFallbackTried = false
@@ -7175,6 +7207,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     @objc private func closeTapped() {
         if isClosing { return }
         isClosing = true
+        refreshIdleTimerForPlayback(reason: "player-close")
         let isAnyPiPActive = rendererIsPictureInPictureActive()
         logSharedPlayerControl("closeTapped; pipActive=\(isAnyPiPActive); mediaInfo=\(String(describing: mediaInfo))")
         dismissEpisodeBrowser(animated: false, reason: "player-close")
@@ -8469,6 +8502,7 @@ extension PlayerViewController: MPVNativeRendererDelegate {
             markPlaybackStarted(reason: "playing")
             rendererResumeForegroundRendering(reason: "mpv-unpause")
         }
+        refreshIdleTimerForPlayback(reason: "mpv-pause-changed")
         if isRendererLoading && !isPaused {
             isRendererLoading = false
             DispatchQueue.main.async { [weak self] in
@@ -8530,6 +8564,7 @@ extension PlayerViewController: MPVNativeRendererDelegate {
 
     func renderer(_ renderer: PlayerRenderer, didFailWithError message: String) {
         if isClosing { return }
+        setIdleTimerDisabledForPlayback(false, reason: "mpv-failure")
         logMPV("delegate didFailWithError message=\(message)")
         Logger.shared.log("PlayerViewController: MPV playback issue: \(message)", type: "MPV")
         if attemptMPVTransportBridgeFallbackIfNeeded(after: message) {
@@ -8585,6 +8620,7 @@ extension PlayerViewController: VLCRendererDelegate {
         if !isPaused {
             markPlaybackStarted(reason: "playing")
         }
+        refreshIdleTimerForPlayback(reason: "vlc-pause-changed")
         if isRendererLoading && !isPaused {
             isRendererLoading = false
             DispatchQueue.main.async { [weak self] in
@@ -8659,6 +8695,7 @@ extension PlayerViewController: VLCRendererDelegate {
 
     func renderer(_ renderer: VLCRenderer, didFailWithError message: String) {
         if isClosing { return }
+        setIdleTimerDisabledForPlayback(false, reason: "vlc-failure")
         isVLCPlaybackStartupInProgress = false
         Logger.shared.log("[PlayerVC.VLCDelegate] didFailWithError message=\(message)", type: "Error")
         if attemptVlcProxyFallbackIfNeeded() {
