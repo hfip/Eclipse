@@ -124,6 +124,7 @@ fun EclipseAndroidApp(
             ratingsRepository = appContainer.ratingsRepository,
             trackerRepository = appContainer.trackerRepository,
             aniSkipService = appContainer.aniSkipService,
+            aniListService = appContainer.aniListService,
             introDbService = appContainer.introDbService,
             tmdbService = appContainer.tmdbService,
             settingsStore = appContainer.settingsStore,
@@ -154,9 +155,11 @@ fun EclipseAndroidApp(
             loggerRepository = appContainer.loggerRepository,
             trackerRepository = appContainer.trackerRepository,
             libraryRepository = appContainer.libraryRepository,
+            progressRepository = appContainer.progressRepository,
             mangaRepository = appContainer.mangaRepository,
             aniListService = appContainer.aniListService,
             myAnimeListService = appContainer.myAnimeListService,
+            tmdbService = appContainer.tmdbService,
             releaseRepository = appContainer.releaseRepository,
             servicesRepository = appContainer.servicesRepository,
         )
@@ -285,8 +288,11 @@ fun EclipseAndroidApp(
         onTrackerCallbackConsumed()
     }
 
-    LaunchedEffect(settingsState.showLocalScheduleTime) {
-        scheduleViewModel.refresh(settingsState.showLocalScheduleTime)
+    LaunchedEffect(settingsState.showLocalScheduleTime, settingsState.defaultScheduleMode) {
+        scheduleViewModel.refresh(
+            localTimeZone = settingsState.showLocalScheduleTime,
+            mode = settingsState.defaultScheduleMode,
+        )
     }
 
     val visibleDestinations = remember(settingsState.showScheduleTab, settingsState.showKanzen) {
@@ -535,6 +541,8 @@ fun EclipseAndroidApp(
                                     positionMs = progress.positionMs,
                                     durationMs = progress.durationMs,
                                     isFinished = progress.isFinished,
+                                    forceTrackerSync = progress.forceTrackerSync,
+                                    playerSource = progress.playerSource,
                                 )?.let(libraryViewModel::syncContinueWatching)
                             },
                             onPlaybackReady = recordPlaybackReady,
@@ -549,9 +557,16 @@ fun EclipseAndroidApp(
                                 showLocalScheduleTime = settingsState.showLocalScheduleTime,
                                 useClassicScheduleUI = settingsState.useClassicScheduleUI,
                             ),
-                            onRefresh = { scheduleViewModel.refresh(settingsState.showLocalScheduleTime) },
+                            onRefresh = {
+                                scheduleViewModel.refresh(
+                                    localTimeZone = settingsState.showLocalScheduleTime,
+                                    mode = scheduleState.selectedMode,
+                                )
+                            },
                             onShowLocalScheduleTimeChanged = settingsViewModel::setShowLocalScheduleTime,
-                            onSelect = ::openDetail,
+                            onModeChanged = scheduleViewModel::selectMode,
+                            onSelect = { card -> scheduleViewModel.select(card, ::openDetail) },
+                            onDismissNoTmdbEntry = scheduleViewModel::dismissNoTmdbEntry,
                         )
                     }
                     composable("services") {
@@ -561,6 +576,7 @@ fun EclipseAndroidApp(
                         ServicesRoute(
                             state = servicesState,
                             onAutoModeChanged = servicesViewModel::setAutoModeEnabled,
+                            onAutoSelectEpisodesChanged = servicesViewModel::setAutoSelectEpisodesEnabled,
                             onAutoModeSourceChanged = servicesViewModel::setAutoModeSourceEnabled,
                             onAddService = servicesViewModel::addService,
                             onSaveServiceConfiguration = servicesViewModel::setServiceConfiguration,
@@ -640,6 +656,7 @@ fun EclipseAndroidApp(
                             onShowScheduleTabChanged = settingsViewModel::setShowScheduleTab,
                             onShowLocalScheduleTimeChanged = settingsViewModel::setShowLocalScheduleTime,
                             onUseClassicScheduleUiChanged = settingsViewModel::setUseClassicScheduleUi,
+                            onDefaultScheduleModeChanged = settingsViewModel::setDefaultScheduleMode,
                             onShowKanzenChanged = settingsViewModel::setShowKanzen,
                             onSeasonMenuChanged = settingsViewModel::setSeasonMenu,
                             onHorizontalEpisodeListChanged = settingsViewModel::setHorizontalEpisodeList,
@@ -701,6 +718,7 @@ fun EclipseAndroidApp(
                             onTrackerManualConnect = settingsViewModel::saveTrackerAccount,
                             onTrackerSyncEnabledChanged = settingsViewModel::setTrackerSyncEnabled,
                             onAutoSyncRatingsChanged = settingsViewModel::setAutoSyncRatings,
+                            onMergeTraktContinueWatchingChanged = settingsViewModel::setMergeTraktContinueWatching,
                             onTrackerDisconnect = settingsViewModel::disconnectTracker,
                             onTrackerSyncNow = settingsViewModel::syncTrackersNow,
                             onAniListImportLibrary = {
@@ -718,6 +736,9 @@ fun EclipseAndroidApp(
                                     mangaViewModel.refresh()
                                     novelViewModel.refresh()
                                 }
+                            },
+                            onTraktImportLibrary = {
+                                settingsViewModel.importTraktLibrary(libraryViewModel::refresh)
                             },
                             onAniListSyncMangaProgress = settingsViewModel::syncMangaProgressNow,
                             onTrackerSyncToolPreview = settingsViewModel::previewTrackerSyncTool,

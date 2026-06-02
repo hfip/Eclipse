@@ -15,6 +15,7 @@ import dev.soupy.eclipse.android.core.model.AtmosphereStyle
 import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.InAppPlayer
 import dev.soupy.eclipse.android.core.model.MediaDetailElement
+import dev.soupy.eclipse.android.core.model.ScheduleMode
 import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +43,7 @@ data class AppSettings(
     val showScheduleTab: Boolean = true,
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
+    val defaultScheduleMode: String = ScheduleMode.Default.rawValue,
     val defaultPlaybackSpeed: Double = 1.0,
     val holdSpeedPlayer: Double = 2.0,
     val externalPlayer: String = "none",
@@ -106,6 +108,7 @@ data class AppSettings(
     val autoClearCacheThresholdMB: Double = 500.0,
     val highQualityThreshold: Double = 0.9,
     val servicesAutoModeQualityPreference: String = ServicesAutoModeQualityPreference.Default.rawValue,
+    val servicesAutoSelectEpisodesEnabled: Boolean = false,
     val filterHorrorContent: Boolean = false,
     val selectedSimilarityAlgorithm: SimilarityAlgorithm = SimilarityAlgorithm.HYBRID,
 )
@@ -271,6 +274,12 @@ class SettingsStore(
         }
     }
 
+    suspend fun setDefaultScheduleMode(rawValue: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.defaultScheduleMode] = ScheduleMode.sanitizedRawValue(rawValue)
+        }
+    }
+
     suspend fun updateDisplayOptions(
         seasonMenu: Boolean,
         horizontalEpisodeList: Boolean,
@@ -412,6 +421,12 @@ class SettingsStore(
         }
     }
 
+    suspend fun setServicesAutoSelectEpisodesEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.servicesAutoSelectEpisodesEnabled] = enabled
+        }
+    }
+
     suspend fun setFilterHorrorContent(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.filterHorrorContent] = enabled
@@ -508,6 +523,7 @@ class SettingsStore(
             prefs[Keys.showScheduleTab] = payload.showScheduleTab
             prefs[Keys.showLocalScheduleTime] = payload.showLocalScheduleTime
             prefs[Keys.useClassicScheduleUI] = payload.useClassicScheduleUI
+            prefs[Keys.defaultScheduleMode] = ScheduleMode.sanitizedRawValue(payload.defaultScheduleMode)
             prefs[Keys.defaultPlaybackSpeed] = payload.defaultPlaybackSpeed
             prefs[Keys.holdSpeedPlayer] = payload.holdSpeedPlayer
             prefs[Keys.externalPlayer] = payload.externalPlayer
@@ -579,6 +595,7 @@ class SettingsStore(
             prefs[Keys.highQualityThreshold] = payload.highQualityThreshold
             prefs[Keys.servicesAutoModeQualityPreference] =
                 ServicesAutoModeQualityPreference.sanitizedRawValue(payload.servicesAutoModeQualityPreference)
+            prefs[Keys.servicesAutoSelectEpisodesEnabled] = payload.servicesAutoSelectEpisodesEnabled
             prefs[Keys.filterHorrorContent] = payload.filterHorrorContent
             prefs[Keys.selectedSimilarityAlgorithm] = SimilarityAlgorithm
                 .fromId(payload.selectedSimilarityAlgorithm)
@@ -602,6 +619,7 @@ class SettingsStore(
         showScheduleTab = preferences[Keys.showScheduleTab] ?: true,
         showLocalScheduleTime = preferences[Keys.showLocalScheduleTime] ?: true,
         useClassicScheduleUI = preferences[Keys.useClassicScheduleUI] ?: false,
+        defaultScheduleMode = ScheduleMode.sanitizedRawValue(preferences[Keys.defaultScheduleMode]),
         defaultPlaybackSpeed = preferences[Keys.defaultPlaybackSpeed] ?: 1.0,
         holdSpeedPlayer = preferences[Keys.holdSpeedPlayer] ?: 2.0,
         externalPlayer = preferences[Keys.externalPlayer] ?: "none",
@@ -670,6 +688,7 @@ class SettingsStore(
         highQualityThreshold = preferences[Keys.highQualityThreshold] ?: 0.9,
         servicesAutoModeQualityPreference =
             ServicesAutoModeQualityPreference.sanitizedRawValue(preferences[Keys.servicesAutoModeQualityPreference]),
+        servicesAutoSelectEpisodesEnabled = preferences[Keys.servicesAutoSelectEpisodesEnabled] ?: false,
         filterHorrorContent = preferences[Keys.filterHorrorContent] ?: false,
         selectedSimilarityAlgorithm = SimilarityAlgorithm.fromId(preferences[Keys.selectedSimilarityAlgorithm]),
     )
@@ -690,6 +709,7 @@ class SettingsStore(
         val showScheduleTab = booleanPreferencesKey("show_schedule_tab")
         val showLocalScheduleTime = booleanPreferencesKey("show_local_schedule_time")
         val useClassicScheduleUI = booleanPreferencesKey("use_classic_schedule_ui")
+        val defaultScheduleMode = stringPreferencesKey("default_schedule_mode")
         val defaultPlaybackSpeed = doublePreferencesKey("default_playback_speed")
         val holdSpeedPlayer = doublePreferencesKey("hold_speed_player")
         val externalPlayer = stringPreferencesKey("external_player")
@@ -754,6 +774,7 @@ class SettingsStore(
         val autoClearCacheThresholdMB = doublePreferencesKey("auto_clear_cache_threshold_mb")
         val highQualityThreshold = doublePreferencesKey("high_quality_threshold")
         val servicesAutoModeQualityPreference = stringPreferencesKey("services_auto_mode_quality_preference")
+        val servicesAutoSelectEpisodesEnabled = booleanPreferencesKey("services_auto_select_episodes_enabled")
         val filterHorrorContent = booleanPreferencesKey("filter_horror_content")
         val selectedSimilarityAlgorithm = stringPreferencesKey("selected_similarity_algorithm")
     }

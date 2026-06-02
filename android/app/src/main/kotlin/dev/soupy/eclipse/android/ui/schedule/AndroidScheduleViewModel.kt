@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import dev.soupy.eclipse.android.data.ScheduleRepository
+import dev.soupy.eclipse.android.core.model.DetailTarget
+import dev.soupy.eclipse.android.core.model.ScheduleEntryCard
+import dev.soupy.eclipse.android.core.model.ScheduleMode
 import dev.soupy.eclipse.android.feature.schedule.ScheduleScreenState
 
 class AndroidScheduleViewModel(
@@ -20,15 +23,19 @@ class AndroidScheduleViewModel(
         refresh()
     }
 
-    fun refresh(localTimeZone: Boolean = true) {
+    fun refresh(
+        localTimeZone: Boolean = true,
+        mode: ScheduleMode = _state.value.selectedMode,
+    ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, errorMessage = null) }
-            repository.loadSchedule(localTimeZone = localTimeZone)
+            repository.loadSchedule(mode = mode, localTimeZone = localTimeZone)
                 .onSuccess { sections ->
                     _state.value = ScheduleScreenState(
                         isLoading = false,
                         showLocalScheduleTime = localTimeZone,
                         useClassicScheduleUI = _state.value.useClassicScheduleUI,
+                        selectedMode = mode,
                         days = sections,
                     )
                 }
@@ -41,6 +48,40 @@ class AndroidScheduleViewModel(
                     }
                 }
         }
+    }
+
+    fun selectMode(mode: ScheduleMode) {
+        refresh(
+            localTimeZone = _state.value.showLocalScheduleTime,
+            mode = mode,
+        )
+    }
+
+    fun select(card: ScheduleEntryCard, onResolved: (DetailTarget) -> Unit) {
+        viewModelScope.launch {
+            _state.update { it.copy(loadingItemId = card.id, noTmdbEntryTitle = null) }
+            repository.lookupTmdbTarget(card)
+                .onSuccess { target ->
+                    if (target == null) {
+                        _state.update { it.copy(loadingItemId = null, noTmdbEntryTitle = card.title) }
+                    } else {
+                        _state.update { it.copy(loadingItemId = null) }
+                        onResolved(target)
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            loadingItemId = null,
+                            errorMessage = error.message ?: "Unable to resolve this schedule entry.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun dismissNoTmdbEntry() {
+        _state.update { it.copy(noTmdbEntryTitle = null) }
     }
 }
 

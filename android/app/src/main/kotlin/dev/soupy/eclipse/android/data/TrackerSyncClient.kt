@@ -7,6 +7,7 @@ import dev.soupy.eclipse.android.core.network.EclipseHttpClient
 import dev.soupy.eclipse.android.core.network.EclipseJson
 import dev.soupy.eclipse.android.core.network.NetworkResult
 import java.time.Instant
+import kotlin.math.roundToInt
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -28,6 +29,7 @@ data class TrackerPlaybackProgressDraft(
     val isFinished: Boolean = false,
     val playbackContext: EpisodePlaybackContext? = null,
     val isAnime: Boolean = false,
+    val forceTraktSync: Boolean = false,
 )
 
 data class TrackerSyncSummary(
@@ -59,6 +61,7 @@ internal data class TrackerSyncItem(
     val progressPercent: Double,
     val isFinished: Boolean = false,
     val isAnime: Boolean = false,
+    val forceTraktSync: Boolean = false,
 ) {
     val isWatchedEnough: Boolean
         get() = isFinished || progressPercent >= TrackerWatchedThreshold
@@ -75,6 +78,8 @@ class TrackerSyncClient(
     private val traktClientId: String = "",
 ) {
     private val aniListToMalAnimeIdCache = mutableMapOf<Int, Int>()
+    private val traktMediaIdCache = mutableMapOf<String, Int>()
+    private val recentTraktPlaybackSyncAt = mutableMapOf<String, Long>()
 
     internal suspend fun sync(
         account: TrackerAccountSnapshot,
@@ -142,7 +147,7 @@ class TrackerSyncClient(
             return TrackerItemSyncResult(skipped = true, message = "Trakt sync needs TRAKT_CLIENT_ID.")
         }
         if (!item.isWatchedEnough) {
-            return TrackerItemSyncResult(skipped = true, message = "Trakt history waits until 85% watched.")
+            return scrobbleTraktPause(account, item)
         }
         val payload = item.toTraktHistoryPayload(Instant.now().toString())
             ?: return TrackerItemSyncResult(skipped = true, message = "Trakt sync needs TMDB movie or episode metadata.")
@@ -163,6 +168,151 @@ class TrackerSyncClient(
             is NetworkResult.Failure.Serialization -> TrackerItemSyncResult(message = "Trakt serialization: ${result.throwable.message}")
         }
     }
+
+    private suspend fun scrobbleTraktPause(
+        account: TrackerAccountSnapshot,
+        item: TrackerSyncItem,
+    ): TrackerItemSyncResult {
+        val key = item.traktPlaybackSyncKey()
+            ?: return TrackerItemSyncResult(skipped = true, message = "Trakt scrobble needs TMDB movie or episode metadata.")
+        if (!shouldStartTraktPlaybackSync(key, item.forceTraktSync)) {
+            return TrackerItemSyncResult(skipped = true)
+        }
+
+        val payload = when (val target = item.target) {
+            is DetailTarget.TmdbMovie -> {
+                val movie = resolveTraktMedia(target.id, "movie")
+                    ?: return TrackerItemSyncResult(skipped = true, message = "Trakt could not map TMDB movie ${target.id}.")
+                buildJsonObject {
+                    put("progress", item.normalizedTraktScrobbleProgress())
+                    put(
+                        "movie",
+                        buildJsonObject {
+                            movie.title?.let { put("title", it) }
+                            movie.year?.let { put("year", it) }
+                            put("ids", buildJsonObject { put("trakt", movie.traktId) })
+                        },
+                    )
+                }
+            }
+            is DetailTarget.TmdbShow -> {
+                val season = item.seasonNumber
+                    ?: return TrackerItemSyncResult(skipped = true, message = "Trakt scrobble needs a TMDB season.")
+                val episode = item.episodeNumber
+                    ?: return TrackerItemSyncResult(skipped = true, message = "Trakt scrobble needs a TMDB episode.")
+                val show = resolveTraktMedia(target.id, "show")
+                    ?: return TrackerItemSyncResult(skipped = true, message = "Trakt could not map TMDB show ${target.id}.")
+                val traktEpisodeId = resolveTraktEpisodeId(account, show.traktId, season, episode)
+                    ?: return TrackerItemSyncResult(skipped = true, message = "Trakt could not map S${season}E${episode}.")
+                buildJsonObject {
+                    put("progress", item.normalizedTraktScrobbleProgress())
+                    put(
+                        "episode",
+                        buildJsonObject {
+                            put("ids", buildJsonObject { put("trakt", traktEpisodeId) })
+                        },
+                    )
+                }
+            }
+            is DetailTarget.AniListMediaTarget,
+            is DetailTarget.ServiceMedia ->
+                return TrackerItemSyncResult(skipped = true, message = "Trakt scrobble needs a mapped TMDB item.")
+        }
+        return when (
+            val result = httpClient.postJson(
+                url = "https://api.trakt.tv/scrobble/pause",
+                body = EclipseJson.encodeToString(payload),
+                headers = account.traktHeaders(),
+            )
+        ) {
+            is NetworkResult.Success -> TrackerItemSyncResult(synced = true)
+            is NetworkResult.Failure.Http -> TrackerItemSyncResult(message = "Trakt HTTP ${result.code}: ${result.body.orEmpty()}")
+            is NetworkResult.Failure.Connectivity -> TrackerItemSyncResult(message = "Trakt connectivity: ${result.throwable.message}")
+            is NetworkResult.Failure.Serialization -> TrackerItemSyncResult(message = "Trakt serialization: ${result.throwable.message}")
+        }
+    }
+
+    private suspend fun resolveTraktMedia(tmdbId: Int, type: String): TraktMediaLookup? {
+        val key = "$type|$tmdbId"
+        traktMediaIdCache[key]?.let { return TraktMediaLookup(traktId = it) }
+        return when (
+            val result = httpClient.get(
+                url = "https://api.trakt.tv/search/tmdb/$tmdbId?type=$type",
+                headers = traktHeaders(),
+            )
+        ) {
+            is NetworkResult.Success -> runCatching {
+                val media = EclipseJson.parseToJsonElement(result.value)
+                    .jsonArray
+                    .firstOrNull()
+                    ?.jsonObject
+                    ?.get(type)
+                    ?.jsonObject
+                    ?: return@runCatching null
+                val traktId = media["ids"]
+                    ?.jsonObject
+                    ?.get("trakt")
+                    ?.jsonPrimitive
+                    ?.intOrNull
+                    ?: return@runCatching null
+                traktMediaIdCache[key] = traktId
+                TraktMediaLookup(
+                    traktId = traktId,
+                    title = media["title"]?.jsonPrimitive?.contentOrNull,
+                    year = media["year"]?.jsonPrimitive?.intOrNull,
+                )
+            }.getOrNull()
+            is NetworkResult.Failure -> null
+        }
+    }
+
+    private suspend fun resolveTraktEpisodeId(
+        account: TrackerAccountSnapshot,
+        traktShowId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+    ): Int? {
+        val key = "episode|$traktShowId|$seasonNumber|$episodeNumber"
+        traktMediaIdCache[key]?.let { return it }
+        return when (
+            val result = httpClient.get(
+                url = "https://api.trakt.tv/shows/$traktShowId/seasons/$seasonNumber/episodes/$episodeNumber",
+                headers = account.traktHeaders(),
+            )
+        ) {
+            is NetworkResult.Success -> runCatching {
+                EclipseJson.parseToJsonElement(result.value)
+                    .jsonObject["ids"]
+                    ?.jsonObject
+                    ?.get("trakt")
+                    ?.jsonPrimitive
+                    ?.intOrNull
+                    ?.also { traktMediaIdCache[key] = it }
+            }.getOrNull()
+            is NetworkResult.Failure -> null
+        }
+    }
+
+    private fun shouldStartTraktPlaybackSync(key: String, force: Boolean): Boolean {
+        val now = System.currentTimeMillis()
+        recentTraktPlaybackSyncAt.entries.removeAll { (_, syncedAt) ->
+            now - syncedAt >= TraktPlaybackSyncIntervalMillis * 10
+        }
+        val lastSyncAt = recentTraktPlaybackSyncAt[key]
+        if (!force && lastSyncAt != null && now - lastSyncAt < TraktPlaybackSyncIntervalMillis) {
+            return false
+        }
+        recentTraktPlaybackSyncAt[key] = now
+        return true
+    }
+
+    private fun traktHeaders(): Map<String, String> = mapOf(
+        "trakt-api-key" to traktClientId.trim(),
+        "trakt-api-version" to "2",
+    )
+
+    private fun TrackerAccountSnapshot.traktHeaders(): Map<String, String> =
+        traktHeaders() + ("Authorization" to "Bearer $accessToken")
 
     private suspend fun syncMyAnimeList(
         account: TrackerAccountSnapshot,
@@ -238,19 +388,53 @@ class TrackerSyncClient(
 
 internal fun TrackerPlaybackProgressDraft.toTrackerSyncItem(): TrackerSyncItem {
     val context = playbackContext
-    val traktSeason = context?.resolvedTMDBSeasonNumber ?: seasonNumber
-    val traktEpisode = context?.resolvedTMDBEpisodeNumber ?: episodeNumber
+    val traktNumbers = if (context == null) {
+        seasonNumber?.let { season -> episodeNumber?.let { episode -> season to episode } }
+    } else {
+        context.traktEpisodeNumbersOrNull()
+    }
     return TrackerSyncItem(
         target = target,
         title = title,
-        seasonNumber = traktSeason,
-        episodeNumber = traktEpisode,
+        seasonNumber = traktNumbers?.first,
+        episodeNumber = traktNumbers?.second,
         anilistMediaId = anilistMediaId ?: context?.anilistMediaId,
         anilistEpisodeNumber = context?.localEpisodeNumber ?: episodeNumber,
         progressPercent = progressPercent,
         isFinished = isFinished,
         isAnime = isAnime || target is DetailTarget.AniListMediaTarget || context?.anilistMediaId != null,
+        forceTraktSync = forceTraktSync,
     )
+}
+
+private data class TraktMediaLookup(
+    val traktId: Int,
+    val title: String? = null,
+    val year: Int? = null,
+)
+
+private fun TrackerSyncItem.traktPlaybackSyncKey(): String? = when (val detailTarget = target) {
+    is DetailTarget.TmdbMovie -> "movie|${detailTarget.id}"
+    is DetailTarget.TmdbShow -> {
+        val season = seasonNumber ?: return null
+        val episode = episodeNumber ?: return null
+        "episode|${detailTarget.id}|$season|$episode"
+    }
+    is DetailTarget.AniListMediaTarget,
+    is DetailTarget.ServiceMedia -> null
+}
+
+private fun TrackerSyncItem.normalizedTraktScrobbleProgress(): Int =
+    (progressPercent * 100.0)
+        .roundToInt()
+        .coerceIn(0, 100)
+
+internal fun EpisodePlaybackContext.traktEpisodeNumbersOrNull(): Pair<Int, Int>? {
+    if (tmdbSeasonNumber != null && (tmdbEpisodeNumber != null || tmdbEpisodeOffset != null)) {
+        return resolvedTMDBSeasonNumber to resolvedTMDBEpisodeNumber
+    }
+    if (isSpecial || hasAnimeMediaId) return null
+    return localSeasonNumber to localEpisodeNumber
 }
 
 private val TrackerSyncItem.hasAnimeTrackerEvidence: Boolean
@@ -343,3 +527,4 @@ private fun String.graphQlErrorMessage(): String? =
 private fun Int.s(): String = if (this == 1) "" else "s"
 
 internal const val TrackerWatchedThreshold = 0.85
+private const val TraktPlaybackSyncIntervalMillis = 30_000L

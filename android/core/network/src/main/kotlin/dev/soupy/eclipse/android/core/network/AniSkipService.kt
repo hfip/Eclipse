@@ -11,18 +11,16 @@ class AniSkipService(
     private val httpClient: EclipseHttpClient = EclipseHttpClient(),
 ) {
     suspend fun fetchSkipTimes(
-        anilistId: Int,
+        malId: Int,
         episodeNumber: Int,
         episodeDurationSeconds: Double,
     ): NetworkResult<List<SkipSegment>> {
-        val durationParam = if (episodeDurationSeconds > 0) {
-            "&episodeLength=${episodeDurationSeconds.toInt()}"
-        } else {
-            ""
-        }
-        val url = "$baseUrl/skip-times/$anilistId/$episodeNumber" +
-            "?types%5B%5D=op&types%5B%5D=ed&types%5B%5D=recap" +
-            "&types%5B%5D=mixed-op&types%5B%5D=mixed-ed$durationParam"
+        val url = aniSkipTimesUrl(
+            baseUrl = baseUrl,
+            malId = malId,
+            episodeNumber = episodeNumber,
+            episodeDurationSeconds = episodeDurationSeconds,
+        )
 
         return when (val result = httpClient.get(url)) {
             is NetworkResult.Success -> decode(result.value, episodeDurationSeconds)
@@ -56,6 +54,22 @@ class AniSkipService(
     } catch (error: SerializationException) {
         NetworkResult.Failure.Serialization(error)
     }
+}
+
+internal fun aniSkipTimesUrl(
+    baseUrl: String,
+    malId: Int,
+    episodeNumber: Int,
+    episodeDurationSeconds: Double,
+): String {
+    val episodeLength = if (episodeDurationSeconds.isFinite() && episodeDurationSeconds > 0) {
+        episodeDurationSeconds.toInt()
+    } else {
+        0
+    }
+    return "$baseUrl/skip-times/$malId/$episodeNumber" +
+        "?types%5B%5D=op&types%5B%5D=ed&types%5B%5D=recap" +
+        "&types%5B%5D=mixed-op&types%5B%5D=mixed-ed&episodeLength=$episodeLength"
 }
 
 @Serializable

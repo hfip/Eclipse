@@ -16,6 +16,7 @@ import android.provider.Browser
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,6 +93,8 @@ data class PlaybackProgressSnapshot(
     val positionMs: Long,
     val durationMs: Long,
     val isFinished: Boolean = false,
+    val forceTrackerSync: Boolean = false,
+    val playerSource: PlayerSource? = null,
 )
 
 @Composable
@@ -241,6 +244,8 @@ fun EclipsePlayerSurface(
     }
 
     var reportedPlaybackReady by remember(source.uri) { mutableStateOf(false) }
+    var isPlaybackActive by remember(source.uri) { mutableStateOf(false) }
+    KeepScreenAwakeWhilePlaying(isPlaybackActive)
 
     LaunchedEffect(
         exoPlayer,
@@ -264,7 +269,10 @@ fun EclipsePlayerSurface(
         exoPlayer.trackSelectionParameters = parameters
     }
 
-    fun progressSnapshot(forceFinished: Boolean = false): PlaybackProgressSnapshot? {
+    fun progressSnapshot(
+        forceFinished: Boolean = false,
+        forceTrackerSync: Boolean = false,
+    ): PlaybackProgressSnapshot? {
         val durationMs = exoPlayer.duration
         if (durationMs <= 0L || durationMs == C.TIME_UNSET) {
             return null
@@ -283,11 +291,16 @@ fun EclipsePlayerSurface(
             positionMs = positionMs,
             durationMs = durationMs,
             isFinished = forceFinished || positionMs >= durationMs - 1_500L,
+            forceTrackerSync = forceTrackerSync,
+            playerSource = source,
         )
     }
 
-    fun emitProgressSnapshot(forceFinished: Boolean = false) {
-        progressSnapshot(forceFinished)?.let(onProgressState.value)
+    fun emitProgressSnapshot(
+        forceFinished: Boolean = false,
+        forceTrackerSync: Boolean = false,
+    ) {
+        progressSnapshot(forceFinished, forceTrackerSync)?.let(onProgressState.value)
     }
 
     LaunchedEffect(exoPlayer) {
@@ -324,6 +337,7 @@ fun EclipsePlayerSurface(
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                isPlaybackActive = isPlaying
                 if (!isPlaying) {
                     emitProgressSnapshot()
                 }
@@ -349,7 +363,7 @@ fun EclipsePlayerSurface(
         }
         exoPlayer.addListener(listener)
         onDispose {
-            emitProgressSnapshot()
+            emitProgressSnapshot(forceTrackerSync = true)
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
@@ -487,6 +501,21 @@ private fun LockLandscapeWhenRequested(alwaysLandscape: Boolean) {
         onDispose {
             if (activity != null && previousOrientation != null) {
                 activity.requestedOrientation = previousOrientation
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeepScreenAwakeWhilePlaying(active: Boolean) {
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(activity, active) {
+        if (active) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (active) {
+                activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
         }
     }
@@ -1038,6 +1067,7 @@ private fun EmbeddedVlcPlayerPanel(
     var userSelectedSubtitleTrack by remember(source.uri) { mutableStateOf(false) }
     var progressPercent by remember(source.uri) { mutableStateOf(0f) }
     var currentPositionSeconds by remember(source.uri) { mutableStateOf(0.0) }
+    var isPlaybackActive by remember(source.uri) { mutableStateOf(false) }
     var initialResumeApplied by remember(source.uri, source.resumePositionMs) { mutableStateOf(false) }
     var autoAudioApplied by remember(source.uri, settings.preferredAnimeAudioLanguage) { mutableStateOf(false) }
     var autoSubtitleApplied by remember(
@@ -1047,6 +1077,7 @@ private fun EmbeddedVlcPlayerPanel(
     ) {
         mutableStateOf(false)
     }
+    KeepScreenAwakeWhilePlaying(isPlaybackActive)
 
     fun refreshVlcTracks(player: MediaPlayer?) {
         if (player == null) return
@@ -1056,7 +1087,11 @@ private fun EmbeddedVlcPlayerPanel(
         selectedSubtitleTrackId = player.getSpuTrack()
     }
 
-    fun progressSnapshot(player: MediaPlayer?, forceFinished: Boolean = false): PlaybackProgressSnapshot? {
+    fun progressSnapshot(
+        player: MediaPlayer?,
+        forceFinished: Boolean = false,
+        forceTrackerSync: Boolean = false,
+    ): PlaybackProgressSnapshot? {
         if (player == null) return null
         val durationMs = player.length.coerceAtLeast(0L)
         if (durationMs <= 0L) return null
@@ -1073,16 +1108,22 @@ private fun EmbeddedVlcPlayerPanel(
             positionMs = positionMs,
             durationMs = durationMs,
             isFinished = forceFinished || positionMs >= (durationMs - 1_500L).coerceAtLeast(0L),
+            forceTrackerSync = forceTrackerSync,
+            playerSource = source,
         )
     }
 
-    fun emitProgressSnapshot(forceFinished: Boolean = false) {
-        progressSnapshot(session?.mediaPlayer, forceFinished)?.let(onProgress)
+    fun emitProgressSnapshot(
+        forceFinished: Boolean = false,
+        forceTrackerSync: Boolean = false,
+    ) {
+        progressSnapshot(session?.mediaPlayer, forceFinished, forceTrackerSync)?.let(onProgress)
     }
 
     DisposableEffect(source.uri) {
         onDispose {
-            emitProgressSnapshot()
+            isPlaybackActive = false
+            emitProgressSnapshot(forceTrackerSync = true)
             session?.release()
             session = null
         }
@@ -1150,6 +1191,7 @@ private fun EmbeddedVlcPlayerPanel(
     LaunchedEffect(session) {
         while (isActive) {
             val player = session?.mediaPlayer
+            isPlaybackActive = player?.isPlaying == true
             val snapshot = progressSnapshot(player)
             if (player != null && snapshot != null) {
                 val activeSegment = if (settings.aniSkipAutoSkip && player.isPlaying) {
@@ -1254,6 +1296,7 @@ private fun EmbeddedVlcPlayerPanel(
                                             PlaybackProgressSnapshot(
                                                 positionMs = created.mediaPlayer.time.coerceAtLeast(0L),
                                                 durationMs = created.mediaPlayer.length.coerceAtLeast(0L),
+                                                playerSource = source,
                                             ),
                                         )
                                     },
@@ -1281,6 +1324,7 @@ private fun EmbeddedVlcPlayerPanel(
                                         PlaybackProgressSnapshot(
                                             positionMs = mediaPlayer.time.coerceAtLeast(0L),
                                             durationMs = mediaPlayer.length.coerceAtLeast(0L),
+                                            playerSource = source,
                                         ),
                                     )
                                 },

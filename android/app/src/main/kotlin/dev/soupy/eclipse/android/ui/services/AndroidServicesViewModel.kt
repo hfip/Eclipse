@@ -87,6 +87,12 @@ class AndroidServicesViewModel(
         }
     }
 
+    fun setAutoSelectEpisodesEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsStore.setServicesAutoSelectEpisodesEnabled(enabled)
+        }
+    }
+
     fun setAutoModeSourceEnabled(sourceId: String, enabled: Boolean) {
         viewModelScope.launch {
             settingsStore.setAutoModeSourceEnabled(sourceId, enabled)
@@ -309,6 +315,7 @@ private fun ServicesSnapshot.toUiState(
         errorMessage = errorMessage,
         noticeMessage = noticeMessage,
         autoModeEnabled = settings.autoModeEnabled,
+        autoSelectEpisodesEnabled = settings.servicesAutoSelectEpisodesEnabled,
         autoModeSelectedCount = autoModeSelectedCount,
         serviceCount = serviceRows.size,
         addonCount = addonRows.size,

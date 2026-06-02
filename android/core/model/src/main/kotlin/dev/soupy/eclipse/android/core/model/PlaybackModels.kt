@@ -102,6 +102,7 @@ data class PlayerSource(
     val serviceName: String? = null,
     val serviceHref: String? = null,
     val context: EpisodePlaybackContext? = null,
+    val progressTarget: DetailTarget? = null,
     val resumePositionMs: Long = 0L,
 )
 

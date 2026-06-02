@@ -428,8 +428,8 @@ final class ProgressManager: ObservableObject {
             entry.currentTime = times.currentTime
             entry.totalDuration = times.totalDuration
             entry.lastUpdated = Date()
-            entry.playbackContext = playbackContext
-            entry.isAnime = isAnime || playbackContext?.hasAnimeMediaId == true
+            entry.playbackContext = playbackContext ?? entry.playbackContext
+            entry.isAnime = entry.isAnime == true || isAnime || playbackContext?.hasAnimeMediaId == true
 
             if entry.progress >= 0.85 {
                 entry.isWatched = true
@@ -522,8 +522,8 @@ final class ProgressManager: ObservableObject {
             entry.isWatched = true
             entry.currentTime = safeDuration
             entry.lastUpdated = Date()
-            entry.playbackContext = playbackContext
-            entry.isAnime = isAnime || playbackContext?.hasAnimeMediaId == true
+            entry.playbackContext = playbackContext ?? entry.playbackContext
+            entry.isAnime = entry.isAnime == true || isAnime || playbackContext?.hasAnimeMediaId == true
             self.progressData.updateEpisode(entry)
             self.publishCurrentData()
             Logger.shared.log("Marked episode as watched: S\(seasonNumber)E\(episodeNumber)", type: "Progress")
@@ -880,7 +880,7 @@ final class ProgressManager: ObservableObject {
             guard let self = self,
                   let currentItem = player.currentItem,
                   currentItem.duration.seconds.isFinite,
-                  currentItem.duration.seconds > 0 else {
+                  currentItem.duration.seconds >= 5 else {
                 return
             }
 

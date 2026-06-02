@@ -21,6 +21,7 @@ import dev.soupy.eclipse.android.core.model.SubtitleTrack
 import dev.soupy.eclipse.android.core.model.buildContentIds
 import dev.soupy.eclipse.android.core.model.displayLabel
 import dev.soupy.eclipse.android.core.model.displayTitle
+import dev.soupy.eclipse.android.core.model.formattedVideoSize
 import dev.soupy.eclipse.android.core.model.isDirectHttp
 import dev.soupy.eclipse.android.core.model.isTorrentLike
 import dev.soupy.eclipse.android.core.model.qualityScore
@@ -119,7 +120,7 @@ class StreamResolutionRepository(
         val request = buildRequest(
             target = target,
             episode = episode,
-            allowEpisodeAutoResolution = settings.autoModeEnabled,
+            allowEpisodeAutoResolution = settings.autoModeEnabled || settings.servicesAutoSelectEpisodesEnabled,
         )
         val addons = stremioAddonDao.observeAll().first()
             .filter(StremioAddonEntity::enabled)
@@ -469,7 +470,7 @@ class StreamResolutionRepository(
                 ?.episodeCandidatesForRequest(
                     request = request,
                     fallback = episode,
-                    allowEpisodeAutoResolution = settings.autoModeEnabled,
+                    allowEpisodeAutoResolution = settings.autoModeEnabled || settings.servicesAutoSelectEpisodesEnabled,
                 )
                 .orEmpty()
             val resolutionTargets = serviceEpisodes
@@ -1122,12 +1123,28 @@ private fun catalogTitleSimilarity(expected: String, result: String): Double {
 }
 
 private fun StremioRequest.catalogSearchTitles(): List<String> {
-    val values = matchTitles + summary
+    val expectedAnimeSeason = playbackContext?.localSeasonNumber?.takeIf { it > 1 }
+    val values = (matchTitles + summary).flatMap { title ->
+        listOfNotNull(
+            title,
+            title.stripEpisodeSuffix().normalizedAnimeSequelTitle(expectedAnimeSeason),
+        )
+    }
     val filtered = values
         .map { title -> title.trim() }
         .filter { title -> title.isNotBlank() }
         .filterNot { title -> title.startsWith("tt") || title.startsWith("tmdb:") || title.startsWith("imdb:") }
     return filtered.ifEmpty { listOf(summary) }
+}
+
+private fun String.normalizedAnimeSequelTitle(expectedSeason: Int?): String? {
+    val season = expectedSeason ?: return null
+    val trimmed = trim()
+    val suffix = season.toString()
+    if (!trimmed.endsWith(suffix)) return null
+    val base = trimmed.dropLast(suffix.length)
+    if (base.lastOrNull()?.isLetter() != true) return null
+    return "${base.trim()} Season $season"
 }
 
 private fun normalizedSearchQueries(values: List<String>): List<String> {
@@ -1485,6 +1502,7 @@ private fun StremioStream.toResolvedCandidate(
             "Match ${(matchScore * 100).toInt()}",
             "Quality ${(sourceQualityScore * 100).toInt()}",
             behaviorHints?.filename,
+            formattedVideoSize,
             "$requestSummary via $contentId".takeIf { playerSource != null && description.isNullOrBlank() },
         ).joinToString(" | ").ifBlank { null },
         addonName = addonLabel,

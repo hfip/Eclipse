@@ -58,6 +58,44 @@ class TrackerSyncClientTest {
     }
 
     @Test
+    fun playbackDraftDoesNotGuessTmdbEpisodeForUnmappedAnimeSeason() {
+        val item = TrackerPlaybackProgressDraft(
+            target = DetailTarget.TmdbShow(100),
+            title = "Anime Sequel",
+            seasonNumber = 1,
+            episodeNumber = 2,
+            progressPercent = 0.4,
+            playbackContext = EpisodePlaybackContext(
+                localSeasonNumber = 2,
+                localEpisodeNumber = 2,
+                anilistMediaId = 9002,
+            ),
+        ).toTrackerSyncItem()
+
+        assertEquals(null, item.seasonNumber)
+        assertEquals(null, item.episodeNumber)
+        assertEquals(2, item.anilistEpisodeNumber)
+    }
+
+    @Test
+    fun playbackDraftUsesLocalEpisodeForOrdinaryUnmappedShow() {
+        val item = TrackerPlaybackProgressDraft(
+            target = DetailTarget.TmdbShow(101),
+            title = "Ordinary Show",
+            seasonNumber = 3,
+            episodeNumber = 4,
+            progressPercent = 0.4,
+            playbackContext = EpisodePlaybackContext(
+                localSeasonNumber = 3,
+                localEpisodeNumber = 4,
+            ),
+        ).toTrackerSyncItem()
+
+        assertEquals(3, item.seasonNumber)
+        assertEquals(4, item.episodeNumber)
+    }
+
+    @Test
     fun aniListSyncSkipsTmdbShowsWithoutAnimeEvidenceEvenIfAniListIdIsPresent() = runBlocking {
         val result = TrackerSyncClient().sync(
             account = TrackerAccountSnapshot(

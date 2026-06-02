@@ -112,6 +112,7 @@ data class TMDBTVShowDetail(
     val status: String? = null,
     @SerialName("origin_country") val originCountry: List<String> = emptyList(),
     @SerialName("external_ids") val externalIds: TMDBExternalIds? = null,
+    @SerialName("next_episode_to_air") val nextEpisodeToAir: TMDBEpisode? = null,
 )
 
 val TMDBTVShowDetail.fullPosterUrl: String?

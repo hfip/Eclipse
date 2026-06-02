@@ -5,11 +5,14 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import dev.soupy.eclipse.android.core.model.AniListMedia
 import dev.soupy.eclipse.android.core.model.BackupCatalog
+import dev.soupy.eclipse.android.core.model.ContinueWatchingRecord
 import dev.soupy.eclipse.android.core.model.DetailTarget
+import dev.soupy.eclipse.android.core.model.EpisodePlaybackContext
 import dev.soupy.eclipse.android.core.model.ExploreMediaCard
 import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.MediaCarouselSection
 import dev.soupy.eclipse.android.core.model.TMDBSearchResult
+import dev.soupy.eclipse.android.core.model.TMDBEpisode
 import dev.soupy.eclipse.android.core.model.bestLogoUrl
 import dev.soupy.eclipse.android.core.model.displayTitle
 import dev.soupy.eclipse.android.core.model.fullBackdropUrl
@@ -20,8 +23,34 @@ import dev.soupy.eclipse.android.core.network.AniListService
 import dev.soupy.eclipse.android.core.network.TmdbService
 import dev.soupy.eclipse.android.core.storage.SettingsStore
 import kotlinx.coroutines.flow.first
+import java.time.LocalDate
 
 private const val HorrorGenreId = 27
+
+private fun TMDBEpisode.hasAired(today: LocalDate = LocalDate.now()): Boolean =
+    airDate
+        ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
+        ?.let { airDate -> !airDate.isAfter(today) }
+        ?: true
+
+private fun WatchNextCandidate.toWatchNextRecord(
+    seasonNumber: Int,
+    episodeNumber: Int,
+    playbackContext: EpisodePlaybackContext? = null,
+): ContinueWatchingRecord = ContinueWatchingRecord(
+    id = "watch-next:$showId:s$seasonNumber:e$episodeNumber",
+    detailTarget = DetailTarget.TmdbShow(showId),
+    title = title.ifBlank { "Show $showId" },
+    subtitle = "S$seasonNumber E$episodeNumber",
+    imageUrl = posterUrl,
+    progressLabel = "Watch next",
+    updatedAt = updatedAt,
+    seasonNumber = seasonNumber,
+    episodeNumber = episodeNumber,
+    playbackContext = playbackContext,
+    isAnime = isAnime,
+    isWatchNext = true,
+)
 
 data class HomeContent(
     val hero: ExploreMediaCard? = null,
@@ -37,6 +66,7 @@ class HomeRepository(
     private val catalogRepository: CatalogRepository,
     private val recommendationRepository: RecommendationRepository,
     private val progressRepository: ProgressRepository,
+    private val trackerRepository: TrackerRepository,
     private val settingsStore: SettingsStore,
     private val tmdbEnabled: Boolean,
 ) {
@@ -45,7 +75,7 @@ class HomeRepository(
             val settings = settingsStore.settings.first()
             tmdbService.setLanguage(settings.tmdbLanguage)
             val enabledCatalogsDeferred = async { catalogRepository.enabledCatalogs() }
-            val continueWatchingDeferred = async { progressRepository.continueWatching(limit = 12) }
+            val continueWatchingDeferred = async { mergedContinueWatching(limit = 12) }
             val trendingDeferred = async {
                 if (tmdbEnabled) tmdbService.trendingAll()
                 else dev.soupy.eclipse.android.core.network.NetworkResult.Success(emptyList<dev.soupy.eclipse.android.core.model.TMDBSearchResult>())
@@ -239,6 +269,92 @@ class HomeRepository(
             else -> null
         }
         return logoUrl?.let { copy(logoUrl = it) } ?: this
+    }
+
+    private suspend fun mergedContinueWatching(limit: Int): List<ContinueWatchingRecord> = coroutineScope {
+        val localItemsDeferred = async { progressRepository.continueWatching(limit = limit) }
+        val traktItemsDeferred = async { trackerRepository.fetchTraktContinueWatchingItems() }
+        val watchNextItemsDeferred = async { resolveWatchNextItems(limit = 10) }
+        mergeContinueWatchingItems(
+            localItems = localItemsDeferred.await(),
+            traktItems = traktItemsDeferred.await(),
+            watchNextItems = watchNextItemsDeferred.await(),
+            limit = limit,
+        )
+    }
+
+    private suspend fun resolveWatchNextItems(limit: Int): List<ContinueWatchingRecord> =
+        progressRepository.watchNextCandidates(limit).mapNotNull { candidate ->
+            resolveWatchNextItem(candidate)
+        }
+
+    private suspend fun resolveWatchNextItem(candidate: WatchNextCandidate): ContinueWatchingRecord? {
+        candidate.playbackContext?.takeIf { it.hasAnimeMediaId }?.let { context ->
+            val episodeCount = context.animeSeasonEpisodeCount ?: return null
+            if (context.isSpecial || candidate.episodeNumber >= episodeCount) return null
+            val nextEpisode = candidate.episodeNumber + 1
+            return candidate.toWatchNextRecord(
+                seasonNumber = candidate.seasonNumber,
+                episodeNumber = nextEpisode,
+                playbackContext = context.forEpisodeNumber(nextEpisode),
+            )
+        }
+        if (!tmdbEnabled) return null
+
+        tmdbService.seasonDetail(candidate.showId, candidate.seasonNumber).orNull()
+            ?.episodes
+            ?.filter { episode -> episode.episodeNumber > candidate.episodeNumber && episode.hasAired() }
+            ?.minByOrNull(TMDBEpisode::episodeNumber)
+            ?.let { episode ->
+                return candidate.toWatchNextRecord(
+                    seasonNumber = episode.seasonNumber,
+                    episodeNumber = episode.episodeNumber,
+                    playbackContext = candidate.playbackContext?.forEpisodeNumber(episode.episodeNumber),
+                )
+            }
+
+        val show = tmdbService.tvShowDetail(candidate.showId).orNull() ?: return null
+        show.seasons
+            .filter { season ->
+                season.seasonNumber > candidate.seasonNumber &&
+                    season.seasonNumber > 0 &&
+                    season.episodeCount > 0
+            }
+            .sortedBy { it.seasonNumber }
+            .forEach { season ->
+                tmdbService.seasonDetail(candidate.showId, season.seasonNumber).orNull()
+                    ?.episodes
+                    ?.filter { episode -> episode.hasAired() }
+                    ?.minByOrNull(TMDBEpisode::episodeNumber)
+                    ?.let { episode ->
+                        return candidate.toWatchNextRecord(
+                            seasonNumber = episode.seasonNumber,
+                            episodeNumber = episode.episodeNumber,
+                        )
+                    }
+            }
+        return null
+    }
+
+    private fun mergeContinueWatchingItems(
+        localItems: List<ContinueWatchingRecord>,
+        traktItems: List<ContinueWatchingRecord>,
+        watchNextItems: List<ContinueWatchingRecord>,
+        limit: Int,
+    ): List<ContinueWatchingRecord> {
+        val itemByMedia = mutableMapOf<DetailTarget, ContinueWatchingRecord>()
+        (watchNextItems + localItems + traktItems).forEach { item ->
+            val existing = itemByMedia[item.detailTarget]
+            itemByMedia[item.detailTarget] = when {
+                existing == null -> item
+                existing.isWatchNext != item.isWatchNext -> if (existing.isWatchNext) item else existing
+                item.updatedAt > existing.updatedAt -> item
+                else -> existing
+            }
+        }
+        return itemByMedia.values
+            .sortedByDescending(ContinueWatchingRecord::updatedAt)
+            .take(limit)
     }
 
     private suspend fun List<AniListMedia>.toMappedAnimeCards(

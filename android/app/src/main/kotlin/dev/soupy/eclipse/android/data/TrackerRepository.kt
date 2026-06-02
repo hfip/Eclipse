@@ -2,6 +2,7 @@ package dev.soupy.eclipse.android.data
 
 import android.net.Uri
 import dev.soupy.eclipse.android.core.model.DetailTarget
+import dev.soupy.eclipse.android.core.model.ContinueWatchingRecord
 import dev.soupy.eclipse.android.core.model.EpisodeProgressBackup
 import dev.soupy.eclipse.android.core.model.MangaLibrarySnapshot
 import dev.soupy.eclipse.android.core.model.MangaProgress
@@ -22,6 +23,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -62,6 +64,29 @@ data class TrackerRemoteMangaProgress(
     val aniListId: Int,
     val progress: Int,
     val isComplete: Boolean = false,
+)
+
+data class TraktLibraryMedia(
+    val tmdbId: Int,
+    val title: String,
+)
+
+data class TraktWatchedSeason(
+    val seasonNumber: Int,
+    val episodeNumbers: List<Int>,
+)
+
+data class TraktWatchedShow(
+    val media: TraktLibraryMedia,
+    val airedEpisodes: Int? = null,
+    val seasons: List<TraktWatchedSeason> = emptyList(),
+)
+
+data class TraktLibraryImportSnapshot(
+    val watchlistShows: List<TraktLibraryMedia> = emptyList(),
+    val watchlistMovies: List<TraktLibraryMedia> = emptyList(),
+    val watchedShows: List<TraktWatchedShow> = emptyList(),
+    val watchedMovies: List<TraktLibraryMedia> = emptyList(),
 )
 
 class TrackerRepository(
@@ -173,6 +198,72 @@ class TrackerRepository(
         val updated = trackerStore.read().copy(autoSyncRatings = enabled)
         trackerStore.write(updated)
         updated
+    }
+
+    suspend fun setMergeTraktContinueWatching(enabled: Boolean): Result<TrackerStateSnapshot> = runCatching {
+        val updated = trackerStore.read().copy(mergeTraktContinueWatching = enabled)
+        trackerStore.write(updated)
+        updated
+    }
+
+    suspend fun fetchTraktContinueWatchingItems(): List<ContinueWatchingRecord> {
+        val state = trackerStore.read()
+        if (!state.mergeTraktContinueWatching || traktClientId.isBlank()) return emptyList()
+        val connectedAccounts = state.connectedAccounts()
+        val originalAccount = connectedAccounts.firstOrNull { account ->
+            account.service.normalizedTrackerService() == "trakt"
+        } ?: return emptyList()
+        val account = originalAccount.refreshIfNeeded().getOrDefault(originalAccount)
+        if (account != originalAccount) {
+            trackerStore.write(
+                state.withAccounts(
+                    connectedAccounts.replaceAccounts(listOf(originalAccount), listOf(account)),
+                ),
+            )
+        }
+
+        return runCatching {
+            val shows = httpClient.get(
+                url = "https://api.trakt.tv/sync/progress/up_next",
+                headers = account.traktHeaders(),
+            ).orThrow().toTraktUpNextRecords()
+            val movies = httpClient.get(
+                url = "https://api.trakt.tv/sync/playback/movies",
+                headers = account.traktHeaders(),
+            ).orThrow().toTraktMoviePlaybackRecords()
+            shows + movies
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun fetchTraktLibrary(): Result<TraktLibraryImportSnapshot> = runCatching {
+        require(traktClientId.isNotBlank()) { "Trakt import needs TRAKT_CLIENT_ID." }
+        val state = trackerStore.read()
+        val connectedAccounts = state.connectedAccounts()
+        val originalAccount = connectedAccounts.firstOrNull { account ->
+            account.service.normalizedTrackerService() == "trakt"
+        } ?: error("Connect Trakt before importing your Trakt library.")
+        val account = originalAccount.refreshIfNeeded().getOrThrow()
+        if (account != originalAccount) {
+            trackerStore.write(
+                state.withAccounts(
+                    connectedAccounts.replaceAccounts(listOf(originalAccount), listOf(account)),
+                ),
+            )
+        }
+        TraktLibraryImportSnapshot(
+            watchlistShows = fetchAllTraktPages("users/me/watchlist/shows?extended=full", account)
+                .flatMap(String::toTraktWatchlistShows),
+            watchlistMovies = fetchAllTraktPages("users/me/watchlist/movies?extended=full", account)
+                .flatMap(String::toTraktWatchlistMovies),
+            watchedShows = httpClient.get(
+                url = "https://api.trakt.tv/users/me/watched/shows",
+                headers = account.traktHeaders(),
+            ).orThrow().toTraktWatchedShows(),
+            watchedMovies = httpClient.get(
+                url = "https://api.trakt.tv/users/me/watched/movies",
+                headers = account.traktHeaders(),
+            ).orThrow().toTraktWatchedMovies(),
+        )
     }
 
     suspend fun markSyncAttempted(): Result<TrackerStateSnapshot> = runCatching {
@@ -1177,7 +1268,117 @@ class TrackerRepository(
             expiresAt = response.expiresAtFromNow() ?: expiresAt,
         )
     }
+
+    private fun TrackerAccountSnapshot.traktHeaders(): Map<String, String> = mapOf(
+        "Authorization" to "Bearer $accessToken",
+        "trakt-api-key" to traktClientId.trim(),
+        "trakt-api-version" to "2",
+    )
+
+    private suspend fun fetchAllTraktPages(
+        path: String,
+        account: TrackerAccountSnapshot,
+        limit: Int = 100,
+    ): List<String> {
+        val pages = mutableListOf<String>()
+        var page = 1
+        while (true) {
+            val separator = if ('?' in path) '&' else '?'
+            val response = httpClient.get(
+                url = "https://api.trakt.tv/$path${separator}page=$page&limit=$limit",
+                headers = account.traktHeaders(),
+            ).orThrow()
+            pages += response
+            if (EclipseJson.parseToJsonElement(response).jsonArray.size < limit) return pages
+            page += 1
+        }
+    }
 }
+
+private fun String.toTraktUpNextRecords(): List<ContinueWatchingRecord> =
+    EclipseJson.parseToJsonElement(this).jsonArray.mapNotNull { element ->
+        val item = element.jsonObject
+        val show = item["show"]?.jsonObject ?: return@mapNotNull null
+        val progress = item["progress"]?.jsonObject ?: return@mapNotNull null
+        val nextEpisode = progress["next_episode"]?.jsonObject ?: return@mapNotNull null
+        val tmdbId = show["ids"]?.jsonObject?.get("tmdb")?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+        val season = nextEpisode["season"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+        val episode = nextEpisode["number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+        ContinueWatchingRecord(
+            id = "trakt:up-next:$tmdbId",
+            detailTarget = DetailTarget.TmdbShow(tmdbId),
+            title = show["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            subtitle = "S$season E$episode",
+            progressLabel = "Watch next",
+            updatedAt = progress["last_watched_at"]?.jsonPrimitive?.contentOrNull.toEpochMillisOrZero(),
+            seasonNumber = season,
+            episodeNumber = episode,
+            isWatchNext = true,
+        )
+    }
+
+private fun String.toTraktMoviePlaybackRecords(): List<ContinueWatchingRecord> =
+    EclipseJson.parseToJsonElement(this).jsonArray.mapNotNull { element ->
+        val item = element.jsonObject
+        val movie = item["movie"]?.jsonObject ?: return@mapNotNull null
+        val tmdbId = movie["ids"]?.jsonObject?.get("tmdb")?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+        val progress = item["progress"]?.jsonPrimitive?.doubleOrNull?.coerceIn(0.0, 100.0) ?: 0.0
+        ContinueWatchingRecord(
+            id = "trakt:movie:${item["id"]?.jsonPrimitive?.intOrNull ?: tmdbId}",
+            detailTarget = DetailTarget.TmdbMovie(tmdbId),
+            title = movie["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            progressPercent = (progress / 100.0).toFloat(),
+            progressLabel = "${progress.roundToInt()}% watched",
+            updatedAt = item["paused_at"]?.jsonPrimitive?.contentOrNull.toEpochMillisOrZero(),
+            traktPlaybackId = item["id"]?.jsonPrimitive?.intOrNull,
+        )
+    }
+
+private fun String.toTraktWatchlistShows(): List<TraktLibraryMedia> =
+    toTraktLibraryMedia("show")
+
+private fun String.toTraktWatchlistMovies(): List<TraktLibraryMedia> =
+    toTraktLibraryMedia("movie")
+
+private fun String.toTraktWatchedMovies(): List<TraktLibraryMedia> =
+    toTraktLibraryMedia("movie")
+
+private fun String.toTraktLibraryMedia(key: String): List<TraktLibraryMedia> =
+    EclipseJson.parseToJsonElement(this).jsonArray.mapNotNull { element ->
+        element.jsonObject[key]?.jsonObject?.toTraktLibraryMedia()
+    }
+
+private fun String.toTraktWatchedShows(): List<TraktWatchedShow> =
+    EclipseJson.parseToJsonElement(this).jsonArray.mapNotNull { element ->
+        val item = element.jsonObject
+        val showObject = item["show"]?.jsonObject ?: return@mapNotNull null
+        val show = showObject.toTraktLibraryMedia() ?: return@mapNotNull null
+        TraktWatchedShow(
+            media = show,
+            airedEpisodes = showObject["aired_episodes"]?.jsonPrimitive?.intOrNull,
+            seasons = item["seasons"]?.jsonArray.orEmpty().mapNotNull { seasonElement ->
+                val season = seasonElement.jsonObject
+                val seasonNumber = season["number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                TraktWatchedSeason(
+                    seasonNumber = seasonNumber,
+                    episodeNumbers = season["episodes"]?.jsonArray.orEmpty().mapNotNull { episode ->
+                        episode.jsonObject["number"]?.jsonPrimitive?.intOrNull
+                    },
+                )
+            },
+        )
+    }
+
+private fun kotlinx.serialization.json.JsonObject.toTraktLibraryMedia(): TraktLibraryMedia? {
+    val tmdbId = this["ids"]?.jsonObject?.get("tmdb")?.jsonPrimitive?.intOrNull ?: return null
+    return TraktLibraryMedia(
+        tmdbId = tmdbId,
+        title = this["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+    )
+}
+
+private fun String?.toEpochMillisOrZero(): Long =
+    this?.let { value -> runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L) } ?: 0L
 
 private data class OAuthCredentials(
     val clientId: String,
@@ -1461,14 +1662,18 @@ private fun MovieProgressBackup.toTrackerSyncItem(): TrackerSyncItem = TrackerSy
     isFinished = isWatched,
 )
 
-private fun EpisodeProgressBackup.toTrackerSyncItem(showTitle: String?): TrackerSyncItem = TrackerSyncItem(
-    target = DetailTarget.TmdbShow(showId),
-    title = showTitle?.takeIf { it.isNotBlank() } ?: "Show $showId",
-    seasonNumber = seasonNumber,
-    episodeNumber = episodeNumber,
-    anilistMediaId = anilistMediaId,
-    anilistEpisodeNumber = episodeNumber,
-    progressPercent = progressPercent,
-    isFinished = isWatched,
-    isAnime = isAnime,
-)
+private fun EpisodeProgressBackup.toTrackerSyncItem(showTitle: String?): TrackerSyncItem {
+    val traktNumbers = playbackContext?.traktEpisodeNumbersOrNull()
+        ?: if (playbackContext == null) seasonNumber to episodeNumber else null
+    return TrackerSyncItem(
+        target = DetailTarget.TmdbShow(showId),
+        title = showTitle?.takeIf { it.isNotBlank() } ?: "Show $showId",
+        seasonNumber = traktNumbers?.first,
+        episodeNumber = traktNumbers?.second,
+        anilistMediaId = anilistMediaId,
+        anilistEpisodeNumber = playbackContext?.localEpisodeNumber ?: episodeNumber,
+        progressPercent = progressPercent,
+        isFinished = isWatched,
+        isAnime = isAnime || playbackContext?.hasAnimeMediaId == true,
+    )
+}

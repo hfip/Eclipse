@@ -27,6 +27,12 @@ data class ContinueWatchingRecord(
     val progressPercent: Float = 0f,
     val progressLabel: String? = null,
     val updatedAt: Long = System.currentTimeMillis(),
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
+    val playbackContext: EpisodePlaybackContext? = null,
+    val isAnime: Boolean = false,
+    val isWatchNext: Boolean = false,
+    val traktPlaybackId: Int? = null,
 )
 
 @Serializable

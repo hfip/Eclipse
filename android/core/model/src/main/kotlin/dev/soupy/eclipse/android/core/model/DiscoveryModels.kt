@@ -3,6 +3,33 @@ package dev.soupy.eclipse.android.core.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+enum class ScheduleMode(
+    val rawValue: String,
+    val title: String,
+    val description: String,
+) {
+    ANIME("anime", "Anime", "Anime episodes from AniList."),
+    WESTERN("western", "Western", "Regional Western TV and streaming episodes."),
+    COMBINED("combined", "Combined", "Anime and Western episodes together."),
+    LIBRARY("library", "Library", "Upcoming episodes from your saved library and bookmarks."),
+    ;
+
+    companion object {
+        val Default: ScheduleMode = ANIME
+
+        fun fromRawValue(value: String?): ScheduleMode =
+            entries.firstOrNull { it.rawValue.equals(value?.trim(), ignoreCase = true) } ?: Default
+
+        fun sanitizedRawValue(value: String?): String = fromRawValue(value).rawValue
+    }
+}
+
+enum class ScheduleSource {
+    ANIME,
+    WESTERN,
+    LIBRARY,
+}
+
 @Serializable
 sealed interface DetailTarget {
     @Serializable
@@ -57,6 +84,7 @@ data class ScheduleEntryCard(
     val mediaId: Int = 0,
     val format: String? = null,
     val titleCandidates: List<String> = emptyList(),
+    val source: ScheduleSource = ScheduleSource.ANIME,
 )
 
 data class ScheduleDaySection(

@@ -19,12 +19,14 @@ class PlayerSourceTest {
             uri = "https://example.test/video.m3u8",
             serviceId = "stremio:https://addon.example.test/manifest.json",
             serviceHref = "tt1234567:1:2",
+            progressTarget = DetailTarget.TmdbShow(42),
         )
 
         val decoded = json.decodeFromString<PlayerSource>(json.encodeToString(source))
 
         assertEquals(source.serviceId, decoded.serviceId)
         assertEquals(source.serviceHref, decoded.serviceHref)
+        assertEquals(source.progressTarget, decoded.progressTarget)
     }
 
     @Test
@@ -35,5 +37,6 @@ class PlayerSourceTest {
 
         assertNull(decoded.serviceId)
         assertNull(decoded.serviceHref)
+        assertNull(decoded.progressTarget)
     }
 }

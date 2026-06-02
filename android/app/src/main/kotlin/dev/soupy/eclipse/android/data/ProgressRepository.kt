@@ -2,6 +2,7 @@ package dev.soupy.eclipse.android.data
 
 import dev.soupy.eclipse.android.core.model.ContinueWatchingRecord
 import dev.soupy.eclipse.android.core.model.DetailTarget
+import dev.soupy.eclipse.android.core.model.EpisodePlaybackContext
 import dev.soupy.eclipse.android.core.model.EpisodeProgressBackup
 import dev.soupy.eclipse.android.core.model.MovieProgressBackup
 import dev.soupy.eclipse.android.core.model.ProgressDataBackup
@@ -18,6 +19,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class MovieProgressDraft(
     val movieId: Int,
@@ -43,19 +46,35 @@ data class EpisodeProgressDraft(
     val isFinished: Boolean = false,
     val lastServiceId: String? = null,
     val lastHref: String? = null,
+    val playbackContext: EpisodePlaybackContext? = null,
+)
+
+data class WatchNextCandidate(
+    val showId: Int,
+    val title: String,
+    val posterUrl: String? = null,
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val updatedAt: Long,
+    val playbackContext: EpisodePlaybackContext? = null,
+    val isAnime: Boolean = false,
 )
 
 class ProgressRepository(
     private val progressStore: ProgressStore,
 ) {
+    private val mutationMutex = Mutex()
+
     suspend fun loadSnapshot(): Result<ProgressDataBackup> = runCatching {
         progressStore.read().normalized()
     }
 
     suspend fun restoreFromBackup(progressData: JsonElement): Result<ProgressDataBackup> = runCatching {
-        val decoded = decodeProgressData(progressData).normalized()
-        progressStore.write(decoded)
-        decoded
+        mutationMutex.withLock {
+            val decoded = decodeProgressData(progressData).normalized()
+            progressStore.write(decoded)
+            decoded
+        }
     }
 
     suspend fun exportForBackup(fallback: JsonElement): JsonElement {
@@ -68,76 +87,102 @@ class ProgressRepository(
     }
 
     suspend fun recordMovieProgress(draft: MovieProgressDraft): Result<ProgressDataBackup> = runCatching {
-        require(draft.movieId > 0) { "Movie progress requires a TMDB movie id." }
-        require(draft.totalDurationSeconds > 0.0) { "Movie progress requires a duration." }
-        val now = Instant.now().toString()
-        val snapshot = progressStore.read()
-        val entry = MovieProgressBackup(
-            id = draft.movieId,
-            title = draft.title,
-            posterUrl = draft.posterUrl,
-            currentTime = if (draft.isFinished) draft.totalDurationSeconds else draft.currentTimeSeconds.coerceIn(0.0, draft.totalDurationSeconds),
-            totalDuration = draft.totalDurationSeconds,
-            isWatched = draft.isFinished,
-            lastUpdated = now,
-            lastServiceId = draft.lastServiceId,
-            lastHref = draft.lastHref,
-        ).withWatchedThreshold()
-        val updated = snapshot.copy(
-            movieProgress = listOf(entry) + snapshot.movieProgress.filterNot { it.id == draft.movieId },
-        ).normalized()
-        progressStore.write(updated)
-        updated
+        mutationMutex.withLock {
+            require(draft.movieId > 0) { "Movie progress requires a TMDB movie id." }
+            val now = Instant.now().toString()
+            val snapshot = progressStore.read()
+            val existing = snapshot.movieProgress.firstOrNull { it.id == draft.movieId }
+            val times = stableProgressTimes(
+                currentTimeSeconds = draft.currentTimeSeconds,
+                totalDurationSeconds = draft.totalDurationSeconds,
+                previousDurationSeconds = existing?.totalDuration ?: 0.0,
+                isFinished = draft.isFinished,
+            )
+            val entry = (existing ?: MovieProgressBackup(id = draft.movieId)).copy(
+                title = draft.title,
+                posterUrl = draft.posterUrl ?: existing?.posterUrl,
+                currentTime = times.currentTimeSeconds,
+                totalDuration = times.totalDurationSeconds,
+                isWatched = existing?.isWatched == true || draft.isFinished,
+                lastUpdated = now,
+                lastServiceId = draft.lastServiceId ?: existing?.lastServiceId,
+                lastHref = draft.lastHref ?: existing?.lastHref,
+            ).withWatchedThreshold()
+            val updated = snapshot.copy(
+                movieProgress = listOf(entry) + snapshot.movieProgress.filterNot { it.id == draft.movieId },
+            ).normalized()
+            progressStore.write(updated)
+            updated
+        }
     }
 
     suspend fun recordEpisodeProgress(draft: EpisodeProgressDraft): Result<ProgressDataBackup> = runCatching {
-        require(draft.showId > 0) { "Episode progress requires a TMDB show id." }
-        require(draft.seasonNumber >= 0) { "Episode progress requires a season number." }
-        require(draft.episodeNumber > 0) { "Episode progress requires an episode number." }
-        require(draft.totalDurationSeconds > 0.0) { "Episode progress requires a duration." }
-        val now = Instant.now().toString()
-        val id = episodeProgressId(draft.showId, draft.seasonNumber, draft.episodeNumber)
-        val snapshot = progressStore.read()
-        val entry = EpisodeProgressBackup(
-            id = id,
-            showId = draft.showId,
-            seasonNumber = draft.seasonNumber,
-            episodeNumber = draft.episodeNumber,
-            anilistMediaId = draft.anilistMediaId,
-            isAnime = draft.isAnime,
-            currentTime = if (draft.isFinished) draft.totalDurationSeconds else draft.currentTimeSeconds.coerceIn(0.0, draft.totalDurationSeconds),
-            totalDuration = draft.totalDurationSeconds,
-            isWatched = draft.isFinished,
-            lastUpdated = now,
-            lastServiceId = draft.lastServiceId,
-            lastHref = draft.lastHref,
-        ).withWatchedThreshold()
-        val metadata = ShowMetadataBackup(
-            showId = draft.showId,
-            title = draft.showTitle,
-            posterUrl = draft.showPosterUrl,
-        )
-        val updated = snapshot.copy(
-            episodeProgress = listOf(entry) + snapshot.episodeProgress.filterNot { it.id == id },
-            showMetadata = snapshot.showMetadata + (draft.showId.toString() to metadata),
-        ).normalized()
-        progressStore.write(updated)
-        updated
+        mutationMutex.withLock {
+            require(draft.showId > 0) { "Episode progress requires a TMDB show id." }
+            require(draft.seasonNumber >= 0) { "Episode progress requires a season number." }
+            require(draft.episodeNumber > 0) { "Episode progress requires an episode number." }
+            val now = Instant.now().toString()
+            val id = episodeProgressId(draft.showId, draft.seasonNumber, draft.episodeNumber)
+            val snapshot = progressStore.read()
+            val existing = snapshot.episodeProgress.firstOrNull { it.id == id }
+            val times = stableProgressTimes(
+                currentTimeSeconds = draft.currentTimeSeconds,
+                totalDurationSeconds = draft.totalDurationSeconds,
+                previousDurationSeconds = existing?.totalDuration ?: 0.0,
+                isFinished = draft.isFinished,
+            )
+            val entry = (existing ?: EpisodeProgressBackup(
+                id = id,
+                showId = draft.showId,
+                seasonNumber = draft.seasonNumber,
+                episodeNumber = draft.episodeNumber,
+            )).copy(
+                anilistMediaId = draft.anilistMediaId ?: existing?.anilistMediaId,
+                isAnime = existing?.isAnime == true || draft.isAnime,
+                currentTime = times.currentTimeSeconds,
+                totalDuration = times.totalDurationSeconds,
+                isWatched = existing?.isWatched == true || draft.isFinished,
+                lastUpdated = now,
+                lastServiceId = draft.lastServiceId ?: existing?.lastServiceId,
+                lastHref = draft.lastHref ?: existing?.lastHref,
+                playbackContext = draft.playbackContext ?: existing?.playbackContext,
+            ).withWatchedThreshold()
+            val metadata = ShowMetadataBackup(
+                showId = draft.showId,
+                title = draft.showTitle,
+                posterUrl = draft.showPosterUrl,
+            )
+            val updated = snapshot.copy(
+                episodeProgress = listOf(entry) + snapshot.episodeProgress.filterNot { it.id == id },
+                showMetadata = snapshot.showMetadata + (draft.showId.toString() to metadata),
+            ).normalized()
+            progressStore.write(updated)
+            updated
+        }
     }
 
-    suspend fun markMovieWatched(movieId: Int, watched: Boolean): Result<ProgressDataBackup> = runCatching {
-        val snapshot = progressStore.read()
-        val now = Instant.now().toString()
-        val existing = snapshot.movieProgress.firstOrNull { it.id == movieId }
-            ?: MovieProgressBackup(id = movieId, lastUpdated = now)
-        val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
-        val updatedEntry = existing.copy(
-            currentTime = if (watched) safeDuration else 0.0,
-            totalDuration = safeDuration,
-            isWatched = watched,
-            lastUpdated = now,
-        )
-        write(snapshot.copy(movieProgress = listOf(updatedEntry) + snapshot.movieProgress.filterNot { it.id == movieId }))
+    suspend fun markMovieWatched(
+        movieId: Int,
+        watched: Boolean,
+        title: String? = null,
+        posterUrl: String? = null,
+    ): Result<ProgressDataBackup> = runCatching {
+        mutationMutex.withLock {
+            val snapshot = progressStore.read()
+            val now = Instant.now().toString()
+            val existing = snapshot.movieProgress.firstOrNull { it.id == movieId }
+                ?: MovieProgressBackup(id = movieId, lastUpdated = now)
+            val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
+            val updatedEntry = existing.copy(
+                title = title?.takeIf(String::isNotBlank) ?: existing.title,
+                posterUrl = posterUrl ?: existing.posterUrl,
+                currentTime = if (watched) safeDuration else 0.0,
+                totalDuration = safeDuration,
+                isWatched = watched,
+                lastUpdated = now,
+            )
+            write(snapshot.copy(movieProgress = listOf(updatedEntry) + snapshot.movieProgress.filterNot { it.id == movieId }))
+        }
     }
 
     suspend fun markEpisodeWatched(
@@ -147,22 +192,42 @@ class ProgressRepository(
         watched: Boolean,
         anilistMediaId: Int? = null,
         isAnime: Boolean = false,
+        playbackContext: EpisodePlaybackContext? = null,
+        showTitle: String? = null,
+        showPosterUrl: String? = null,
     ): Result<ProgressDataBackup> = runCatching {
-        val snapshot = progressStore.read()
-        val now = Instant.now().toString()
-        val id = episodeProgressId(showId, seasonNumber, episodeNumber)
-        val existing = snapshot.episodeProgress.firstOrNull { it.id == id }
-            ?: EpisodeProgressBackup(id = id, showId = showId, seasonNumber = seasonNumber, episodeNumber = episodeNumber)
-        val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
-        val updatedEntry = existing.copy(
-            anilistMediaId = anilistMediaId ?: existing.anilistMediaId,
-            isAnime = existing.isAnime || isAnime,
-            currentTime = if (watched) safeDuration else 0.0,
-            totalDuration = safeDuration,
-            isWatched = watched,
-            lastUpdated = now,
-        )
-        write(snapshot.copy(episodeProgress = listOf(updatedEntry) + snapshot.episodeProgress.filterNot { it.id == id }))
+        mutationMutex.withLock {
+            val snapshot = progressStore.read()
+            val now = Instant.now().toString()
+            val id = episodeProgressId(showId, seasonNumber, episodeNumber)
+            val existing = snapshot.episodeProgress.firstOrNull { it.id == id }
+                ?: EpisodeProgressBackup(id = id, showId = showId, seasonNumber = seasonNumber, episodeNumber = episodeNumber)
+            val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
+            val updatedEntry = existing.copy(
+                anilistMediaId = anilistMediaId ?: existing.anilistMediaId,
+                isAnime = existing.isAnime || isAnime,
+                playbackContext = playbackContext ?: existing.playbackContext,
+                currentTime = if (watched) safeDuration else 0.0,
+                totalDuration = safeDuration,
+                isWatched = watched,
+                lastUpdated = now,
+            )
+            val updatedMetadata = showTitle?.takeIf(String::isNotBlank)?.let { title ->
+                snapshot.showMetadata + (
+                    showId.toString() to ShowMetadataBackup(
+                        showId = showId,
+                        title = title,
+                        posterUrl = showPosterUrl,
+                    )
+                )
+            } ?: snapshot.showMetadata
+            write(
+                snapshot.copy(
+                    episodeProgress = listOf(updatedEntry) + snapshot.episodeProgress.filterNot { it.id == id },
+                    showMetadata = updatedMetadata,
+                ),
+            )
+        }
     }
 
     suspend fun markPreviousEpisodesWatched(
@@ -172,43 +237,47 @@ class ProgressRepository(
         watched: Boolean,
         isAnime: Boolean = false,
     ): Result<ProgressDataBackup> = runCatching {
-        if (throughEpisodeExclusive <= 1) return@runCatching progressStore.read().normalized()
-        val now = Instant.now().toString()
-        val snapshot = progressStore.read()
-        val updatedById = snapshot.episodeProgress.associateBy { it.id }.toMutableMap()
-        for (episode in 1 until throughEpisodeExclusive) {
-            val id = episodeProgressId(showId, seasonNumber, episode)
-            val existing = updatedById[id]
-                ?: EpisodeProgressBackup(id = id, showId = showId, seasonNumber = seasonNumber, episodeNumber = episode)
-            val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
-            updatedById[id] = existing.copy(
-                isAnime = existing.isAnime || isAnime,
-                currentTime = if (watched) safeDuration else 0.0,
-                totalDuration = safeDuration,
-                isWatched = watched,
-                lastUpdated = now,
-            )
+        mutationMutex.withLock {
+            if (throughEpisodeExclusive <= 1) return@withLock progressStore.read().normalized()
+            val now = Instant.now().toString()
+            val snapshot = progressStore.read()
+            val updatedById = snapshot.episodeProgress.associateBy { it.id }.toMutableMap()
+            for (episode in 1 until throughEpisodeExclusive) {
+                val id = episodeProgressId(showId, seasonNumber, episode)
+                val existing = updatedById[id]
+                    ?: EpisodeProgressBackup(id = id, showId = showId, seasonNumber = seasonNumber, episodeNumber = episode)
+                val safeDuration = existing.totalDuration.takeIf { it > 0.0 } ?: existing.currentTime.coerceAtLeast(1.0)
+                updatedById[id] = existing.copy(
+                    isAnime = existing.isAnime || isAnime,
+                    currentTime = if (watched) safeDuration else 0.0,
+                    totalDuration = safeDuration,
+                    isWatched = watched,
+                    lastUpdated = now,
+                )
+            }
+            write(snapshot.copy(episodeProgress = updatedById.values.toList()))
         }
-        write(snapshot.copy(episodeProgress = updatedById.values.toList()))
     }
 
     suspend fun removeContinueWatching(id: String): Result<ProgressDataBackup> = runCatching {
-        val snapshot = progressStore.read()
-        val updated = when {
-            id.startsWith("progress:movie:") -> {
-                val movieId = id.substringAfterLast(":").toIntOrNull()
-                snapshot.copy(movieProgress = snapshot.movieProgress.filterNot { it.id == movieId })
+        mutationMutex.withLock {
+            val snapshot = progressStore.read()
+            val updated = when {
+                id.startsWith("progress:movie:") -> {
+                    val movieId = id.substringAfterLast(":").toIntOrNull()
+                    snapshot.copy(movieProgress = snapshot.movieProgress.filterNot { it.id == movieId })
+                }
+                id.startsWith("progress:show:") -> {
+                    val showId = id.substringAfterLast(":").toIntOrNull()
+                    snapshot.copy(
+                        episodeProgress = snapshot.episodeProgress.filterNot { it.showId == showId },
+                        showMetadata = snapshot.showMetadata.filterKeys { it != showId?.toString() },
+                    )
+                }
+                else -> snapshot
             }
-            id.startsWith("progress:show:") -> {
-                val showId = id.substringAfterLast(":").toIntOrNull()
-                snapshot.copy(
-                    episodeProgress = snapshot.episodeProgress.filterNot { it.showId == showId },
-                    showMetadata = snapshot.showMetadata.filterKeys { it != showId?.toString() },
-                )
-            }
-            else -> snapshot
+            write(updated)
         }
-        write(updated)
     }
 
     suspend fun continueWatching(limit: Int = 20): List<ContinueWatchingRecord> {
@@ -243,12 +312,41 @@ class ProgressRepository(
                     progressPercent = episode.progressPercent.toFloat(),
                     progressLabel = "${(episode.progressPercent * 100.0).toInt()}% watched",
                     updatedAt = episode.lastUpdated.toEpochMillisOrZero(),
+                    seasonNumber = episode.playbackContext?.localSeasonNumber ?: episode.seasonNumber,
+                    episodeNumber = episode.playbackContext?.localEpisodeNumber ?: episode.episodeNumber,
+                    playbackContext = episode.playbackContext,
+                    isAnime = episode.isAnime || episode.playbackContext?.hasAnimeMediaId == true,
                 )
             }
 
         return (movies + mostRecentEpisodesByShow)
             .sortedByDescending { it.updatedAt }
             .take(limit)
+    }
+
+    suspend fun watchNextCandidates(limit: Int = 10): List<WatchNextCandidate> {
+        val snapshot = progressStore.read().normalized()
+        return snapshot.episodeProgress
+            .groupBy(EpisodeProgressBackup::showId)
+            .mapNotNull { (_, episodes) ->
+                episodes.maxByOrNull { it.lastUpdated.toEpochMillisOrZero() }
+            }
+            .filter { it.isWatched || it.progressPercent >= 0.85 }
+            .sortedByDescending { it.lastUpdated.toEpochMillisOrZero() }
+            .take(limit)
+            .map { episode ->
+                val metadata = snapshot.showMetadata[episode.showId.toString()]
+                WatchNextCandidate(
+                    showId = episode.showId,
+                    title = metadata?.title.orEmpty(),
+                    posterUrl = metadata?.posterUrl,
+                    seasonNumber = episode.playbackContext?.localSeasonNumber ?: episode.seasonNumber,
+                    episodeNumber = episode.playbackContext?.localEpisodeNumber ?: episode.episodeNumber,
+                    updatedAt = episode.lastUpdated.toEpochMillisOrZero(),
+                    playbackContext = episode.playbackContext,
+                    isAnime = episode.isAnime || episode.playbackContext?.hasAnimeMediaId == true,
+                )
+            }
     }
 
     private suspend fun write(snapshot: ProgressDataBackup): ProgressDataBackup {
@@ -278,6 +376,38 @@ private fun ProgressDataBackup.normalized(): ProgressDataBackup = copy(
 
 private fun episodeProgressId(showId: Int, seasonNumber: Int, episodeNumber: Int): String =
     "ep_${showId}_s${seasonNumber}_e${episodeNumber}"
+
+internal data class StableProgressTimes(
+    val currentTimeSeconds: Double,
+    val totalDurationSeconds: Double,
+)
+
+internal fun stableProgressTimes(
+    currentTimeSeconds: Double,
+    totalDurationSeconds: Double,
+    previousDurationSeconds: Double = 0.0,
+    isFinished: Boolean = false,
+): StableProgressTimes {
+    require(currentTimeSeconds.isFinite() && currentTimeSeconds >= 0.0) {
+        "Progress requires a non-negative current time."
+    }
+    require(totalDurationSeconds.isFinite() && totalDurationSeconds > 0.0) {
+        "Progress requires a duration."
+    }
+    val stableDuration = maxOf(
+        totalDurationSeconds,
+        previousDurationSeconds.takeIf { it.isFinite() && it > 0.0 } ?: 0.0,
+        currentTimeSeconds,
+    )
+    return StableProgressTimes(
+        currentTimeSeconds = if (isFinished) {
+            stableDuration
+        } else {
+            currentTimeSeconds.coerceIn(0.0, stableDuration)
+        },
+        totalDurationSeconds = stableDuration,
+    )
+}
 
 private fun remainingLabel(currentTime: Double, totalDuration: Double): String {
     val remainingMinutes = ((totalDuration - currentTime).coerceAtLeast(0.0) / 60.0).toInt()

@@ -9,14 +9,20 @@ import dev.soupy.eclipse.android.core.model.AtmosphereStyle
 import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.InAppPlayer
 import dev.soupy.eclipse.android.core.model.MediaDetailElement
+import dev.soupy.eclipse.android.core.model.ScheduleMode
 import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import dev.soupy.eclipse.android.core.model.TrackerAccountSnapshot
 import dev.soupy.eclipse.android.core.model.TrackerStateSnapshot
+import dev.soupy.eclipse.android.core.model.TMDBMovieDetail
+import dev.soupy.eclipse.android.core.model.TMDBTVShowDetail
 import dev.soupy.eclipse.android.core.model.displayTitle
+import dev.soupy.eclipse.android.core.model.fullBackdropUrl
+import dev.soupy.eclipse.android.core.model.fullPosterUrl
 import dev.soupy.eclipse.android.core.network.AniListService
 import dev.soupy.eclipse.android.core.network.MyAnimeListService
 import dev.soupy.eclipse.android.core.network.NetworkResult
+import dev.soupy.eclipse.android.core.network.TmdbService
 import dev.soupy.eclipse.android.core.storage.AppSettings
 import dev.soupy.eclipse.android.core.storage.SettingsStore
 import dev.soupy.eclipse.android.data.AniListLibraryImportDraft
@@ -27,15 +33,19 @@ import dev.soupy.eclipse.android.data.CacheRepository
 import dev.soupy.eclipse.android.data.CatalogRepository
 import dev.soupy.eclipse.android.data.GitHubReleaseCachedState
 import dev.soupy.eclipse.android.data.LibraryRepository
+import dev.soupy.eclipse.android.data.LibraryItemDraft
 import dev.soupy.eclipse.android.data.LoggerRepository
 import dev.soupy.eclipse.android.data.MangaRepository
+import dev.soupy.eclipse.android.data.ProgressRepository
 import dev.soupy.eclipse.android.data.ReleaseRepository
 import dev.soupy.eclipse.android.data.ServicesRepository
 import dev.soupy.eclipse.android.data.TrackerAccountDraft
 import dev.soupy.eclipse.android.data.TrackerRemoteAnimeProgress
 import dev.soupy.eclipse.android.data.TrackerRemoteMangaProgress
 import dev.soupy.eclipse.android.data.TrackerRepository
+import dev.soupy.eclipse.android.data.TrackerLibraryItemDraft
 import dev.soupy.eclipse.android.data.TrackerSyncSummary
+import dev.soupy.eclipse.android.data.orNull
 import dev.soupy.eclipse.android.feature.settings.CatalogSettingsRow
 import dev.soupy.eclipse.android.feature.settings.LogSettingsRow
 import dev.soupy.eclipse.android.feature.settings.SettingsScreenState
@@ -68,9 +78,11 @@ class AndroidSettingsViewModel(
     private val loggerRepository: LoggerRepository,
     private val trackerRepository: TrackerRepository,
     private val libraryRepository: LibraryRepository,
+    private val progressRepository: ProgressRepository,
     private val mangaRepository: MangaRepository,
     private val aniListService: AniListService,
     private val myAnimeListService: MyAnimeListService,
+    private val tmdbService: TmdbService,
     private val releaseRepository: ReleaseRepository,
     private val servicesRepository: ServicesRepository,
 ) : ViewModel() {
@@ -136,6 +148,7 @@ class AndroidSettingsViewModel(
                     showScheduleTab = settings.showScheduleTab,
                     showLocalScheduleTime = settings.showLocalScheduleTime,
                     useClassicScheduleUI = settings.useClassicScheduleUI,
+                    defaultScheduleMode = ScheduleMode.fromRawValue(settings.defaultScheduleMode),
                     showKanzen = settings.showKanzen,
                     seasonMenu = settings.seasonMenu,
                     horizontalEpisodeList = settings.horizontalEpisodeList,
@@ -247,6 +260,12 @@ class AndroidSettingsViewModel(
             showLocalScheduleTime = current.showLocalScheduleTime,
             useClassicScheduleUI = enabled,
         )
+    }
+
+    fun setDefaultScheduleMode(mode: ScheduleMode) {
+        viewModelScope.launch {
+            settingsStore.setDefaultScheduleMode(mode.rawValue)
+        }
     }
 
     fun setShowKanzen(enabled: Boolean) {
@@ -1404,6 +1423,27 @@ class AndroidSettingsViewModel(
         }
     }
 
+    fun setMergeTraktContinueWatching(enabled: Boolean) {
+        viewModelScope.launch {
+            trackerRepository.setMergeTraktContinueWatching(enabled)
+                .onSuccess { snapshot ->
+                    _state.value = _state.value.withTrackerState(
+                        snapshot = snapshot,
+                        status = if (enabled) {
+                            "Trakt Continue Watching merge enabled."
+                        } else {
+                            "Trakt Continue Watching merge disabled."
+                        },
+                    )
+                }
+                .onFailure { error ->
+                    _state.value = _state.value.copy(
+                        trackerStatus = error.message ?: "Could not update Trakt Continue Watching merge.",
+                    )
+                }
+        }
+    }
+
     fun disconnectTracker(service: String) {
         viewModelScope.launch {
             trackerRepository.disconnect(service)
@@ -1680,6 +1720,95 @@ class AndroidSettingsViewModel(
                 .onFailure { error ->
                     _state.value = _state.value.copy(
                         trackerStatus = error.message ?: "Could not import MAL manga library.",
+                    )
+                }
+        }
+    }
+
+    fun importTraktLibrary(onImported: () -> Unit = {}) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(trackerStatus = "Fetching your Trakt library...")
+            trackerRepository.fetchTraktLibrary()
+                .onSuccess { imported ->
+                    _state.value = _state.value.copy(trackerStatus = "Matching Trakt items to TMDB...")
+                    val showIds = (imported.watchlistShows.map { it.tmdbId } + imported.watchedShows.map { it.media.tmdbId })
+                        .distinct()
+                    val movieIds = (imported.watchlistMovies.map { it.tmdbId } + imported.watchedMovies.map { it.tmdbId })
+                        .distinct()
+                    val showsById = showIds.mapNotNull { id ->
+                        tmdbService.tvShowDetail(id).orNull()?.let { id to it }
+                    }.toMap()
+                    val moviesById = movieIds.mapNotNull { id ->
+                        tmdbService.movieDetail(id).orNull()?.let { id to it }
+                    }.toMap()
+                    val itemDrafts = buildList {
+                        imported.watchlistShows.forEach { media ->
+                            showsById[media.tmdbId]?.let { show ->
+                                add(TrackerLibraryItemDraft(show.toLibraryItemDraft(), "Trakt Watchlist", "Trakt"))
+                            }
+                        }
+                        imported.watchlistMovies.forEach { media ->
+                            moviesById[media.tmdbId]?.let { movie ->
+                                add(TrackerLibraryItemDraft(movie.toLibraryItemDraft(), "Trakt Watchlist", "Trakt"))
+                            }
+                        }
+                        imported.watchedShows.forEach { watched ->
+                            showsById[watched.media.tmdbId]?.let { show ->
+                                val watchedCount = watched.seasons.sumOf { it.episodeNumbers.size }
+                                val collection = if (
+                                    watched.airedEpisodes != null &&
+                                    watched.airedEpisodes > 0 &&
+                                    watchedCount >= watched.airedEpisodes
+                                ) {
+                                    "Trakt Completed"
+                                } else {
+                                    "Trakt Watching"
+                                }
+                                add(TrackerLibraryItemDraft(show.toLibraryItemDraft(), collection, "Trakt"))
+                            }
+                        }
+                        imported.watchedMovies.forEach { media ->
+                            moviesById[media.tmdbId]?.let { movie ->
+                                add(TrackerLibraryItemDraft(movie.toLibraryItemDraft(), "Trakt Completed", "Trakt"))
+                            }
+                        }
+                    }
+                    libraryRepository.importTrackerItems(itemDrafts).getOrThrow()
+                    imported.watchedShows.forEach { watched ->
+                        val show = showsById[watched.media.tmdbId] ?: return@forEach
+                        watched.seasons.forEach { season ->
+                            season.episodeNumbers.forEach { episodeNumber ->
+                                progressRepository.markEpisodeWatched(
+                                    showId = show.id,
+                                    seasonNumber = season.seasonNumber,
+                                    episodeNumber = episodeNumber,
+                                    watched = true,
+                                    showTitle = show.name,
+                                    showPosterUrl = show.fullPosterUrl,
+                                ).getOrThrow()
+                            }
+                        }
+                    }
+                    imported.watchedMovies.forEach { media ->
+                        val movie = moviesById[media.tmdbId] ?: return@forEach
+                        progressRepository.markMovieWatched(
+                            movieId = movie.id,
+                            watched = true,
+                            title = movie.title,
+                            posterUrl = movie.fullPosterUrl,
+                        ).getOrThrow()
+                    }
+                    val skipped = showIds.size - showsById.size + movieIds.size - moviesById.size
+                    _state.value = _state.value.copy(
+                        trackerStatus = "Imported ${itemDrafts.size} Trakt collection entr${if (itemDrafts.size == 1) "y" else "ies"} and ${imported.watchedShows.size + imported.watchedMovies.size} watched title${if (imported.watchedShows.size + imported.watchedMovies.size == 1) "" else "s"}${if (skipped > 0) " with $skipped unmatched TMDB item${if (skipped == 1) "" else "s"}" else ""}.",
+                    )
+                    loggerRepository.log("Trackers", "Imported Trakt library into Android Library.")
+                    refreshLogs()
+                    onImported()
+                }
+                .onFailure { error ->
+                    _state.value = _state.value.copy(
+                        trackerStatus = error.message ?: "Could not import Trakt library.",
                     )
                 }
         }
@@ -2341,6 +2470,24 @@ class AndroidSettingsViewModel(
 
 private const val ServiceAutoUpdateIntervalMillis = 60L * 60L * 1_000L
 
+private fun TMDBTVShowDetail.toLibraryItemDraft(): LibraryItemDraft = LibraryItemDraft(
+    detailTarget = dev.soupy.eclipse.android.core.model.DetailTarget.TmdbShow(id),
+    title = name,
+    overview = overview,
+    imageUrl = fullPosterUrl,
+    backdropUrl = fullBackdropUrl,
+    mediaLabel = "Series",
+)
+
+private fun TMDBMovieDetail.toLibraryItemDraft(): LibraryItemDraft = LibraryItemDraft(
+    detailTarget = dev.soupy.eclipse.android.core.model.DetailTarget.TmdbMovie(id),
+    title = title,
+    overview = overview,
+    imageUrl = fullPosterUrl,
+    backdropUrl = fullBackdropUrl,
+    mediaLabel = "Movie",
+)
+
 private fun AppSettings.toGitHubReleaseStatus(releaseState: GitHubReleaseCachedState): String = when {
     releaseState.updateAvailable && githubReleaseLatestVersion.isNotBlank() ->
         "Update available: $githubReleaseLatestVersion"
@@ -2397,6 +2544,7 @@ private fun SettingsScreenState.withTrackerState(
     return copy(
         trackerSyncEnabled = snapshot.syncEnabled,
         autoSyncRatings = snapshot.autoSyncRatings,
+        mergeTraktContinueWatching = snapshot.mergeTraktContinueWatching,
         trackerRows = rows,
         trackerStatus = trackerStatus,
     )

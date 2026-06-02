@@ -50,6 +50,7 @@ import dev.soupy.eclipse.android.core.model.AtmosphereStyle
 import dev.soupy.eclipse.android.core.model.HeroBannerBehavior
 import dev.soupy.eclipse.android.core.model.InAppPlayer
 import dev.soupy.eclipse.android.core.model.MediaDetailElement
+import dev.soupy.eclipse.android.core.model.ScheduleMode
 import dev.soupy.eclipse.android.core.model.ServicesAutoModeQualityPreference
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import java.time.LocalDateTime
@@ -102,6 +103,7 @@ data class SettingsScreenState(
     val showScheduleTab: Boolean = true,
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
+    val defaultScheduleMode: ScheduleMode = ScheduleMode.Default,
     val showKanzen: Boolean = false,
     val seasonMenu: Boolean = false,
     val horizontalEpisodeList: Boolean = false,
@@ -137,6 +139,7 @@ data class SettingsScreenState(
     val loggerStatus: String = "No logs captured yet.",
     val trackerSyncEnabled: Boolean = true,
     val autoSyncRatings: Boolean = false,
+    val mergeTraktContinueWatching: Boolean = false,
     val trackerRows: List<TrackerSettingsRow> = emptyList(),
     val trackerStatus: String = "No tracker accounts connected yet.",
     val trackerSyncTools: List<TrackerSyncToolRow> = DefaultTrackerSyncToolRows,
@@ -344,6 +347,7 @@ fun SettingsRoute(
     onShowScheduleTabChanged: (Boolean) -> Unit,
     onShowLocalScheduleTimeChanged: (Boolean) -> Unit,
     onUseClassicScheduleUiChanged: (Boolean) -> Unit,
+    onDefaultScheduleModeChanged: (ScheduleMode) -> Unit,
     onShowKanzenChanged: (Boolean) -> Unit,
     onSeasonMenuChanged: (Boolean) -> Unit,
     onHorizontalEpisodeListChanged: (Boolean) -> Unit,
@@ -405,11 +409,13 @@ fun SettingsRoute(
     onTrackerManualConnect: (String, String, String) -> Unit,
     onTrackerSyncEnabledChanged: (Boolean) -> Unit,
     onAutoSyncRatingsChanged: (Boolean) -> Unit,
+    onMergeTraktContinueWatchingChanged: (Boolean) -> Unit,
     onTrackerDisconnect: (String) -> Unit,
     onTrackerSyncNow: () -> Unit,
     onAniListImportLibrary: () -> Unit,
     onAniListImportMangaLibrary: () -> Unit,
     onMyAnimeListImportLibrary: () -> Unit,
+    onTraktImportLibrary: () -> Unit,
     onAniListSyncMangaProgress: () -> Unit,
     onTrackerSyncToolPreview: (String) -> Unit,
     onTrackerSyncToolRun: (String) -> Unit,
@@ -525,6 +531,7 @@ fun SettingsRoute(
                     onShowScheduleTabChanged = onShowScheduleTabChanged,
                     onShowLocalScheduleTimeChanged = onShowLocalScheduleTimeChanged,
                     onUseClassicScheduleUiChanged = onUseClassicScheduleUiChanged,
+                    onDefaultScheduleModeChanged = onDefaultScheduleModeChanged,
                     onShowKanzenChanged = onShowKanzenChanged,
                     onSeasonMenuChanged = onSeasonMenuChanged,
                 onHorizontalEpisodeListChanged = onHorizontalEpisodeListChanged,
@@ -831,11 +838,13 @@ fun SettingsRoute(
                 },
                 onSyncEnabledChanged = onTrackerSyncEnabledChanged,
                 onAutoSyncRatingsChanged = onAutoSyncRatingsChanged,
+                onMergeTraktContinueWatchingChanged = onMergeTraktContinueWatchingChanged,
                 onDisconnect = onTrackerDisconnect,
                 onSyncNow = onTrackerSyncNow,
                 onAniListImportLibrary = onAniListImportLibrary,
                 onAniListImportMangaLibrary = onAniListImportMangaLibrary,
                 onMyAnimeListImportLibrary = onMyAnimeListImportLibrary,
+                onTraktImportLibrary = onTraktImportLibrary,
                 onAniListSyncMangaProgress = onAniListSyncMangaProgress,
                 onTrackerSyncToolPreview = onTrackerSyncToolPreview,
                 onTrackerSyncToolRun = onTrackerSyncToolRun,
@@ -954,6 +963,11 @@ private fun SettingsOverview(
             SettingsMenuRow(
                 title = "Appearance",
                 subtitle = state.selectedAppearance.replaceFirstChar { it.titlecase() },
+                onClick = { onSelected(SettingsSection.BASIC) },
+            )
+            SettingsMenuRow(
+                title = "Schedule",
+                subtitle = state.defaultScheduleMode.title,
                 onClick = { onSelected(SettingsSection.BASIC) },
             )
             SettingsMenuRow(
@@ -1179,6 +1193,7 @@ private fun DisplayOptionsCard(
     onShowScheduleTabChanged: (Boolean) -> Unit,
     onShowLocalScheduleTimeChanged: (Boolean) -> Unit,
     onUseClassicScheduleUiChanged: (Boolean) -> Unit,
+    onDefaultScheduleModeChanged: (ScheduleMode) -> Unit,
     onShowKanzenChanged: (Boolean) -> Unit,
     onSeasonMenuChanged: (Boolean) -> Unit,
     onHorizontalEpisodeListChanged: (Boolean) -> Unit,
@@ -1207,6 +1222,12 @@ private fun DisplayOptionsCard(
                 title = "Classic Schedule Layout",
                 checked = state.useClassicScheduleUI,
                 onCheckedChange = onUseClassicScheduleUiChanged,
+            )
+            OptionButtonGroup(
+                title = "Default Schedule",
+                selected = state.defaultScheduleMode.rawValue,
+                options = ScheduleMode.entries.map { mode -> mode.rawValue to mode.title },
+                onSelected = { rawValue -> onDefaultScheduleModeChanged(ScheduleMode.fromRawValue(rawValue)) },
             )
             SettingInlineToggle(
                 title = "Kanzen Mode",
@@ -1826,11 +1847,13 @@ private fun TrackerSettingsCard(
     onConnect: () -> Unit,
     onSyncEnabledChanged: (Boolean) -> Unit,
     onAutoSyncRatingsChanged: (Boolean) -> Unit,
+    onMergeTraktContinueWatchingChanged: (Boolean) -> Unit,
     onDisconnect: (String) -> Unit,
     onSyncNow: () -> Unit,
     onAniListImportLibrary: () -> Unit,
     onAniListImportMangaLibrary: () -> Unit,
     onMyAnimeListImportLibrary: () -> Unit,
+    onTraktImportLibrary: () -> Unit,
     onAniListSyncMangaProgress: () -> Unit,
     onTrackerSyncToolPreview: (String) -> Unit,
     onTrackerSyncToolRun: (String) -> Unit,
@@ -1841,6 +1864,9 @@ private fun TrackerSettingsCard(
     }
     val hasMyAnimeListAccount = state.trackerRows.any { row ->
         row.isConnected && row.service.isMyAnimeListService()
+    }
+    val hasTraktAccount = state.trackerRows.any { row ->
+        row.isConnected && row.service.equals("Trakt", ignoreCase = true)
     }
     val uriHandler = LocalUriHandler.current
     var confirmSyncToolId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1905,6 +1931,13 @@ private fun TrackerSettingsCard(
                 checked = state.autoSyncRatings,
                 onCheckedChange = onAutoSyncRatingsChanged,
             )
+            if (hasTraktAccount) {
+                SettingInlineToggle(
+                    title = "Merge Trakt Continue Watching",
+                    checked = state.mergeTraktContinueWatching,
+                    onCheckedChange = onMergeTraktContinueWatchingChanged,
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1988,6 +2021,13 @@ private fun TrackerSettingsCard(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Import MAL Library")
+            }
+            OutlinedButton(
+                onClick = onTraktImportLibrary,
+                enabled = hasTraktAccount,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Import Trakt Library")
             }
             OutlinedButton(
                 onClick = onAniListSyncMangaProgress,

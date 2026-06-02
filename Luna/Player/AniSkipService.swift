@@ -82,7 +82,8 @@ final class AniSkipService {
     /// - Returns: Array of skip segments (intro, outro, recap).
     func fetchSkipTimes(malId: Int, episodeNumber: Int, episodeDuration: Double) async throws -> [SkipSegment] {
         let durationIsUsable = episodeDuration.isFinite && episodeDuration > 0
-        let durationParam = durationIsUsable ? "&episodeLength=\(Int(episodeDuration))" : ""
+        let episodeLength = durationIsUsable ? Int(episodeDuration) : 0
+        let durationParam = "&episodeLength=\(episodeLength)"
         let urlString = "\(baseURL)/skip-times/\(malId)/\(episodeNumber)?types[]=op&types[]=ed&types[]=recap&types[]=mixed-op&types[]=mixed-ed\(durationParam)"
 
         guard let url = URL(string: urlString) else {

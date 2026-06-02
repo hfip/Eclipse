@@ -149,6 +149,7 @@ class EclipseAppContainer(
         catalogRepository = catalogRepository,
         recommendationRepository = recommendationRepository,
         progressRepository = progressRepository,
+        trackerRepository = trackerRepository,
         settingsStore = settingsStore,
         tmdbEnabled = tmdbApiKey.isNotBlank(),
     )
@@ -189,14 +190,15 @@ class EclipseAppContainer(
         servicesRepository = servicesRepository,
         sourceHealthRepository = sourceHealthRepository,
     )
-    val scheduleRepository: ScheduleRepository = ScheduleRepository(
-        aniListService = aniListService,
-        tmdbService = tmdbService,
-        tmdbEnabled = tmdbApiKey.isNotBlank(),
-    )
     val libraryRepository: LibraryRepository = LibraryRepository(
         libraryStore = libraryStore,
         progressRepository = progressRepository,
+    )
+    val scheduleRepository: ScheduleRepository = ScheduleRepository(
+        aniListService = aniListService,
+        tmdbService = tmdbService,
+        libraryRepository = libraryRepository,
+        tmdbEnabled = tmdbApiKey.isNotBlank(),
     )
     val backupRepository: BackupRepository = BackupRepository(
         context = context,

@@ -3,6 +3,8 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.descriptors.element
 import kotlinx.serialization.encoding.Decoder
@@ -16,6 +18,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
+import java.util.Locale
 
 private val qualityPatterns = listOf(
     "2160p" to 1.00,
@@ -106,6 +110,8 @@ data class StremioStreamBehaviorHints(
     @SerialName("filename") val filename: String? = null,
     @SerialName("notWebReady") val notWebReady: Boolean = false,
     @SerialName("proxyHeaders") val proxyHeaders: StremioProxyHeaders? = null,
+    @Serializable(with = FlexibleLongSerializer::class)
+    @SerialName("videoSize") val videoSize: Long? = null,
 )
 
 @Serializable
@@ -120,6 +126,9 @@ data class StremioStream(
     val subtitles: List<StremioSubtitle> = emptyList(),
     @SerialName("behaviorHints") val behaviorHints: StremioStreamBehaviorHints? = null,
 )
+
+val StremioStream.formattedVideoSize: String?
+    get() = behaviorHints?.videoSize?.takeIf { it > 0L }?.formattedFileSize()
 
 @Serializable
 data class StremioStreamResponse(
@@ -491,6 +500,7 @@ fun StremioStream.qualityScore(): Double {
         title,
         description,
         behaviorHints?.filename,
+        formattedVideoSize,
     ).joinToString(" ").lowercase()
 
     val base = qualityPatterns.firstOrNull { (needle, _) -> haystack.contains(needle) }?.second ?: 0.50
@@ -500,6 +510,46 @@ fun StremioStream.qualityScore(): Double {
     val notWebReadyPenalty = if (behaviorHints?.notWebReady == true) 0.08 else 0.0
 
     return (base + hdrBoost + remuxBoost + webBoost - notWebReadyPenalty).coerceIn(0.0, 1.0)
+}
+
+object FlexibleLongSerializer : KSerializer<Long?> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("FlexibleLong", PrimitiveKind.LONG)
+
+    override fun deserialize(decoder: Decoder): Long? {
+        val input = decoder as? JsonDecoder ?: return runCatching { decoder.decodeLong() }.getOrNull()
+        return when (val element = input.decodeJsonElement()) {
+            JsonNull -> null
+            is JsonPrimitive -> element.contentOrNull?.toDoubleOrNull()?.toLong()
+            else -> null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: Long?) {
+        val output = encoder as? JsonEncoder
+        if (output != null) {
+            output.encodeJsonElement(value?.let(::JsonPrimitive) ?: JsonNull)
+        } else if (value != null) {
+            encoder.encodeLong(value)
+        } else {
+            encoder.encodeNull()
+        }
+    }
+}
+
+private fun Long.formattedFileSize(): String {
+    val units = listOf("B", "KB", "MB", "GB", "TB")
+    var value = toDouble()
+    var index = 0
+    while (value >= 1024.0 && index < units.lastIndex) {
+        value /= 1024.0
+        index += 1
+    }
+    return if (index == 0) {
+        "$this ${units[index]}"
+    } else {
+        String.format(Locale.US, "%.1f %s", value, units[index]).replace(".0 ", " ")
+    }
 }
 
 

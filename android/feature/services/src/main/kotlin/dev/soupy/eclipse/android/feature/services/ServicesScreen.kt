@@ -103,6 +103,7 @@ data class ServicesScreenState(
     val errorMessage: String? = null,
     val noticeMessage: String? = null,
     val autoModeEnabled: Boolean = true,
+    val autoSelectEpisodesEnabled: Boolean = false,
     val autoModeSelectedCount: Int = 0,
     val serviceCount: Int = 0,
     val addonCount: Int = 0,
@@ -115,6 +116,7 @@ data class ServicesScreenState(
 fun ServicesRoute(
     state: ServicesScreenState,
     onAutoModeChanged: (Boolean) -> Unit,
+    onAutoSelectEpisodesChanged: (Boolean) -> Unit,
     onAutoModeSourceChanged: (String, Boolean) -> Unit,
     onAddService: (String, String, String?) -> Unit,
     onSaveServiceConfiguration: (String, String?) -> Unit,
@@ -247,28 +249,18 @@ fun ServicesRoute(
 
         item {
             GlassPanel {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "Use Auto Mode",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = "Let Eclipse pick from the sources you include below.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-                        )
-                    }
-                    Switch(
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    ServiceOptionToggle(
+                        title = "Use Auto Mode",
+                        description = "Let Eclipse pick from the sources you include below.",
                         checked = state.autoModeEnabled,
                         onCheckedChange = onAutoModeChanged,
+                    )
+                    ServiceOptionToggle(
+                        title = "Auto-Select Episodes",
+                        description = "Resolve bundled anime and alternate-season episode lists automatically.",
+                        checked = state.autoSelectEpisodesEnabled,
+                        onCheckedChange = onAutoSelectEpisodesChanged,
                     )
                 }
             }
@@ -508,6 +500,39 @@ fun ServicesRoute(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ServiceOptionToggle(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 

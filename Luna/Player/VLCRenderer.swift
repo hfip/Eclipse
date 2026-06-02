@@ -62,6 +62,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     private var pendingAbsoluteSeek: Double?
     private var preparedInitialSeek: Double?
     private var loadGeneration = 0
+    private var isAwaitingConfiguredMediaForCurrentLoad = false
     private let minimumReliableDuration: Double = 5.0
     private var currentURL: URL?
     private var currentHeaders: [String: String]?
@@ -374,6 +375,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         isRunning = false
         isStopping = true
         loadGeneration += 1
+        isAwaitingConfiguredMediaForCurrentLoad = false
         proxyResumeAttemptID += 1
         subtitleStyleReloadWorkItem?.cancel()
         subtitleStyleReloadWorkItem = nil
@@ -439,6 +441,8 @@ final class VLCRenderer: NSObject, PlayerRenderer {
         currentURL = url
         currentPreset = preset
         loadGeneration += 1
+        let generation = loadGeneration
+        isAwaitingConfiguredMediaForCurrentLoad = true
         proxyResumeAttemptID += 1
         subtitleStyleReloadWorkItem?.cancel()
         subtitleStyleReloadWorkItem = nil
@@ -477,6 +481,10 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             guard let self, let player = self.mediaPlayer else {
                 Logger.shared.log("[VLCRenderer.load] ERROR: mediaPlayer is nil", type: "Error")
                 return 
+            }
+            guard self.loadGeneration == generation else {
+                self.logVLC("load configuration skipped stale generation=\(generation) current=\(self.loadGeneration)", type: "Stream")
+                return
             }
             
             let mediaURL = url
@@ -533,6 +541,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             self.currentMedia = media
             
             player.media = media
+            self.isAwaitingConfiguredMediaForCurrentLoad = false
             player.drawable = self.activeVLCView
             self.ensureAudioSessionActive()
             self.logVLC("load configured media; calling play snapshot={\(self.playerSnapshot(player))}", type: "Stream")
@@ -541,7 +550,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 player.rate = Float(self.currentPlaybackSpeed)
             }
             self.startProgressPolling()
-            self.schedulePendingSubtitleTrackRestoreChecks(generation: self.loadGeneration)
+            self.schedulePendingSubtitleTrackRestoreChecks(generation: generation)
             self.scheduleLoadingSanityChecks()
             self.logVLC("load submitted play snapshot={\(self.playerSnapshot(player))}", type: "Stream")
         }
@@ -849,9 +858,14 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             logVLC("no-reload recovery queued seek reason=\(reason) target=\(secondsText(cachedPosition)) duration unavailable", type: "Progress")
         }
 
+        dispatchProgress(position: cachedPosition, duration: max(0, effectiveDuration))
+    }
+
+    private func dispatchProgress(position: Double, duration: Double, generation: Int? = nil) {
+        let expectedGeneration = generation ?? loadGeneration
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.delegate?.renderer(self, didUpdatePosition: self.cachedPosition, duration: max(0, effectiveDuration))
+            guard let self, self.loadGeneration == expectedGeneration else { return }
+            self.delegate?.renderer(self, didUpdatePosition: position, duration: duration)
         }
     }
 
@@ -972,10 +986,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             pendingAbsoluteSeek = clamped
             logVLC("applySeek terminal player; doing terminal-only media reload target=\(secondsText(clamped)) snapshot={\(playerSnapshot(player))}", type: "Progress")
             reloadStoppedPlayerMediaPreservingPosition(clamped, reason: "terminal-seek")
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.delegate?.renderer(self, didUpdatePosition: clamped, duration: max(duration, self.cachedDuration))
-            }
+            dispatchProgress(position: clamped, duration: max(duration, cachedDuration))
             return
         }
 
@@ -1014,10 +1025,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 self.logVLC("applySeek follow-up snapshot={\(self.playerSnapshot(player))}", type: "Progress")
             }
         }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.delegate?.renderer(self, didUpdatePosition: clamped, duration: max(duration, self.cachedDuration))
-        }
+        dispatchProgress(position: clamped, duration: max(duration, cachedDuration))
         logVLC("applySeek end snapshot={\(playerSnapshot(player))}", type: "Progress")
     }
 
@@ -1432,6 +1440,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
     }
 
     private func publishPlaybackProgress(from player: VLCMediaPlayer) {
+        guard !isAwaitingConfiguredMediaForCurrentLoad else { return }
         let progress = resolvedPlaybackProgress(from: player)
         let position = progress.position
         let duration = progress.duration
@@ -1462,10 +1471,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
                 }
                 cachedPosition = position
                 clearLoadingState()
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.delegate?.renderer(self, didUpdatePosition: position, duration: duration)
-                }
+                dispatchProgress(position: position, duration: duration)
                 return
             }
             let normalized = min(max(pending / duration, 0), 1)
@@ -1479,10 +1485,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             if isLoading && hasStartupSignal {
                 clearLoadingState()
             }
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.delegate?.renderer(self, didUpdatePosition: seekPosition, duration: duration)
-            }
+            dispatchProgress(position: seekPosition, duration: duration)
             return
         }
 
@@ -1493,10 +1496,7 @@ final class VLCRenderer: NSObject, PlayerRenderer {
             clearLoadingState()
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.delegate?.renderer(self, didUpdatePosition: position, duration: duration)
-        }
+        dispatchProgress(position: position, duration: duration)
     }
 
     private func logProgressSnapshotIfNeeded(player: VLCMediaPlayer, position: Double, duration: Double) {

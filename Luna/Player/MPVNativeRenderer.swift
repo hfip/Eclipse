@@ -1751,8 +1751,9 @@ final class MPVNativeRenderer: PlayerRenderer {
     private func publishProgress() {
         let position = cachedPosition
         let duration = cachedDuration
+        let generation = loadGeneration
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.loadGeneration == generation else { return }
             self.delegate?.renderer(self, didUpdatePosition: position, duration: duration)
         }
     }

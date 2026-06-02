@@ -19,11 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -41,12 +43,14 @@ import dev.soupy.eclipse.android.core.design.PosterImage
 import dev.soupy.eclipse.android.core.design.SectionHeading
 import dev.soupy.eclipse.android.core.model.ScheduleDaySection
 import dev.soupy.eclipse.android.core.model.ScheduleEntryCard
+import dev.soupy.eclipse.android.core.model.ScheduleMode
 
 data class ScheduleScreenState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
+    val selectedMode: ScheduleMode = ScheduleMode.Default,
     val days: List<ScheduleDaySection> = emptyList(),
     val loadingItemId: String? = null,
     val noTmdbEntryTitle: String? = null,
@@ -57,11 +61,15 @@ fun ScheduleRoute(
     state: ScheduleScreenState,
     onRefresh: () -> Unit,
     onShowLocalScheduleTimeChanged: (Boolean) -> Unit,
+    onModeChanged: (ScheduleMode) -> Unit,
     onSelect: (ScheduleEntryCard) -> Unit,
     onDismissNoTmdbEntry: () -> Unit,
 ) {
     var selectedDayIndex by rememberSaveable { mutableIntStateOf(0) }
     val selectedDay = state.days.getOrNull(selectedDayIndex) ?: state.days.firstOrNull()
+    LaunchedEffect(state.selectedMode) {
+        selectedDayIndex = 0
+    }
 
     state.noTmdbEntryTitle?.let { title ->
         AlertDialog(
@@ -93,6 +101,12 @@ fun ScheduleRoute(
         }
 
         if (!state.isLoading && state.errorMessage == null && state.days.isNotEmpty()) {
+            item {
+                ScheduleModePicker(
+                    selectedMode = state.selectedMode,
+                    onModeChanged = onModeChanged,
+                )
+            }
             item {
                 TimeZoneToggleRow(
                     showLocalScheduleTime = state.showLocalScheduleTime,
@@ -151,10 +165,38 @@ fun ScheduleRoute(
             item {
                 ErrorPanel(
                     title = "No airings landed",
-                    message = "AniList did not return any upcoming items for this window.",
+                    message = "There are no upcoming ${state.selectedMode.title.lowercase()} episodes in this window.",
                     actionLabel = "Refresh",
                     onAction = onRefresh,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleModePicker(
+    selectedMode: ScheduleMode,
+    onModeChanged: (ScheduleMode) -> Unit,
+) {
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "Schedule",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(ScheduleMode.entries) { mode ->
+                    FilterChip(
+                        selected = mode == selectedMode,
+                        onClick = { onModeChanged(mode) },
+                        label = { Text(mode.title) },
+                    )
+                }
             }
         }
     }

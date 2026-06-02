@@ -72,6 +72,7 @@ data class EpisodeProgressBackup(
     val lastUpdated: String? = null,
     val lastServiceId: String? = null,
     val lastHref: String? = null,
+    val playbackContext: EpisodePlaybackContext? = null,
 )
 
 @Serializable
@@ -196,6 +197,7 @@ data class TrackerStateSnapshot(
     val accounts: List<TrackerAccountSnapshot> = emptyList(),
     val syncEnabled: Boolean = true,
     val autoSyncRatings: Boolean = false,
+    val mergeTraktContinueWatching: Boolean = false,
     val lastSyncDate: String? = null,
     val provider: String? = null,
     val accessToken: String? = null,
@@ -241,6 +243,7 @@ data class BackupData(
     val showScheduleTab: Boolean = true,
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
+    val defaultScheduleMode: String = ScheduleMode.Default.rawValue,
     val defaultPlaybackSpeed: Double = 1.0,
     val holdSpeedPlayer: Double = 2.0,
     val externalPlayer: String = "none",
@@ -276,6 +279,7 @@ data class BackupData(
     val kanzenAutoUpdateModules: Boolean = true,
     val autoUpdateServicesEnabled: Boolean = true,
     @SerialName("servicesAutoModeEnabled") val autoModeEnabled: Boolean = true,
+    @SerialName("servicesAutoSelectEpisodesEnabled") val servicesAutoSelectEpisodesEnabled: Boolean = false,
     @SerialName("servicesAutoModeSourceIds") val autoModeSourceIds: List<String> = emptyList(),
     @SerialName("servicesAutoModeSourceOrderIds") val autoModeSourceOrderIds: List<String> = emptyList(),
     val servicesAutoModeQualityPreference: String = ServicesAutoModeQualityPreference.Default.rawValue,

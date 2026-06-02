@@ -49,6 +49,12 @@ data class LibraryImportSummary(
     val importedContinueWatching: Int,
 )
 
+data class TrackerLibraryItemDraft(
+    val item: LibraryItemDraft,
+    val collectionName: String,
+    val sourceName: String = "Tracker",
+)
+
 class LibraryRepository(
     private val libraryStore: LibraryStore,
     private val progressRepository: ProgressRepository,
@@ -112,6 +118,20 @@ class LibraryRepository(
             snapshot = updated,
             importedItems = importedSaved.size,
             importedContinueWatching = importedContinueWatching.size,
+        )
+    }
+
+    suspend fun importTrackerItems(drafts: List<TrackerLibraryItemDraft>): Result<LibrarySnapshot> = runCatching {
+        val snapshot = libraryStore.read()
+        val importedSaved = drafts
+            .map { draft -> draft.item.toRecord(draft.item.detailTarget.storageKey()) }
+            .distinctBy(LibraryItemRecord::id)
+        val importedIds = importedSaved.map(LibraryItemRecord::id).toSet()
+        writeSnapshot(
+            snapshot.copy(
+                savedItems = importedSaved + snapshot.savedItems.filterNot { it.id in importedIds },
+                collections = snapshot.collections.withTrackerCollections(drafts),
+            ),
         )
     }
 
@@ -388,6 +408,34 @@ private fun List<MediaLibraryCollection>.withRemoteStatusCollections(
                 id = "anilist-${name.slugified()}",
                 name = name,
                 description = "Imported from $sourceName.",
+                itemIds = ids,
+                createdAt = now,
+                updatedAt = now,
+            )
+        } else {
+            existing.copy(
+                itemIds = (ids + existing.itemIds).distinct(),
+                updatedAt = now,
+            )
+        }
+    }
+    return keyedCollections.values.toList()
+}
+
+private fun List<MediaLibraryCollection>.withTrackerCollections(
+    drafts: List<TrackerLibraryItemDraft>,
+): List<MediaLibraryCollection> {
+    val now = System.currentTimeMillis()
+    val keyedCollections = associateBy { it.name.lowercase() }.toMutableMap()
+    drafts.groupBy(TrackerLibraryItemDraft::collectionName).forEach { (name, entries) ->
+        val key = name.lowercase()
+        val existing = keyedCollections[key]
+        val ids = entries.map { it.item.detailTarget.storageKey() }.distinct()
+        keyedCollections[key] = if (existing == null) {
+            MediaLibraryCollection(
+                id = "tracker-${name.slugified()}",
+                name = name,
+                description = "Imported from ${entries.firstOrNull()?.sourceName ?: "tracker"}.",
                 itemIds = ids,
                 createdAt = now,
                 updatedAt = now,
