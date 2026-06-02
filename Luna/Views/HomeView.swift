@@ -1403,7 +1403,7 @@ struct ContinueWatchingCard: View {
             return
         }
 
-        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "VLC"
+        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "mpv"
         if inAppRaw == "mpv" || inAppRaw == "VLC" {
             let pvc = PlayerViewController(
                 url: request.url,

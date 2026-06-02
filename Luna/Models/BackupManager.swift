@@ -154,7 +154,7 @@ struct BackupData: Codable {
         // Support both new "inAppPlayer" key and legacy "playerChoice" key
         inAppPlayer = try container.decodeIfPresent(String.self, forKey: .inAppPlayer)
             ?? container.decodeIfPresent(String.self, forKey: .playerChoice)
-            ?? "VLC"
+            ?? "mpv"
         showScheduleTab = try container.decodeIfPresent(Bool.self, forKey: .showScheduleTab) ?? true
         showLocalScheduleTime = try container.decodeIfPresent(Bool.self, forKey: .showLocalScheduleTime) ?? true
         defaultScheduleMode = ScheduleMode.sanitizedRawValue(try container.decodeIfPresent(String.self, forKey: .defaultScheduleMode))
@@ -766,7 +766,7 @@ class BackupManager {
         let enableVLCSubtitleEditMenu = userDefaults.bool(forKey: "enableVLCSubtitleEditMenu")
 
         let preferredAnimeAudioLanguage = userDefaults.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn"
-        let inAppPlayer = userDefaults.string(forKey: "inAppPlayer") ?? "VLC"
+        let inAppPlayer = userDefaults.string(forKey: "inAppPlayer") ?? "mpv"
         let tmdbLanguage = userDefaults.string(forKey: "tmdbLanguage") ?? "en-US"
         let showScheduleTab = userDefaults.bool(forKey: "showScheduleTab")
         let showLocalScheduleTime = userDefaults.bool(forKey: "showLocalScheduleTime")
@@ -1083,7 +1083,7 @@ class BackupManager {
         let defaultSubtitleLanguage = json["defaultSubtitleLanguage"] as? String ?? "eng"
         let enableVLCSubtitleEditMenu = json["enableVLCSubtitleEditMenu"] as? Bool ?? false
         let preferredAnimeAudioLanguage = json["preferredAnimeAudioLanguage"] as? String ?? "jpn"
-        let inAppPlayer = json["inAppPlayer"] as? String ?? json["playerChoice"] as? String ?? "VLC"
+        let inAppPlayer = json["inAppPlayer"] as? String ?? json["playerChoice"] as? String ?? "mpv"
         let showScheduleTab = json["showScheduleTab"] as? Bool ?? true
         let showLocalScheduleTime = json["showLocalScheduleTime"] as? Bool ?? true
         let defaultScheduleMode = ScheduleMode.sanitizedRawValue(json["defaultScheduleMode"] as? String)

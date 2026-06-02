@@ -182,8 +182,8 @@ final class PlayerSettingsStore: ObservableObject {
         
         self.landscapeOnly = UserDefaults.standard.bool(forKey: "alwaysLandscape")
         
-        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.vlc.rawValue
-        self.inAppPlayer = InAppPlayer(rawValue: inAppRaw) ?? .vlc
+        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.mpv.rawValue
+        self.inAppPlayer = InAppPlayer(rawValue: inAppRaw) ?? .mpv
 
         self.preferDownloadedMedia = UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
 
