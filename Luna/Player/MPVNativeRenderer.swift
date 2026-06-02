@@ -694,6 +694,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
     private var lastSubtitleViewportSize: CGSize = .zero
     private var loadGeneration = 0
+    private var isAwaitingFileLoadedForCurrentLoad = true
     private var currentLoadStartedAt: Date?
     private var lastProgressLogBucket = -1
     private var lastDurationLogValue: Double = -1
@@ -839,6 +840,8 @@ final class MPVNativeRenderer: PlayerRenderer {
     func stop() {
         if isStopping { return }
         if !isRunning, mpv == nil { return }
+        loadGeneration += 1
+        isAwaitingFileLoadedForCurrentLoad = true
         logMPV("stop requested running=\(isRunning) ready=\(isReadyToSeek) loading=\(isLoading) cached=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration))")
         isRunning = false
         isStopping = true
@@ -889,6 +892,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         updateVideoSize(width: 0, height: 0, allowZero: true)
         isReadyToSeek = false
         loadGeneration += 1
+        isAwaitingFileLoadedForCurrentLoad = true
         currentLoadStartedAt = Date()
         lastProgressLogBucket = -1
         lastDurationLogValue = -1
@@ -1480,6 +1484,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         switch event.event_id {
         case MPV_EVENT_START_FILE:
             logMPV("event start-file gen=\(loadGeneration)")
+            cachedPosition = 0
+            cachedDuration = 0
             setLoading(true)
         case MPV_EVENT_VIDEO_RECONFIG:
             logMPV("event video-reconfig")
@@ -1584,6 +1590,7 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     private func handleFileLoaded() {
         isReadyToSeek = true
+        isAwaitingFileLoadedForCurrentLoad = false
         setLoading(isPausedForCache)
         refreshVideoState()
         let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
@@ -1749,11 +1756,14 @@ final class MPVNativeRenderer: PlayerRenderer {
     }
 
     private func publishProgress() {
+        guard !isAwaitingFileLoadedForCurrentLoad else { return }
         let position = cachedPosition
         let duration = cachedDuration
         let generation = loadGeneration
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.loadGeneration == generation else { return }
+            guard let self,
+                  self.loadGeneration == generation,
+                  !self.isAwaitingFileLoadedForCurrentLoad else { return }
             self.delegate?.renderer(self, didUpdatePosition: position, duration: duration)
         }
     }
@@ -2490,6 +2500,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
     private var isPaused = true
     private var isReadyToSeek = false
     private var isLoading = false
+    private var isAwaitingReadyForCurrentLoad = true
     private var positionUpdateTimer: Timer?
     private var lastPositionUpdateAt: CFTimeInterval = 0
     private let positionUpdateInterval: CFTimeInterval = 0.5
@@ -2547,6 +2558,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         isRunning = false
         isReadyToSeek = false
         isLoading = false
+        isAwaitingReadyForCurrentLoad = true
         lastPositionUpdateAt = 0
     }
 
@@ -2555,7 +2567,9 @@ final class MPVKitMetalRenderer: PlayerRenderer {
         currentPreset = preset
         currentHeaders = headers
         applyPreset(preset)
+        isReadyToSeek = false
         isLoading = true
+        isAwaitingReadyForCurrentLoad = true
         delegate?.renderer(self, didChangeLoading: true)
         sampleRenderer.load(url, headers: headers)
         sampleRenderer.play()
@@ -2816,7 +2830,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
             }
             return
         }
-        guard isRunning else { return }
+        guard isRunning, !isAwaitingReadyForCurrentLoad else { return }
         let now = CACurrentMediaTime()
         guard force || now - lastPositionUpdateAt >= positionUpdateInterval else { return }
         lastPositionUpdateAt = now
@@ -2843,6 +2857,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
             delegate?.renderer(self, didChangePause: false)
             if !isReadyToSeek {
                 isReadyToSeek = true
+                isAwaitingReadyForCurrentLoad = false
                 applyPendingInitialSeekIfNeeded(reason: "playing")
                 delegate?.renderer(self, didBecomeReadyToSeek: true)
             }
@@ -2856,6 +2871,7 @@ final class MPVKitMetalRenderer: PlayerRenderer {
             delegate?.renderer(self, didChangeLoading: false)
             if currentURL != nil, !isReadyToSeek {
                 isReadyToSeek = true
+                isAwaitingReadyForCurrentLoad = false
                 applyPendingInitialSeekIfNeeded(reason: "ready")
                 delegate?.renderer(self, didBecomeReadyToSeek: true)
             }
