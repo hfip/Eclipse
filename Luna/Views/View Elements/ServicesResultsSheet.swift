@@ -2462,6 +2462,10 @@ struct ModulesSearchResultsSheet: View {
                 parts.append(firstLine)
             }
         }
+        if let languageLabel = stremioLanguageLabel(for: stream),
+           !stremioLanguageLabel(languageLabel, isAlreadyIncludedIn: parts) {
+            parts.append(languageLabel)
+        }
         let hasDisplayedSize = parts.joined(separator: " ").range(
             of: #"\d+(?:\.\d+)?\s*(?:KB|MB|GB|TB)"#,
             options: [.regularExpression, .caseInsensitive]
@@ -2471,6 +2475,141 @@ struct ModulesSearchResultsSheet: View {
         }
 
         return parts.isEmpty ? "Stream" : parts.joined(separator: " · ")
+    }
+
+    private func stremioLanguageLabel(for stream: StremioStream) -> String? {
+        let metadata = [
+            stream.name,
+            stream.title,
+            stream.description,
+            stream.behaviorHints?.filename
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+        var languages = stream.languageHints
+            .flatMap(splitStremioLanguageHint)
+            .compactMap(normalizedStremioLanguageName)
+        languages.append(contentsOf: detectedStremioLanguageNames(in: metadata.joined(separator: " ")))
+
+        var seen = Set<String>()
+        let uniqueLanguages = languages.filter { seen.insert($0).inserted }
+        if uniqueLanguages.contains("Multi Audio") || uniqueLanguages.count > 3 {
+            return "Multi Audio"
+        }
+
+        let namedLanguages = uniqueLanguages.filter { $0 != "Dual Audio" }
+        if !namedLanguages.isEmpty {
+            return namedLanguages.joined(separator: "/")
+        }
+
+        let metadataText = metadata.joined(separator: " ")
+        if containsStremioLanguageMarker("multi audio", in: metadataText)
+            || containsStremioLanguageMarker("multi-language", in: metadataText)
+            || containsStremioLanguageMarker("multilang", in: metadataText) {
+            return "Multi Audio"
+        }
+        if uniqueLanguages.contains("Dual Audio")
+            || containsStremioLanguageMarker("dual audio", in: metadataText) {
+            return "Dual Audio"
+        }
+        return nil
+    }
+
+    private func splitStremioLanguageHint(_ value: String) -> [String] {
+        value.components(separatedBy: CharacterSet(charactersIn: ",/|;+"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func normalizedStremioLanguageName(_ value: String) -> String? {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "dual", "dual audio", "dual-audio": return "Dual Audio"
+        case "multi", "multi audio", "multi-audio", "multilang", "multi-language": return "Multi Audio"
+        case "eng", "en", "english": return "English"
+        case "jpn", "ja", "jp", "japanese": return "Japanese"
+        case "hin", "hi", "hindi": return "Hindi"
+        case "kor", "ko", "korean": return "Korean"
+        case "chi", "zho", "zh", "chinese", "mandarin", "cantonese": return "Chinese"
+        case "spa", "es", "esp", "spanish": return "Spanish"
+        case "lat", "latin", "latino": return "Latino"
+        case "fre", "fra", "fr", "french": return "French"
+        case "ger", "deu", "de", "german": return "German"
+        case "ita", "it", "italian": return "Italian"
+        case "por", "pt", "portuguese": return "Portuguese"
+        case "rus", "ru", "russian": return "Russian"
+        case "ara", "ar", "arabic": return "Arabic"
+        case "tam", "ta", "tamil": return "Tamil"
+        case "tel", "te", "telugu": return "Telugu"
+        case "ben", "bn", "bengali": return "Bengali"
+        case "mal", "ml", "malayalam": return "Malayalam"
+        case "kan", "kn", "kannada": return "Kannada"
+        case "mar", "mr", "marathi": return "Marathi"
+        case "tur", "tr", "turkish": return "Turkish"
+        case "pol", "pl", "polish": return "Polish"
+        case "dut", "nld", "nl", "dutch": return "Dutch"
+        case "ind", "id", "indonesian": return "Indonesian"
+        case "tha", "th", "thai": return "Thai"
+        case "vie", "vi", "vietnamese": return "Vietnamese"
+        case "ukr", "uk", "ukrainian": return "Ukrainian"
+        default: return nil
+        }
+    }
+
+    private func detectedStremioLanguageNames(in value: String) -> [String] {
+        let languages: [(name: String, markers: [String])] = [
+            ("English", ["english", "eng"]),
+            ("Japanese", ["japanese", "jpn"]),
+            ("Hindi", ["hindi", "hin"]),
+            ("Korean", ["korean", "kor"]),
+            ("Chinese", ["chinese", "mandarin", "cantonese", "zho", "chi"]),
+            ("Spanish", ["spanish", "spa"]),
+            ("Latino", ["latino", "latin", "lat"]),
+            ("French", ["french", "fra", "fre"]),
+            ("German", ["german", "deu", "ger"]),
+            ("Italian", ["italian", "ita"]),
+            ("Portuguese", ["portuguese", "por"]),
+            ("Russian", ["russian", "rus"]),
+            ("Arabic", ["arabic", "ara"]),
+            ("Tamil", ["tamil", "tam"]),
+            ("Telugu", ["telugu", "tel"]),
+            ("Bengali", ["bengali", "ben"]),
+            ("Malayalam", ["malayalam", "mal"]),
+            ("Kannada", ["kannada", "kan"]),
+            ("Marathi", ["marathi", "mar"]),
+            ("Turkish", ["turkish", "tur"]),
+            ("Polish", ["polish", "pol"]),
+            ("Dutch", ["dutch", "nld", "dut"]),
+            ("Indonesian", ["indonesian", "ind"]),
+            ("Thai", ["thai", "tha"]),
+            ("Vietnamese", ["vietnamese", "vie"]),
+            ("Ukrainian", ["ukrainian", "ukr"])
+        ]
+
+        return languages.compactMap { language in
+            language.markers.contains { containsStremioLanguageMarker($0, in: value) }
+                ? language.name
+                : nil
+        }
+    }
+
+    private func containsStremioLanguageMarker(_ marker: String, in value: String) -> Bool {
+        let escapedMarker = NSRegularExpression.escapedPattern(for: marker)
+        return value.range(
+            of: "(?i)(^|[^a-z])\(escapedMarker)([^a-z]|$)",
+            options: .regularExpression
+        ) != nil
+    }
+
+    private func stremioLanguageLabel(_ languageLabel: String, isAlreadyIncludedIn parts: [String]) -> Bool {
+        let displayedText = parts.joined(separator: " ")
+        if displayedText.range(of: languageLabel, options: .caseInsensitive) != nil {
+            return true
+        }
+
+        let displayedLanguages = Set(detectedStremioLanguageNames(in: displayedText))
+        let expectedLanguages = languageLabel.components(separatedBy: "/")
+        return !expectedLanguages.isEmpty && expectedLanguages.allSatisfy(displayedLanguages.contains)
     }
 
     private func smartPlayerMetadata(for stream: StremioStream) -> String {

@@ -333,11 +333,14 @@ struct StremioStream: Codable, Identifiable, Hashable {
     let title: String?
     let name: String?
     let description: String?
+    let lang: String?
+    let language: String?
+    let languages: [String]?
     let behaviorHints: StremioStreamBehaviorHints?
     let subtitles: [StremioSubtitle]?
 
     enum CodingKeys: String, CodingKey {
-        case url, infoHash, title, name, description, behaviorHints, subtitles
+        case url, infoHash, title, name, description, lang, language, languages, behaviorHints, subtitles
     }
 
     init(from decoder: Decoder) throws {
@@ -347,6 +350,15 @@ struct StremioStream: Codable, Identifiable, Hashable {
         title = try container.decodeIfPresent(String.self, forKey: .title)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         description = try container.decodeIfPresent(String.self, forKey: .description)
+        lang = try? container.decodeIfPresent(String.self, forKey: .lang)
+        language = try? container.decodeIfPresent(String.self, forKey: .language)
+        if let values = try? container.decodeIfPresent([String].self, forKey: .languages) {
+            languages = values
+        } else if let value = try? container.decodeIfPresent(String.self, forKey: .languages) {
+            languages = [value]
+        } else {
+            languages = nil
+        }
         // Use try? so unexpected shapes don't kill the whole stream
         behaviorHints = try? container.decodeIfPresent(StremioStreamBehaviorHints.self, forKey: .behaviorHints)
         subtitles = try? container.decodeIfPresent([StremioSubtitle].self, forKey: .subtitles)
@@ -375,6 +387,13 @@ struct StremioStream: Codable, Identifiable, Hashable {
     var formattedVideoSize: String? {
         guard let videoSize = behaviorHints?.videoSize, videoSize > 0 else { return nil }
         return ByteCountFormatter.string(fromByteCount: videoSize, countStyle: .file)
+    }
+
+    var languageHints: [String] {
+        [lang, language]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            + (languages ?? [])
     }
 }
 
