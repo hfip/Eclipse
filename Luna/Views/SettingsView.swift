@@ -467,10 +467,7 @@ struct ScheduleSettingsView: View {
             } header: {
                 Text("Schedule Tab")
             } footer: {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Choose which schedule opens first when you select the Schedule tab. You can still switch modes inside the tab.")
-                    Link("Western schedule data by TVmaze", destination: URL(string: "https://www.tvmaze.com")!)
-                }
+                Text("Choose which schedule opens first when you select the Schedule tab. You can still switch modes inside the tab.")
             }
         }
         .navigationTitle("Schedule")

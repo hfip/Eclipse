@@ -596,7 +596,12 @@ struct ScheduleView: View {
     }
 
     private func formattedTime(for item: ScheduleEntry) -> String {
-        item.hasKnownAiringTime ? formattedTime(item.airingAt) : "Time TBA"
+        if item.hasKnownAiringTime {
+            return formattedTime(item.airingAt)
+        }
+        if item.isStreamingRelease {
+            return "Streaming"
+        }
+        return "Time TBA"
     }
 }
-

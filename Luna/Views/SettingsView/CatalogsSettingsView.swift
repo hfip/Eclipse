@@ -51,29 +51,6 @@ struct CatalogsSettingsView: View {
                 Text("Enable/disable content catalogs and drag to reorder them. The order here determines the order on your home screen.")
             }
             .background(LunaScrollTracker())
-            
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("TMDB")
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Text("Movies & TV Shows")
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    HStack {
-                        Text("AniList")
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Text("Anime")
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .font(.caption)
-            } header: {
-                Text("Sources")
-            }
         }
         .navigationTitle("Catalogs")
         .lunaSettingsStyle()

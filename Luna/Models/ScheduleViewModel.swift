@@ -30,7 +30,7 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
         case .anime:
             return "Anime episodes from AniList."
         case .western:
-            return "Regional Western TV and streaming episodes."
+            return "Western TV and streaming episodes from Trakt."
         case .combined:
             return "Anime and Western episodes together."
         }
@@ -73,6 +73,8 @@ struct ScheduleEntry: Identifiable {
     let nativeTitle: String?
     let format: String?
     let hasKnownAiringTime: Bool
+    let isStreamingRelease: Bool
+    let tmdbId: Int?
 
     init(animeEntry: AniListAiringScheduleEntry) {
         id = "anime-\(animeEntry.id)"
@@ -88,6 +90,8 @@ struct ScheduleEntry: Identifiable {
         nativeTitle = animeEntry.nativeTitle
         format = animeEntry.format
         hasKnownAiringTime = true
+        isStreamingRelease = false
+        tmdbId = nil
     }
 
     fileprivate init(westernEpisode: TVMazeScheduleEpisode, airing: TVMazeAiringInfo) {
@@ -104,6 +108,30 @@ struct ScheduleEntry: Identifiable {
         nativeTitle = nil
         format = nil
         hasKnownAiringTime = airing.hasKnownAiringTime
+        isStreamingRelease = westernEpisode.show.webChannel != nil
+        tmdbId = nil
+    }
+
+    fileprivate init(traktItem: TraktCalendarItem, airingAt: Date, tmdbDetail: TMDBTVShowDetail?) {
+        let showId = traktItem.show.ids.trakt ?? traktItem.show.ids.tmdb ?? 0
+        let episodeId = traktItem.episode.ids?.trakt ?? 0
+        let seasonNumber = traktItem.episode.season ?? 0
+        let episodeNumber = traktItem.episode.number ?? 0
+        id = "trakt-\(showId)-\(seasonNumber)-\(episodeNumber)-\(episodeId)-\(traktItem.firstAired)"
+        source = .western
+        sourceMediaId = showId
+        title = traktItem.show.title
+        self.airingAt = airingAt
+        episode = episodeNumber
+        season = seasonNumber
+        coverImage = tmdbDetail?.fullPosterURL
+        englishTitle = traktItem.show.title
+        romajiTitle = nil
+        nativeTitle = nil
+        format = nil
+        hasKnownAiringTime = true
+        isStreamingRelease = false
+        tmdbId = traktItem.show.ids.tmdb
     }
 }
 
@@ -188,7 +216,13 @@ final class ScheduleViewModel: ObservableObject {
         if !forceRefresh, let westernScheduleEntries {
             return westernScheduleEntries
         }
-        let entries = try await TVMazeService.shared.fetchSchedule(dayCount: scheduleDayCount)
+        let entries: [ScheduleEntry]
+        do {
+            entries = try await TraktScheduleService.shared.fetchSchedule(dayCount: scheduleDayCount)
+        } catch {
+            Logger.shared.log("TraktScheduleService: falling back to TVMaze: \(error.localizedDescription)", type: "TMDB")
+            entries = try await TVMazeService.shared.fetchSchedule(dayCount: scheduleDayCount)
+        }
         westernScheduleEntries = entries
         return entries
     }
@@ -259,6 +293,11 @@ final class ScheduleViewModel: ObservableObject {
     }
 
     private func performTMDBLookup(for entry: ScheduleEntry) async -> TMDBSearchResult? {
+        if let tmdbId = entry.tmdbId,
+           let detail = try? await TMDBService.shared.getTVShowDetails(id: tmdbId) {
+            return tmdbSearchResult(from: detail)
+        }
+
         func normalized(_ value: String) -> String {
             value.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
         }
@@ -318,6 +357,24 @@ final class ScheduleViewModel: ObservableObject {
         }
 
         return nil
+    }
+
+    private func tmdbSearchResult(from detail: TMDBTVShowDetail) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: detail.id,
+            mediaType: "tv",
+            title: nil,
+            name: detail.name,
+            overview: detail.overview,
+            posterPath: detail.posterPath,
+            backdropPath: detail.backdropPath,
+            releaseDate: nil,
+            firstAirDate: detail.firstAirDate,
+            voteAverage: detail.voteAverage,
+            popularity: detail.popularity,
+            adult: detail.adult,
+            genreIds: detail.genres.map(\.id)
+        )
     }
 
     private func bestTVMatch(results: [TMDBTVShow], candidateKey: String, preferAnimation: Bool) -> TMDBTVShow? {
@@ -402,6 +459,240 @@ struct DayBucket: Identifiable {
     let id = UUID()
     let date: Date
     let items: [ScheduleEntry]
+}
+
+// MARK: - Trakt Western Schedule
+
+private final class TraktScheduleService {
+    static let shared = TraktScheduleService()
+
+    private let baseURL = URL(string: "https://api.trakt.tv")!
+
+    private var clientId: String {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "TraktClientID") as? String ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.contains("$(") ? "" : trimmed
+    }
+
+    private init() {}
+
+    func fetchSchedule(dayCount: Int) async throws -> [ScheduleEntry] {
+        guard !clientId.isEmpty else {
+            throw TraktScheduleError.missingClientId
+        }
+
+        let startDate = formattedStartDate()
+        let items = try await fetchCalendarItems(startDate: startDate, dayCount: dayCount)
+        let candidates = scheduleCandidates(from: items)
+        let filtered = removeDailyShows(from: candidates)
+            .sorted { $0.airingAt < $1.airingAt }
+        let tmdbDetails = await fetchTMDBDetails(for: filtered)
+
+        return filtered.map { candidate in
+            ScheduleEntry(
+                traktItem: candidate.item,
+                airingAt: candidate.airingAt,
+                tmdbDetail: candidate.item.show.ids.tmdb.flatMap { tmdbDetails[$0] }
+            )
+        }
+    }
+
+    private func formattedStartDate() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Calendar.current.startOfDay(for: Date()))
+    }
+
+    private func fetchCalendarItems(startDate: String, dayCount: Int) async throws -> [TraktCalendarItem] {
+        var components = URLComponents(string: "\(baseURL.absoluteString)/calendars/all/shows/\(startDate)/\(dayCount)")
+        components?.queryItems = [
+            URLQueryItem(name: "extended", value: "full"),
+            URLQueryItem(name: "languages", value: "en")
+        ]
+        guard let url = components?.url else {
+            throw TraktScheduleError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(clientId, forHTTPHeaderField: "trakt-api-key")
+        request.setValue("2", forHTTPHeaderField: "trakt-api-version")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw TraktScheduleError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw TraktScheduleError.httpStatus(httpResponse.statusCode)
+        }
+
+        return try JSONDecoder().decode([TraktCalendarItem].self, from: data)
+    }
+
+    private func scheduleCandidates(from items: [TraktCalendarItem]) -> [TraktScheduleCandidate] {
+        let dayFormatter = DateFormatter()
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+
+        var seenEpisodeIds = Set<String>()
+        return items.compactMap { item in
+            guard item.isWesternScheduleCandidate,
+                  let airingAt = Self.parseDate(item.firstAired) else {
+                return nil
+            }
+
+            let episodeKey = item.episode.ids?.trakt.map { "trakt-\($0)" }
+                ?? item.episode.ids?.tmdb.map { "tmdb-\($0)" }
+                ?? "\(item.showKey)-\(item.episode.season ?? 0)-\(item.episode.number ?? 0)-\(item.firstAired)"
+            guard seenEpisodeIds.insert(episodeKey).inserted else {
+                return nil
+            }
+
+            return TraktScheduleCandidate(
+                item: item,
+                airingAt: airingAt,
+                airdate: dayFormatter.string(from: airingAt),
+                showKey: item.showKey
+            )
+        }
+    }
+
+    private func removeDailyShows(from candidates: [TraktScheduleCandidate]) -> [TraktScheduleCandidate] {
+        let dailyShowIds = Set(
+            Dictionary(grouping: candidates, by: \.showKey)
+                .compactMap { entry in
+                    Set(entry.value.map(\.airdate)).count >= 4 ? entry.key : nil
+                }
+        )
+        return candidates.filter { !dailyShowIds.contains($0.showKey) }
+    }
+
+    private func fetchTMDBDetails(for candidates: [TraktScheduleCandidate]) async -> [Int: TMDBTVShowDetail] {
+        var seen = Set<Int>()
+        let ids = candidates
+            .compactMap { $0.item.show.ids.tmdb }
+            .filter { seen.insert($0).inserted }
+
+        return await withTaskGroup(of: (Int, TMDBTVShowDetail?).self) { group in
+            for id in ids.prefix(80) {
+                group.addTask {
+                    (id, try? await TMDBService.shared.getTVShowDetails(id: id))
+                }
+            }
+
+            var details: [Int: TMDBTVShowDetail] = [:]
+            for await (id, detail) in group {
+                if let detail {
+                    details[id] = detail
+                }
+            }
+            return details
+        }
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        return ISO8601DateFormatter().date(from: value)
+    }
+}
+
+private struct TraktScheduleCandidate {
+    let item: TraktCalendarItem
+    let airingAt: Date
+    let airdate: String
+    let showKey: String
+}
+
+fileprivate struct TraktCalendarItem: Decodable {
+    let firstAired: String
+    let episode: TraktCalendarEpisode
+    let show: TraktCalendarShow
+
+    enum CodingKeys: String, CodingKey {
+        case firstAired = "first_aired"
+        case episode, show
+    }
+
+    var showKey: String {
+        show.ids.trakt.map { "trakt-\($0)" }
+            ?? show.ids.tmdb.map { "tmdb-\($0)" }
+            ?? show.title.lowercased()
+    }
+
+    var isWesternScheduleCandidate: Bool {
+        guard show.language?.lowercased() == "en" else {
+            return false
+        }
+
+        let excludedGenres: Set<String> = [
+            "anime",
+            "documentary",
+            "food",
+            "game-show",
+            "home-and-garden",
+            "news",
+            "reality",
+            "soap",
+            "special-interest",
+            "sport",
+            "talk-show"
+        ]
+        let genres = Set((show.genres ?? []).map { $0.lowercased() })
+        return genres.isDisjoint(with: excludedGenres)
+    }
+}
+
+fileprivate struct TraktCalendarEpisode: Decodable {
+    let season: Int?
+    let number: Int?
+    let title: String?
+    let ids: TraktCalendarIDs?
+}
+
+fileprivate struct TraktCalendarShow: Decodable {
+    let title: String
+    let year: Int?
+    let ids: TraktCalendarIDs
+    let language: String?
+    let country: String?
+    let network: String?
+    let genres: [String]?
+}
+
+fileprivate struct TraktCalendarIDs: Decodable {
+    let trakt: Int?
+    let slug: String?
+    let tvdb: Int?
+    let imdb: String?
+    let tmdb: Int?
+}
+
+private enum TraktScheduleError: LocalizedError {
+    case missingClientId
+    case invalidURL
+    case invalidResponse
+    case httpStatus(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingClientId:
+            return "TRAKT_CLIENT_ID is not configured."
+        case .invalidURL:
+            return "The Trakt schedule URL could not be created."
+        case .invalidResponse:
+            return "The Trakt schedule service returned an invalid response."
+        case .httpStatus(let status):
+            return "The Trakt schedule service returned HTTP \(status)."
+        }
+    }
 }
 
 // MARK: - TVMaze Western Schedule
