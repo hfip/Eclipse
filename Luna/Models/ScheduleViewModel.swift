@@ -11,7 +11,6 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
     case anime
     case western
     case combined
-    case library
 
     var id: String { rawValue }
 
@@ -23,8 +22,6 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
             return "Western"
         case .combined:
             return "Combined"
-        case .library:
-            return "Library"
         }
     }
 
@@ -36,8 +33,6 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
             return "Regional Western TV and streaming episodes."
         case .combined:
             return "Anime and Western episodes together."
-        case .library:
-            return "Upcoming episodes from your saved library and bookmarks."
         }
     }
 
@@ -53,7 +48,6 @@ enum ScheduleMode: String, CaseIterable, Identifiable {
 enum ScheduleSource {
     case anime
     case western
-    case library
 
     var displayName: String {
         switch self {
@@ -61,8 +55,6 @@ enum ScheduleSource {
             return "Anime"
         case .western:
             return "Western"
-        case .library:
-            return "Library"
         }
     }
 }
@@ -81,7 +73,6 @@ struct ScheduleEntry: Identifiable {
     let nativeTitle: String?
     let format: String?
     let hasKnownAiringTime: Bool
-    let tmdbResult: TMDBSearchResult?
 
     init(animeEntry: AniListAiringScheduleEntry) {
         id = "anime-\(animeEntry.id)"
@@ -97,7 +88,6 @@ struct ScheduleEntry: Identifiable {
         nativeTitle = animeEntry.nativeTitle
         format = animeEntry.format
         hasKnownAiringTime = true
-        tmdbResult = nil
     }
 
     fileprivate init(westernEpisode: TVMazeScheduleEpisode, airing: TVMazeAiringInfo) {
@@ -114,42 +104,6 @@ struct ScheduleEntry: Identifiable {
         nativeTitle = nil
         format = nil
         hasKnownAiringTime = airing.hasKnownAiringTime
-        tmdbResult = nil
-    }
-
-    fileprivate init(libraryResult: TMDBSearchResult, nextEpisode: TMDBEpisode, airingAt: Date, hasKnownAiringTime: Bool) {
-        id = "library-\(libraryResult.stableIdentity)-\(nextEpisode.id)"
-        source = .library
-        sourceMediaId = libraryResult.id
-        title = libraryResult.displayTitle
-        self.airingAt = airingAt
-        episode = nextEpisode.episodeNumber
-        season = nextEpisode.seasonNumber
-        coverImage = libraryResult.posterPath.map { "https://image.tmdb.org/t/p/w342\($0)" }
-        englishTitle = libraryResult.displayTitle
-        romajiTitle = nil
-        nativeTitle = nil
-        format = nil
-        self.hasKnownAiringTime = hasKnownAiringTime
-        tmdbResult = libraryResult
-    }
-
-    fileprivate init(libraryResult: TMDBSearchResult, animeEntry: AniListAiringScheduleEntry, seasonNumber: Int) {
-        id = "library-\(libraryResult.stableIdentity)-anime-\(animeEntry.id)"
-        source = .library
-        sourceMediaId = libraryResult.id
-        title = libraryResult.displayTitle
-        airingAt = animeEntry.airingAt
-        episode = animeEntry.episode
-        season = seasonNumber
-        coverImage = animeEntry.coverImage
-            ?? libraryResult.posterPath.map { "https://image.tmdb.org/t/p/w342\($0)" }
-        englishTitle = animeEntry.englishTitle ?? libraryResult.displayTitle
-        romajiTitle = animeEntry.romajiTitle
-        nativeTitle = animeEntry.nativeTitle
-        format = animeEntry.format
-        hasKnownAiringTime = true
-        tmdbResult = libraryResult
     }
 }
 
@@ -163,8 +117,6 @@ final class ScheduleViewModel: ObservableObject {
     private let scheduleDayCount = 7
     private var animeScheduleEntries: [ScheduleEntry]?
     private var westernScheduleEntries: [ScheduleEntry]?
-    private var libraryScheduleEntries: [ScheduleEntry]?
-    private var libraryScheduleCacheKey: [String]?
 
     init() {}
 
@@ -219,8 +171,6 @@ final class ScheduleViewModel: ObservableObject {
                 throw firstError
             }
             return combinedEntries
-        case .library:
-            return await libraryEntries(forceRefresh: forceRefresh)
         }
     }
 
@@ -241,147 +191,6 @@ final class ScheduleViewModel: ObservableObject {
         let entries = try await TVMazeService.shared.fetchSchedule(dayCount: scheduleDayCount)
         westernScheduleEntries = entries
         return entries
-    }
-
-    private func libraryEntries(forceRefresh: Bool) async -> [ScheduleEntry] {
-        let savedResults = uniqueSavedTVResults()
-        let cacheKey = savedResults.map(\.stableIdentity).sorted()
-        if !forceRefresh,
-           cacheKey == libraryScheduleCacheKey,
-           let libraryScheduleEntries {
-            return libraryScheduleEntries
-        }
-
-        let batchSize = 4
-        let dayCount = scheduleDayCount
-        let animeAiringSchedule = (try? await AniListService.shared.fetchAiringSchedule(daysAhead: dayCount)) ?? []
-        var entries: [ScheduleEntry] = []
-        for start in stride(from: 0, to: savedResults.count, by: batchSize) {
-            let end = min(start + batchSize, savedResults.count)
-            let batch = savedResults[start..<end]
-            let batchEntries = await withTaskGroup(of: ScheduleEntry?.self, returning: [ScheduleEntry].self) { group in
-                for result in batch {
-                    group.addTask {
-                        await Self.libraryEntry(
-                            for: result,
-                            dayCount: dayCount,
-                            animeScheduleEntries: animeAiringSchedule
-                        )
-                    }
-                }
-
-                var resolved: [ScheduleEntry] = []
-                for await entry in group {
-                    if let entry {
-                        resolved.append(entry)
-                    }
-                }
-                return resolved
-            }
-            entries.append(contentsOf: batchEntries)
-        }
-
-        let sortedEntries = entries.sorted { $0.airingAt < $1.airingAt }
-        libraryScheduleCacheKey = cacheKey
-        libraryScheduleEntries = sortedEntries
-        return sortedEntries
-    }
-
-    private func uniqueSavedTVResults() -> [TMDBSearchResult] {
-        var seen = Set<String>()
-        return LibraryManager.shared.collections
-            .flatMap(\.items)
-            .map(\.searchResult)
-            .filter(\.isTVShow)
-            .filter { seen.insert($0.stableIdentity).inserted }
-    }
-
-    private static func libraryEntry(
-        for result: TMDBSearchResult,
-        dayCount: Int,
-        animeScheduleEntries: [AniListAiringScheduleEntry]
-    ) async -> ScheduleEntry? {
-        guard let detail = try? await TMDBService.shared.getTVShowDetails(id: result.id) else {
-            return nil
-        }
-
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        guard let end = calendar.date(byAdding: .day, value: dayCount, to: start) else {
-            return nil
-        }
-
-        if detail.isLikelyAnime,
-           let animeEntry = await libraryAnimeEntry(
-               for: result,
-               detail: detail,
-               scheduleEntries: animeScheduleEntries,
-               start: start,
-               end: end
-           ) {
-            return animeEntry
-        }
-
-        guard let nextEpisode = detail.nextEpisodeToAir,
-              let airDate = nextEpisode.airDate,
-              let fallbackAiringAt = tmdbDate(from: airDate),
-              fallbackAiringAt >= start,
-              fallbackAiringAt < end else {
-            return nil
-        }
-
-        let tvMazeAiring = await TVMazeService.shared.fetchAiring(for: detail, episode: nextEpisode)
-        return ScheduleEntry(
-            libraryResult: result,
-            nextEpisode: nextEpisode,
-            airingAt: tvMazeAiring?.date ?? fallbackAiringAt,
-            hasKnownAiringTime: tvMazeAiring?.hasKnownAiringTime == true
-        )
-    }
-
-    private static func libraryAnimeEntry(
-        for result: TMDBSearchResult,
-        detail: TMDBTVShowDetail,
-        scheduleEntries: [AniListAiringScheduleEntry],
-        start: Date,
-        end: Date
-    ) async -> ScheduleEntry? {
-        guard !scheduleEntries.isEmpty,
-              let animeData = try? await AniListService.shared.fetchAnimeDetailsWithEpisodes(
-                  title: detail.name,
-                  tmdbShowId: detail.id,
-                  tmdbService: TMDBService.shared,
-                  tmdbShowPoster: detail.fullPosterURL,
-                  token: nil
-              ) else {
-            return nil
-        }
-
-        let seasonsByMediaId = animeData.seasons.reduce(into: [Int: AniListSeasonWithPoster]()) { result, season in
-            result[season.anilistId] = season
-        }
-        return scheduleEntries
-            .filter { $0.airingAt >= start && $0.airingAt < end }
-            .compactMap { scheduleEntry -> ScheduleEntry? in
-                guard let season = seasonsByMediaId[scheduleEntry.mediaId] else {
-                    return nil
-                }
-                return ScheduleEntry(
-                    libraryResult: result,
-                    animeEntry: scheduleEntry,
-                    seasonNumber: season.seasonNumber
-                )
-            }
-            .min { $0.airingAt < $1.airingAt }
-    }
-
-    private static func tmdbDate(from value: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: value)
     }
 
     func updateBuckets(with entries: [ScheduleEntry], localTimeZone: Bool) {
@@ -439,10 +248,6 @@ final class ScheduleViewModel: ObservableObject {
     private var tmdbCache: [String: TMDBSearchResult?] = [:]
 
     func lookupTMDBResult(for entry: ScheduleEntry) async -> TMDBSearchResult? {
-        if let tmdbResult = entry.tmdbResult {
-            return tmdbResult
-        }
-
         let cacheKey = "\(entry.source.displayName)-\(entry.sourceMediaId)"
         if let cached = tmdbCache[cacheKey] {
             return cached
@@ -599,14 +404,6 @@ struct DayBucket: Identifiable {
     let items: [ScheduleEntry]
 }
 
-private extension TMDBTVShowDetail {
-    var isLikelyAnime: Bool {
-        let asianAnimationCountries: Set<String> = ["JP", "CN", "KR", "TW"]
-        return genres.contains { $0.id == 16 }
-            && (originCountry?.contains { asianAnimationCountries.contains($0) } == true)
-    }
-}
-
 // MARK: - TVMaze Western Schedule
 
 private final class TVMazeService {
@@ -692,73 +489,16 @@ private final class TVMazeService {
         }
     }
 
-    func fetchAiring(for detail: TMDBTVShowDetail, episode: TMDBEpisode) async -> TVMazeAiringInfo? {
-        var lookupQueries: [[URLQueryItem]] = []
-        if let tvdbId = detail.externalIds?.tvdbId {
-            lookupQueries.append([URLQueryItem(name: "thetvdb", value: String(tvdbId))])
-        }
-        if let imdbId = detail.externalIds?.imdbId, !imdbId.isEmpty {
-            lookupQueries.append([URLQueryItem(name: "imdb", value: imdbId)])
-        }
-
-        for queryItems in lookupQueries {
-            do {
-                guard let show = try await fetchShow(queryItems: queryItems) else {
-                    continue
-                }
-                if let airing = try await fetchEpisodeAiring(
-                    showId: show.id,
-                    season: episode.seasonNumber,
-                    number: episode.episodeNumber
-                ) {
-                    return airing
-                }
-            } catch {
-                Logger.shared.log(
-                    "TVMazeService: library airtime lookup failed tmdbId=\(detail.id) s=\(episode.seasonNumber) e=\(episode.episodeNumber) error=\(error.localizedDescription)",
-                    type: "TMDB"
-                )
-            }
-        }
-
-        return nil
-    }
-
     private func fetchEpisodes(path: String, queryItems: [URLQueryItem], retryAfterRateLimit: Bool = true) async throws -> [TVMazeScheduleEpisode] {
-        guard let data = try await fetchData(path: path, queryItems: queryItems, retryAfterRateLimit: retryAfterRateLimit) else {
-            return []
-        }
+        let data = try await fetchData(path: path, queryItems: queryItems, retryAfterRateLimit: retryAfterRateLimit)
         return try JSONDecoder().decode([TVMazeScheduleEpisode].self, from: data)
-    }
-
-    private func fetchShow(queryItems: [URLQueryItem]) async throws -> TVMazeShow? {
-        guard let data = try await fetchData(path: "lookup/shows", queryItems: queryItems, allowsNotFound: true) else {
-            return nil
-        }
-        return try JSONDecoder().decode(TVMazeShow.self, from: data)
-    }
-
-    private func fetchEpisodeAiring(showId: Int, season: Int, number: Int) async throws -> TVMazeAiringInfo? {
-        let queryItems = [
-            URLQueryItem(name: "season", value: String(season)),
-            URLQueryItem(name: "number", value: String(number))
-        ]
-        guard let data = try await fetchData(
-            path: "shows/\(showId)/episodebynumber",
-            queryItems: queryItems,
-            allowsNotFound: true
-        ) else {
-            return nil
-        }
-        return try JSONDecoder().decode(TVMazeEpisodeAiring.self, from: data).airing
     }
 
     private func fetchData(
         path: String,
         queryItems: [URLQueryItem],
-        retryAfterRateLimit: Bool = true,
-        allowsNotFound: Bool = false
-    ) async throws -> Data? {
+        retryAfterRateLimit: Bool = true
+    ) async throws -> Data {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
         components?.queryItems = queryItems
         guard let url = components?.url else {
@@ -777,12 +517,8 @@ private final class TVMazeService {
             return try await fetchData(
                 path: path,
                 queryItems: queryItems,
-                retryAfterRateLimit: false,
-                allowsNotFound: allowsNotFound
+                retryAfterRateLimit: false
             )
-        }
-        if httpResponse.statusCode == 404, allowsNotFound {
-            return nil
         }
         guard (200...299).contains(httpResponse.statusCode) else {
             throw TVMazeError.httpStatus(httpResponse.statusCode)
@@ -842,16 +578,6 @@ fileprivate struct TVMazeScheduleEpisode: Decodable {
             airstamp: airstamp,
             timeZoneIdentifier: show.network?.country?.timezone ?? show.webChannel?.country?.timezone
         )
-    }
-}
-
-fileprivate struct TVMazeEpisodeAiring: Decodable {
-    let airdate: String
-    let airtime: String?
-    let airstamp: String?
-
-    var airing: TVMazeAiringInfo? {
-        tvMazeAiringInfo(airdate: airdate, airtime: airtime, airstamp: airstamp, timeZoneIdentifier: nil)
     }
 }
 

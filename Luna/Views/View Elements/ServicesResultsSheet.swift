@@ -154,6 +154,9 @@ struct ModulesSearchResultsSheet: View {
     @State private var autoModeDidRun = false
     @State private var autoModeRunToken: String?
     @State private var autoModeCancelled = false
+    @State private var autoModeAttemptedSourceIds: Set<String> = []
+    @State private var autoModeRetryScheduled = false
+    @State private var autoModeLastFailureMessage: String?
     @State private var showManualPicker = false
     @State private var sheetHostController: UIViewController?
     private static let autoModeInitialMatchThreshold = 0.85
@@ -1565,6 +1568,13 @@ struct ModulesSearchResultsSheet: View {
                         .font(.caption)
                         .foregroundColor(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
+
+                    if let autoModeLastFailureMessage {
+                        Text(autoModeLastFailureMessage)
+                            .font(.caption)
+                            .foregroundColor(.orange.opacity(0.95))
+                            .multilineTextAlignment(.center)
+                    }
                 }
 
                 Button(role: .cancel) {
@@ -1594,6 +1604,9 @@ struct ModulesSearchResultsSheet: View {
         autoModeRunToken = requestToken
         autoModeDidRun = true
         autoModeCancelled = false
+        autoModeAttemptedSourceIds.removeAll()
+        autoModeRetryScheduled = false
+        autoModeLastFailureMessage = nil
         viewModel.moduleResults.removeAll()
         viewModel.stremioResults.removeAll()
         viewModel.searchedServices.removeAll()
@@ -1651,8 +1664,9 @@ struct ModulesSearchResultsSheet: View {
             return
         }
 
-        for item in orderedItems {
+        for item in orderedItems where !autoModeAttemptedSourceIds.contains(item.sourceId) {
             guard !autoModeCancelled else { return }
+            autoModeAttemptedSourceIds.insert(item.sourceId)
             switch item {
             case .service(let service):
                 viewModel.currentFetchingTitle = service.metadata.sourceName
@@ -1664,6 +1678,10 @@ struct ModulesSearchResultsSheet: View {
                     await playContent(result, autoModeLaunch: true)
                     return
                 }
+                updateAutoModeSourceStatus(
+                    sourceName: service.metadata.sourceName,
+                    message: "No matching result was found. Trying the next selected source..."
+                )
             case .stremio(let addon):
                 viewModel.currentFetchingTitle = addon.manifest.name
                 viewModel.streamFetchProgress = "Checking \(addon.manifest.name)..."
@@ -1674,10 +1692,21 @@ struct ModulesSearchResultsSheet: View {
                     playStremioStream(stream, addon: addon, autoModeLaunch: true)
                     return
                 }
+                if !autoModeCancelled {
+                    updateAutoModeSourceStatus(
+                        sourceName: addon.manifest.name,
+                        message: "No playable stream was returned. Trying the next selected source..."
+                    )
+                }
             }
         }
 
-        showAutoModeFailure("Auto Mode could not find a service match above \(Int(Self.autoModeInitialMatchThreshold * 100))% in the selected sources.")
+        let exhaustedMessage = "Auto Mode could not find a playable result from the selected sources."
+        if let autoModeLastFailureMessage {
+            showAutoModeFailure("\(autoModeLastFailureMessage)\n\n\(exhaustedMessage)")
+        } else {
+            showAutoModeFailure(exhaustedMessage)
+        }
     }
 
     @MainActor
@@ -1753,6 +1782,45 @@ struct ModulesSearchResultsSheet: View {
     }
 
     @MainActor
+    private func updateAutoModeSourceStatus(sourceName: String, message: String) {
+        autoModeLastFailureMessage = "\(sourceName): \(message)"
+        viewModel.currentFetchingTitle = sourceName
+        viewModel.streamFetchProgress = "Continuing Auto Mode..."
+    }
+
+    @MainActor
+    private func shouldRetryNextAutoModeSource(autoModeLaunch: Bool?) -> Bool {
+        autoModeOnly
+            && !showManualPicker
+            && !autoModeCancelled
+            && (autoModeLaunch ?? viewModel.pendingPlaybackAutoMode)
+    }
+
+    @MainActor
+    private func retryNextAutoModeSource(sourceName: String, message: String) {
+        updateAutoModeSourceStatus(
+            sourceName: sourceName,
+            message: "\(message) Trying the next selected source..."
+        )
+        viewModel.resetPickerState()
+        viewModel.resetStreamState()
+        viewModel.subtitleOptions = []
+        viewModel.pendingStreamURL = nil
+        viewModel.pendingHeaders = nil
+        viewModel.streamError = nil
+        viewModel.showingStreamError = false
+
+        guard !autoModeRetryScheduled else { return }
+        autoModeRetryScheduled = true
+        Task { @MainActor in
+            await Task.yield()
+            autoModeRetryScheduled = false
+            guard !autoModeCancelled else { return }
+            await runOrderedAutoModeSelection()
+        }
+    }
+
+    @MainActor
     private func cancelPendingAutoModeChoice(_ message: String) {
         let wasAutoModeChoice = shouldUseAutomaticResolution
         viewModel.resetPickerState()
@@ -1768,6 +1836,10 @@ struct ModulesSearchResultsSheet: View {
 
     @MainActor
     private func handleServicePlaybackPreparationFailure(_ service: Service, message: String, autoModeLaunch: Bool? = nil) {
+        if shouldRetryNextAutoModeSource(autoModeLaunch: autoModeLaunch) {
+            retryNextAutoModeSource(sourceName: service.metadata.sourceName, message: message)
+            return
+        }
         viewModel.isFetchingStreams = false
         viewModel.streamError = message
         viewModel.showingStreamError = true
@@ -1775,6 +1847,10 @@ struct ModulesSearchResultsSheet: View {
 
     @MainActor
     private func handleStremioPlaybackPreparationFailure(_ addon: StremioAddon, message: String, autoModeLaunch: Bool) {
+        if shouldRetryNextAutoModeSource(autoModeLaunch: autoModeLaunch) {
+            retryNextAutoModeSource(sourceName: addon.manifest.name, message: message)
+            return
+        }
         viewModel.isFetchingStreams = false
         viewModel.streamError = message
         viewModel.showingStreamError = true
@@ -1782,6 +1858,10 @@ struct ModulesSearchResultsSheet: View {
 
     @MainActor
     private func handlePlaybackStartupFailure(_ report: PlaybackFailureReport) {
+        if shouldRetryNextAutoModeSource(autoModeLaunch: report.context.autoMode) {
+            retryNextAutoModeSource(sourceName: report.context.sourceName, message: report.message)
+            return
+        }
         viewModel.isFetchingStreams = false
         viewModel.streamError = "\(report.context.sourceName) could not start playback. \(report.message)"
         viewModel.showingStreamError = true
@@ -2517,6 +2597,11 @@ struct ModulesSearchResultsSheet: View {
         // SAFETY: Double-check this is a direct HTTP(S) stream - NO torrents allowed
         guard let urlString = stream.url, stream.isDirectHTTP else {
             Logger.shared.log("Stremio: SAFETY BLOCK - Rejected non-HTTP stream", type: "Error")
+            handleStremioPlaybackPreparationFailure(
+                addon,
+                message: "Stremio addon returned a non-HTTP stream.",
+                autoModeLaunch: autoModeLaunch
+            )
             return
         }
 
@@ -2529,7 +2614,13 @@ struct ModulesSearchResultsSheet: View {
         let subtitleNames = allSubtitles.map { $0.lang ?? "Unknown" }
 
         if downloadMode {
-            downloadStremioStream(urlString, addon: addon, subtitle: subtitleURLs.first, headers: stream.proxyHeaders)
+            downloadStremioStream(
+                urlString,
+                addon: addon,
+                subtitle: subtitleURLs.first,
+                headers: stream.proxyHeaders,
+                autoModeLaunch: autoModeLaunch
+            )
         } else {
             playStremioStreamURL(urlString, addon: addon, subtitles: subtitleURLs, subtitleNames: subtitleNames, headers: stream.proxyHeaders, streamName: smartPlayerMetadata(for: stream), autoModeLaunch: autoModeLaunch, retryCount: retryCount)
         }
@@ -2721,11 +2812,16 @@ struct ModulesSearchResultsSheet: View {
         }
     }
 
-    private func downloadStremioStream(_ url: String, addon: StremioAddon, subtitle: String?, headers: [String: String]?) {
+    private func downloadStremioStream(_ url: String, addon: StremioAddon, subtitle: String?, headers: [String: String]?, autoModeLaunch: Bool = false) {
         // SAFETY: Verify HTTP(S) URL - NO torrents, magnet links, or other schemes ever
         guard let parsed = URL(string: url),
               parsed.scheme == "http" || parsed.scheme == "https" else {
             Logger.shared.log("Stremio: SAFETY BLOCK - Non-HTTP download URL rejected", type: "Error")
+            handleStremioPlaybackPreparationFailure(
+                addon,
+                message: "Stremio addon returned a non-HTTP download stream.",
+                autoModeLaunch: autoModeLaunch
+            )
             return
         }
 
@@ -3295,7 +3391,13 @@ struct ModulesSearchResultsSheet: View {
     /// Routes to either play or download based on downloadMode
     private func dispatchStreamAction(_ url: String, service: Service, subtitle: String?, headers: [String: String]?, streamName: String? = nil, serviceHref: String? = nil) {
         if downloadMode {
-            downloadStreamURL(url, service: service, subtitle: subtitle, headers: headers)
+            downloadStreamURL(
+                url,
+                service: service,
+                subtitle: subtitle,
+                headers: headers,
+                autoModeLaunch: viewModel.pendingPlaybackAutoMode
+            )
         } else {
             playStreamURL(
                 url,
@@ -3632,7 +3734,18 @@ struct ModulesSearchResultsSheet: View {
         }
     }
     
-    private func downloadStreamURL(_ url: String, service: Service, subtitle: String?, headers: [String: String]?) {
+    private func downloadStreamURL(_ url: String, service: Service, subtitle: String?, headers: [String: String]?, autoModeLaunch: Bool = false) {
+        guard let parsed = URL(string: url),
+              parsed.scheme == "http" || parsed.scheme == "https" else {
+            Logger.shared.log("Invalid download stream URL: \(url)", type: "Error")
+            handleServicePlaybackPreparationFailure(
+                service,
+                message: "The source did not return a playable HTTP download stream.",
+                autoModeLaunch: autoModeLaunch
+            )
+            return
+        }
+
         viewModel.resetStreamState()
         
         let serviceURL = service.metadata.baseUrl
