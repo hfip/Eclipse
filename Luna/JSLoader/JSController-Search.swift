@@ -16,21 +16,26 @@ struct SearchItem: Identifiable {
 
 extension JSController {
     func fetchJsSearchResults(keyword: String, module: Service, maxResults: Int? = nil, completion: @escaping ([SearchItem]) -> Void) {
+        let operation = beginServiceOperation(service: module, operation: "searchResults", primaryURL: keyword)
+
         if let exception = context.exception {
-            Logger.shared.log("JavaScript exception: \(exception)", type: "Error")
+            Logger.shared.log("Service search JavaScript exception service=\(module.metadata.sourceName): \(exception)", type: "Error")
+            endServiceOperation(operation, reason: "exception")
             completion([])
             return
         }
         
         guard let searchResultsFunction = context.objectForKeyedSubscript("searchResults") else {
-            Logger.shared.log("Search function not found in module", type: "Error")
+            Logger.shared.log("Search function not found in service \(module.metadata.sourceName)", type: "Error")
+            endServiceOperation(operation, reason: "missing-function")
             completion([])
             return
         }
         
         let promiseValue = searchResultsFunction.call(withArguments: [keyword])
         guard let promise = promiseValue else {
-            Logger.shared.log("Search function returned invalid response", type: "Error")
+            Logger.shared.log("Search function returned invalid response service=\(module.metadata.sourceName)", type: "Error")
+            endServiceOperation(operation, reason: "invalid-promise")
             completion([])
             return
         }
@@ -44,30 +49,36 @@ extension JSController {
                             guard let title = item["title"] as? String,
                                   let imageUrl = item["image"] as? String,
                                   let href = item["href"] as? String else {
-                                Logger.shared.log("Invalid search result data format", type: "Error")
+                                Logger.shared.log("Invalid search result data format service=\(module.metadata.sourceName)", type: "Error")
                                 return nil
                             }
                             return SearchItem(title: title, imageUrl: imageUrl, href: href)
                         }
+
+                        Logger.shared.log("Service search completed service=\(module.metadata.sourceName) query='\(keyword)' rawResults=\(array.count) returnedResults=\(resultItems.count)", type: "Service")
+                        self.endServiceOperation(operation, reason: "resolved")
                         
                         DispatchQueue.main.async {
                             completion(resultItems)
                         }
                         
                     } else {
-                        Logger.shared.log("Could not parse JSON response", type: "Error")
+                        Logger.shared.log("Could not parse search JSON response service=\(module.metadata.sourceName)", type: "Error")
+                        self.endServiceOperation(operation, reason: "parse-failed")
                         DispatchQueue.main.async {
                             completion([])
                         }
                     }
                 } catch {
-                    Logger.shared.log("JSON parsing error: \(error)", type: "Error")
+                    Logger.shared.log("Search JSON parsing error service=\(module.metadata.sourceName): \(error)", type: "Error")
+                    self.endServiceOperation(operation, reason: "parse-error")
                     DispatchQueue.main.async {
                         completion([])
                     }
                 }
             } else {
-                Logger.shared.log("Invalid search result format", type: "Error")
+                Logger.shared.log("Invalid search result format service=\(module.metadata.sourceName)", type: "Error")
+                self.endServiceOperation(operation, reason: "invalid-result")
                 DispatchQueue.main.async {
                     completion([])
                 }
@@ -75,7 +86,8 @@ extension JSController {
         }
         
         let catchBlock: @convention(block) (JSValue) -> Void = { error in
-            Logger.shared.log("Search operation failed: \(String(describing: error.toString()))", type: "Error")
+            Logger.shared.log("Search operation failed service=\(module.metadata.sourceName): \(String(describing: error.toString()))", type: "Error")
+            self.endServiceOperation(operation, reason: "rejected")
             DispatchQueue.main.async {
                 completion([])
             }

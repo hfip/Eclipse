@@ -771,17 +771,48 @@ class ServiceManager: ObservableObject {
 
     private func downloadAndParseMetadata(from urlString: String) async throws -> ServiceMetadata {
         guard let url = URL(string: urlString) else { throw ServiceError.invalidURL }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await downloadServiceInstallAsset(from: url, kind: "metadata")
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw ServiceError.downloadFailed }
         return try JSONDecoder().decode(ServiceMetadata.self, from: data)
     }
 
     private func downloadJavaScript(from urlString: String) async throws -> String {
         guard let url = URL(string: urlString) else { throw ServiceError.invalidScriptURL }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await downloadServiceInstallAsset(from: url, kind: "script")
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw ServiceError.scriptDownloadFailed }
         guard let jsContent = String(data: data, encoding: .utf8) else { throw ServiceError.invalidScriptContent }
         return jsContent
+    }
+
+    private func downloadServiceInstallAsset(from url: URL, kind: String) async throws -> (Data, URLResponse) {
+        guard !ServiceSandboxState.isBlockedTrackingURL(url.absoluteString) else {
+            Logger.shared.log("Service install sandbox blocked tracking \(kind) download target=\(ServiceSandboxState.redactedURL(url.absoluteString))", type: "ServiceSandbox")
+            throw ServiceError.blockedTrackingEndpoint
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        configuration.httpAdditionalHeaders = [
+            "User-Agent": URLSession.randomUserAgent,
+            "DNT": "1",
+            "Sec-GPC": "1"
+        ]
+
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue(URLSession.randomUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("1", forHTTPHeaderField: "DNT")
+        request.setValue("1", forHTTPHeaderField: "Sec-GPC")
+
+        Logger.shared.log("Service install sandbox downloading \(kind) target=\(ServiceSandboxState.redactedURL(url.absoluteString))", type: "ServiceManager")
+        return try await session.data(for: request)
     }
 
     func loadServicesFromCloud() {
@@ -798,7 +829,7 @@ class ServiceManager: ObservableObject {
 
     private func searchInService(service: Service, query: String) async -> [SearchItem] {
         let jsController = JSController()
-        jsController.loadScript(service.jsScript)
+        jsController.loadScript(service.jsScript, service: service)
 
         return await withCheckedContinuation { continuation in
             jsController.fetchJsSearchResults(keyword: query, module: service) { results in
@@ -1013,7 +1044,7 @@ extension String {
 // MARK: - Service Errors
 
 enum ServiceError: LocalizedError {
-    case invalidURL, invalidScriptURL, downloadFailed, scriptDownloadFailed, invalidJSON, invalidScriptContent
+    case invalidURL, invalidScriptURL, downloadFailed, scriptDownloadFailed, invalidJSON, invalidScriptContent, blockedTrackingEndpoint
 
     var errorDescription: String? {
         switch self {
@@ -1023,6 +1054,7 @@ enum ServiceError: LocalizedError {
         case .scriptDownloadFailed: return "Failed to download JavaScript file"
         case .invalidJSON: return "Invalid JSON format"
         case .invalidScriptContent: return "Invalid JavaScript content"
+        case .blockedTrackingEndpoint: return "Service install blocked a tracking endpoint"
         }
     }
 }

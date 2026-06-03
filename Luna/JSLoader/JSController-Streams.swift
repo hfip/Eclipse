@@ -9,21 +9,26 @@ import JavaScriptCore
 
 extension JSController {
     func fetchStreamUrlJS(episodeUrl: String, softsub: Bool = false, module: Service, completion: @escaping ((streams: [String]?, subtitles: [String]?,sources: [[String:Any]]? )) -> Void) {
+        let operation = beginServiceOperation(service: module, operation: "extractStreamUrl", primaryURL: episodeUrl)
+
         if let exception = context.exception {
-            Logger.shared.log("JavaScript exception: \(exception)", type: "Error")
+            Logger.shared.log("Service stream JavaScript exception service=\(module.metadata.sourceName): \(exception)", type: "Error")
+            endServiceOperation(operation, reason: "exception")
             completion((nil, nil,nil))
             return
         }
         
         guard let extractStreamUrlFunction = context.objectForKeyedSubscript("extractStreamUrl") else {
-            Logger.shared.log("No JavaScript function extractStreamUrl found", type: "Error")
+            Logger.shared.log("No JavaScript function extractStreamUrl found service=\(module.metadata.sourceName)", type: "Error")
+            endServiceOperation(operation, reason: "missing-function")
             completion((nil, nil,nil))
             return
         }
         
         let promiseValue = extractStreamUrlFunction.call(withArguments: [episodeUrl])
         guard let promise = promiseValue else {
-            Logger.shared.log("extractStreamUrl did not return a Promise", type: "Error")
+            Logger.shared.log("extractStreamUrl did not return a Promise service=\(module.metadata.sourceName)", type: "Error")
+            endServiceOperation(operation, reason: "invalid-promise")
             completion((nil, nil,nil))
             return
         }
@@ -32,24 +37,29 @@ extension JSController {
             guard let self else { return }
             
             if result.isNull || result.isUndefined {
-                Logger.shared.log("Received null or undefined result from JavaScript", type: "Error")
+                Logger.shared.log("Received null or undefined stream result service=\(module.metadata.sourceName)", type: "Error")
+                self.endServiceOperation(operation, reason: "empty-result")
                 DispatchQueue.main.async { completion((nil, nil, nil)) }
                 return
             }
             
             if let resultString = result.toString(), resultString == "[object Promise]" {
-                Logger.shared.log("Received Promise object instead of resolved value, waiting for proper resolution", type: "Stream")
+                Logger.shared.log("Received Promise object instead of resolved stream value service=\(module.metadata.sourceName)", type: "Error")
+                self.endServiceOperation(operation, reason: "promise-object")
+                DispatchQueue.main.async { completion((nil, nil, nil)) }
                 return
             }
             
             guard let jsonString = result.toString() else {
-                Logger.shared.log("Failed to convert JSValue to string", type: "Error")
+                Logger.shared.log("Failed to convert stream JSValue to string service=\(module.metadata.sourceName)", type: "Error")
+                self.endServiceOperation(operation, reason: "invalid-result")
                 DispatchQueue.main.async { completion((nil, nil, nil)) }
                 return
             }
             
             guard let data = jsonString.data(using: .utf8) else {
-                Logger.shared.log("Failed to convert string to data", type: "Error")
+                Logger.shared.log("Failed to convert stream string to data service=\(module.metadata.sourceName)", type: "Error")
+                self.endServiceOperation(operation, reason: "invalid-data")
                 DispatchQueue.main.async { completion((nil, nil, nil)) }
                 return
             }
@@ -62,31 +72,32 @@ extension JSController {
                     
                     if let streamSources = json["streams"] as? [[String:Any]] {
                         streamUrlsAndHeaders = streamSources
-                        Logger.shared.log("Found \(streamSources.count) streams and headers", type: "Stream")
+                        Logger.shared.log("Found \(streamSources.count) streams and headers service=\(module.metadata.sourceName)", type: "Stream")
                         self.logStreamSourceDiagnostics(streamSources, serviceName: module.metadata.sourceName)
                     } else if let streamSource = json["stream"] as? [String:Any] {
                         streamUrlsAndHeaders = [streamSource]
-                        Logger.shared.log("Found single stream with headers", type: "Stream")
+                        Logger.shared.log("Found single stream with headers service=\(module.metadata.sourceName)", type: "Stream")
                         self.logStreamSourceDiagnostics([streamSource], serviceName: module.metadata.sourceName)
                     } else if let streamsArray = json["streams"] as? [String] {
                         streamUrls = streamsArray
-                        Logger.shared.log("Found \(streamsArray.count) streams", type: "Stream")
+                        Logger.shared.log("Found \(streamsArray.count) streams service=\(module.metadata.sourceName)", type: "Stream")
                         self.logPlainStreamDiagnostics(streamsArray, serviceName: module.metadata.sourceName)
                     } else if let streamUrl = json["stream"] as? String {
                         streamUrls = [streamUrl]
-                        Logger.shared.log("Found single stream", type: "Stream")
+                        Logger.shared.log("Found single stream service=\(module.metadata.sourceName)", type: "Stream")
                         self.logPlainStreamDiagnostics([streamUrl], serviceName: module.metadata.sourceName)
                     }
                     
                     if let subsArray = json["subtitles"] as? [String] {
                         subtitleUrls = subsArray
-                        Logger.shared.log("Found \(subsArray.count) subtitle tracks", type: "Stream")
+                        Logger.shared.log("Found \(subsArray.count) subtitle tracks service=\(module.metadata.sourceName)", type: "Stream")
                     } else if let subtitleUrl = json["subtitles"] as? String {
                         subtitleUrls = [subtitleUrl]
-                        Logger.shared.log("Found single subtitle track", type: "Stream")
+                        Logger.shared.log("Found single subtitle track service=\(module.metadata.sourceName)", type: "Stream")
                     }
                     
-                    Logger.shared.log("Starting stream with \(streamUrls?.count ?? 0) sources and \(subtitleUrls?.count ?? 0) subtitles", type: "Stream")
+                    Logger.shared.log("Service stream extraction completed service=\(module.metadata.sourceName) plainStreams=\(streamUrls?.count ?? 0) structuredSources=\(streamUrlsAndHeaders?.count ?? 0) subtitles=\(subtitleUrls?.count ?? 0)", type: "Stream")
+                    self.endServiceOperation(operation, reason: "resolved")
                     DispatchQueue.main.async {
                         completion((streamUrls, subtitleUrls, streamUrlsAndHeaders))
                     }
@@ -94,15 +105,17 @@ extension JSController {
                 }
                 
                 if let streamsArray = try JSONSerialization.jsonObject(with: data, options: []) as? [String] {
-                    Logger.shared.log("Starting multi-stream with \(streamsArray.count) sources", type: "Stream")
+                    Logger.shared.log("Starting multi-stream with \(streamsArray.count) sources service=\(module.metadata.sourceName)", type: "Stream")
+                    self.endServiceOperation(operation, reason: "resolved-array")
                     DispatchQueue.main.async { completion((streamsArray, nil, nil)) }
                     return
                 }
             } catch {
-                Logger.shared.log("JSON parsing error: \(error.localizedDescription)", type: "Error")
+                Logger.shared.log("Stream JSON parsing error service=\(module.metadata.sourceName): \(error.localizedDescription)", type: "Error")
             }
             
-            Logger.shared.log("Starting stream from: \(jsonString)", type: "Stream")
+            Logger.shared.log("Starting stream from raw string service=\(module.metadata.sourceName) target=\(ServiceSandboxState.redactedURL(jsonString))", type: "Stream")
+            self.endServiceOperation(operation, reason: "raw-string")
             DispatchQueue.main.async {
                 completion(([jsonString], nil, nil))
             }
@@ -110,7 +123,8 @@ extension JSController {
         
         let catchBlock: @convention(block) (JSValue) -> Void = { error in
             let errorMessage = error.toString() ?? "Unknown JavaScript error"
-            Logger.shared.log("Promise rejected: \(errorMessage)", type: "Error")
+            Logger.shared.log("Stream promise rejected service=\(module.metadata.sourceName): \(errorMessage)", type: "Error")
+            self.endServiceOperation(operation, reason: "rejected")
             DispatchQueue.main.async {
                 completion((nil, nil, nil))
             }
@@ -120,7 +134,8 @@ extension JSController {
         let catchFunction = JSValue(object: catchBlock, in: context)
         
         guard let thenFunction = thenFunction, let catchFunction = catchFunction else {
-            Logger.shared.log("Failed to create JSValue objects for Promise handling", type: "Error")
+            Logger.shared.log("Failed to create JSValue objects for stream Promise handling service=\(module.metadata.sourceName)", type: "Error")
+            endServiceOperation(operation, reason: "handler-create-failed")
             completion((nil, nil, nil))
             return
         }

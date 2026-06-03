@@ -60,8 +60,13 @@ struct NetworkFetchOptions {
 }
 
 extension JSContext {
-    func setupNetworkFetch() {
+    func setupNetworkFetch(sandbox: ServiceSandboxState) {
         let networkFetchNativeFunction: @convention(block) (String, JSValue?, JSValue, JSValue) -> Void = { urlString, optionsValue, resolve, reject in
+            guard let operation = sandbox.allowServiceNetworkRequest(api: "networkFetch", urlString: urlString) else {
+                reject.call(withArguments: ["Service network request blocked by sandbox"])
+                return
+            }
+
             DispatchQueue.main.async {
                 var options = NetworkFetchOptions()
 
@@ -92,6 +97,7 @@ extension JSContext {
                 NetworkFetchManager.shared.performNetworkFetch(
                     urlString: urlString,
                     options: options,
+                    operation: operation,
                     resolve: resolve,
                     reject: reject
                 )
@@ -106,8 +112,13 @@ extension JSContext {
         self.evaluateScript(networkFetchDefinition)
     }
 
-    func setupNetworkFetchSimple() {
+    func setupNetworkFetchSimple(sandbox: ServiceSandboxState) {
         let networkFetchSimpleNativeFunction: @convention(block) (String, JSValue?, JSValue, JSValue) -> Void = { urlString, optionsValue, resolve, reject in
+            guard let operation = sandbox.allowServiceNetworkRequest(api: "networkFetchSimple", urlString: urlString) else {
+                reject.call(withArguments: ["Service network request blocked by sandbox"])
+                return
+            }
+
             DispatchQueue.main.async {
                 var timeoutSeconds = 5
                 var htmlContent: String? = nil
@@ -122,6 +133,7 @@ extension JSContext {
                     timeoutSeconds: timeoutSeconds,
                     htmlContent: htmlContent,
                     headers: headers,
+                    operation: operation,
                     resolve: resolve,
                     reject: reject
                 )
@@ -143,7 +155,7 @@ class NetworkFetchSimpleManager: NSObject, ObservableObject {
         super.init()
     }
 
-    func performNetworkFetch(urlString: String, timeoutSeconds: Int, htmlContent: String? = nil, headers: [String: String] = [:], resolve: JSValue, reject: JSValue) {
+    func performNetworkFetch(urlString: String, timeoutSeconds: Int, htmlContent: String? = nil, headers: [String: String] = [:], operation: ServiceSandboxOperation, resolve: JSValue, reject: JSValue) {
         let monitorId = UUID().uuidString
         let monitor = NetworkFetchSimpleMonitor()
         activeMonitors[monitorId] = monitor
@@ -151,7 +163,8 @@ class NetworkFetchSimpleManager: NSObject, ObservableObject {
             urlString: urlString,
             timeoutSeconds: timeoutSeconds,
             htmlContent: htmlContent,
-            headers: headers
+            headers: headers,
+            operation: operation
         ) { [weak self] result in
             self?.activeMonitors.removeValue(forKey: monitorId)
             DispatchQueue.main.async {
@@ -167,13 +180,15 @@ class NetworkFetchSimpleMonitor: NSObject, ObservableObject {
     private var webView: WKWebView?
     private var completionHandler: (([String: Any]) -> Void)?
     private var timer: Timer?
+    private var operation: ServiceSandboxOperation?
 
     @Published private(set) var networkRequests: [String] = []
 
     private var originalUrlString: String = ""
 
-    func startMonitoring(urlString: String, timeoutSeconds: Int, htmlContent: String? = nil, headers: [String: String] = [:], completion: @escaping ([String: Any]) -> Void) {
+    func startMonitoring(urlString: String, timeoutSeconds: Int, htmlContent: String? = nil, headers: [String: String] = [:], operation: ServiceSandboxOperation, completion: @escaping ([String: Any]) -> Void) {
         originalUrlString = urlString
+        self.operation = operation
         completionHandler = completion
         networkRequests.removeAll()
         if let htmlContent = htmlContent, !htmlContent.isEmpty {
@@ -284,7 +299,12 @@ class NetworkFetchSimpleMonitor: NSObject, ObservableObject {
             "success": true
         ]
 
+        if let operation {
+            Logger.shared.log("Service networkFetchSimple completed service=\(operation.serviceName) operation=\(operation.operation) requestCount=\(networkRequests.count) original=\(ServiceSandboxState.redactedURL(originalUrl))", type: "Service")
+        }
+
         webView = nil
+        operation = nil
 
         completionHandler?(result)
         completionHandler = nil
@@ -308,6 +328,13 @@ extension NetworkFetchSimpleMonitor: WKNavigationDelegate {
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url {
+            if ServiceSandboxState.isBlockedTrackingURL(url.absoluteString) {
+                if let operation {
+                    Logger.shared.log("Service sandbox blocked tracking navigation service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(url.absoluteString))", type: "ServiceSandbox")
+                }
+                decisionHandler(.cancel)
+                return
+            }
             addRequest(url.absoluteString)
         }
         decisionHandler(.allow)
@@ -334,14 +361,15 @@ class NetworkFetchManager: NSObject, ObservableObject {
         super.init()
     }
     
-    func performNetworkFetch(urlString: String, options: NetworkFetchOptions, resolve: JSValue, reject: JSValue) {
+    func performNetworkFetch(urlString: String, options: NetworkFetchOptions, operation: ServiceSandboxOperation, resolve: JSValue, reject: JSValue) {
         let monitorId = UUID().uuidString
         let monitor = NetworkFetchMonitor()
         activeMonitors[monitorId] = monitor
         
         monitor.startMonitoring(
             urlString: urlString,
-            options: options
+            options: options,
+            operation: operation
         ) { [weak self] result in
             self?.activeMonitors.removeValue(forKey: monitorId)
             
@@ -359,6 +387,7 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
     private var completionHandler: (([String: Any]) -> Void)?
     private var timer: Timer?
     private var options: NetworkFetchOptions?
+    private var operation: ServiceSandboxOperation?
     private var elementsClicked: [String] = []
     private var waitResults: [String: Bool] = [:]
     private var cookies: [String: String] = [:]
@@ -370,8 +399,9 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
     @Published private(set) var htmlCaptured = false
     @Published private(set) var cookiesCaptured = false
     
-    func startMonitoring(urlString: String, options: NetworkFetchOptions, completion: @escaping ([String: Any]) -> Void) {
+    func startMonitoring(urlString: String, options: NetworkFetchOptions, operation: ServiceSandboxOperation, completion: @escaping ([String: Any]) -> Void) {
         self.options = options
+        self.operation = operation
         completionHandler = completion
         networkRequests.removeAll()
         cutoffTriggered = false
@@ -493,6 +523,54 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
         
         let jsCode = """
         (function() {
+            const lunaBlockedHostSuffixes = [
+                "google-analytics.com",
+                "googletagmanager.com",
+                "doubleclick.net",
+                "googlesyndication.com",
+                "facebook.net",
+                "facebook.com",
+                "mixpanel.com",
+                "segment.io",
+                "segment.com",
+                "amplitude.com",
+                "appsflyer.com",
+                "branch.io",
+                "hotjar.com",
+                "clarity.ms",
+                "scorecardresearch.com",
+                "quantserve.com",
+                "newrelic.com",
+                "sentry.io",
+                "datadoghq-browser-agent.com"
+            ];
+            const lunaBlockedHostTokens = ["analytics", "telemetry", "metrics", "tracking", "tracker", "beacon"];
+            function lunaIsBlockedTrackingUrl(value) {
+                try {
+                    const parsed = new URL(value, window.location.href);
+                    const host = parsed.hostname.toLowerCase();
+                    if (lunaBlockedHostSuffixes.some(suffix => host === suffix || host.endsWith("." + suffix))) {
+                        return true;
+                    }
+                    return lunaBlockedHostTokens.some(token => host.includes(token));
+                } catch(e) {
+                    return false;
+                }
+            }
+            function lunaReportBlockedTracking(type, value) {
+                try {
+                    const fullUrl = new URL(value, window.location.href).href;
+                    window.webkit.messageHandlers.networkLogger.postMessage({
+                        type: "blocked-tracking-" + type,
+                        url: fullUrl
+                    });
+                } catch(e) {
+                    window.webkit.messageHandlers.networkLogger.postMessage({
+                        type: "blocked-tracking-" + type,
+                        url: value ? value.toString() : ""
+                    });
+                }
+            }
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
             Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
@@ -508,6 +586,10 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
             window.fetch = function() {
                 const url = arguments[0];
                 const options = arguments[1] || {};
+                if (lunaIsBlockedTrackingUrl(url)) {
+                    lunaReportBlockedTracking("fetch", url);
+                    return Promise.reject(new Error("Tracking request blocked by Luna sandbox"));
+                }
                 
                 try {
                     const fullUrl = new URL(url, window.location.href).href;
@@ -533,11 +615,17 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
                 } catch(e) {
                     this._url = url;
                 }
+
+                this._lunaBlockedTracking = lunaIsBlockedTrackingUrl(this._url);
                 
                 window.webkit.messageHandlers.networkLogger.postMessage({
-                    type: 'xhr-open',
+                    type: this._lunaBlockedTracking ? 'blocked-tracking-xhr-open' : 'xhr-open',
                     url: this._url
                 });
+
+                if (this._lunaBlockedTracking) {
+                    return;
+                }
                 
                 const self = this;
                 const originalOnReadyStateChange = this.onreadystatechange;
@@ -578,6 +666,9 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
             };
             
             XMLHttpRequest.prototype.send = function() {
+                if (this._lunaBlockedTracking) {
+                    return;
+                }
                 if (this._url) {
                     window.webkit.messageHandlers.networkLogger.postMessage({
                         type: 'xhr-send',
@@ -589,6 +680,10 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
             
             const originalWebSocket = window.WebSocket;
             window.WebSocket = function(url, protocols) {
+                if (lunaIsBlockedTrackingUrl(url)) {
+                    lunaReportBlockedTracking("websocket", url);
+                    throw new Error("Tracking request blocked by Luna sandbox");
+                }
                 window.webkit.messageHandlers.networkLogger.postMessage({
                     type: 'websocket',
                     url: url
@@ -606,6 +701,10 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
                             Object.defineProperty(obj.prototype, prop, {
                                 set: function(value) {
                                     if (typeof value === 'string' && (value.includes('http') || value.includes('.m3u8') || value.includes('.ts'))) {
+                                        if (lunaIsBlockedTrackingUrl(value)) {
+                                            lunaReportBlockedTracking("property-set", value);
+                                            return;
+                                        }
                                         window.webkit.messageHandlers.networkLogger.postMessage({
                                             type: 'property-set',
                                             url: value
@@ -986,8 +1085,13 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
             "elementsClicked": elementsClicked,
             "waitResults": waitResults
         ]
+
+        if let operation {
+            Logger.shared.log("Service networkFetch completed service=\(operation.serviceName) operation=\(operation.operation) reason=\(reason) requestCount=\(networkRequests.count) original=\(ServiceSandboxState.redactedURL(originalUrl)) cutoff=\(cutoffTriggered)", type: "Service")
+        }
         
         webView = nil
+        operation = nil
         
         
         completionHandler?(result)
@@ -1021,6 +1125,13 @@ extension NetworkFetchMonitor: WKNavigationDelegate {
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url {
+            if ServiceSandboxState.isBlockedTrackingURL(url.absoluteString) {
+                if let operation {
+                    Logger.shared.log("Service sandbox blocked tracking navigation service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(url.absoluteString))", type: "ServiceSandbox")
+                }
+                decisionHandler(.cancel)
+                return
+            }
             addRequest(url.absoluteString)
         }
         decisionHandler(.allow)
@@ -1032,6 +1143,12 @@ extension NetworkFetchMonitor: WKScriptMessageHandler {
         if message.name == "networkLogger" {
             if let messageBody = message.body as? [String: Any] {
                 if let url = messageBody["url"] as? String {
+                    if let type = messageBody["type"] as? String,
+                       type.hasPrefix("blocked-tracking"),
+                       let operation {
+                        Logger.shared.log("Service sandbox blocked tracking request service=\(operation.serviceName) operation=\(operation.operation) api=\(type) target=\(ServiceSandboxState.redactedURL(url))", type: "ServiceSandbox")
+                        return
+                    }
                     addRequest(url)
                 } else if let type = messageBody["type"] as? String {
                     if type == "click-results" {

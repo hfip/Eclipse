@@ -23,27 +23,40 @@ struct EpisodeLink: Identifiable {
 }
 
 extension JSController {
-    func fetchDetailsJS(url: String, completion: @escaping ([MediaItem], [EpisodeLink]) -> Void) {
+    func fetchDetailsJS(url: String, module: Service? = nil, completion: @escaping ([MediaItem], [EpisodeLink]) -> Void) {
         guard let url = URL(string: url) else {
             Logger.shared.log("Invalid URL in fetchDetailsJS: \(url)", type: "Error")
             completion([], [])
             return
         }
+
+        let operation = module.map {
+            beginServiceOperation(service: $0, operation: "extractDetails", primaryURL: url.absoluteString)
+        }
+
+        func endOperation(reason: String) {
+            if let operation {
+                self.endServiceOperation(operation, reason: reason)
+            }
+        }
         
         if let exception = context.exception {
-            Logger.shared.log("JavaScript exception: \(exception)", type: "Error")
+            Logger.shared.log("Service detail JavaScript exception service=\(module?.metadata.sourceName ?? "unknown"): \(exception)", type: "Error")
+            endOperation(reason: "exception")
             completion([], [])
             return
         }
         
         guard let extractDetailsFunction = context.objectForKeyedSubscript("extractDetails") else {
-            Logger.shared.log("No JavaScript function extractDetails found", type: "Error")
+            Logger.shared.log("No JavaScript function extractDetails found service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
+            endOperation(reason: "missing-details-function")
             completion([], [])
             return
         }
         
         guard let extractEpisodesFunction = context.objectForKeyedSubscript("extractEpisodes") else {
-            Logger.shared.log("No JavaScript function extractEpisodes found", type: "Error")
+            Logger.shared.log("No JavaScript function extractEpisodes found service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
+            endOperation(reason: "missing-episodes-function")
             completion([], [])
             return
         }
@@ -59,12 +72,13 @@ extension JSController {
         
         let promiseValueDetails = extractDetailsFunction.call(withArguments: [url.absoluteString])
         guard let promiseDetails = promiseValueDetails else {
-            Logger.shared.log("extractDetails did not return a Promise", type: "Error")
+            Logger.shared.log("extractDetails did not return a Promise service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
             detailsGroupQueue.sync {
                 guard !hasLeftDetailsGroup else { return }
                 hasLeftDetailsGroup = true
                 dispatchGroup.leave()
             }
+            endOperation(reason: "invalid-details-promise")
             completion([], [])
             return
         }
@@ -89,13 +103,13 @@ extension JSController {
                                 )
                             }
                         } else {
-                            Logger.shared.log("Failed to parse JSON of extractDetails", type: "Error")
+                            Logger.shared.log("Failed to parse JSON of extractDetails service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
                         }
                     } catch {
-                        Logger.shared.log("JSON parsing error of extract details: \(error)", type: "Error")
+                        Logger.shared.log("JSON parsing error of extractDetails service=\(module?.metadata.sourceName ?? "unknown"): \(error)", type: "Error")
                     }
                 } else {
-                    Logger.shared.log("Result is not a string of extractDetails", type: "Error")
+                    Logger.shared.log("Result is not a string of extractDetails service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
                 }
                 dispatchGroup.leave()
             }
@@ -109,7 +123,7 @@ extension JSController {
                 }
                 hasLeftDetailsGroup = true
                 
-                Logger.shared.log("Promise rejected of extractDetails: \(String(describing: error.toString()))", type: "Error")
+                Logger.shared.log("Promise rejected of extractDetails service=\(module?.metadata.sourceName ?? "unknown"): \(String(describing: error.toString()))", type: "Error")
                 dispatchGroup.leave()
             }
         }
@@ -127,7 +141,7 @@ extension JSController {
         let episodesGroupQueue = DispatchQueue(label: "episodes.group")
         
         let timeoutWorkItem = DispatchWorkItem {
-            Logger.shared.log("Timeout for extractEpisodes", type: "Warning")
+            Logger.shared.log("Timeout for extractEpisodes service=\(module?.metadata.sourceName ?? "unknown")", type: "Warning")
             episodesGroupQueue.sync {
                 guard !hasLeftEpisodesGroup else {
                     Logger.shared.log("extractEpisodes: timeout called but group already left", type: "Debug")
@@ -140,13 +154,14 @@ extension JSController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: timeoutWorkItem)
         
         guard let promiseEpisodes = promiseValueEpisodes else {
-            Logger.shared.log("extractEpisodes did not return a Promise", type: "Error")
+            Logger.shared.log("extractEpisodes did not return a Promise service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
             timeoutWorkItem.cancel()
             episodesGroupQueue.sync {
                 guard !hasLeftEpisodesGroup else { return }
                 hasLeftEpisodesGroup = true
                 dispatchGroup.leave()
             }
+            endOperation(reason: "invalid-episodes-promise")
             completion([], [])
             return
         }
@@ -173,13 +188,13 @@ extension JSController {
                                 )
                             }
                         } else {
-                            Logger.shared.log("Failed to parse JSON of extractEpisodes", type: "Error")
+                            Logger.shared.log("Failed to parse JSON of extractEpisodes service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
                         }
                     } catch {
-                        Logger.shared.log("JSON parsing error of extractEpisodes: \(error)", type: "Error")
+                        Logger.shared.log("JSON parsing error of extractEpisodes service=\(module?.metadata.sourceName ?? "unknown"): \(error)", type: "Error")
                     }
                 } else {
-                    Logger.shared.log("Result is not a string of extractEpisodes", type: "Error")
+                    Logger.shared.log("Result is not a string of extractEpisodes service=\(module?.metadata.sourceName ?? "unknown")", type: "Error")
                 }
                 dispatchGroup.leave()
             }
@@ -194,7 +209,7 @@ extension JSController {
                 }
                 hasLeftEpisodesGroup = true
                 
-                Logger.shared.log("Promise rejected of extractEpisodes: \(String(describing: error.toString()))", type: "Error")
+                Logger.shared.log("Promise rejected of extractEpisodes service=\(module?.metadata.sourceName ?? "unknown"): \(String(describing: error.toString()))", type: "Error")
                 dispatchGroup.leave()
             }
         }
@@ -206,25 +221,31 @@ extension JSController {
         promiseEpisodes.invokeMethod("catch", withArguments: [catchFunctionEpisodes as Any])
         
         dispatchGroup.notify(queue: .main) {
+            Logger.shared.log("Service details completed service=\(module?.metadata.sourceName ?? "unknown") details=\(resultItems.count) episodes=\(episodeLinks.count)", type: "Service")
+            endOperation(reason: "resolved")
             completion(resultItems, episodeLinks)
         }
     }
     
-    func fetchEpisodesJS(url: String, completion: @escaping ([EpisodeLink]) -> Void) {
+    func fetchEpisodesJS(url: String, module: Service, completion: @escaping ([EpisodeLink]) -> Void) {
         guard let url = URL(string: url) else {
-            Logger.shared.log("Invalid URL in fetchEpisodesJS: \(url)", type: "Error")
+            Logger.shared.log("Invalid URL in fetchEpisodesJS service=\(module.metadata.sourceName): \(url)", type: "Error")
             completion([])
             return
         }
+
+        let operation = beginServiceOperation(service: module, operation: "extractEpisodes", primaryURL: url.absoluteString)
         
         if let exception = context.exception {
-            Logger.shared.log("JavaScript exception: \(exception)", type: "Error")
+            Logger.shared.log("Service episodes JavaScript exception service=\(module.metadata.sourceName): \(exception)", type: "Error")
+            endServiceOperation(operation, reason: "exception")
             completion([])
             return
         }
         
         guard let extractEpisodesFunction = context.objectForKeyedSubscript("extractEpisodes") else {
-            Logger.shared.log("No JavaScript function extractEpisodes found", type: "Error")
+            Logger.shared.log("No JavaScript function extractEpisodes found service=\(module.metadata.sourceName)", type: "Error")
+            endServiceOperation(operation, reason: "missing-function")
             completion([])
             return
         }
@@ -237,13 +258,14 @@ extension JSController {
         let completionQueue = DispatchQueue(label: "episodes.completion")
         
         let timeoutWorkItem = DispatchWorkItem {
-            Logger.shared.log("Timeout for extractEpisodes", type: "Warning")
+            Logger.shared.log("Timeout for extractEpisodes service=\(module.metadata.sourceName)", type: "Warning")
             completionQueue.sync {
                 guard !hasCompleted else {
                     Logger.shared.log("extractEpisodes: timeout called but already completed", type: "Debug")
                     return
                 }
                 hasCompleted = true
+                self.endServiceOperation(operation, reason: "timeout")
                 DispatchQueue.main.async {
                     completion([])
                 }
@@ -252,8 +274,9 @@ extension JSController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: timeoutWorkItem)
         
         guard let promiseEpisodes = promiseValueEpisodes else {
-            Logger.shared.log("extractEpisodes did not return a Promise", type: "Error")
+            Logger.shared.log("extractEpisodes did not return a Promise service=\(module.metadata.sourceName)", type: "Error")
             timeoutWorkItem.cancel()
+            endServiceOperation(operation, reason: "invalid-promise")
             completion([])
             return
         }
@@ -280,14 +303,17 @@ extension JSController {
                                 )
                             }
                         } else {
-                            Logger.shared.log("Failed to parse JSON of extractEpisodes", type: "Error")
+                            Logger.shared.log("Failed to parse JSON of extractEpisodes service=\(module.metadata.sourceName)", type: "Error")
                         }
                     } catch {
-                        Logger.shared.log("JSON parsing error of extractEpisodes: \(error)", type: "Error")
+                        Logger.shared.log("JSON parsing error of extractEpisodes service=\(module.metadata.sourceName): \(error)", type: "Error")
                     }
                 } else {
-                    Logger.shared.log("Result is not a string of extractEpisodes", type: "Error")
+                    Logger.shared.log("Result is not a string of extractEpisodes service=\(module.metadata.sourceName)", type: "Error")
                 }
+
+                Logger.shared.log("Service episodes completed service=\(module.metadata.sourceName) episodeCount=\(episodeLinks.count) target=\(ServiceSandboxState.redactedURL(url.absoluteString))", type: "Service")
+                self.endServiceOperation(operation, reason: "resolved")
                 
                 DispatchQueue.main.async {
                     completion(episodeLinks)
@@ -304,7 +330,8 @@ extension JSController {
                 }
                 hasCompleted = true
                 
-                Logger.shared.log("Promise rejected of extractEpisodes: \(String(describing: error.toString()))", type: "Error")
+                Logger.shared.log("Promise rejected of extractEpisodes service=\(module.metadata.sourceName): \(String(describing: error.toString()))", type: "Error")
+                self.endServiceOperation(operation, reason: "rejected")
                 DispatchQueue.main.async {
                     completion([])
                 }

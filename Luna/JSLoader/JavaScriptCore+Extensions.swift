@@ -9,14 +9,14 @@ import SoraCore
 import JavaScriptCore
 
 extension JSContext {
-    func setupConsoleLogging() {
+    func setupConsoleLogging(sandbox: ServiceSandboxState) {
         let consoleObject = JSValue(newObjectIn: self)
         
         let consoleLogFunction: @convention(block) (String) -> Void = { _ in }
         consoleObject?.setObject(consoleLogFunction, forKeyedSubscript: "log" as NSString)
         
         let consoleErrorFunction: @convention(block) (String) -> Void = { message in
-            Logger.shared.log(message, type: "Error")
+            Logger.shared.log("Service console.error \(sandbox.contextLabel()): \(message)", type: "Error")
         }
         consoleObject?.setObject(consoleErrorFunction, forKeyedSubscript: "error" as NSString)
         
@@ -26,10 +26,15 @@ extension JSContext {
         self.setObject(logFunction, forKeyedSubscript: "log" as NSString)
     }
     
-    func setupNativeFetch() {
+    func setupNativeFetch(sandbox: ServiceSandboxState) {
         let fetchNativeFunction: @convention(block) (String, [String: String]?, JSValue, JSValue) -> Void = { urlString, headers, resolve, reject in
+            guard let operation = sandbox.allowServiceNetworkRequest(api: "fetch", urlString: urlString) else {
+                reject.call(withArguments: ["Service network request blocked by sandbox"])
+                return
+            }
+
             guard let url = URL(string: urlString) else {
-                Logger.shared.log("Invalid URL", type: "Error")
+                Logger.shared.log("Invalid URL in service fetch service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString))", type: "Error")
                 reject.call(withArguments: ["Invalid URL"])
                 return
             }
@@ -39,21 +44,23 @@ extension JSContext {
                     request.setValue(value, forHTTPHeaderField: key)
                 }
             }
-            let task = URLSession.custom.dataTask(with: request) { data, _, error in
+            let task = URLSession.custom.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    Logger.shared.log("Network error in fetchNativeFunction: \(error.localizedDescription)", type: "Error")
+                    Logger.shared.log("Service fetch failed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) error=\(error.localizedDescription)", type: "Error")
                     reject.call(withArguments: [error.localizedDescription])
                     return
                 }
                 guard let data = data else {
-                    Logger.shared.log("No data in response", type: "Error")
+                    Logger.shared.log("Service fetch returned no data service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0)", type: "Error")
                     reject.call(withArguments: ["No data"])
                     return
                 }
                 if let text = String(data: data, encoding: .utf8) {
+                    Logger.shared.log("Service fetch completed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count)", type: "Service")
                     resolve.call(withArguments: [text])
                 } else {
-                    Logger.shared.log("Unable to decode data to text", type: "Error")
+                    let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+                    Logger.shared.log("Service fetch decode failed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count) contentType=\(contentType)", type: "Error")
                     reject.call(withArguments: ["Unable to decode data"])
                 }
             }
@@ -71,13 +78,29 @@ extension JSContext {
         self.evaluateScript(fetchDefinition)
     }
     
-    func setupFetchV2() {
+    func setupFetchV2(sandbox: ServiceSandboxState) {
         let fetchV2NativeFunction: @convention(block) (String, Any?, String?, String?, ObjCBool, String?, JSValue, JSValue) -> Void = { urlString, headersAny, method, body, redirect, encoding, resolve, reject in
-            guard let url = URL(string: urlString) else {
-                Logger.shared.log("Invalid URL", type: "Error")
+            let callResolveEarly: ([String: Any]) -> Void = { dict in
                 DispatchQueue.main.async {
-                    resolve.call(withArguments: ["Invalid URL"])
+                    if !resolve.isUndefined {
+                        resolve.call(withArguments: [dict])
+                    }
                 }
+            }
+
+            guard let operation = sandbox.allowServiceNetworkRequest(api: "fetchv2", urlString: urlString) else {
+                callResolveEarly([
+                    "status": 0,
+                    "headers": [:],
+                    "body": "",
+                    "error": "Service network request blocked by sandbox"
+                ])
+                return
+            }
+
+            guard let url = URL(string: urlString) else {
+                Logger.shared.log("Invalid URL in service fetchv2 service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString))", type: "Error")
+                callResolveEarly(["error": "Invalid URL"])
                 return
             }
             
@@ -159,10 +182,8 @@ extension JSContext {
             let bodyIsEmpty = body == nil || (body)?.isEmpty == true || body == "null" || body == "undefined"
             
             if httpMethod == "GET" && !bodyIsEmpty {
-                Logger.shared.log("GET request must not have a body", type: "Error")
-                DispatchQueue.main.async {
-                    resolve.call(withArguments: ["GET request must not have a body"])
-                }
+                Logger.shared.log("Service fetchv2 rejected GET body service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString))", type: "Error")
+                callResolveEarly(["error": "GET request must not have a body"])
                 return
             }
             
@@ -197,13 +218,13 @@ extension JSContext {
                 }
                 
                 if let error = error {
-                    Logger.shared.log("Network error in fetchV2NativeFunction: \(error.localizedDescription)", type: "Error")
+                    Logger.shared.log("Service fetchv2 failed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) error=\(error.localizedDescription)", type: "Error")
                     callResolve(["error": error.localizedDescription])
                     return
                 }
                 
                 guard let tempFileURL = tempFileURL else {
-                    Logger.shared.log("No data in response", type: "Error")
+                    Logger.shared.log("Service fetchv2 returned no data service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0)", type: "Error")
                     callResolve(["error": "No data"])
                     return
                 }
@@ -240,20 +261,23 @@ extension JSContext {
                     
                     if let text = String(data: data, encoding: textEncoding) {
                         responseDict["body"] = text
+                        Logger.shared.log("Service fetchv2 completed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count)", type: "Service")
                         callResolve(responseDict)
                     } else {
-                        Logger.shared.log("Unable to decode data with encoding \(encoding ?? "utf-8"), trying UTF-8 fallback", type: "Warning")
+                        Logger.shared.log("Service fetchv2 decode warning service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) encoding=\(encoding ?? "utf-8") status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count); trying UTF-8 fallback", type: "Warning")
                         if let fallbackText = String(data: data, encoding: .utf8) {
                             responseDict["body"] = fallbackText
+                            Logger.shared.log("Service fetchv2 completed after UTF-8 fallback service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count)", type: "Service")
                             callResolve(responseDict)
                         } else {
-                            Logger.shared.log("Unable to decode data to text with any encoding", type: "Error")
+                            let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+                            Logger.shared.log("Service fetchv2 decode failed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count) contentType=\(contentType)", type: "Error")
                             callResolve(responseDict)
                         }
                     }
                     
                 } catch {
-                    Logger.shared.log("Error reading downloaded file: \(error.localizedDescription)", type: "Error")
+                    Logger.shared.log("Service fetchv2 failed reading downloaded file service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) error=\(error.localizedDescription)", type: "Error")
                     callResolve(["error": "Error reading downloaded file"])
                 }
             }
@@ -376,13 +400,13 @@ extension JSContext {
         self.evaluateScript(scrapingUtils)
     }
 
-    func setupJavaScriptEnvironment() {
+    func setupJavaScriptEnvironment(sandbox: ServiceSandboxState) {
         setupWeirdCode()
-        setupConsoleLogging()
-        setupNativeFetch()
-        setupNetworkFetch()
-        setupNetworkFetchSimple()
-        setupFetchV2()
+        setupConsoleLogging(sandbox: sandbox)
+        setupNativeFetch(sandbox: sandbox)
+        setupNetworkFetch(sandbox: sandbox)
+        setupNetworkFetchSimple(sandbox: sandbox)
+        setupFetchV2(sandbox: sandbox)
         setupBase64Functions()
         setupScrapingUtilities()
     }

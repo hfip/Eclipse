@@ -3136,12 +3136,12 @@ struct ModulesSearchResultsSheet: View {
         viewModel.streamFetchProgress = "Loading service: \(service.metadata.sourceName)"
         
         let jsController = JSController()
-        jsController.loadScript(service.jsScript)
-        Logger.shared.log("JavaScript loaded successfully", type: "Stream")
+        jsController.loadScript(service.jsScript, service: service)
+        Logger.shared.log("JavaScript loaded successfully service=\(service.metadata.sourceName)", type: "Stream")
         
         viewModel.streamFetchProgress = "Fetching episodes..."
         
-        jsController.fetchEpisodesJS(url: result.href) { episodes in
+        jsController.fetchEpisodesJS(url: result.href, module: service) { episodes in
             Task { @MainActor in
                 self.handleEpisodesFetched(episodes, result: result, service: service, jsController: jsController)
             }
