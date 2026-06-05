@@ -413,14 +413,14 @@ struct AniMapTMDBImportMatch {
     let tmdbSeason: Int?
 }
 
-private actor AniMapSpecialsService {
-    static let shared = AniMapSpecialsService()
+private actor AniMapMappingService {
+    static let shared = AniMapMappingService()
 
     private let baseURL = URL(string: "https://animap.s0n1c.ca")!
     private var cacheByTMDBShowId: [Int: [AniMapMapping]] = [:]
     private var cacheByAniListId: [Int: [AniMapMapping]] = [:]
 
-    func specialMappings(forTMDBShowId tmdbShowId: Int) async -> [AniMapMapping] {
+    func mappings(forTMDBShowId tmdbShowId: Int) async -> [AniMapMapping] {
         if let cached = cacheByTMDBShowId[tmdbShowId] {
             return cached
         }
@@ -449,18 +449,24 @@ private actor AniMapSpecialsService {
 
             let decoded = try JSONDecoder().decode(AniMapMappingList.self, from: data)
             let mappings = decoded.mappings.filter { mapping in
-                guard mapping.tmdbShowId == tmdbShowId,
-                      let type = mapping.mediaType?.uppercased() else {
-                    return false
-                }
-                return type == "SPECIAL" || type == "OVA"
+                mapping.tmdbShowId == tmdbShowId
             }
             cacheByTMDBShowId[tmdbShowId] = mappings
             return mappings
         } catch {
-            Logger.shared.log("AniMapSpecialsService: lookup failed for TMDB show \(tmdbShowId): \(error.localizedDescription)", type: "AniList")
+            Logger.shared.log("AniMapMappingService: lookup failed for TMDB show \(tmdbShowId): \(error.localizedDescription)", type: "AniList")
             cacheByTMDBShowId[tmdbShowId] = []
             return []
+        }
+    }
+
+    func specialMappings(forTMDBShowId tmdbShowId: Int) async -> [AniMapMapping] {
+        let mappings = await mappings(forTMDBShowId: tmdbShowId)
+        return mappings.filter { mapping in
+            guard let type = mapping.mediaType?.uppercased() else {
+                return false
+            }
+            return type == "SPECIAL" || type == "OVA"
         }
     }
 
@@ -498,7 +504,7 @@ private actor AniMapSpecialsService {
             cacheByAniListId[anilistId] = mappings
             return mappings
         } catch {
-            Logger.shared.log("AniMapSpecialsService: AniList lookup failed for \(anilistId): \(error.localizedDescription)", type: "AniList")
+            Logger.shared.log("AniMapMappingService: AniList lookup failed for \(anilistId): \(error.localizedDescription)", type: "AniList")
             cacheByAniListId[anilistId] = []
             return []
         }
@@ -955,6 +961,63 @@ final class AniListService {
         return AnimeMetadataRating(value: value, source: .aniList)
     }
 
+    private func aniMapCandidateAniListIds(forTMDBShowId tmdbShowId: Int, limit: Int = 12) async -> [Int] {
+        let mappings = await AniMapMappingService.shared.mappings(forTMDBShowId: tmdbShowId)
+        guard !mappings.isEmpty else {
+            return []
+        }
+
+        var seen = Set<Int>()
+        let ids = mappings
+            .filter { $0.tmdbShowId == tmdbShowId }
+            .sorted { lhs, rhs in
+                let lhsScore = aniMapCandidateScore(lhs)
+                let rhsScore = aniMapCandidateScore(rhs)
+                if lhsScore != rhsScore {
+                    return lhsScore < rhsScore
+                }
+                return (lhs.anilistId ?? Int.max) < (rhs.anilistId ?? Int.max)
+            }
+            .compactMap { mapping -> Int? in
+                guard let id = mapping.anilistId, id > 0, seen.insert(id).inserted else {
+                    return nil
+                }
+                return id
+            }
+
+        return Array(ids.prefix(limit))
+    }
+
+    private func aniMapCandidateScore(_ mapping: AniMapMapping) -> Int {
+        let typeScore: Int
+        switch mapping.mediaType?.uppercased() {
+        case "TV", "TV_SHORT", "ONA":
+            typeScore = 0
+        case nil:
+            typeScore = 1
+        case "MOVIE":
+            typeScore = 2
+        case "SPECIAL", "OVA":
+            typeScore = 4
+        default:
+            typeScore = 3
+        }
+
+        let seasonScore = mapping.tmdbSeason.map { min(max($0, 0), 99) } ?? 50
+        return typeScore * 1_000 + seasonScore
+    }
+
+    private func isNormalAniListSeasonCandidate(_ anime: AniListAnime) -> Bool {
+        if anime.status == "NOT_YET_RELEASED" {
+            return false
+        }
+        if let format = anime.format, !["TV", "TV_SHORT", "ONA"].contains(format) {
+            return false
+        }
+        let title = AniListTitlePicker.title(from: anime.title, preferredLanguageCode: preferredLanguageCode).lowercased()
+        return !["recap", "summary", "music", "trailer", "pv", "cm"].contains { title.contains($0) }
+    }
+
     private func fetchAnimeDetailsWithEpisodesFromAniList(
         title: String,
         tmdbShowId: Int,
@@ -971,6 +1034,24 @@ final class AniListService {
         }
 
         Logger.shared.log("AniListService: fetchAnimeDetailsWithEpisodes START for '\(title)' tmdbId=\(tmdbShowId)", type: "AniList")
+        var candidates: [AniListAnime] = []
+        let aniMapCandidateIds = await aniMapCandidateAniListIds(forTMDBShowId: tmdbShowId)
+        if !aniMapCandidateIds.isEmpty {
+            let nodesById = await batchFetchAniListNodes(ids: aniMapCandidateIds)
+            candidates = aniMapCandidateIds.compactMap { nodesById[$0] }
+            let hydratedCandidateCount = candidates.count
+            if !candidates.isEmpty, !candidates.contains(where: isNormalAniListSeasonCandidate) {
+                Logger.shared.log("AniListService: AniMap hydrated \(candidates.count) nodes for tmdbId=\(tmdbShowId), but none looked like normal anime seasons; falling back to title search", type: "AniList")
+                candidates = []
+            }
+            if candidates.isEmpty, hydratedCandidateCount == 0 {
+                Logger.shared.log("AniListService: AniMap returned \(aniMapCandidateIds.count) mapped AniList IDs for tmdbId=\(tmdbShowId), but none hydrated from AniList", type: "AniList")
+            } else if !candidates.isEmpty {
+                Logger.shared.log("AniListService: AniMap seeded \(candidates.count)/\(aniMapCandidateIds.count) AniList candidates for tmdbId=\(tmdbShowId)", type: "AniList")
+            }
+        }
+
+        if candidates.isEmpty {
         // Query AniList for anime structure + sequels + coverImage (multiple candidates for better matching)
         let query = """
         query {
@@ -1060,7 +1141,8 @@ final class AniListService {
         }
         
         let result = try JSONDecoder().decode(Response.self, from: response)
-        let candidates = result.data.Page.media
+        candidates = result.data.Page.media
+        }
         Logger.shared.log("AniListService: AniList returned \(candidates.count) candidates for '\(title)'", type: "AniList")
         guard !candidates.isEmpty else {
             Logger.shared.log("AniListService: NO candidates from AniList for '\(title)' — throwing", type: "Error")
@@ -1122,6 +1204,15 @@ final class AniListService {
         }
 
         appendAnime(anime)
+        let aniMapSeedIds = Set(aniMapCandidateIds)
+        let aniMapSeedCandidates = candidates.filter { candidate in
+            aniMapSeedIds.contains(candidate.id)
+                && candidate.id != anime.id
+                && isNormalAniListSeasonCandidate(candidate)
+        }
+        if !aniMapSeedCandidates.isEmpty {
+            Logger.shared.log("AniListService: Seeding sequel detection with \(aniMapSeedCandidates.count) AniMap-mapped AniList nodes for tmdbId=\(tmdbShowId)", type: "AniList")
+        }
         
         Logger.shared.log("AniListService: Starting sequel detection for \(AniListTitlePicker.title(from: anime.title, preferredLanguageCode: preferredLanguageCode)) (ID: \(anime.id), episodes: \(anime.episodes ?? 0), relations: \(anime.relations?.edges.count ?? 0))", type: "AniList")
 
@@ -1131,6 +1222,10 @@ final class AniListService {
         // BFS over sequels/prequels/seasons, batch-fetching nodes that need deeper relations per level
         var queue: [AniListAnime] = [anime]
         var seenIds = Set<Int>([anime.id])
+        for seed in aniMapSeedCandidates where seenIds.insert(seed.id).inserted {
+            appendAnime(seed)
+            queue.append(seed)
+        }
 
         while !queue.isEmpty {
             let currentLevel = queue
@@ -1578,7 +1673,7 @@ final class AniListService {
         baseAniListIds: [Int] = [],
         tmdbService: TMDBService
     ) async -> [AniListSpecialSearchEntry] {
-        let mappings = await AniMapSpecialsService.shared.specialMappings(forTMDBShowId: tmdbShowId)
+        let mappings = await AniMapMappingService.shared.specialMappings(forTMDBShowId: tmdbShowId)
         let uniqueMappings = mappings.reduce(into: [Int: AniMapMapping]()) { result, mapping in
             guard let anilistId = mapping.anilistId, result[anilistId] == nil else { return }
             result[anilistId] = mapping
@@ -1759,7 +1854,7 @@ final class AniListService {
         await withTaskGroup(of: (Int, AniMapMapping?).self) { group in
             for id in candidates.keys {
                 group.addTask {
-                    let mappings = await AniMapSpecialsService.shared.mappings(forAniListId: id)
+                    let mappings = await AniMapMappingService.shared.mappings(forAniListId: id)
                     let specialMapping = mappings.first { mapping in
                         let type = mapping.mediaType?.uppercased()
                         let isSpecial = type == nil || type == "SPECIAL" || type == "OVA" || type == "ONA"
@@ -2445,7 +2540,7 @@ final class AniListService {
         return await withTaskGroup(of: (Int, AniMapTMDBImportMatch?).self) { group in
             for anilistId in uniqueIds {
                 group.addTask {
-                    let mappings = await AniMapSpecialsService.shared.mappings(forAniListId: anilistId)
+                    let mappings = await AniMapMappingService.shared.mappings(forAniListId: anilistId)
                     guard let mapping = Self.bestAniMapImportMapping(mappings, anilistId: anilistId),
                           let match = await Self.tmdbImportMatch(from: mapping, tmdbService: tmdbService) else {
                         return (anilistId, nil)
