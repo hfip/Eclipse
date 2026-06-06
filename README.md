@@ -15,7 +15,7 @@
 
 ## Why Eclipse
 
-Eclipse was designed to bridge Luna services with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels.
+Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels.
 
 ## Screenshots
 
