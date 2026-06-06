@@ -54,6 +54,7 @@ Eclipse was designed to bridge Luna services with Stremio addons in one polished
 - Episode descriptions in service result sheets
 - VLC/MPV playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
 - A redesigned interface built around browsing, watching, reading, and managing progress
+- Customizable UI
 - And more!
 
 ## Install
