@@ -44,8 +44,8 @@ struct pageReader: UIViewControllerRepresentable {
                 controller.setViewControllers([currControllers[index]], direction: .forward, animated: false)
             }
             else{
-                Logger.shared.log("failed to set initial controller", type: "Error")
-                Logger.shared.log("index < currController count ? \(index < (self.reader_manager.currControllers?.count ?? 0))", type: "Debug")
+                ReaderLogger.shared.log("Failed to set initial paged controller", type: "Error")
+                ReaderLogger.shared.log("index < currController count ? \(index < (self.reader_manager.currControllers?.count ?? 0))", type: "ReaderDebug")
             }
         }
         
@@ -94,8 +94,7 @@ struct pageReader: UIViewControllerRepresentable {
         
         func pageViewController(_ pageViewController: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
             guard let index = currControllers.firstIndex(of: viewController) else {
-                print("find before Controlelr instead")
-                print(reader_manager.findControllers(currView: viewController))
+                ReaderLogger.shared.log("Paged reader could not resolve previous controller; known=\(reader_manager.findControllers(currView: viewController))", type: "ReaderDebug")
                 return nil
             }
             switch pageViewConfig {
@@ -110,8 +109,7 @@ struct pageReader: UIViewControllerRepresentable {
         
         func pageViewController(_ pageViewController: UIPageViewController, viewControllerAfter viewController: UIViewController) -> UIViewController? {
             guard let index = currControllers.firstIndex(of: viewController) else {
-                print("find after Controlelr instead")
-                print(reader_manager.findControllers(currView: viewController))
+                ReaderLogger.shared.log("Paged reader could not resolve next controller; known=\(reader_manager.findControllers(currView: viewController))", type: "ReaderDebug")
                 return nil
             }
             switch pageViewConfig {

@@ -22,16 +22,17 @@ struct readerManagerView:View {
     // new Implementation
     
     @StateObject   var reader_manager: readerManager
-    init (chapters: [Chapter]?,selectedChapter: Chapter?,kanzen: KanzenEngine, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "")
+    init (chapters: [Chapter]?,selectedChapter: Chapter?,kanzen: KanzenEngine, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil)
     {
         self.kanzen = kanzen
-        _reader_manager =  StateObject(wrappedValue: readerManager(kanzen:kanzen,chapters: chapters,selectedChapter: selectedChapter, mangaId: mangaId, mangaTitle: mangaTitle, mangaCoverURL: mangaCoverURL))
+        _reader_manager =  StateObject(wrappedValue: readerManager(kanzen:kanzen,chapters: chapters,selectedChapter: selectedChapter, mangaId: mangaId, mangaTitle: mangaTitle, mangaCoverURL: mangaCoverURL, mangaRoute: mangaRoute))
         _chapters = State(initialValue: chapters)
         _selectedChapter = State(initialValue: selectedChapter)
     }
     
     var body: some View {
         ZStack {
+            Color.black.ignoresSafeArea()
             // Custom Back Button
             
             //pageReader(reader_manager: reader_manager)
@@ -41,11 +42,32 @@ struct readerManagerView:View {
             {
                 readerContent()
             }
-            else{
+            else if let errorMessage = reader_manager.currentErrorMessage {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundColor(.white.opacity(0.72))
+                    Text(errorMessage)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.72))
+                        .multilineTextAlignment(.center)
+                    Button("Retry") {
+                        reader_manager.resetState()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+            }
+            else if reader_manager.isLoadingCurrentChapter {
+                CircularLoader()
+            }
+            else {
                 CircularLoader()
             }
             readerOverlay()
         }
+        .ignoresSafeArea()
+        .statusBar(hidden: !showFullScreen)
         
         .sheet(isPresented: $showChapterlist)
         {
@@ -53,10 +75,6 @@ struct readerManagerView:View {
         }
         .sheet(isPresented: $showReadingModePicker){
             readerManagerSettings(readerManager: reader_manager)
-            //.presentationDetents([.fraction(0.3)]) // 👈 make it short (30% screen height)
-            //.presentationCornerRadius(24) // 👈 curved top corners
-            //.presentationBackground(.regularMaterial) // 👈 blurred material background
-            
         }
         .onDisappear {
             AppDelegate.orientationLock = .all
@@ -73,15 +91,15 @@ struct readerManagerView:View {
         case .LTR: pageReader(reader_manager: reader_manager, pageViewConfig: .LTR).id("LTR").onTapGesture {
             showFullScreen.toggle()
         }
-        case .WEBTOON: WebtoonView(reader_manager: reader_manager).id("WEBTOON").onTapGesture {
+        case .WEBTOON: WebtoonView(reader_manager: reader_manager) {
             showFullScreen.toggle()
-        }
+        }.id("WEBTOON")
         case .RTL: pageReader(reader_manager: reader_manager,pageViewConfig: .RTL).id("RTL").onTapGesture {
             showFullScreen.toggle()
         }
-        case .VERTICAL: pageReader(reader_manager: reader_manager,pageViewConfig: .Vertical).id("VERTICAL").onTapGesture {
+        case .VERTICAL: WebtoonView(reader_manager: reader_manager) {
             showFullScreen.toggle()
-        }
+        }.id("VERTICAL")
             
         }
         
@@ -171,7 +189,7 @@ struct readerManagerView:View {
                         } label: {
                             Image(systemName: "chevron.left")
                                 .font(.callout.bold())
-                                .foregroundColor(reader_manager.selectedChapter?.idx ?? 0 > 0 ? .white : .white.opacity(0.3))
+                                .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) > 0 ? .white : .white.opacity(0.3))
                         }
                         .disabled(reader_manager.selectedChapter?.idx == 0)
 

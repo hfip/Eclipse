@@ -13,7 +13,7 @@ struct readerManagerSettings: View {
         Form{
             Section{
                 Picker("Reading Mode",selection: readerManager.$readingModeRaw){
-                    ForEach(ReadingMode.allCases) { mode in
+                    ForEach(ReadingMode.allCases.filter(\.isVisibleInSettings)) { mode in
                         Text(mode.title).tag(mode.rawValue)
                     }
                 }

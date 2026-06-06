@@ -72,21 +72,7 @@ struct MangaCollectionDetailView: View {
 
     @ViewBuilder
     private func mangaDestination(for item: MangaLibraryItem) -> some View {
-        let manga = AniListManga(
-            id: item.aniListId,
-            title: AniListManga.AniListMangaTitle(romaji: item.title, english: nil, native: nil),
-            chapters: item.totalChapters,
-            volumes: nil,
-            status: nil,
-            coverImage: item.coverURL.map { AniListManga.AniListMangaCover(large: $0, medium: nil) },
-            format: item.format,
-            description: nil,
-            genres: nil,
-            averageScore: nil,
-            countryOfOrigin: nil,
-            startDate: nil
-        )
-        MangaDetailView(manga: manga)
+        MangaLibraryDestinationView(item: item)
     }
 }
 #endif

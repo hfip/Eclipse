@@ -5,6 +5,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Soupy-dev/Eclipse/releases">
+    <img alt="GitHub release downloads" src="https://img.shields.io/github/downloads/Soupy-dev/Eclipse/total?style=for-the-badge&label=Downloads">
+  </a>
+</p>
+
+<p align="center">
   <a href="#preview">Preview</a> |
   <a href="#screenshots">Screenshots</a> |
   <a href="#features">Features</a> |

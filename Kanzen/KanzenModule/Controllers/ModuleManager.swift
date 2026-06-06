@@ -39,7 +39,7 @@ class ModuleManager: ObservableObject {
         for module in modules {
             validateModule(module){isValid in
                 if !isValid {
-                    Logger.shared.log("Module \(module.moduleData.sourceName) is not valid", type: "Error")
+                    ReaderLogger.shared.log("Module \(module.moduleData.sourceName) is not valid", type: "Error")
                 }
             }
         }
@@ -98,10 +98,10 @@ class ModuleManager: ObservableObject {
         {
             do {
                 try "[]".write(to:fileUrl,atomically: true,encoding: .utf8)
-                Logger.shared.log("Created new modules file",type: "Info")
+                ReaderLogger.shared.log("Created new modules file",type: "Info")
             }
             catch {
-                Logger.shared.log("Failed to create modules file: \(error.localizedDescription)", type: "Error")
+                ReaderLogger.shared.log("Failed to create modules file: \(error.localizedDescription)", type: "Error")
             }
         }
     }
@@ -122,7 +122,7 @@ class ModuleManager: ObservableObject {
         catch
         {
             modules = []
-            Logger.shared.log(ModuleLoadingError.moduleDecodeError(error.localizedDescription).localizedDescription,type: "Error")
+            ReaderLogger.shared.log(ModuleLoadingError.moduleDecodeError(error.localizedDescription).localizedDescription,type: "Error")
             
         }
         
@@ -173,7 +173,7 @@ class ModuleManager: ObservableObject {
               
                 if(!validFilePath)
                 {
-                    Logger.shared.log("downloading js file for: \(module.moduleData.sourceName)")
+                    ReaderLogger.shared.log("downloading js file for: \(module.moduleData.sourceName)")
                     let validJsContent = try await validateJSfile(module.moduleData.scriptURL)
                     try validJsContent.write(to:fileUrl,atomically: true, encoding: .utf8 )
                 }
@@ -182,7 +182,7 @@ class ModuleManager: ObservableObject {
                 
             }
             catch  {
-                Logger.shared.log("Module Validation Error: (\(module.moduleData.sourceName)) \(error.localizedDescription)",type: "Error")
+                ReaderLogger.shared.log("Module Validation Error: (\(module.moduleData.sourceName)) \(error.localizedDescription)",type: "Error")
                 completion(false)
                
             }
@@ -198,14 +198,14 @@ class ModuleManager: ObservableObject {
 
     /// Re-downloads the JS scripts for installed modules whose version has changed.
     func updateModules() async {
-        Logger.shared.log("ModuleManager: Starting module auto-update for \(modules.count) modules", type: "Info")
+        ReaderLogger.shared.log("ModuleManager: Starting module auto-update for \(modules.count) modules", type: "Info")
         for module in modules {
             do {
                 let metaData = try await validateModuleUrl(module.moduleurl)
 
                 // Skip update if version hasn't changed
                 if metaData.version == module.moduleData.version {
-                    Logger.shared.log("ModuleManager: \(module.moduleData.sourceName) is already up to date (v\(metaData.version))", type: "Info")
+                    ReaderLogger.shared.log("ModuleManager: \(module.moduleData.sourceName) is already up to date (v\(metaData.version))", type: "Info")
                     continue
                 }
 
@@ -226,14 +226,14 @@ class ModuleManager: ObservableObject {
                         self.modules[index] = updated
                     }
                 }
-                Logger.shared.log("ModuleManager: Updated \(module.moduleData.sourceName) to v\(metaData.version)", type: "Info")
+                ReaderLogger.shared.log("ModuleManager: Updated \(module.moduleData.sourceName) to v\(metaData.version)", type: "Info")
             } catch {
-                Logger.shared.log("ModuleManager: Failed to update \(module.moduleData.sourceName): \(error.localizedDescription)", type: "Error")
+                ReaderLogger.shared.log("ModuleManager: Failed to update \(module.moduleData.sourceName): \(error.localizedDescription)", type: "Error")
             }
         }
         saveModules()
         lastAutoUpdateDate = Date()
-        Logger.shared.log("ModuleManager: Auto-update complete", type: "Info")
+        ReaderLogger.shared.log("ModuleManager: Auto-update complete", type: "Info")
     }
 
     /// Auto-update modules if enabled and enough time has passed since the last update.
@@ -242,13 +242,13 @@ class ModuleManager: ObservableObject {
 
         let elapsed = Date().timeIntervalSince(lastAutoUpdateDate)
         guard elapsed >= autoUpdateInterval else {
-            Logger.shared.log("ModuleManager: Skipping auto-update, last update was \(Int(elapsed))s ago", type: "Info")
+            ReaderLogger.shared.log("ModuleManager: Skipping auto-update, last update was \(Int(elapsed))s ago", type: "Info")
             return
         }
 
-        Logger.shared.log("ModuleManager: Starting automatic module update", type: "Info")
+        ReaderLogger.shared.log("ModuleManager: Starting automatic module update", type: "Info")
         await updateModules()
-        Logger.shared.log("ModuleManager: Automatic module update completed", type: "Info")
+        ReaderLogger.shared.log("ModuleManager: Automatic module update completed", type: "Info")
     }
     
 }

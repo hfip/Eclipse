@@ -509,7 +509,7 @@ class Settings: ObservableObject {
             let colorData = try NSKeyedArchiver.archivedData(withRootObject: uiColor, requiringSecureCoding: false)
             UserDefaults.standard.set(colorData, forKey: "accentColor")
         } catch {
-            Logger.shared.log("Failed to save accent color: \(error.localizedDescription)")
+            ReaderLogger.shared.log("Failed to save accent color: \(error.localizedDescription)")
         }
     }
     

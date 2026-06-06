@@ -47,6 +47,13 @@
 		F9A1B2C32F90000100A1B2C3 /* VLCHeaderProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A1B2C22F90000100A1B2C3 /* VLCHeaderProxy.swift */; };
 		BB7777972F20000001BB7797 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = BB7777982F20000001BB7798 /* VLCKitSPM */; };
 		C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */ = {isa = PBXBuildFile; productRef = C0A5A0042FD1000000C0A504 /* CrashReporter */; };
+		AD0000012FD9000000AD0001 /* ReaderLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000102FD9000000AD0010 /* ReaderLogger.swift */; };
+		AD0000022FD9000000AD0002 /* ReaderLoggerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000112FD9000000AD0011 /* ReaderLoggerView.swift */; };
+		AD0000032FD9000000AD0003 /* AidokuSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000122FD9000000AD0012 /* AidokuSourceManager.swift */; };
+		AD0000042FD9000000AD0004 /* AidokuMangaDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000132FD9000000AD0013 /* AidokuMangaDetailView.swift */; };
+		AD0000052FD9000000AD0005 /* AidokuSourcesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000142FD9000000AD0014 /* AidokuSourcesSettingsView.swift */; };
+		AD0000062FD9000000AD0006 /* AidokuRunner in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000222FD9000000AD0022 /* AidokuRunner */; };
+		AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000232FD9000000AD0023 /* ZIPFoundation */; };
 		13A46CFD2EF5943400423BC6 /* FakeWebKit in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFC2EF5943400423BC6 /* FakeWebKit */; };
 		13A46D002EF5944C00423BC6 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFF2EF5944C00423BC6 /* Kingfisher */; };
 		13A46D032EF5945700423BC6 /* SoraCore in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46D022EF5945700423BC6 /* SoraCore */; };
@@ -351,6 +358,11 @@
 		FEE555002F40000000FEE550 /* MangaCreateCollectionView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MangaCreateCollectionView.swift; sourceTree = "<group>"; };
 		FFF666002F40000000FFF660 /* MangaCollectionDetailView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MangaCollectionDetailView.swift; sourceTree = "<group>"; };
 		GG1111002F60000000GG1110 /* NovelReaderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NovelReaderView.swift; sourceTree = "<group>"; };
+		AD0000102FD9000000AD0010 /* ReaderLogger.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ReaderLogger.swift; sourceTree = "<group>"; };
+		AD0000112FD9000000AD0011 /* ReaderLoggerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ReaderLoggerView.swift; sourceTree = "<group>"; };
+		AD0000122FD9000000AD0012 /* AidokuSourceManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AidokuSourceManager.swift; sourceTree = "<group>"; };
+		AD0000132FD9000000AD0013 /* AidokuMangaDetailView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AidokuMangaDetailView.swift; sourceTree = "<group>"; };
+		AD0000142FD9000000AD0014 /* AidokuSourcesSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AidokuSourcesSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -365,6 +377,8 @@
 				136C25C62EFE950300E37A6E /* MPVKit-GPL in Frameworks */,
 				BB7777972F20000001BB7797 /* VLCKitSPM in Frameworks */,
 				C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */,
+				AD0000062FD9000000AD0006 /* AidokuRunner in Frameworks */,
+				AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -428,12 +442,21 @@
 			isa = PBXGroup;
 			children = (
 				13E1ED9A2ED9E65F00087629 /* KanzenModule */,
+				AD0000152FD9000000AD0015 /* Aidoku */,
 				13E1ED9F2ED9E65F00087629 /* mangaModel.xcdatamodeld */,
 				13E1EDA12ED9E65F00087629 /* Models */,
 				13E1EDA82ED9E65F00087629 /* KanzenEngine */,
 				13E1EDB52ED9E65F00087629 /* Views */,
 			);
 			path = Kanzen;
+			sourceTree = "<group>";
+		};
+		AD0000152FD9000000AD0015 /* Aidoku */ = {
+			isa = PBXGroup;
+			children = (
+				AD0000122FD9000000AD0012 /* AidokuSourceManager.swift */,
+			);
+			path = Aidoku;
 			sourceTree = "<group>";
 		};
 		13E1ED9A2ED9E65F00087629 /* KanzenModule */ = {
@@ -602,6 +625,7 @@
 			children = (
 				13E1EDC22ED9E65F00087629 /* kanzenGeneralSettings.swift */,
 				FF8888802F30000000FF8880 /* MangaCatalogSettingsView.swift */,
+				AD0000142FD9000000AD0014 /* AidokuSourcesSettingsView.swift */,
 			);
 			path = subSettings;
 			sourceTree = "<group>";
@@ -615,6 +639,7 @@
 				13E1EDC82ED9E65F00087629 /* circularLoading.swift */,
 				13E1EDC92ED9E65F00087629 /* contentView.swift */,
 				FF7777702F30000000FF7770 /* MangaDetailView.swift */,
+				AD0000132FD9000000AD0013 /* AidokuMangaDetailView.swift */,
 			);
 			path = Util;
 			sourceTree = "<group>";
@@ -816,6 +841,7 @@
 			isa = PBXGroup;
 			children = (
 				13F072942E4B2D9100EF90EB /* Logger.swift */,
+				AD0000102FD9000000AD0010 /* ReaderLogger.swift */,
 				C0A5A0012FD1000000C0A501 /* CrashReportManager.swift */,
 			);
 			path = Logger;
@@ -879,6 +905,7 @@
 				5E2222202F70000000AE2220 /* StremioConfigureView.swift */,
 				13F518422EBCE42B00DEF778 /* StorageView.swift */,
 				13F0727E2E4B2D9000EF90EB /* LoggerView.swift */,
+				AD0000112FD9000000AD0011 /* ReaderLoggerView.swift */,
 				14BBB0043FFF111100AAAAAA /* BackupManagementView.swift */,
 				AA3333302F10000000AA3330 /* TrackersSettingsView.swift */,
 				AA6666602F10000000AA6660 /* CatalogsSettingsView.swift */,
@@ -958,6 +985,8 @@
 				136C25C52EFE950300E37A6E /* MPVKit-GPL */,
 				BB7777982F20000001BB7798 /* VLCKitSPM */,
 				C0A5A0042FD1000000C0A504 /* CrashReporter */,
+				AD0000222FD9000000AD0022 /* AidokuRunner */,
+				AD0000232FD9000000AD0023 /* ZIPFoundation */,
 			);
 			productName = Sora;
 			productReference = 13F0725B2E4B2D3300EF90EB /* Luna.app */;
@@ -994,6 +1023,8 @@
 				136C25C42EFE950300E37A6E /* XCRemoteSwiftPackageReference "MPVKit" */,
 				BB7777992F20000001BB7799 /* XCRemoteSwiftPackageReference "vlckit-spm" */,
 				C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */,
+				AD0000202FD9000000AD0020 /* XCRemoteSwiftPackageReference "AidokuRunner" */,
+				AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			productRefGroup = 13F0725C2E4B2D3300EF90EB /* Products */;
 			projectDirPath = "";
@@ -1093,6 +1124,7 @@
 				5E2222212F70000000AE2221 /* StremioConfigureView.swift in Sources */,
 				13F072A62E4B2D9200EF90EB /* LibraryView.swift in Sources */,
 				13F072A92E4B2D9200EF90EB /* LoggerView.swift in Sources */,
+				AD0000022FD9000000AD0002 /* ReaderLoggerView.swift in Sources */,
 				13F072A72E4B2D9200EF90EB /* MediaDetailView.swift in Sources */,
 				13F072A22E4B2D9200EF90EB /* SettingsView.swift in Sources */,
 				13E1EDE02ED9E66000087629 /* KanzenRunnerController.swift in Sources */,
@@ -1138,6 +1170,7 @@
 				12DF1FC22F040D6700E80375 /* AdaptiveConfirmationDialog.swift in Sources */,
 				13F072A82E4B2D9200EF90EB /* ContentView.swift in Sources */,
 				13F072B72E4B2D9200EF90EB /* Logger.swift in Sources */,
+				AD0000012FD9000000AD0001 /* ReaderLogger.swift in Sources */,
 				C0A5A0022FD1000000C0A502 /* CrashReportManager.swift in Sources */,
 				13E1EDD72ED9E65F00087629 /* favouriteManager.swift in Sources */,
 				13B2E5742E7597B9009F3271 /* JSController-NetworkFetch.swift in Sources */,
@@ -1187,6 +1220,9 @@
 				FF6666662F30000000FF6666 /* KanzenGlobalSearchView.swift in Sources */,
 				FF7777712F30000000FF7771 /* MangaDetailView.swift in Sources */,
 				FF8888812F30000000FF8881 /* MangaCatalogSettingsView.swift in Sources */,
+				AD0000032FD9000000AD0003 /* AidokuSourceManager.swift in Sources */,
+				AD0000042FD9000000AD0004 /* AidokuMangaDetailView.swift in Sources */,
+				AD0000052FD9000000AD0005 /* AidokuSourcesSettingsView.swift in Sources */,
 				FAA111012F40000000FAA111 /* MangaLibraryItem.swift in Sources */,
 				FBB222012F40000000FBB221 /* MangaLibraryCollection.swift in Sources */,
 				FCC333012F40000000FCC331 /* MangaLibraryManager.swift in Sources */,
@@ -1511,6 +1547,22 @@
 				minimumVersion = 1.12.2;
 			};
 		};
+		AD0000202FD9000000AD0020 /* XCRemoteSwiftPackageReference "AidokuRunner" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Aidoku/AidokuRunner";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.19;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1547,6 +1599,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */;
 			productName = CrashReporter;
+		};
+		AD0000222FD9000000AD0022 /* AidokuRunner */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000202FD9000000AD0020 /* XCRemoteSwiftPackageReference "AidokuRunner" */;
+			productName = AidokuRunner;
+		};
+		AD0000232FD9000000AD0023 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
 		};
 /* End XCSwiftPackageProductDependency section */
 

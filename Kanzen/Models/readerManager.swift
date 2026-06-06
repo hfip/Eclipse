@@ -17,10 +17,13 @@ class readerManager: ObservableObject {
     @Published var currChapter: [PageData]
     @Published var prevChapter: [PageData]
     @Published var nextChapter: [PageData]
+    @Published var isLoadingCurrentChapter = false
+    @Published var currentErrorMessage: String?
     @AppStorage("readingMode") var readingModeRaw: Int = ReadingMode.WEBTOON.rawValue
     var pagePrefetcher: ImagePrefetcher?
     var readingMode: ReadingMode {
-        ReadingMode(rawValue: readingModeRaw) ?? .LTR
+        let mode = ReadingMode(rawValue: readingModeRaw) ?? .WEBTOON
+        return mode == .VERTICAL ? .WEBTOON : mode
     }
     var changeIndex: Bool = false
 
@@ -28,6 +31,7 @@ class readerManager: ObservableObject {
     var mangaId: Int = 0
     var mangaTitle: String = ""
     var mangaCoverURL: String = ""
+    var mangaRoute: MangaContentRoute?
     // Cached controllers - only recreated when data changes
  var currControllers: [UIViewController]?
   var prevControllers: [UIViewController]?
@@ -49,7 +53,7 @@ var nextControllers: [UIViewController]?
         }
     }
     
-    init(index: Int = 0, currChapter: [PageData] = [], prevChapter: [PageData] = [], nextChapter: [PageData] = [], shiftChapterLeft: @escaping () -> Void = {}, shiftChapterRight: @escaping () -> Void = {}, fetchPrev: @escaping () -> Void = {}, fetchNext: @escaping () -> Void = {}, kanzen: KanzenEngine,chapters: [Chapter]?, selectedChapter: Chapter?, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "") {
+    init(index: Int = 0, currChapter: [PageData] = [], prevChapter: [PageData] = [], nextChapter: [PageData] = [], shiftChapterLeft: @escaping () -> Void = {}, shiftChapterRight: @escaping () -> Void = {}, fetchPrev: @escaping () -> Void = {}, fetchNext: @escaping () -> Void = {}, kanzen: KanzenEngine,chapters: [Chapter]?, selectedChapter: Chapter?, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil) {
         self.index = index
         self.currChapter = currChapter
         self.prevChapter = prevChapter
@@ -60,6 +64,7 @@ var nextControllers: [UIViewController]?
         self.mangaId = mangaId
         self.mangaTitle = mangaTitle
         self.mangaCoverURL = mangaCoverURL
+        self.mangaRoute = mangaRoute
     }
     func initChapters(){
         // resetState
@@ -70,6 +75,8 @@ var nextControllers: [UIViewController]?
     {
         cancelAllLoadPagesTasks()
         index = 0
+        isLoadingCurrentChapter = true
+        currentErrorMessage = nil
         prevChapter = []
         currChapter = []
         nextChapter = []
@@ -78,9 +85,11 @@ var nextControllers: [UIViewController]?
         nextControllers = nil
         if let selectedChapter = selectedChapter, let chapters = chapters
         {
+            var didStartCurrentLoad = false
             if let currSources = selectedChapter.chapterData, currSources.count > 0,
                 let currParams = currSources[0].params
             {
+                didStartCurrentLoad = true
                 loadPages(params: currParams, position: .curr)
             }
             let idx = selectedChapter.idx
@@ -108,7 +117,16 @@ var nextControllers: [UIViewController]?
                 }
             }
 
+            if !didStartCurrentLoad {
+                isLoadingCurrentChapter = false
+                currentErrorMessage = "No page source found for this chapter."
+            }
+
                     
+        }
+        else {
+            isLoadingCurrentChapter = false
+            currentErrorMessage = "No chapter selected."
         }
     }
     // Cancel all loadPages tasks
@@ -136,12 +154,15 @@ var nextControllers: [UIViewController]?
                 chapterNumber: chapter.chapterNumber,
                 page: index,
                 mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL
+                coverURL: mangaCoverURL,
+                route: mangaRoute
             )
         }
     }
 
     func setCurrChapter(_ currChapter: [PageData]) {
+        isLoadingCurrentChapter = false
+        currentErrorMessage = nil
         self.currChapter = currChapter
         generateCurrControllers()
         // Restore saved page position
@@ -169,8 +190,8 @@ var nextControllers: [UIViewController]?
     func generateCurrControllers()
     {
         currControllers = currChapter.map { page in
-            if page.content != "CHAPTER_END", let url = URL(string: page.content) {
-                return UIHostingController(rootView: AnyView(ZoomablePageView(url: url)))
+            if !page.isTransition, (page.urlString != nil || page.imageData != nil) {
+                return UIHostingController(rootView: AnyView(ZoomablePageView(page: page)))
             }
             return UIHostingController(rootView: AnyView(page.body))
         }
@@ -183,8 +204,8 @@ var nextControllers: [UIViewController]?
     func generatePrevControllers()
     {
         prevControllers = prevChapter.map { page in
-            if page.content != "CHAPTER_END", let url = URL(string: page.content) {
-                return UIHostingController(rootView: AnyView(ZoomablePageView(url: url)))
+            if !page.isTransition, (page.urlString != nil || page.imageData != nil) {
+                return UIHostingController(rootView: AnyView(ZoomablePageView(page: page)))
             }
             return UIHostingController(rootView: AnyView(page.body))
         }
@@ -197,8 +218,8 @@ var nextControllers: [UIViewController]?
     func generateNextControllers()
     {
         nextControllers = nextChapter.map { page in
-            if page.content != "CHAPTER_END", let url = URL(string: page.content) {
-                return UIHostingController(rootView: AnyView(ZoomablePageView(url: url)))
+            if !page.isTransition, (page.urlString != nil || page.imageData != nil) {
+                return UIHostingController(rootView: AnyView(ZoomablePageView(page: page)))
             }
             return UIHostingController(rootView: AnyView(page.body))
         }
@@ -213,7 +234,7 @@ var nextControllers: [UIViewController]?
         cancelLoadPagesTask(for: .next)
         if let currChapter = selectedChapter, currChapter.idx == 0
         {
-            print("End of chapters reached - no more chapters to load")
+            ReaderLogger.shared.log("No previous chapter available", type: "ReaderDebug")
             return
         }
         
@@ -223,7 +244,8 @@ var nextControllers: [UIViewController]?
                 mangaId: mangaId,
                 chapterNumber: chapter.chapterNumber,
                 mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL
+                coverURL: mangaCoverURL,
+                route: mangaRoute
             )
         }
         
@@ -243,7 +265,7 @@ var nextControllers: [UIViewController]?
         // "Previous" becomes empty
         shiftChapterLeft()
         index = currChapter.count - 1
-        print("Shifted left - controllers moved")
+        ReaderLogger.shared.log("Shifted left; controllers moved", type: "ReaderProgress")
     }
     
     func shiftRight() {
@@ -253,7 +275,7 @@ var nextControllers: [UIViewController]?
             let chapters = chapters,
             currChapter.idx == chapters.count - 1
         {
-            print("End of chapters reached - no more chapters to load")
+            ReaderLogger.shared.log("No next chapter available", type: "ReaderDebug")
             return
         }
         
@@ -263,7 +285,8 @@ var nextControllers: [UIViewController]?
                 mangaId: mangaId,
                 chapterNumber: chapter.chapterNumber,
                 mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL
+                coverURL: mangaCoverURL,
+                route: mangaRoute
             )
         }
         
@@ -283,7 +306,7 @@ var nextControllers: [UIViewController]?
         index = 0
         shiftChapterRight()
 
-        print("Shifted right - controllers moved")
+        ReaderLogger.shared.log("Shifted right; controllers moved", type: "ReaderProgress")
     }
     
     func getIndex() -> Int {
@@ -329,8 +352,6 @@ var nextControllers: [UIViewController]?
   
     
     func loadPages(params: Any,position: ChapterPosition, completion: @escaping () -> Void = {}){
-        print("params are")
-        print(params)
         // Cancel any existing task for this position
         cancelLoadPagesTask(for: position)
         
@@ -340,13 +361,22 @@ var nextControllers: [UIViewController]?
                 // Check for cancellation before starting
                 try Task.checkCancellation()
                 
-                print("Loading chapter \(position)...")
-                
-                // Convert callback to async/await
-                let result = await withCheckedContinuation { continuation in
-                    self.kanzen.extractImages(params: params) { result in
-                        continuation.resume(returning: result)
-                    }
+                ReaderLogger.shared.log("Loading chapter position=\(position)", type: "Reader")
+
+                let pages: [PageData]
+                if let payload = params as? AidokuChapterPayload {
+                    pages = try await AidokuSourceManager.shared.pageList(
+                        sourceId: payload.sourceId,
+                        manga: payload.manga,
+                        chapter: payload.chapter
+                    )
+                } else {
+                    let result = await withCheckedContinuation { continuation in
+                        self.kanzen.extractImages(params: params) { result in
+                            continuation.resume(returning: result)
+                        }
+                    } ?? []
+                    pages = result.map { PageData(content: $0) }
                 }
                 
                 // Check for cancellation after network call
@@ -354,11 +384,7 @@ var nextControllers: [UIViewController]?
                 
        
                 
-                if let result = result {
-                    var pages = result.map{PageData(content: $0)}
-                    pages = pages
-                    print("pages is ")
-                    print("\(pages)")
+                if !pages.isEmpty {
                     // Check for cancellation before updating UI
                     try Task.checkCancellation()
                     
@@ -366,21 +392,24 @@ var nextControllers: [UIViewController]?
                     switch position
                     {
                     case .prev:
-                       print("prev is called")
                         self.setPrevChapter(pages)
                         
                     case .next:
-                        print("next is called")
                         self.setNextChapter(pages)
                         
                         
                     case .curr:
-                        print("curr is called")
                         self.setCurrChapter(pages)
 
 
                     }
-                    print("successfully set \(position) chapter")
+                    ReaderLogger.shared.log("Loaded chapter position=\(position) pages=\(pages.count)", type: "Reader")
+                    completion()
+                } else if position == .curr {
+                    self.isLoadingCurrentChapter = false
+                    self.currentErrorMessage = "No pages found for this chapter."
+                    completion()
+                } else {
                     completion()
                 }
                 
@@ -389,9 +418,13 @@ var nextControllers: [UIViewController]?
                 
             } catch {
                 if error is CancellationError {
-                    print("Loading chapter \(position) was cancelled")
+                    ReaderLogger.shared.log("Loading chapter position=\(position) cancelled", type: "ReaderDebug")
                 } else {
-                    print("Error loading chapter \(position): \(error)")
+                    ReaderLogger.shared.log("Error loading chapter position=\(position): \(error.localizedDescription)", type: "Error")
+                    if position == .curr {
+                        self.isLoadingCurrentChapter = false
+                        self.currentErrorMessage = error.localizedDescription
+                    }
                 }
                 // Remove failed/cancelled task from storage
                 self.loadPagesTasks.removeValue(forKey: position)
@@ -407,7 +440,7 @@ var nextControllers: [UIViewController]?
             if idx > 0
             {
                 selectedChapter = chapters[idx - 1]
-                print("shift chapter Left successfull")
+                ReaderLogger.shared.log("Shifted to previous chapter", type: "ReaderProgress")
             }
         }
     }
@@ -419,7 +452,7 @@ var nextControllers: [UIViewController]?
             if idx < chapters.count - 1
             {
                 selectedChapter = chapters[idx + 1]
-                print("shift Chapter Right successfull")
+                ReaderLogger.shared.log("Shifted to next chapter", type: "ReaderProgress")
             }
         }
     }
@@ -431,7 +464,8 @@ var nextControllers: [UIViewController]?
                 mangaId: mangaId,
                 chapterNumber: chapter.chapterNumber,
                 mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL
+                coverURL: mangaCoverURL,
+                route: mangaRoute
             )
         }
         selectedChapter = chapters?[chapter.idx - 1]
@@ -445,7 +479,8 @@ var nextControllers: [UIViewController]?
                 mangaId: mangaId,
                 chapterNumber: chapter.chapterNumber,
                 mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL
+                coverURL: mangaCoverURL,
+                route: mangaRoute
             )
         }
         selectedChapter = chapters[chapter.idx + 1]
@@ -454,7 +489,7 @@ var nextControllers: [UIViewController]?
 
     func fetchPrev(completion: @escaping () -> Void = {})
     {
-        print("fetchPrev called")
+        ReaderLogger.shared.log("Prefetch previous chapter requested", type: "ReaderDebug")
         if let selectedChapter = selectedChapter, let chapters = chapters {
             let idx = selectedChapter.idx
             if idx > 0 {
@@ -491,32 +526,32 @@ var nextControllers: [UIViewController]?
         var pagesURLs: [URL] = []
         
         if index < currChapter.count - 1 {
-            let pageUrl = URL(string: currChapter[index+1].content)
+            let pageUrl = currChapter[index + 1].urlString.flatMap(URL.init(string:))
             if let pageUrl = pageUrl {
                 pagesURLs.append(pageUrl)
             }
         }
         if index < currChapter.count - 2 {
-            let pageUrl = URL(string: currChapter[index+2].content)
+            let pageUrl = currChapter[index + 2].urlString.flatMap(URL.init(string:))
             if let pageUrl = pageUrl {
                 pagesURLs.append(pageUrl)
             }
         }
         else if nextChapter.count > 0 {
-            let pageUrl = URL(string: nextChapter.first!.content)
+            let pageUrl = nextChapter.first?.urlString.flatMap(URL.init(string:))
             if let pageUrl = pageUrl {
                 pagesURLs.append(pageUrl)
             }
         }
         
         if index > 0 {
-            let pageUrl = URL(string: currChapter[index - 1 ].content)
+            let pageUrl = currChapter[index - 1].urlString.flatMap(URL.init(string:))
             if let pageUrl = pageUrl {
                 pagesURLs.append(pageUrl)
             }
         }
         else if prevChapter.count > 0 {
-            let pageUrl = URL(string: prevChapter.last!.content)
+            let pageUrl = prevChapter.last?.urlString.flatMap(URL.init(string:))
             if let pageUrl = pageUrl {
                 pagesURLs.append(pageUrl)
             }

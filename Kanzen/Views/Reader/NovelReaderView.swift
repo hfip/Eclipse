@@ -19,6 +19,7 @@ struct NovelReaderView: View {
     let mangaId: Int
     let mangaTitle: String
     let mangaCoverURL: String
+    let mangaRoute: MangaContentRoute? = nil
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
@@ -202,35 +203,35 @@ struct NovelReaderView: View {
         loadError = nil
         htmlContent = ""
 
-        Logger.shared.log("NovelReader: loadChapterContent for chapter '\(currentChapter.chapterNumber)'", type: "Debug")
-        Logger.shared.log("NovelReader: chapterData count=\(currentChapter.chapterData?.count ?? 0)", type: "Debug")
+        ReaderLogger.shared.log("NovelReader: loadChapterContent for chapter '\(currentChapter.chapterNumber)'", type: "ReaderDebug")
+        ReaderLogger.shared.log("NovelReader: chapterData count=\(currentChapter.chapterData?.count ?? 0)", type: "ReaderDebug")
 
         guard let data = currentChapter.chapterData?.first else {
-            Logger.shared.log("NovelReader: chapterData is nil or empty", type: "Error")
+            ReaderLogger.shared.log("NovelReader: chapterData is nil or empty", type: "Error")
             loadError = "No chapter data available"
             isLoading = false
             return
         }
 
-        Logger.shared.log("NovelReader: chapterData.params type=\(type(of: data.params as Any)), value=\(data.params ?? "nil")", type: "Debug")
-        Logger.shared.log("NovelReader: chapterData.scanlationGroup='\(data.scanlationGroup)', title='\(data.title)'", type: "Debug")
+        ReaderLogger.shared.log("NovelReader: chapterData.params type=\(type(of: data.params as Any))", type: "ReaderDebug")
+        ReaderLogger.shared.log("NovelReader: chapterData.scanlationGroup='\(data.scanlationGroup)', title='\(data.title)'", type: "ReaderDebug")
 
         guard let params = data.params else {
-            Logger.shared.log("NovelReader: params is nil", type: "Error")
+            ReaderLogger.shared.log("NovelReader: params is nil", type: "Error")
             loadError = "No chapter data available"
             isLoading = false
             return
         }
 
-        Logger.shared.log("NovelReader: calling extractText with params=\(params)", type: "Debug")
+        ReaderLogger.shared.log("NovelReader: calling extractText", type: "ReaderDebug")
         kanzen.extractText(params: params) { result in
             DispatchQueue.main.async {
                 if let content = result, !content.isEmpty, content != "undefined", content.count > 20 {
-                    Logger.shared.log("NovelReader: extractText success, length=\(content.count)", type: "Debug")
+                    ReaderLogger.shared.log("NovelReader: extractText success, length=\(content.count)", type: "ReaderDebug")
                     self.htmlContent = content
                     self.isLoading = false
                 } else {
-                    Logger.shared.log("NovelReader: extractText failed/empty, result=\(result?.prefix(100) ?? "nil")", type: "Error")
+                    ReaderLogger.shared.log("NovelReader: extractText failed or returned empty", type: "Error")
                     self.loadError = "Failed to extract text content"
                     self.isLoading = false
                 }
@@ -262,7 +263,8 @@ struct NovelReaderView: View {
             mangaId: mangaId,
             chapterNumber: currentChapter.chapterNumber,
             mangaTitle: mangaTitle,
-            coverURL: mangaCoverURL
+            coverURL: mangaCoverURL,
+            route: mangaRoute
         )
     }
 

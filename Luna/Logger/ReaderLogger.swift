@@ -1,8 +1,8 @@
 //
-//  Logging.swift
-//  Sora
+//  ReaderLogger.swift
+//  Luna
 //
-//  Created by seiike on 16/01/2025.
+//  Separate Kanzen/Aidoku reader logger so media playback logs stay isolated.
 //
 
 import Foundation
@@ -10,27 +10,29 @@ import Foundation
 import UIKit
 #endif
 
-class Logger: @unchecked Sendable {
-    static let shared = Logger()
+class ReaderLogger: @unchecked Sendable {
+    static let shared = ReaderLogger()
 
     enum ExportError: Error {
         case encodingFailed
     }
-    
+
     struct LogEntry {
         let message: String
         let type: String
         let timestamp: Date
     }
-    
-    private let queue = DispatchQueue(label: "me.cranci.sora.logger", attributes: .concurrent)
-    private let fileQueue = DispatchQueue(label: "me.cranci.sora.logger.file")
+
+    private let queue = DispatchQueue(label: "me.cranci.sora.reader.logger", attributes: .concurrent)
+    private let fileQueue = DispatchQueue(label: "me.cranci.sora.reader.logger.file")
     private var logs: [LogEntry] = []
     private let logFileURL: URL
     private let sessionMarkerURL: URL
     private let maxLogEntries = 1000
     private let maxLogFileBytes = 1_000_000
-    private let noisyTypes: Set<String> = ["AniList", "Tracker", "Progress", "Stream", "General", "Info", "TMDB", "MPV", "Matching"]
+    private let noisyTypes: Set<String> = [
+        "ReaderDebug", "AidokuRuntime", "AidokuNetwork", "ReaderNetwork", "ReaderProgress"
+    ]
     private let noisyWindowDuration: TimeInterval = 20
     private let noisyTypeBurstLimit = 30
     private let repeatDedupWindow: TimeInterval = 2
@@ -39,12 +41,11 @@ class Logger: @unchecked Sendable {
     private var suppressedTypeCounts: [String: Int] = [:]
     private var lastEntryForRepeat: LogEntry?
     private var repeatCount = 0
-    
+
     private init() {
-        // Use Documents folder for persistent logs (easier to access)
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        logFileURL = documentsURL.appendingPathComponent("player-logs.txt")
-        sessionMarkerURL = documentsURL.appendingPathComponent("app-session.marker")
+        logFileURL = documentsURL.appendingPathComponent("reader-logs.txt")
+        sessionMarkerURL = documentsURL.appendingPathComponent("reader-session.marker")
         ensureLogFileExists()
         logs = loadLogsFromDisk()
         detectPreviousUncleanShutdown()
@@ -54,50 +55,26 @@ class Logger: @unchecked Sendable {
 
     static func displayCategory(for type: String) -> String {
         let trimmed = type.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "General" }
+        guard !trimmed.isEmpty else { return "Reader" }
 
         switch trimmed.lowercased() {
-        case "crashprobe", "matching", "animatch", "animap", "tmdbmatch", "mediamatch":
-            return "Matching"
-        case "mpvcrashprobe":
-            return "MPV"
-        case "vlccrashprobe":
-            return "VLC"
+        case "aidoku", "aidokuruntime", "aidokusource", "aidokuhome", "aidokusearch":
+            return "Aidoku"
+        case "readerdebug", "readerprogress":
+            return "Reader"
+        case "readernetwork", "aidokunetwork":
+            return "Reader Network"
+        case "readersandbox", "aidokusandbox":
+            return "Reader Sandbox"
         default:
             return trimmed
         }
     }
-    
-    func log(_ message: String, type: String = "General") {
-        let normalizedMessage = message.replacingOccurrences(of: "\n", with: " ")
+
+    func log(_ message: String, type: String = "Reader") {
+        let normalizedMessage = Self.redact(message.replacingOccurrences(of: "\n", with: " "))
         let entry = LogEntry(message: normalizedMessage, type: type, timestamp: Date())
 
-        // Crash diagnostics must survive hard crashes immediately.
-        if Self.isCrashDiagnosticType(type) || Self.isCrashDiagnosticMessage(normalizedMessage) {
-            appendToDisk(entry)
-
-            queue.async(flags: .barrier) {
-                self.logs.append(entry)
-                if self.logs.count > self.maxLogEntries {
-                    self.logs.removeFirst(self.logs.count - self.maxLogEntries)
-                }
-                self.debugLog(entry)
-
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("LoggerNotification"),
-                        object: nil,
-                        userInfo: [
-                            "message": entry.message,
-                            "type": Self.displayCategory(for: entry.type),
-                            "timestamp": entry.timestamp
-                        ]
-                    )
-                }
-            }
-            return
-        }
-        
         queue.async(flags: .barrier) {
             let now = entry.timestamp
             var entriesToRecord = self.rolloverNoisyWindowIfNeeded(now: now)
@@ -135,17 +112,9 @@ class Logger: @unchecked Sendable {
             }
         }
     }
-    
-    func getLogs() -> String {
-        var result = ""
-        queue.sync {
-            result = self.formatLogs(self.logs)
-        }
-        return result
-    }
-    
+
     func getLogsAsync(category: String? = nil) async -> String {
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { continuation in
             queue.async {
                 let selectedCategory = category.flatMap { value -> String? in
                     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -154,27 +123,11 @@ class Logger: @unchecked Sendable {
                 let entries = selectedCategory.map { category in
                     self.logs.filter { Self.displayCategory(for: $0.type) == category }
                 } ?? self.logs
-                let result = self.formatLogs(entries)
-                continuation.resume(returning: result)
+                continuation.resume(returning: self.formatLogs(entries))
             }
         }
     }
-    
-    func clearLogs() {
-        queue.async(flags: .barrier) {
-            self.logs.removeAll()
-            self.lastEntryForRepeat = nil
-            self.repeatCount = 0
-            self.noisyTypeCounts.removeAll()
-            self.suppressedTypeCounts.removeAll()
-            self.noisyWindowStart = Date()
-            self.fileQueue.sync {
-                try? FileManager.default.removeItem(at: self.logFileURL)
-                self.ensureLogFileExists()
-            }
-        }
-    }
-    
+
     func clearLogsAsync() async {
         await withCheckedContinuation { continuation in
             queue.async(flags: .barrier) {
@@ -192,18 +145,14 @@ class Logger: @unchecked Sendable {
             }
         }
     }
-    
+
     func exportLogsToTempFile(category: String? = nil) async throws -> URL {
         let selectedCategory = category.flatMap { value -> String? in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty || trimmed == "All" ? nil : Self.displayCategory(for: trimmed)
         }
         let logs = await getLogsAsync(category: selectedCategory)
-        var content = logs.isEmpty ? "No logs available." : logs
-        if let crashReport = CrashReportManager.shared.latestCrashReportText(),
-           !crashReport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            content += "\n\n==== Last Native Crash Report ====\n\n\(crashReport)"
-        }
+        let content = logs.isEmpty ? "No reader logs available." : logs
         guard let data = content.data(using: .utf8) else {
             throw ExportError.encodingFailed
         }
@@ -211,10 +160,44 @@ class Logger: @unchecked Sendable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let suffix = selectedCategory.map { "-\($0.lowercased().replacingOccurrences(of: " ", with: "-"))" } ?? ""
-        let filename = "luna-logs\(suffix)-\(formatter.string(from: Date())).txt"
+        let filename = "luna-reader-logs\(suffix)-\(formatter.string(from: Date())).txt"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    private static func redact(_ message: String) -> String {
+        var result = message
+        let patterns = [
+            #"(?i)\b(authorization|cookie|set-cookie|token|api[_-]?key|password)\b\s*([:=])\s*["']?[^"',;]+["']?"#
+        ]
+        for pattern in patterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: "$1$2<redacted>",
+                options: .regularExpression
+            )
+        }
+
+        guard let regex = try? NSRegularExpression(pattern: #"https?://[^\s<>"'\)\]]+"#) else {
+            return result
+        }
+        let nsRange = NSRange(result.startIndex..., in: result)
+        for match in regex.matches(in: result, range: nsRange).reversed() {
+            guard let range = Range(match.range, in: result) else { continue }
+            let rawURL = String(result[range])
+            guard var components = URLComponents(string: rawURL),
+                  components.queryItems?.isEmpty == false else {
+                continue
+            }
+            components.queryItems = components.queryItems?.map {
+                URLQueryItem(name: $0.name, value: "<redacted>")
+            }
+            if let redacted = components.string {
+                result.replaceSubrange(range, with: redacted)
+            }
+        }
+        return result
     }
 
     private func formatLogs(_ entries: [LogEntry]) -> String {
@@ -225,13 +208,12 @@ class Logger: @unchecked Sendable {
         }
         .joined(separator: "\n----\n")
     }
-    
+
     private func debugLog(_ entry: LogEntry) {
 #if DEBUG
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM HH:mm:ss"
-        let formattedMessage = "[\(dateFormatter.string(from: entry.timestamp))] [\(Self.displayCategory(for: entry.type))] \(entry.message)"
-        print(formattedMessage)
+        print("[\(dateFormatter.string(from: entry.timestamp))] [\(Self.displayCategory(for: entry.type))] \(entry.message)")
 #endif
     }
 
@@ -248,20 +230,16 @@ class Logger: @unchecked Sendable {
         guard let marker, marker.hasPrefix("running") else { return }
 
         let entry = LogEntry(
-            message: "Detected previous unclean app shutdown (likely crash or force close).",
-            type: "CrashProbe",
+            message: "Detected previous unclean reader shutdown.",
+            type: "ReaderCrashProbe",
             timestamp: Date()
         )
-
         appendToDisk(entry)
         queue.async(flags: .barrier) {
             self.logs.append(entry)
-            if self.logs.count > self.maxLogEntries {
-                self.logs.removeFirst(self.logs.count - self.maxLogEntries)
-            }
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
-                    name: NSNotification.Name("LoggerNotification"),
+                    name: NSNotification.Name("ReaderLoggerNotification"),
                     object: nil,
                     userInfo: [
                         "message": entry.message,
@@ -335,7 +313,7 @@ class Logger: @unchecked Sendable {
 
         DispatchQueue.main.async {
             NotificationCenter.default.post(
-                name: NSNotification.Name("LoggerNotification"),
+                name: NSNotification.Name("ReaderLoggerNotification"),
                 object: nil,
                 userInfo: [
                     "message": entry.message,
@@ -354,7 +332,7 @@ class Logger: @unchecked Sendable {
             .map { type, count in
                 LogEntry(
                     message: "Suppressed \(count) noisy \(type) logs in last \(Int(noisyWindowDuration))s",
-                    type: "Logger",
+                    type: "ReaderLogger",
                     timestamp: now
                 )
             }
@@ -366,70 +344,15 @@ class Logger: @unchecked Sendable {
     }
 
     private func shouldRecordInNoisyWindow(_ entry: LogEntry) -> Bool {
-        if shouldBypassNoisySuppression(entry) {
-            return true
-        }
-
-        let type = entry.type
-        guard noisyTypes.contains(type) else { return true }
-        let next = noisyTypeCounts[type, default: 0] + 1
-        noisyTypeCounts[type] = next
-        return next <= noisyTypeBurstLimit
-    }
-
-    private func shouldBypassNoisySuppression(_ entry: LogEntry) -> Bool {
-        if Self.isCrashDiagnosticType(entry.type) || Self.isCrashDiagnosticMessage(entry.message) {
-            return true
-        }
-
         let category = Self.displayCategory(for: entry.type).lowercased()
-        let message = entry.message.lowercased()
-
-        if category == "error" {
+        if category == "error" || category.contains("sandbox") {
             return true
         }
 
-        if message.contains("playerheaderproxy") || message.contains("mpvheaderproxy") || message.contains("vlcheaderproxy") {
-            return true
-        }
-
-        guard category == "mpv" else { return false }
-
-        return message.contains("startup watchdog")
-            || message.contains("declaring stalled")
-            || message.contains("startup monitor armed")
-            || message.contains("loading initial url")
-            || message.contains("load url=")
-            || message.contains("rendererload url=")
-            || message.contains("load start gen=")
-            || message.contains("applying mpv raw http headers")
-            || message.contains("clearing http headers")
-            || message.contains("command loadfile")
-            || message.contains("delegate didfailwitherror")
-            || message.contains("playback issue")
-            || message.contains("playbackstart")
-            || message.contains("loadfile command failed")
-            || message.contains("event end-file")
-            || message.contains("event file-loaded")
-            || message.contains("http error")
-            || message.contains("failed")
-            || (message.contains("mpv[") && (message.contains(" error:") || message.contains(" warn:")))
-    }
-
-    private static func isCrashDiagnosticType(_ type: String) -> Bool {
-        switch type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "crashprobe", "mpvcrashprobe", "vlccrashprobe", "vlcplayback", "vlcproxy":
-            return true
-        default:
-            return false
-        }
-    }
-
-    private static func isCrashDiagnosticMessage(_ message: String) -> Bool {
-        let lowercasedMessage = message.lowercased()
-        return lowercasedMessage.contains("[vlcrenderer]")
-            || lowercasedMessage.contains("[playervc.vlc")
-            || lowercasedMessage.contains("vlcheaderproxy")
+        guard noisyTypes.contains(entry.type) else { return true }
+        let next = noisyTypeCounts[entry.type, default: 0] + 1
+        noisyTypeCounts[entry.type] = next
+        return next <= noisyTypeBurstLimit
     }
 
     private func appendToDisk(_ entry: LogEntry) {

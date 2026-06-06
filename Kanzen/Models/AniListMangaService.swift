@@ -200,7 +200,7 @@ final class AniListMangaService {
             "recentlyUpdated": decoded.data.recentlyUpdated.media,
         ]
 
-        Logger.shared.log("AniListMangaService: Fetched all manga catalogs in 1 query", type: "AniList")
+        ReaderLogger.shared.log("AniListMangaService: Fetched all manga catalogs in 1 query", type: "AniList")
         return result
     }
 
@@ -244,7 +244,7 @@ final class AniListMangaService {
             "publishingNovels": decoded.data.publishingNovels.media,
         ]
 
-        Logger.shared.log("AniListMangaService: Fetched all light novel catalogs in 1 query", type: "AniList")
+        ReaderLogger.shared.log("AniListMangaService: Fetched all light novel catalogs in 1 query", type: "AniList")
         return result
     }
 
@@ -377,14 +377,14 @@ final class AniListMangaService {
                     let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
                         .flatMap(Double.init) ?? Double(2 * (attempt + 1))
                     let delay = min(retryAfter, 10)
-                    Logger.shared.log("AniListManga rate limited (429), retry \(attempt + 1)/\(maxRetries) after \(delay)s", type: "AniList")
+                    ReaderLogger.shared.log("AniListManga rate limited (429), retry \(attempt + 1)/\(maxRetries) after \(delay)s", type: "AniList")
                     try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     lastError = NSError(domain: "AniListManga", code: 429, userInfo: [NSLocalizedDescriptionKey: "Rate limited"])
                     continue
                 }
 
                 let error = "AniListManga error (HTTP \(httpResponse.statusCode))"
-                Logger.shared.log("AniListMangaService: GraphQL request failed with HTTP \(httpResponse.statusCode)", type: "Error")
+                ReaderLogger.shared.log("AniListMangaService: GraphQL request failed with HTTP \(httpResponse.statusCode)", type: "Error")
                 throw NSError(domain: "AniListManga", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: error])
             }
 

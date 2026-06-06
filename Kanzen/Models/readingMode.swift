@@ -21,9 +21,13 @@ enum ReadingMode: Int,CaseIterable,Identifiable {
         switch self {
         case .LTR: return "Left to Right"
         case .RTL: return "Right to Left"
-        case .WEBTOON: return "Webtoon"
+        case .WEBTOON: return "Continuous Scroll"
         case .VERTICAL: return "Vertical"
         }
+    }
+
+    var isVisibleInSettings: Bool {
+        self != .VERTICAL
     }
 }
 

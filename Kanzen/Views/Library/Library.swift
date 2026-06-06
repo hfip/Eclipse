@@ -276,21 +276,93 @@ struct KanzenLibraryView: View {
 
     @ViewBuilder
     private func mangaDestination(for item: MangaLibraryItem) -> some View {
-        let manga = AniListManga(
-            id: item.aniListId,
-            title: AniListManga.AniListMangaTitle(romaji: item.title, english: nil, native: nil),
-            chapters: item.totalChapters,
-            volumes: nil,
-            status: nil,
-            coverImage: item.coverURL.map { AniListManga.AniListMangaCover(large: $0, medium: nil) },
-            format: item.format,
-            description: nil,
-            genres: nil,
-            averageScore: nil,
-            countryOfOrigin: nil,
-            startDate: nil
-        )
-        MangaDetailView(manga: manga)
+        MangaLibraryDestinationView(item: item)
+    }
+}
+
+struct MangaLibraryDestinationView: View {
+    let item: MangaLibraryItem
+    @ObservedObject private var progressManager = MangaReadingProgressManager.shared
+
+    var body: some View {
+        if let route = contentRoute {
+            routeDestination(route)
+        } else if item.aniListId < 0 {
+            MangaModuleUnavailableView(
+                title: item.title,
+                message: "This saved item is missing its source route. Open it again from its source to repair the bookmark."
+            )
+        } else {
+            let manga = AniListManga(
+                id: item.aniListId,
+                title: AniListManga.AniListMangaTitle(romaji: item.title, english: nil, native: nil),
+                chapters: item.totalChapters,
+                volumes: nil,
+                status: nil,
+                coverImage: item.coverURL.map { AniListManga.AniListMangaCover(large: $0, medium: nil) },
+                format: item.format,
+                description: nil,
+                genres: nil,
+                averageScore: nil,
+                countryOfOrigin: nil,
+                startDate: nil
+            )
+            MangaDetailView(manga: manga)
+        }
+    }
+
+    @ViewBuilder
+    private func routeDestination(_ route: MangaContentRoute) -> some View {
+        switch route {
+        case .legacyModule(let moduleUUIDString, let contentParams, let isNovel):
+            if let moduleUUID = UUID(uuidString: moduleUUIDString),
+               let module = ModuleManager.shared.getModule(moduleUUID) {
+                MangaModuleContentLoaderView(
+                    module: module,
+                    title: item.title,
+                    imageURL: item.coverURL ?? "",
+                    contentParams: contentParams,
+                    isNovel: isNovel
+                )
+            } else {
+                MangaModuleUnavailableView(
+                    title: item.title,
+                    message: "The legacy source module may have been removed."
+                )
+            }
+
+        case .aidoku(let sourceId, let mangaKey):
+            AidokuMangaRouteLoaderView(
+                sourceId: sourceId,
+                mangaKey: mangaKey,
+                title: item.title,
+                coverURL: item.coverURL
+            )
+        }
+    }
+
+    private var contentRoute: MangaContentRoute? {
+        if let route = item.route {
+            return route
+        }
+
+        if let progress = progressManager.progress(for: item.aniListId),
+           let route = progress.route {
+            return route
+        }
+
+        if let moduleUUIDString = item.moduleUUID,
+           let contentParams = item.contentParams {
+            return .legacyModule(moduleUUID: moduleUUIDString, contentParams: contentParams, isNovel: item.isNovel ?? false)
+        }
+
+        if let progress = progressManager.progress(for: item.aniListId),
+           let moduleUUIDString = progress.moduleUUID,
+           let contentParams = progress.contentParams {
+            return .legacyModule(moduleUUID: moduleUUIDString, contentParams: contentParams, isNovel: progress.isNovel ?? false)
+        }
+
+        return nil
     }
 }
 #endif

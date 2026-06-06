@@ -15,6 +15,10 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
     let coverURL: String?
     let format: String?
     let totalChapters: Int?
+    var moduleUUID: String? = nil
+    var contentParams: String? = nil
+    var isNovel: Bool? = nil
+    var route: MangaContentRoute? = nil
     var dateAdded: Date = Date()
 
     /// Create a library item from module search content.
@@ -30,7 +34,23 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
             title: title,
             coverURL: coverURL,
             format: isNovel ? "NOVEL" : "MANGA",
-            totalChapters: nil
+            totalChapters: nil,
+            moduleUUID: moduleId.uuidString,
+            contentParams: contentId,
+            isNovel: isNovel,
+            route: .legacyModule(moduleUUID: moduleId.uuidString, contentParams: contentId, isNovel: isNovel)
+        )
+    }
+
+    static func fromAidoku(sourceId: String, mangaKey: String, title: String, coverURL: String?) -> MangaLibraryItem {
+        let route = MangaContentRoute.aidoku(sourceId: sourceId, mangaKey: mangaKey)
+        return MangaLibraryItem(
+            aniListId: route.stableNegativeId,
+            title: title,
+            coverURL: coverURL,
+            format: "MANGA",
+            totalChapters: nil,
+            route: route
         )
     }
 

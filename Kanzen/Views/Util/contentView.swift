@@ -51,6 +51,15 @@ struct contentView: View {
             isNovel: parentModule?.moduleData.novel == true
         )
     }
+
+    private var contentRoute: MangaContentRoute? {
+        guard let parentModule else { return nil }
+        return .legacyModule(
+            moduleUUID: parentModule.id.uuidString,
+            contentParams: params,
+            isNovel: parentModule.moduleData.novel == true
+        )
+    }
     
     
     var body: some View {
@@ -111,7 +120,8 @@ struct contentView: View {
                     coverURL: imageURL,
                     moduleUUID: parentModule?.id.uuidString,
                     contentParams: params,
-                    isNovel: parentModule?.moduleData.novel == true
+                    isNovel: parentModule?.moduleData.novel == true,
+                    route: contentRoute
                 )
             }
         }){ chapter in
@@ -124,7 +134,8 @@ struct contentView: View {
                         initialChapter: chapter,
                         mangaId: stableId,
                         mangaTitle: title,
-                        mangaCoverURL: imageURL
+                        mangaCoverURL: imageURL,
+                        mangaRoute: contentRoute
                     )
                 } else {
                     readerManagerView(
@@ -133,7 +144,8 @@ struct contentView: View {
                         kanzen: kanzen,
                         mangaId: stableId,
                         mangaTitle: title,
-                        mangaCoverURL: imageURL
+                        mangaCoverURL: imageURL,
+                        mangaRoute: contentRoute
                     )
                 }
             }
@@ -424,7 +436,7 @@ struct contentView: View {
                             }
                         } else {
                             Button {
-                                progressManager.markChapterRead(mangaId: stableId, chapterNumber: chapter.chapterNumber, mangaTitle: title, coverURL: imageURL, moduleUUID: parentModule?.id.uuidString, contentParams: params, isNovel: parentModule?.moduleData.novel == true)
+                                progressManager.markChapterRead(mangaId: stableId, chapterNumber: chapter.chapterNumber, mangaTitle: title, coverURL: imageURL, moduleUUID: parentModule?.id.uuidString, contentParams: params, isNovel: parentModule?.moduleData.novel == true, route: contentRoute)
                             } label: {
                                 Label("Mark as Read", systemImage: "eye")
                             }
@@ -507,6 +519,76 @@ struct contentView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+}
+
+struct MangaModuleContentLoaderView: View {
+    let module: ModuleDataContainer
+    let title: String
+    let imageURL: String
+    let contentParams: String
+    let isNovel: Bool
+
+    @StateObject private var kanzen = KanzenEngine()
+    @State private var moduleLoaded = false
+    @State private var loadError: String?
+
+    var body: some View {
+        Group {
+            if moduleLoaded {
+                contentView(
+                    parentModule: module,
+                    title: title,
+                    imageURL: imageURL,
+                    params: contentParams
+                )
+                .environmentObject(kanzen)
+            } else if let loadError {
+                MangaModuleUnavailableView(
+                    title: title,
+                    message: loadError
+                )
+            } else {
+                ProgressView("Loading source...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task(id: "\(module.id.uuidString):\(contentParams)") {
+                        loadModule()
+                    }
+            }
+        }
+    }
+
+    private func loadModule() {
+        do {
+            let content = try ModuleManager.shared.getModuleScript(module: module)
+            try kanzen.loadScript(content, isNovel: isNovel)
+            moduleLoaded = true
+        } catch {
+            ReaderLogger.shared.log("Error loading module content: \(error.localizedDescription)", type: "Error")
+            loadError = error.localizedDescription
+        }
+    }
+}
+
+struct MangaModuleUnavailableView: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 42))
+                .foregroundColor(.secondary)
+            Text(title)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 #endif

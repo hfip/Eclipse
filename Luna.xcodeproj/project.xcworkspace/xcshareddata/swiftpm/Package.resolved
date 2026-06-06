@@ -2,6 +2,15 @@
   "originHash" : "4561a9088cc02d530cf0726a874107be63f44ab1ddffae049809036cedc44807",
   "pins" : [
     {
+      "identity" : "aidokurunner",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Aidoku/AidokuRunner",
+      "state" : {
+        "branch" : "main",
+        "revision" : "3dcb4ea9afd8f6ad35b4f7fe47166f596ae4a0a9"
+      }
+    },
+    {
       "identity" : "fakewebkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/undeaDD/FakeWebKit",
@@ -37,12 +46,48 @@
       }
     },
     {
+      "identity" : "swiftlintplugins",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SimplyDanny/SwiftLintPlugins",
+      "state" : {
+        "revision" : "8545ddf4de043e6f2051c5cf204f39ef778ebf6b",
+        "version" : "0.59.1"
+      }
+    },
+    {
+      "identity" : "swiftsoup",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scinfu/SwiftSoup.git",
+      "state" : {
+        "revision" : "4206bc7b8bd9a4ff8e9511211e1b4bff979ef9c4",
+        "version" : "2.11.1"
+      }
+    },
+    {
       "identity" : "vlckit-spm",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tylerjonesio/vlckit-spm",
       "state" : {
         "revision" : "e932bbd488872fdb74f6654d28c2f291eae03daf",
         "version" : "3.6.0"
+      }
+    },
+    {
+      "identity" : "wasm3",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Skittyblock/Wasm3",
+      "state" : {
+        "branch" : "main",
+        "revision" : "565f4858aa59976ab27719ec02238524eb27030d"
+      }
+    },
+    {
+      "identity" : "zipfoundation",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/weichsel/ZIPFoundation.git",
+      "state" : {
+        "revision" : "02b6abe5f6eef7e3cbd5f247c5cc24e246efcfe0",
+        "version" : "0.9.19"
       }
     }
   ],

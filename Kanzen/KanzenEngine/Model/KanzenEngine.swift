@@ -35,6 +35,30 @@ class KanzenEngine: ObservableObject
             completion(result)
         }
     }
+
+    func homeSections(page: Int = 0, completion: @escaping ([[String: Any]]?) -> Void) {
+        controller.homeSections(page: page) { result in
+            completion(result)
+        }
+    }
+
+    func homeSectionItems(sectionId: String, page: Int = 0, completion: @escaping ([[String: Any]]?) -> Void) {
+        controller.homeSectionItems(sectionId: sectionId, page: page) { result in
+            completion(result)
+        }
+    }
+
+    func searchFilters(completion: @escaping ([[String: Any]]?) -> Void) {
+        controller.searchFilters { result in
+            completion(result)
+        }
+    }
+
+    func searchAdvanced(_ input: String, filters: [String: Any], page: Int = 0, completion: @escaping ([[String: Any]]?) -> Void) {
+        controller.searchAdvanced(_input: input, filters: filters, page: page) { result in
+            completion(result)
+        }
+    }
     
     func extractChapters(params: Any, completion: @escaping (Any?)-> Void)
     {

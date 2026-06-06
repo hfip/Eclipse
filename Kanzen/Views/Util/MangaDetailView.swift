@@ -686,9 +686,9 @@ struct MangaDetailView: View {
         do {
             let script = try ModuleManager.shared.getModuleScript(module: match.module)
             let isNovel = match.module.moduleData.novel == true
-            Logger.shared.log("MangaDetail.selectSource: loading module '\(match.module.moduleData.sourceName)', isNovel=\(isNovel)", type: "Debug")
+            ReaderLogger.shared.log("MangaDetail.selectSource: loading module '\(match.module.moduleData.sourceName)', isNovel=\(isNovel)", type: "Debug")
             try engine.loadScript(script, isNovel: isNovel)
-            Logger.shared.log("MangaDetail.selectSource: module loaded successfully", type: "Debug")
+            ReaderLogger.shared.log("MangaDetail.selectSource: module loaded successfully", type: "Debug")
         } catch {
             loadingChapters = false
             chapterLoadError = "Failed to load module: \(error.localizedDescription)"
@@ -698,15 +698,15 @@ struct MangaDetailView: View {
         // Store engine for the reader to use later
         chapterEngine = engine
 
-        Logger.shared.log("MangaDetail.selectSource: calling extractChapters with mangaId='\(match.manga.mangaId)'", type: "Debug")
+        ReaderLogger.shared.log("MangaDetail.selectSource: calling extractChapters with mangaId='\(match.manga.mangaId)'", type: "Debug")
         engine.extractChapters(params: match.manga.mangaId) { result in
             DispatchQueue.main.async {
-                Logger.shared.log("MangaDetail.selectSource: extractChapters returned type=\(type(of: result as Any)), isNil=\(result == nil)", type: "Debug")
+                ReaderLogger.shared.log("MangaDetail.selectSource: extractChapters returned type=\(type(of: result as Any)), isNil=\(result == nil)", type: "Debug")
                 if let result = result {
                     var parsed: [Chapters] = []
 
                     if let dictResult = result as? [String: Any] {
-                        Logger.shared.log("MangaDetail.selectSource: Kanzen format, keys=\(Array(dictResult.keys))", type: "Debug")
+                        ReaderLogger.shared.log("MangaDetail.selectSource: Kanzen format, keys=\(Array(dictResult.keys))", type: "Debug")
                         // Kanzen format: {language: [[chapterName, [{scanlation_group, id}]]]}
                         for (key, value) in dictResult {
                             var chapterList: [Chapter] = []
@@ -726,9 +726,9 @@ struct MangaDetailView: View {
                         }
                     } else if let arrResult = result as? [[String: Any]] {
                         // Sora format: [{number, title, href}, ...]
-                        Logger.shared.log("MangaDetail.selectSource: Sora format, \(arrResult.count) chapters", type: "Debug")
+                        ReaderLogger.shared.log("MangaDetail.selectSource: Sora format, \(arrResult.count) chapters", type: "Debug")
                         if let first = arrResult.first {
-                            Logger.shared.log("MangaDetail.selectSource: first chapter keys=\(Array(first.keys)), values=\(first)", type: "Debug")
+                            ReaderLogger.shared.log("MangaDetail.selectSource: first chapter keys=\(Array(first.keys)), values=\(first)", type: "Debug")
                         }
                         var chapterList: [Chapter] = []
                         for (idx, chapterDict) in arrResult.enumerated() {
@@ -744,10 +744,10 @@ struct MangaDetailView: View {
                         }
                     }
 
-                    Logger.shared.log("MangaDetail.selectSource: parsed \(parsed.count) language groups, total chapters=\(parsed.reduce(0) { $0 + $1.chapters.count })", type: "Debug")
+                    ReaderLogger.shared.log("MangaDetail.selectSource: parsed \(parsed.count) language groups, total chapters=\(parsed.reduce(0) { $0 + $1.chapters.count })", type: "Debug")
                     self.loadedChapters = parsed
                 } else {
-                    Logger.shared.log("MangaDetail.selectSource: result is not dict or array, actual type=\(type(of: result))", type: "Error")
+                    ReaderLogger.shared.log("MangaDetail.selectSource: result is not dict or array, actual type=\(type(of: result))", type: "Error")
                     self.loadedChapters = []
                 }
                 self.loadingChapters = false

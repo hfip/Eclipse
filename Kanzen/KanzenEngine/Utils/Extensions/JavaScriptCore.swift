@@ -27,15 +27,15 @@ extension JSContext
     {
         guard let jsPath = Bundle.main.path(forResource: "bundle", ofType: "js")
         else{
-            Logger.shared.log("bundle not found",type: "Error")
+            ReaderLogger.shared.log("bundle not found",type: "Error")
             return
         }
         do {
             let jsCode = try String(contentsOfFile: jsPath, encoding: .utf8)
             self.evaluateScript(jsCode)
-            Logger.shared.log("bundle loaded successfully")
+            ReaderLogger.shared.log("bundle loaded successfully")
         } catch {
-            Logger.shared.log("Error loading bundle.js: \(error)")
+            ReaderLogger.shared.log("Error loading bundle.js: \(error)")
         }
         
     }
@@ -47,7 +47,7 @@ extension JSContext
         let consoleObject = JSValue(newObjectIn: self)
         let consoleLogFunction: @convention(block) (String) -> Void = {
             message in
-            Logger.shared.log(message,type: "Debug")
+            ReaderLogger.shared.log(message,type: "Debug")
         }
         let consolePrintFunction: @convention(block) (JSValue) -> Void = {
             message in
@@ -125,7 +125,7 @@ extension JSContext
                             }
                             catch
                             {
-                                Logger.shared.log("JSON serialization failed",type:"Error")
+                                ReaderLogger.shared.log("JSON serialization failed",type:"Error")
                             }
                         }
                         return JSValue(newErrorFromMessage: "No Data", in: self)
@@ -183,19 +183,19 @@ extension JSContext
         let consoleObject = JSValue(newObjectIn: self)
         
         let consoleLogFunction: @convention(block) (String) -> Void = { message in
-            Logger.shared.log(message, type: "Debug")
+            ReaderLogger.shared.log(message, type: "Debug")
         }
         consoleObject?.setObject(consoleLogFunction, forKeyedSubscript: "log" as NSString)
         
         let consoleErrorFunction: @convention(block) (String) -> Void = { message in
-            Logger.shared.log(message, type: "Error")
+            ReaderLogger.shared.log(message, type: "Error")
         }
         consoleObject?.setObject(consoleErrorFunction, forKeyedSubscript: "error" as NSString)
         
         self.setObject(consoleObject, forKeyedSubscript: "console" as NSString)
         
         let logFunction: @convention(block) (String) -> Void = { message in
-            Logger.shared.log("JavaScript log: \(message)", type: "Debug")
+            ReaderLogger.shared.log("JavaScript log: \(message)", type: "Debug")
         }
         self.setObject(logFunction, forKeyedSubscript: "log" as NSString)
     }
@@ -206,7 +206,7 @@ extension JSContext
     {
         let fetchNativeFunction: @convention(block) (String, [String: String]?, JSValue, JSValue) -> Void = { urlString, headers, resolve, reject in
             guard let url = URL(string: urlString) else {
-                Logger.shared.log("Invalid URL: \(urlString)", type: "Error")
+                ReaderLogger.shared.log("Invalid URL: \(urlString)", type: "Error")
                 reject.call(withArguments: ["Invalid URL"])
                 return
             }
@@ -218,19 +218,19 @@ extension JSContext
             }
             let task = URLSession.shared.dataTask(with: request) { data, _, error in
                 if let error = error {
-                    Logger.shared.log("Network error in fetch: \(error.localizedDescription)", type: "Error")
+                    ReaderLogger.shared.log("Network error in fetch: \(error.localizedDescription)", type: "Error")
                     reject.call(withArguments: [error.localizedDescription])
                     return
                 }
                 guard let data = data else {
-                    Logger.shared.log("No data in fetch response", type: "Error")
+                    ReaderLogger.shared.log("No data in fetch response", type: "Error")
                     reject.call(withArguments: ["No data"])
                     return
                 }
                 if let text = String(data: data, encoding: .utf8) {
                     resolve.call(withArguments: [text])
                 } else {
-                    Logger.shared.log("Unable to decode fetch data to text", type: "Error")
+                    ReaderLogger.shared.log("Unable to decode fetch data to text", type: "Error")
                     reject.call(withArguments: ["Unable to decode data"])
                 }
             }
@@ -254,7 +254,7 @@ extension JSContext
     {
         let fetchV2NativeFunction: @convention(block) (String, Any?, String?, String?, ObjCBool, String?, JSValue, JSValue) -> Void = { urlString, headersAny, method, body, redirect, encoding, resolve, reject in
             guard let url = URL(string: urlString) else {
-                Logger.shared.log("Invalid URL in fetchv2: \(urlString)", type: "Error")
+                ReaderLogger.shared.log("Invalid URL in fetchv2: \(urlString)", type: "Error")
                 DispatchQueue.main.async {
                     resolve.call(withArguments: [["error": "Invalid URL"]])
                 }
@@ -321,7 +321,7 @@ extension JSContext
                 }
                 
                 if let error = error {
-                    Logger.shared.log("Network error in fetchv2: \(error.localizedDescription)", type: "Error")
+                    ReaderLogger.shared.log("Network error in fetchv2: \(error.localizedDescription)", type: "Error")
                     callResolve(["error": error.localizedDescription])
                     return
                 }

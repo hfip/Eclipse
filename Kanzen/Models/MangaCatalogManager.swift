@@ -7,99 +7,207 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
-class MangaCatalogManager: ObservableObject {
-    static let shared = MangaCatalogManager()
+enum MangaHomeSourceKind: String, Codable {
+    case aidoku
+    case legacyModule
+}
 
-    @Published var catalogs: [MangaCatalog] = []
+struct MangaHomeSource: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let iconURL: String
+    let kind: MangaHomeSourceKind
+    let aidokuSource: AidokuInstalledSource?
+    let module: ModuleDataContainer?
+    var isEnabled: Bool
+    var order: Int
 
-    private let userDefaults = UserDefaults.standard
-    private let catalogsKey = "mangaEnabledCatalogs"
+    var isAidoku: Bool { kind == .aidoku }
+    var isLegacyModule: Bool { kind == .legacyModule }
 
-    init() {
-        loadCatalogs()
+    var sourceId: String? {
+        aidokuSource?.id
     }
 
-    private func loadCatalogs() {
-        let defaultCatalogs: [MangaCatalog] = [
-            MangaCatalog(id: "trendingManga", name: "Trending Manga", isEnabled: true, order: 0),
-            MangaCatalog(id: "popularManga", name: "Popular Manga", isEnabled: true, order: 1),
-            MangaCatalog(id: "topRatedManga", name: "Top Rated Manga", isEnabled: true, order: 2),
-            MangaCatalog(id: "publishingManga", name: "Currently Publishing", isEnabled: false, order: 3),
-            MangaCatalog(id: "recentlyUpdated", name: "Recently Updated", isEnabled: true, order: 4),
-            MangaCatalog(id: "popularManhwa", name: "Popular Manhwa", isEnabled: true, order: 5),
-            MangaCatalog(id: "trendingManhwa", name: "Trending Manhwa", isEnabled: false, order: 6),
-            MangaCatalog(id: "topRatedManhwa", name: "Top Rated Manhwa", isEnabled: false, order: 7),
-            MangaCatalog(id: "trendingNovels", name: "Trending Light Novels", isEnabled: false, order: 8),
-            MangaCatalog(id: "popularNovels", name: "Popular Light Novels", isEnabled: false, order: 9),
-            MangaCatalog(id: "topRatedNovels", name: "Top Rated Light Novels", isEnabled: false, order: 10),
-            MangaCatalog(id: "publishingNovels", name: "Publishing Light Novels", isEnabled: false, order: 11),
-        ]
-
-        if let data = userDefaults.data(forKey: catalogsKey),
-           let savedCatalogs = try? JSONDecoder().decode([MangaCatalog].self, from: data) {
-            let validIds = Set(defaultCatalogs.map { $0.id })
-            // Remove stale catalogs that no longer exist in defaults
-            var merged = savedCatalogs.filter { validIds.contains($0.id) }.sorted { $0.order < $1.order }
-            let existingIds = Set(merged.map { $0.id })
-            let missingDefaults = defaultCatalogs.filter { !existingIds.contains($0.id) }
-            merged.append(contentsOf: missingDefaults)
-
-            merged = merged.enumerated().map { index, catalog in
-                var updated = catalog
-                updated.order = index
-                return updated
-            }
-
-            self.catalogs = merged
-            saveCatalogs()
-        } else {
-            self.catalogs = defaultCatalogs
-            saveCatalogs()
-        }
+    var moduleUUID: UUID? {
+        module?.id
     }
 
-    func saveCatalogs() {
-        if let data = try? JSONEncoder().encode(catalogs) {
-            userDefaults.set(data, forKey: catalogsKey)
-            userDefaults.synchronize()
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.objectWillChange.send()
-        }
+    static func aidoku(_ source: AidokuInstalledSource, order: Int) -> MangaHomeSource {
+        MangaHomeSource(
+            id: "aidoku:\(source.id)",
+            name: source.name,
+            iconURL: source.iconURLString,
+            kind: .aidoku,
+            aidokuSource: source,
+            module: nil,
+            isEnabled: source.isEnabled,
+            order: order
+        )
     }
 
-    func toggleCatalog(id: String) {
-        if let index = catalogs.firstIndex(where: { $0.id == id }) {
-            catalogs[index].isEnabled.toggle()
-            saveCatalogs()
-        }
-    }
-
-    func moveCatalog(from: IndexSet, to: Int) {
-        catalogs.move(fromOffsets: from, toOffset: to)
-        for (index, _) in catalogs.enumerated() {
-            catalogs[index].order = index
-        }
-        saveCatalogs()
-    }
-
-    func getEnabledCatalogs() -> [MangaCatalog] {
-        catalogs.filter { $0.isEnabled }.sorted { $0.order < $1.order }
-    }
-
-    private static let lightNovelCatalogIds: Set<String> = [
-        "trendingNovels", "popularNovels", "topRatedNovels", "publishingNovels"
-    ]
-
-    var hasEnabledLightNovelCatalogs: Bool {
-        catalogs.contains { $0.isEnabled && Self.lightNovelCatalogIds.contains($0.id) }
+    static func legacyModule(_ module: ModuleDataContainer, preference: MangaHomeSourcePreference, orderOffset: Int) -> MangaHomeSource {
+        MangaHomeSource(
+            id: "module:\(module.id.uuidString)",
+            name: module.moduleData.sourceName,
+            iconURL: module.moduleData.iconURL,
+            kind: .legacyModule,
+            aidokuSource: nil,
+            module: module,
+            isEnabled: preference.isEnabled,
+            order: orderOffset + preference.order
+        )
     }
 }
 
-struct MangaCatalog: Identifiable, Codable {
-    let id: String
-    let name: String
+struct MangaHomeSourcePreference: Codable {
     var isEnabled: Bool
     var order: Int
+}
+
+final class MangaHomeSourceManager: ObservableObject {
+    static let shared = MangaHomeSourceManager()
+
+    @Published private var legacyPreferences: [String: MangaHomeSourcePreference] = [:]
+
+    private let storageKey = "kanzenLegacyHomeSourcePreferences"
+
+    private init() {
+        loadPreferences()
+    }
+
+    func refreshSources(from modules: [ModuleDataContainer]) {
+        reconcile(modules: legacyMangaModules(from: modules))
+    }
+
+    func allSources(
+        aidokuManager: AidokuSourceManager = .shared,
+        modules: [ModuleDataContainer],
+        includeDisabledAidoku: Bool = true
+    ) -> [MangaHomeSource] {
+        let aidokuMetadata = includeDisabledAidoku
+            ? aidokuManager.installedSources.filter { aidokuManager.showMatureSources || !$0.isMature }
+            : aidokuManager.enabledSources()
+
+        let aidokuSources = aidokuMetadata
+            .sorted {
+                if $0.order != $1.order { return $0.order < $1.order }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            .enumerated()
+            .map { index, source in
+                MangaHomeSource.aidoku(source, order: index)
+            }
+
+        let legacySources = legacySources(from: modules, orderOffset: aidokuSources.count)
+        return aidokuSources + legacySources
+    }
+
+    func enabledSources(
+        aidokuManager: AidokuSourceManager = .shared,
+        modules: [ModuleDataContainer]
+    ) -> [MangaHomeSource] {
+        allSources(aidokuManager: aidokuManager, modules: modules, includeDisabledAidoku: false)
+            .filter(\.isEnabled)
+    }
+
+    func legacySources(from modules: [ModuleDataContainer], orderOffset: Int = 0) -> [MangaHomeSource] {
+        let sourceModules = legacyMangaModules(from: modules)
+
+        return sourceModules.map { module in
+            let key = module.id.uuidString
+            let preference = legacyPreferences[key] ?? MangaHomeSourcePreference(
+                isEnabled: true,
+                order: defaultOrder(for: module, in: sourceModules)
+            )
+
+            return MangaHomeSource.legacyModule(module, preference: preference, orderOffset: orderOffset)
+        }
+        .sorted {
+            if $0.order != $1.order { return $0.order < $1.order }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    func toggleLegacySource(id: String) {
+        let key = normalizedLegacyKey(id)
+        var preference = legacyPreferences[key] ?? MangaHomeSourcePreference(
+            isEnabled: true,
+            order: legacyPreferences.count
+        )
+        preference.isEnabled.toggle()
+        legacyPreferences[key] = preference
+        savePreferences()
+    }
+
+    func moveLegacySource(from offsets: IndexSet, to destination: Int, modules: [ModuleDataContainer]) {
+        var orderedIds = legacySources(from: modules).compactMap(\.moduleUUID).map(\.uuidString)
+        orderedIds.move(fromOffsets: offsets, toOffset: destination)
+
+        for (index, id) in orderedIds.enumerated() {
+            var preference = legacyPreferences[id] ?? MangaHomeSourcePreference(isEnabled: true, order: index)
+            preference.order = index
+            legacyPreferences[id] = preference
+        }
+
+        savePreferences()
+    }
+
+    private func legacyMangaModules(from modules: [ModuleDataContainer]) -> [ModuleDataContainer] {
+        modules.filter { $0.moduleData.novel != true }
+    }
+
+    private func reconcile(modules: [ModuleDataContainer]) {
+        let validIds = Set(modules.map { $0.id.uuidString })
+        var changed = false
+
+        for key in legacyPreferences.keys where !validIds.contains(key) {
+            legacyPreferences.removeValue(forKey: key)
+            changed = true
+        }
+
+        for (index, module) in modules.enumerated() {
+            let key = module.id.uuidString
+            if legacyPreferences[key] == nil {
+                legacyPreferences[key] = MangaHomeSourcePreference(isEnabled: true, order: index)
+                changed = true
+            }
+        }
+
+        if changed {
+            savePreferences()
+        }
+    }
+
+    private func defaultOrder(for module: ModuleDataContainer, in modules: [ModuleDataContainer]) -> Int {
+        modules.firstIndex(where: { $0.id == module.id }) ?? legacyPreferences.count
+    }
+
+    private func normalizedLegacyKey(_ id: String) -> String {
+        id.replacingOccurrences(of: "module:", with: "")
+    }
+
+    private func loadPreferences() {
+        guard
+            let data = UserDefaults.standard.data(forKey: storageKey),
+            let decoded = try? JSONDecoder().decode([String: MangaHomeSourcePreference].self, from: data)
+        else {
+            if let oldData = UserDefaults.standard.data(forKey: "kanzenHomeSourcePreferences"),
+               let oldDecoded = try? JSONDecoder().decode([String: MangaHomeSourcePreference].self, from: oldData) {
+                legacyPreferences = oldDecoded
+            }
+            return
+        }
+
+        legacyPreferences = decoded
+    }
+
+    private func savePreferences() {
+        if let data = try? JSONEncoder().encode(legacyPreferences) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+        objectWillChange.send()
+    }
 }

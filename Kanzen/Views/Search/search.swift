@@ -132,7 +132,7 @@ struct KanzenSearchView: View {
                     }
                     }
                 catch{
-                    Logger.shared.log(error.localizedDescription,type: "Error")
+                    ReaderLogger.shared.log(error.localizedDescription,type: "Error")
                 }
             }
     }

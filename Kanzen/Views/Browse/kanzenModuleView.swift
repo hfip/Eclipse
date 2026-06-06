@@ -206,7 +206,7 @@ struct KanzenModuleView: View {
               try await moduleManager.addModules(url, metaData: fetchedModule)
           }
           catch {
-              Logger.shared.log((error.localizedDescription),type: "Error")
+              ReaderLogger.shared.log((error.localizedDescription),type: "Error")
           }
           dismiss()
         }
@@ -339,7 +339,7 @@ struct KanzenModuleView: View {
                 completion(metaData)
             }
             catch {
-                Logger.shared.log(error.localizedDescription,type: "Error")
+                ReaderLogger.shared.log(error.localizedDescription,type: "Error")
                 completion(nil)
             }
         }

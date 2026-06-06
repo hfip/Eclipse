@@ -24,6 +24,7 @@ struct MangaProgress: Codable {
     var moduleUUID: String?
     var contentParams: String?
     var isNovel: Bool?
+    var route: MangaContentRoute?
 }
 
 // MARK: - Progress Manager
@@ -58,13 +59,18 @@ final class MangaReadingProgressManager: ObservableObject {
         progressMap[mangaId]?.pagePositions[chapterNumber] ?? 0
     }
 
-    func savePagePosition(mangaId: Int, chapterNumber: String, page: Int, mangaTitle: String? = nil, coverURL: String? = nil) {
+    func progress(for mangaId: Int) -> MangaProgress? {
+        progressMap[mangaId]
+    }
+
+    func savePagePosition(mangaId: Int, chapterNumber: String, page: Int, mangaTitle: String? = nil, coverURL: String? = nil, route: MangaContentRoute? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
         progress.pagePositions[chapterNumber] = page
         progress.lastReadChapter = chapterNumber
         progress.lastReadDate = Date()
         if let t = mangaTitle { progress.title = t }
         if let c = coverURL { progress.coverURL = c }
+        applyRoute(route, to: &progress)
         progressMap[mangaId] = progress
         save()
     }
@@ -72,7 +78,7 @@ final class MangaReadingProgressManager: ObservableObject {
     // MARK: - Mutations
 
     /// Mark a chapter as read and optionally sync to AniList.
-    func markChapterRead(mangaId: Int, chapterNumber: String, mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil) {
+    func markChapterRead(mangaId: Int, chapterNumber: String, mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil, route: MangaContentRoute? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
 
         guard !progress.readChapterNumbers.contains(chapterNumber) else {
@@ -85,6 +91,10 @@ final class MangaReadingProgressManager: ObservableObject {
             if let m = moduleUUID, progress.moduleUUID != m { progress.moduleUUID = m; changed = true }
             if let cp = contentParams, progress.contentParams != cp { progress.contentParams = cp; changed = true }
             if let n = isNovel, progress.isNovel != n { progress.isNovel = n; changed = true }
+            if let route, progress.route != route {
+                applyRoute(route, to: &progress)
+                changed = true
+            }
             if changed { progressMap[mangaId] = progress; save() }
             return
         }
@@ -99,11 +109,12 @@ final class MangaReadingProgressManager: ObservableObject {
         if let m = moduleUUID { progress.moduleUUID = m }
         if let cp = contentParams { progress.contentParams = cp }
         if let n = isNovel { progress.isNovel = n }
+        applyRoute(route, to: &progress)
         progressMap[mangaId] = progress
         save()
 
-        // Sync to AniList if connected — extract numeric chapter for the API
-        if let numericChapter = extractChapterNumber(from: chapterNumber) {
+        // Sync to AniList if connected; extract numeric chapter for the API.
+        if mangaId > 0, let numericChapter = extractChapterNumber(from: chapterNumber) {
             TrackerManager.shared.syncMangaProgress(aniListId: mangaId, chapterNumber: numericChapter)
         }
     }
@@ -131,7 +142,7 @@ final class MangaReadingProgressManager: ObservableObject {
 
         // Sync highest chapter number to AniList
         let highest = chapterNumbers.compactMap { extractChapterNumber(from: $0) }.max()
-        if let highest = highest {
+        if mangaId > 0, let highest = highest {
             TrackerManager.shared.syncMangaProgress(aniListId: mangaId, chapterNumber: highest)
         }
     }
@@ -198,7 +209,7 @@ final class MangaReadingProgressManager: ObservableObject {
 
     // MARK: - Helpers
 
-    /// Extracts the leading integer from a chapter string like "Ch. 129" → 129, or "127.2" → 127.
+    /// Extracts the leading integer from a chapter string like "Ch. 129" or "127.2".
     private func extractChapterNumber(from string: String) -> Int? {
         // Look for patterns like "Ch. 129", "Chapter 5", or just "129.2"
         let pattern = #"(\d+)"#
@@ -206,5 +217,16 @@ final class MangaReadingProgressManager: ObservableObject {
               let match = regex.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)),
               let range = Range(match.range(at: 1), in: string) else { return nil }
         return Int(string[range])
+    }
+
+    private func applyRoute(_ route: MangaContentRoute?, to progress: inout MangaProgress) {
+        guard let route else { return }
+        progress.route = route
+
+        if case .legacyModule(let moduleUUID, let contentParams, let isNovel) = route {
+            progress.moduleUUID = moduleUUID
+            progress.contentParams = contentParams
+            progress.isNovel = isNovel
+        }
     }
 }
