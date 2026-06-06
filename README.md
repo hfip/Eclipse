@@ -57,7 +57,7 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 - Automatic cache cleanup
 - User ratings and private notes
 - Anime schedule integration through AniList
-- Episode descriptions in service result sheets
+- Western schedule by trakt
 - VLC/MPV playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
 - A redesigned interface built around browsing, watching, reading, and managing progress
 - Customizable UI
