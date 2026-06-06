@@ -19,7 +19,7 @@ struct NovelReaderView: View {
     let mangaId: Int
     let mangaTitle: String
     let mangaCoverURL: String
-    let mangaRoute: MangaContentRoute? = nil
+    let mangaRoute: MangaContentRoute?
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
@@ -87,13 +87,14 @@ struct NovelReaderView: View {
         Color(hex: colorPresets[selectedColorPreset].text)
     }
 
-    init(kanzen: KanzenEngine, chapters: [Chapter], initialChapter: Chapter, mangaId: Int, mangaTitle: String, mangaCoverURL: String) {
+    init(kanzen: KanzenEngine, chapters: [Chapter], initialChapter: Chapter, mangaId: Int, mangaTitle: String, mangaCoverURL: String, mangaRoute: MangaContentRoute? = nil) {
         self.kanzen = kanzen
         self.chapters = chapters
         self.initialChapter = initialChapter
         self.mangaId = mangaId
         self.mangaTitle = mangaTitle
         self.mangaCoverURL = mangaCoverURL
+        self.mangaRoute = mangaRoute
 
         _currentChapter = State(initialValue: initialChapter)
 
