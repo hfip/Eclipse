@@ -45,6 +45,8 @@ xcodebuild archive \
     -archivePath "$ARCHIVE_PATH" \
     -destination "$XCODE_DESTINATION" \
     -sdk "$SDK" \
+    -skipPackagePluginValidation \
+    -skipMacroValidation \
     CODE_SIGN_IDENTITY="" \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGNING_ALLOWED=NO \
