@@ -28,7 +28,7 @@ final class StremioClient {
     func fetchManifest(from url: String) async throws -> StremioManifest {
         let manifestURL = normalizeManifestURL(url)
         Logger.shared.log("Stremio: Fetching manifest from \(manifestURL)", type: "Stremio")
-        guard let requestURL = URL(string: manifestURL) else {
+        guard let requestURL = URL(string: manifestURL), requestURL.scheme != nil else {
             Logger.shared.log("Stremio: Invalid manifest URL: \(manifestURL)", type: "Stremio")
             throw StremioError.invalidURL
         }
@@ -394,25 +394,31 @@ final class StremioClient {
 
     // MARK: - Helpers
 
-    /// Normalizes a user-provided URL to point to manifest.json
-    private func normalizeManifestURL(_ url: String) -> String {
+    static func normalizedConfiguredURL(from url: String) -> String {
         var cleaned = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.hasSuffix("/") { cleaned = String(cleaned.dropLast()) }
 
-        if cleaned.hasSuffix("/manifest.json") {
-            return cleaned
+        if cleaned.lowercased().hasPrefix("stremio://") {
+            cleaned = "https://" + String(cleaned.dropFirst("stremio://".count))
         }
 
-        return "\(cleaned)/manifest.json"
-    }
+        if cleaned.hasSuffix("/") {
+            cleaned = String(cleaned.dropLast())
+        }
 
-    private func normalizedBaseURL(_ url: String) -> String {
-        var cleaned = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleaned.hasSuffix("/") { cleaned = String(cleaned.dropLast()) }
         if cleaned.hasSuffix("/manifest.json") {
             cleaned = String(cleaned.dropLast("/manifest.json".count))
         }
+
         return cleaned
+    }
+
+    /// Normalizes a user-provided URL to point to manifest.json
+    private func normalizeManifestURL(_ url: String) -> String {
+        "\(Self.normalizedConfiguredURL(from: url))/manifest.json"
+    }
+
+    private func normalizedBaseURL(_ url: String) -> String {
+        Self.normalizedConfiguredURL(from: url)
     }
 
     private func encodePathSegment(_ value: String, preservingColon: Bool) -> String {

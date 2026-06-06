@@ -17,6 +17,7 @@ struct StremioConfigureView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = true
     @State private var error: String?
+    @State private var manualConfiguredURL = ""
 
     /// Derive the configure page URL, preserving the current config path.
     /// e.g. "https://torrentio.strem.fun/sort=qualitysize|..." → ".../sort=qualitysize|.../configure"
@@ -36,20 +37,10 @@ struct StremioConfigureView: View {
                 if let error = error {
                     errorView(message: error)
                 } else if let url = configureURL {
-                    StremioConfigureWebView(
-                        url: url,
-                        isLoading: $isLoading,
-                        onConfigured: { newURL in
-                            applyConfiguration(newURL)
-                        },
-                        onError: { msg in
-                            error = msg
-                        }
-                    )
-                    .overlay {
-                        if isLoading {
-                            ProgressView("Loading configuration…")
-                        }
+                    if #available(iOS 16.0, *) {
+                        configureWebContent(url: url)
+                    } else {
+                        iOS15ConfigureFallback(url: url)
                     }
                 } else {
                     errorView(message: "Unable to determine configure URL for this addon.")
@@ -82,6 +73,53 @@ struct StremioConfigureView: View {
         .padding()
     }
 
+#if !os(tvOS)
+    @ViewBuilder
+    private func configureWebContent(url: URL) -> some View {
+        StremioConfigureWebView(
+            url: url,
+            isLoading: $isLoading,
+            onConfigured: { newURL in
+                applyConfiguration(newURL)
+            },
+            onError: { msg in
+                error = msg
+            }
+        )
+        .overlay {
+            if isLoading {
+                ProgressView("Loading configuration...")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func iOS15ConfigureFallback(url: URL) -> some View {
+        VStack(spacing: 0) {
+            configureWebContent(url: url)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Configured addon URL")
+                    .font(.headline)
+
+                TextField("https://addon.example/...", text: $manualConfiguredURL)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+
+                Button("Save") {
+                    applyConfiguration(manualConfiguredURL)
+                }
+                .disabled(manualConfiguredURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding()
+            .background(Color.black.opacity(0.08))
+        }
+    }
+#endif
+
     @ViewBuilder
     private var tvOSFallbackView: some View {
         VStack(spacing: 16) {
@@ -104,7 +142,7 @@ struct StremioConfigureView: View {
     private func applyConfiguration(_ newURL: String) {
         Task {
             do {
-                try await manager.reconfigureAddon(addon, newURL: newURL)
+                try await manager.reconfigureAddon(addon, newURL: StremioClient.normalizedConfiguredURL(from: newURL))
                 await MainActor.run { dismiss() }
             } catch {
                 await MainActor.run {
@@ -130,44 +168,60 @@ struct StremioConfigureWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        // Inject JS to intercept stremio:// links and window.location assignments
         let js = """
         (function() {
-            // Intercept link clicks
+            function sendInstall(url) {
+                if (typeof url === 'string' && url.toLowerCase().startsWith('stremio://')) {
+                    window.webkit.messageHandlers.stremioInstall.postMessage(url);
+                    return true;
+                }
+                return false;
+            }
+
             document.addEventListener('click', function(e) {
                 var target = e.target;
                 while (target && target.tagName !== 'A') { target = target.parentElement; }
-                if (target && target.href && target.href.toLowerCase().startsWith('stremio://')) {
+                if (target && target.href && sendInstall(target.href)) {
                     e.preventDefault();
                     e.stopPropagation();
-                    window.webkit.messageHandlers.stremioInstall.postMessage(target.href);
                 }
             }, true);
-            // Intercept window.location changes
+
             var origAssign = window.location.assign;
             window.location.assign = function(url) {
-                if (typeof url === 'string' && url.toLowerCase().startsWith('stremio://')) {
-                    window.webkit.messageHandlers.stremioInstall.postMessage(url);
-                    return;
-                }
+                if (sendInstall(url)) { return; }
                 origAssign.call(window.location, url);
+            };
+
+            var origReplace = window.location.replace;
+            window.location.replace = function(url) {
+                if (sendInstall(url)) { return; }
+                origReplace.call(window.location, url);
+            };
+
+            var origOpen = window.open;
+            window.open = function(url) {
+                if (sendInstall(url)) { return null; }
+                return origOpen.apply(window, arguments);
             };
         })();
         """
-        let userScript = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
         config.userContentController.add(context.coordinator, name: "stremioInstall")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.load(URLRequest(url: url))
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate {
         let parent: StremioConfigureWebView
 
         init(parent: StremioConfigureWebView) {
@@ -178,11 +232,26 @@ struct StremioConfigureWebView: UIViewRepresentable {
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "stremioInstall", let urlString = message.body as? String {
-                let configuredURL = extractConfiguredURL(from: urlString)
-                DispatchQueue.main.async {
-                    self.parent.onConfigured(configuredURL)
-                }
+                handleInstallURL(urlString)
             }
+        }
+
+        // MARK: - WKUIDelegate
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            guard navigationAction.targetFrame == nil else { return nil }
+            if let url = navigationAction.request.url {
+                if handleInstallURL(url.absoluteString) {
+                    return nil
+                }
+                webView.load(navigationAction.request)
+            }
+            return nil
         }
 
         // MARK: - WKNavigationDelegate
@@ -221,34 +290,26 @@ struct StremioConfigureWebView: UIViewRepresentable {
 
             let urlString = url.absoluteString
 
-            if urlString.lowercased().hasPrefix("stremio://") {
+            if handleInstallURL(urlString) {
                 decisionHandler(.cancel)
-                let configuredURL = extractConfiguredURL(from: urlString)
-                DispatchQueue.main.async {
-                    self.parent.onConfigured(configuredURL)
-                }
                 return
             }
 
             decisionHandler(.allow)
         }
 
+        @discardableResult
+        private func handleInstallURL(_ urlString: String) -> Bool {
+            guard urlString.lowercased().hasPrefix("stremio://") else { return false }
+            let configuredURL = extractConfiguredURL(from: urlString)
+            DispatchQueue.main.async {
+                self.parent.onConfigured(configuredURL)
+            }
+            return true
+        }
+
         private func extractConfiguredURL(from stremioURL: String) -> String {
-            var cleaned = stremioURL
-
-            if cleaned.lowercased().hasPrefix("stremio://") {
-                cleaned = "https://" + cleaned.dropFirst("stremio://".count)
-            }
-
-            if cleaned.hasSuffix("/manifest.json") {
-                cleaned = String(cleaned.dropLast("/manifest.json".count))
-            }
-
-            if cleaned.hasSuffix("/") {
-                cleaned = String(cleaned.dropLast())
-            }
-
-            return cleaned
+            StremioClient.normalizedConfiguredURL(from: stremioURL)
         }
     }
 }

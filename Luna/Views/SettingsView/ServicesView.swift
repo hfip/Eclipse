@@ -15,7 +15,7 @@ struct ServicesView: View {
     @Environment(\.editMode) private var editMode
     @State private var showDownloadAlert = false
     @State private var downloadURL = ""
-    @State private var showServiceDownloadAlert = false
+    @State private var serviceDownloadAlert: ServiceDownloadAlert?
     @State private var autoUpdateEnabled: Bool = UserDefaults.standard.bool(forKey: "autoUpdateServicesEnabled")
     @State private var showStremioAddAlert = false
     @State private var stremioURL = ""
@@ -27,6 +27,12 @@ struct ServicesView: View {
     @State private var autoModeSourceOrderIds: [String] = UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceOrderIds") ?? []
     @State private var autoModeQualityPreference: AutoModeQualityPreference = .current
     @State private var autoModeQualityEnabled: Bool = AutoModeQualityPreference.current.usesAutomaticSelection
+
+    private struct ServiceDownloadAlert: Identifiable {
+        let id = UUID()
+        let title: String
+        let message: String
+    }
     
     var body: some View {
         ZStack {
@@ -78,10 +84,28 @@ struct ServicesView: View {
                 downloadURL: $downloadURL,
                 onAdd: { downloadServiceFromURL() }
             ))
-            .alert("Service Downloaded", isPresented: $showServiceDownloadAlert) {
-                Button("OK") { }
+            .modifier(AddStremioAddonInputModifier(
+                isPresented: $showStremioAddAlert,
+                addonURL: $stremioURL,
+                onAdd: { addStremioAddon() }
+            ))
+            .alert(item: $serviceDownloadAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+            .alert("Stremio Error", isPresented: $showStremioError) {
+                Button("OK", role: .cancel) { stremioError = nil }
             } message: {
-                Text("The service has been successfully downloaded and saved to your documents folder.")
+                if let error = stremioError {
+                    Text(error)
+                }
+            }
+            .onAppear {
+                _ = healthStore.version
+                syncAutoModeSelectionWithInstalledSources()
             }
         }
     }
@@ -273,22 +297,6 @@ struct ServicesView: View {
                 }
             }
         }
-        .modifier(AddStremioAddonInputModifier(
-            isPresented: $showStremioAddAlert,
-            addonURL: $stremioURL,
-            onAdd: { addStremioAddon() }
-        ))
-        .alert("Stremio Error", isPresented: $showStremioError) {
-            Button("OK", role: .cancel) { stremioError = nil }
-        } message: {
-            if let error = stremioError {
-                Text(error)
-            }
-        }
-        .onAppear {
-            _ = healthStore.version
-            syncAutoModeSelectionWithInstalledSources()
-        }
     }
 
     @ViewBuilder
@@ -419,13 +427,30 @@ struct ServicesView: View {
         
         Task {
             do {
-                let wasHandled = await serviceManager.handlePotentialServiceURL(downloadURL)
+                let wasHandled = try await serviceManager.handlePotentialServiceURL(downloadURL)
                 if wasHandled {
                     await MainActor.run {
                         downloadURL = ""
                         reloadAutoModeSelectionFromDefaults()
-                        showServiceDownloadAlert = true
+                        serviceDownloadAlert = ServiceDownloadAlert(
+                            title: "Service Downloaded",
+                            message: "The service has been successfully downloaded and saved."
+                        )
                     }
+                } else {
+                    await MainActor.run {
+                        serviceDownloadAlert = ServiceDownloadAlert(
+                            title: "Service Download Failed",
+                            message: "Enter a direct JSON service URL."
+                        )
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    serviceDownloadAlert = ServiceDownloadAlert(
+                        title: "Service Download Failed",
+                        message: error.localizedDescription
+                    )
                 }
             }
         }

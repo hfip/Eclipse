@@ -50,14 +50,7 @@ class StremioAddonManager: ObservableObject {
         let manifestData = try JSONEncoder().encode(manifest)
         let manifestJSON = String(data: manifestData, encoding: .utf8) ?? ""
 
-        // Normalize the URL
-        var configuredURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if configuredURL.hasSuffix("/manifest.json") {
-            configuredURL = String(configuredURL.dropLast("/manifest.json".count))
-        }
-        if configuredURL.hasSuffix("/") {
-            configuredURL = String(configuredURL.dropLast())
-        }
+        let configuredURL = StremioClient.normalizedConfiguredURL(from: url)
 
         StremioAddonStore.shared.storeAddon(
             id: id,
@@ -100,13 +93,7 @@ class StremioAddonManager: ObservableObject {
             throw StremioAddonError.noStreamSupport
         }
 
-        var configuredURL = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if configuredURL.hasSuffix("/manifest.json") {
-            configuredURL = String(configuredURL.dropLast("/manifest.json".count))
-        }
-        if configuredURL.hasSuffix("/") {
-            configuredURL = String(configuredURL.dropLast())
-        }
+        let configuredURL = StremioClient.normalizedConfiguredURL(from: newURL)
 
         let manifestData = try JSONEncoder().encode(manifest)
         let manifestJSON = String(data: manifestData, encoding: .utf8) ?? ""

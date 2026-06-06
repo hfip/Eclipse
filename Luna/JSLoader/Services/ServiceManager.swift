@@ -592,7 +592,7 @@ class ServiceManager: ObservableObject {
     }
 
     // MARK: - Download single service from JSON URL
-    func downloadService(from jsonURL: String) async {
+    func downloadService(from jsonURL: String) async throws {
         await updateProgress(0.0, "Starting download...")
         try? await Task.sleep(nanoseconds: delay)
 
@@ -618,6 +618,9 @@ class ServiceManager: ObservableObject {
             try? await Task.sleep(nanoseconds: delay)
 
             loadServicesFromCloud()
+            guard services.contains(where: { $0.id == serviceId }) else {
+                throw ServiceError.saveFailed
+            }
 
             await MainActor.run {
                 self.downloadProgress = 1.0
@@ -629,12 +632,13 @@ class ServiceManager: ObservableObject {
         } catch {
             await resetDownloadState()
             Logger.shared.log("Failed to download service: \(error.localizedDescription)", type: "ServiceManager")
+            throw error
         }
     }
 
-    func handlePotentialServiceURL(_ text: String) async -> Bool {
+    func handlePotentialServiceURL(_ text: String) async throws -> Bool {
         guard isValidJSONURL(text) else { return false }
-        await downloadService(from: text)
+        try await downloadService(from: text)
         return true
     }
 
@@ -1044,7 +1048,7 @@ extension String {
 // MARK: - Service Errors
 
 enum ServiceError: LocalizedError {
-    case invalidURL, invalidScriptURL, downloadFailed, scriptDownloadFailed, invalidJSON, invalidScriptContent, blockedTrackingEndpoint
+    case invalidURL, invalidScriptURL, downloadFailed, scriptDownloadFailed, invalidJSON, invalidScriptContent, blockedTrackingEndpoint, saveFailed
 
     var errorDescription: String? {
         switch self {
@@ -1055,6 +1059,7 @@ enum ServiceError: LocalizedError {
         case .invalidJSON: return "Invalid JSON format"
         case .invalidScriptContent: return "Invalid JavaScript content"
         case .blockedTrackingEndpoint: return "Service install blocked a tracking endpoint"
+        case .saveFailed: return "The service downloaded, but it could not be saved."
         }
     }
 }
