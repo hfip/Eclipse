@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/Soupy-dev/Eclipse/releases">
-    <img alt="GitHub release downloads" src="https://img.shields.io/github/downloads/Soupy-dev/Eclipse/total?style=for-the-badge&label=Downloads">
+    <img alt="GitHub release downloads" src="https://img.shields.io/github/downloads/Soupy-dev/Eclipse/total.svg?style=for-the-badge&label=Downloads&cacheSeconds=3600">
   </a>
 </p>
 
