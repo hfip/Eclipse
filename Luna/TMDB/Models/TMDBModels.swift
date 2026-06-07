@@ -72,6 +72,22 @@ struct TMDBSearchResponse: Decodable {
     }
 }
 
+struct TMDBFindResponse: Decodable {
+    let movieResults: [TMDBMovie]
+    let tvResults: [TMDBTVShow]
+
+    enum CodingKeys: String, CodingKey {
+        case movieResults = "movie_results"
+        case tvResults = "tv_results"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        movieResults = (try container.decodeIfPresent(LossyDecodableArray<TMDBMovie>.self, forKey: .movieResults))?.elements ?? []
+        tvResults = (try container.decodeIfPresent(LossyDecodableArray<TMDBTVShow>.self, forKey: .tvResults))?.elements ?? []
+    }
+}
+
 // MARK: - Search Result
 struct TMDBSearchResult: Codable, Identifiable {
     let id: Int
@@ -118,11 +134,17 @@ struct TMDBSearchResult: Codable, Identifiable {
     
     var fullPosterURL: String? {
         guard let posterPath = posterPath else { return nil }
+        if posterPath.lowercased().hasPrefix("http://") || posterPath.lowercased().hasPrefix("https://") {
+            return posterPath
+        }
         return "\(TMDBService.tmdbImageBaseURL)\(posterPath)"
     }
     
     var fullBackdropURL: String? {
         guard let backdropPath = backdropPath else { return nil }
+        if backdropPath.lowercased().hasPrefix("http://") || backdropPath.lowercased().hasPrefix("https://") {
+            return backdropPath
+        }
         return "\(TMDBService.tmdbImageBaseURL)\(backdropPath)"
     }
 

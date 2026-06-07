@@ -23,7 +23,7 @@ struct CatalogsSettingsView: View {
                                 .fontWeight(.medium)
                             
                             HStack(spacing: 6) {
-                                Text("Source: \(catalogManager.catalogs[index].source.rawValue)")
+                                Text(sourceText(for: catalogManager.catalogs[index]))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 
@@ -48,12 +48,21 @@ struct CatalogsSettingsView: View {
             } header: {
                 Text("Content Catalogs")
             } footer: {
-                Text("Enable/disable content catalogs and drag to reorder them. The order here determines the order on your home screen.")
+                Text("Enable/disable content catalogs and drag to reorder them. The order here determines the order on your home screen. Stremio catalog addons may reduce performance or have visual inconsistencies.")
             }
             .background(LunaScrollTracker())
         }
         .navigationTitle("Catalogs")
         .lunaSettingsStyle()
         .environment(\.editMode, $editMode)
+    }
+
+    private func sourceText(for catalog: Catalog) -> String {
+        if catalog.source == .stremio,
+           let addonName = catalog.stremioAddonName,
+           !addonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Source: Stremio · \(addonName)"
+        }
+        return "Source: \(catalog.source.rawValue)"
     }
 }

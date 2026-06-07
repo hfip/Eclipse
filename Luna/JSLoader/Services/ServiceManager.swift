@@ -267,6 +267,17 @@ enum AutoModeSourceSelection {
         UserDefaults.standard.set(Array(ids), forKey: idsKey)
         UserDefaults.standard.set(order, forKey: orderKey)
     }
+
+    static func removeSource(_ sourceId: String) {
+        var ids = Set(UserDefaults.standard.stringArray(forKey: idsKey) ?? [])
+        var order = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
+
+        ids.remove(sourceId)
+        order.removeAll { $0 == sourceId }
+
+        UserDefaults.standard.set(Array(ids), forKey: idsKey)
+        UserDefaults.standard.set(order, forKey: orderKey)
+    }
 }
 
 final class SourceHealthMonitor {

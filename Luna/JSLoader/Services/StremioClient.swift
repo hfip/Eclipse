@@ -99,24 +99,31 @@ final class StremioClient {
 
     // MARK: - Fetch Catalogs and Meta
 
-    func fetchCatalogMetas(baseURL: String, catalog: StremioCatalog, searchQuery: String) async throws -> [StremioMetaPreview] {
+    func fetchCatalogMetas(baseURL: String, catalog: StremioCatalog, searchQuery: String? = nil, skip: Int? = nil) async throws -> [StremioMetaPreview] {
         let cleanBase = normalizedBaseURL(baseURL)
         let encodedType = encodePathSegment(catalog.type, preservingColon: false)
         let encodedCatalogId = encodePathSegment(catalog.id, preservingColon: true)
-        let encodedSearch = encodeExtraValue(searchQuery)
-        let urlString = "\(cleanBase)/catalog/\(encodedType)/\(encodedCatalogId)/search=\(encodedSearch).json"
+        var extras: [String] = []
+        if let skip {
+            extras.append("skip=\(max(skip, 0))")
+        }
+        if let searchQuery {
+            extras.append("search=\(encodeExtraValue(searchQuery))")
+        }
+        let extraPath = extras.isEmpty ? "" : "/\(extras.joined(separator: "&"))"
+        let urlString = "\(cleanBase)/catalog/\(encodedType)/\(encodedCatalogId)\(extraPath).json"
 
         guard let url = URL(string: urlString) else {
             throw StremioError.invalidURL
         }
 
-        Logger.shared.log("Stremio: Searching catalog \(catalog.id) query='\(searchQuery)' url=\(urlString)", type: "Stremio")
+        Logger.shared.log("Stremio: Fetching catalog \(catalog.id) query='\(searchQuery ?? "nil")' skip=\(skip?.description ?? "nil") url=\(urlString)", type: "Stremio")
 
         let (data, response) = try await session.data(from: url)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
-            Logger.shared.log("Stremio: Catalog search failed HTTP \(statusCode) catalog=\(catalog.id) query='\(searchQuery)'", type: "Stremio")
+            Logger.shared.log("Stremio: Catalog fetch failed HTTP \(statusCode) catalog=\(catalog.id) query='\(searchQuery ?? "nil")' skip=\(skip?.description ?? "nil")", type: "Stremio")
             throw StremioError.httpError(statusCode)
         }
 
@@ -165,13 +172,15 @@ final class StremioClient {
 
     func fetchSubtitles(baseURL: String, type: String, id: String) async throws -> [StremioSubtitle] {
         let cleanBase = normalizedBaseURL(baseURL)
+        let encodedType = encodePathSegment(type, preservingColon: false)
+        let encodedId = encodePathSegment(id, preservingColon: true)
+        let urlString = "\(cleanBase)/subtitles/\(encodedType)/\(encodedId).json"
 
-        guard let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "\(cleanBase)/subtitles/\(type)/\(encodedId).json") else {
+        guard let url = URL(string: urlString) else {
             throw StremioError.invalidURL
         }
 
-        Logger.shared.log("Stremio: Fetching subtitles - type=\(type) id=\(id) url=\(url.absoluteString)", type: "Stremio")
+        Logger.shared.log("Stremio: Fetching subtitles - type=\(type) id=\(id) url=\(urlString)", type: "Stremio")
 
         let (data, response) = try await session.data(from: url)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -212,7 +221,7 @@ final class StremioClient {
             type: type,
             season: season,
             episode: episode,
-            idPrefixes: manifest.idPrefixes,
+            idPrefixes: manifest.subtitleIdPrefixes,
             addonName: manifest.name
         ) else {
             Logger.shared.log("Stremio: OpenSubtitles v3 missing supported content ID", type: "Stremio")

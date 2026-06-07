@@ -150,6 +150,15 @@ struct ServicesView: View {
             }
         }
 
+        var supportsAutoMode: Bool {
+            switch self {
+            case .service:
+                return true
+            case .stremio(let a):
+                return a.manifest.supportsStreams
+            }
+        }
+
         var displayName: String {
             switch self {
             case .service(let s): return s.metadata.sourceName
@@ -172,7 +181,7 @@ struct ServicesView: View {
     }
 
     private var orderedAutoModeListItems: [UnifiedItem] {
-        let activeItems = unifiedItems.filter(\.isActive)
+        let activeItems = unifiedItems.filter { $0.isActive && $0.supportsAutoMode }
         let byId = Dictionary(uniqueKeysWithValues: activeItems.map { ($0.autoModeSourceId, $0) })
         var ordered = autoModeSourceOrderIds.compactMap { byId[$0] }
         let existing = Set(ordered.map(\.autoModeSourceId))
@@ -239,7 +248,7 @@ struct ServicesView: View {
                         .foregroundColor(.secondary)
 
                     if orderedAutoModeListItems.isEmpty {
-                        Text("Activate at least one service or addon to use Auto Mode.")
+                        Text("Activate at least one stream-capable service or addon to use Auto Mode.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else {
@@ -394,7 +403,7 @@ struct ServicesView: View {
     }
 
     private func syncAutoModeSelectionWithInstalledSources() {
-        let validIds = Set(unifiedItems.map(\.autoModeSourceId))
+        let validIds = Set(unifiedItems.filter(\.supportsAutoMode).map(\.autoModeSourceId))
         let previous = selectedAutoModeSourceIds
         selectedAutoModeSourceIds = selectedAutoModeSourceIds.intersection(validIds)
         let ordered = orderedAutoModeListItems.map(\.autoModeSourceId)
@@ -671,6 +680,20 @@ struct StremioAddonRow: View {
         addon.manifest.behaviorHints?.configurable == true
     }
 
+    private var resourceLabels: [(title: String, systemImage: String)] {
+        var labels: [(title: String, systemImage: String)] = []
+        if addon.manifest.supportsStreams {
+            labels.append(("Streams", "play.rectangle"))
+        }
+        if addon.manifest.supportsSubtitles {
+            labels.append(("Subtitles", "captions.bubble"))
+        }
+        if addon.manifest.supportsCatalogs {
+            labels.append(("Catalogs", "square.grid.2x2"))
+        }
+        return labels
+    }
+
     private var sourceId: String {
         SourceHealth.stremioId(addon)
     }
@@ -730,6 +753,17 @@ struct StremioAddonRow: View {
                             .font(.caption)
                             .foregroundStyle(.gray)
                             .lineLimit(1)
+                    }
+                }
+
+                if !resourceLabels.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(resourceLabels.indices, id: \.self) { index in
+                            let label = resourceLabels[index]
+                            Label(label.title, systemImage: label.systemImage)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 

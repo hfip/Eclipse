@@ -142,6 +142,11 @@ struct HomeView: View {
         .onChangeComp(of: heroBannerBehavior) { _, _ in
             homeViewModel.refreshHeroContentForSettingsChange()
         }
+        .onReceive(catalogManager.$catalogs) { _ in
+            guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
+            homeViewModel.resetContent()
+            loadContent()
+        }
         .onReceive(heroCarouselTimer) { _ in
             homeViewModel.advanceHeroCarouselIfNeeded()
         }

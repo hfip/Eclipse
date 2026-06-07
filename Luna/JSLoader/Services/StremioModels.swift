@@ -44,6 +44,19 @@ struct StremioManifest: Codable {
         return resources.contains { $0.isSubtitles }
     }
 
+    var supportsCatalogs: Bool {
+        guard let resources = resources else { return false }
+        return resources.contains { $0.isCatalog }
+    }
+
+    var supportsPlayableResources: Bool {
+        supportsStreams || supportsSubtitles
+    }
+
+    var supportsInstallableResources: Bool {
+        supportsPlayableResources || supportsCatalogs
+    }
+
     var supportsMeta: Bool {
         guard let resources = resources else { return false }
         return resources.contains { $0.isMeta }
@@ -53,11 +66,40 @@ struct StremioManifest: Codable {
         catalogs?.filter { $0.canSearchWithQueryOnly } ?? []
     }
 
+    var homeCatalogs: [StremioCatalog] {
+        guard supportsCatalogs else { return [] }
+        return catalogs?.filter { $0.isHomeFeedCapable && $0.lunaMediaType != nil } ?? []
+    }
+
     var streamIdPrefixes: [String]? {
         let resourcePrefixes = resources?
             .flatMap { $0.idPrefixes(for: "stream") }
             .filter { !$0.isEmpty } ?? []
         return resourcePrefixes.isEmpty ? idPrefixes : resourcePrefixes
+    }
+
+    var subtitleIdPrefixes: [String]? {
+        let resourcePrefixes = resources?
+            .flatMap { $0.idPrefixes(for: "subtitles") }
+            .filter { !$0.isEmpty } ?? []
+        return resourcePrefixes.isEmpty ? idPrefixes : resourcePrefixes
+    }
+
+    func supportsResource(_ resourceName: String, type requestedType: String) -> Bool {
+        let resourceTypes = resources?
+            .flatMap { $0.types(for: resourceName) }
+            .filter { !$0.isEmpty } ?? []
+        let allowedTypes = resourceTypes.isEmpty ? (types ?? []) : resourceTypes
+        guard !allowedTypes.isEmpty else { return true }
+        return allowedTypes.contains { manifestTypeMatches($0, requestedType) }
+    }
+
+    private func manifestTypeMatches(_ allowedType: String, _ requestedType: String) -> Bool {
+        let allowed = allowedType.lowercased()
+        let requested = requestedType.lowercased()
+        return allowed == requested ||
+            (allowed == "tv" && requested == "series") ||
+            (allowed == "series" && requested == "tv")
     }
 }
 
@@ -86,6 +128,13 @@ enum StremioResource: Codable {
         }
     }
 
+    var isCatalog: Bool {
+        switch self {
+        case .simple(let name): return name == "catalog"
+        case .detailed(let detail): return detail.name == "catalog"
+        }
+    }
+
     var isMeta: Bool {
         switch self {
         case .simple(let name): return name == "meta"
@@ -99,6 +148,15 @@ enum StremioResource: Codable {
             return []
         case .detailed(let detail):
             return detail.name == resourceName ? (detail.idPrefixes ?? []) : []
+        }
+    }
+
+    func types(for resourceName: String) -> [String] {
+        switch self {
+        case .simple:
+            return []
+        case .detailed(let detail):
+            return detail.name == resourceName ? (detail.types ?? []) : []
         }
     }
 
@@ -127,6 +185,30 @@ struct StremioResourceDetail: Codable {
     let name: String
     let types: [String]?
     let idPrefixes: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case name, types, type, idPrefixes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? container.decode(String.self, forKey: .name)) ?? ""
+        if let values = try? container.decodeIfPresent([String].self, forKey: .types) {
+            types = values
+        } else if let value = try? container.decodeIfPresent(String.self, forKey: .type) {
+            types = [value]
+        } else {
+            types = nil
+        }
+        idPrefixes = try? container.decodeIfPresent([String].self, forKey: .idPrefixes)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(types, forKey: .types)
+        try container.encodeIfPresent(idPrefixes, forKey: .idPrefixes)
+    }
 }
 
 // MARK: - Catalog and Meta Responses
@@ -146,6 +228,22 @@ struct StremioCatalog: Codable, Hashable {
         return extra?.allSatisfy { extra in
             extra.isRequired != true || extra.name == "search"
         } ?? true
+    }
+
+    var isHomeFeedCapable: Bool {
+        let required = extra?.filter { $0.isRequired == true } ?? []
+        return required.allSatisfy { $0.name == "skip" }
+    }
+
+    var shouldSendInitialSkip: Bool {
+        extra?.contains { $0.name == "skip" && $0.isRequired == true } ?? false
+    }
+
+    var lunaMediaType: String? {
+        let normalized = type.lowercased()
+        if normalized == "movie" { return "movie" }
+        if normalized == "series" || normalized == "tv" { return "tv" }
+        return nil
     }
 
     func supportsType(_ requestedType: String) -> Bool {
@@ -233,14 +331,16 @@ struct StremioMetaPreview: Codable, Identifiable, Hashable {
     let type: String?
     let name: String
     let poster: String?
+    let background: String?
     let description: String?
     let releaseInfo: String?
     let released: String?
+    let imdbRating: String?
     let videos: [StremioVideo]?
     let behaviorHints: StremioMetaBehaviorHints?
 
     enum CodingKeys: String, CodingKey {
-        case id, type, name, poster, description, releaseInfo, released, videos, behaviorHints
+        case id, type, name, poster, background, description, releaseInfo, released, imdbRating, videos, behaviorHints
     }
 }
 
@@ -468,7 +568,7 @@ struct StremioSubtitle: Codable, Sendable, Hashable {
         if let name, !name.isEmpty { return name }
         if let title, !title.isEmpty { return title }
         if let lang, !lang.isEmpty { return lang.uppercased() }
-        return id ?? "OpenSubtitles"
+        return id ?? "Subtitle"
     }
 }
 

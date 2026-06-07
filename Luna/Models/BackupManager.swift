@@ -1530,7 +1530,7 @@ class BackupManager {
                 guard !configuredURL.isEmpty,
                       let manifestData = addon.manifestJSON.data(using: .utf8),
                       let manifest = try? JSONDecoder().decode(StremioManifest.self, from: manifestData),
-                      manifest.supportsStreams else {
+                      manifest.supportsInstallableResources else {
                     Logger.shared.log("Skipping invalid Stremio addon from backup: \(addon.id)", type: "Stremio")
                     continue
                 }

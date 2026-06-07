@@ -39,6 +39,7 @@ final class HomeViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         hasCompletedInitialLoad = false
+        let enabledCatalogSnapshot = catalogManager.getEnabledCatalogs()
         
         Task {
             async let trending: [TMDBSearchResult] = self.loadHomeCatalog("trending") {
@@ -155,6 +156,20 @@ final class HomeViewModel: ObservableObject {
 
             // Load widget data in secondary pass (non-blocking, progressive)
             self.loadWidgetData(tmdbService: tmdbService, catalogManager: catalogManager)
+
+            let stremioCatalogs = await self.loadStremioCatalogs(
+                enabledCatalogs: enabledCatalogSnapshot,
+                tmdbService: tmdbService,
+                contentFilter: contentFilter
+            )
+            if !stremioCatalogs.isEmpty {
+                await MainActor.run {
+                    self.catalogResults.merge(stremioCatalogs) { _, stremio in stremio }
+                    self.hasLoadedContent = true
+                    self.errorMessage = nil
+                    self.applyHeroBannerSelection()
+                }
+            }
         }
     }
 
@@ -182,6 +197,36 @@ final class HomeViewModel: ObservableObject {
             Logger.shared.log("HomeViewModel: anime catalogs failed: \(error.localizedDescription)", type: "Error")
             return [:]
         }
+    }
+
+    private func loadStremioCatalogs(
+        enabledCatalogs: [Catalog],
+        tmdbService: TMDBService,
+        contentFilter: TMDBContentFilter
+    ) async -> [String: [TMDBSearchResult]] {
+        let catalogs = enabledCatalogs.filter { $0.source == .stremio }
+        guard !catalogs.isEmpty else { return [:] }
+
+        var loaded: [String: [TMDBSearchResult]] = [:]
+        for catalog in catalogs {
+            if Task.isCancelled { break }
+            let items = await StremioAddonManager.shared.fetchCatalogItems(
+                for: catalog,
+                tmdbService: tmdbService,
+                limit: 15
+            )
+            let filtered = contentFilter.filterSearchResults(items)
+            if !filtered.isEmpty {
+                loaded[catalog.id] = filtered
+            }
+        }
+
+        let summary = loaded
+            .map { "\($0.key)=\($0.value.count)" }
+            .sorted()
+            .joined(separator: ",")
+        Logger.shared.log("HomeViewModel: Stremio catalogs loaded \(summary.isEmpty ? "none" : summary)", type: "Stremio")
+        return loaded
     }
 
     private func movieSearchResult(_ movie: TMDBMovie) -> TMDBSearchResult {

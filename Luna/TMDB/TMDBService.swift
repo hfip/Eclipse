@@ -281,6 +281,40 @@ class TMDBService: ObservableObject {
         
         return allResults
     }
+
+    func findByIMDbId(_ imdbId: String, preferredMediaType: String? = nil) async throws -> TMDBSearchResult? {
+        let trimmedId = imdbId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else { return nil }
+
+        let encodedId = trimmedId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedId
+        let urlString = "\(baseURL)/find/\(encodedId)?api_key=\(apiKey)&language=\(currentLanguage)&external_source=imdb_id"
+
+        guard let url = URL(string: urlString) else {
+            throw TMDBError.invalidURL
+        }
+
+        do {
+            let (data, _) = try await throttledData(from: url)
+            let response = try JSONDecoder().decode(TMDBFindResponse.self, from: data)
+            let preferred = preferredMediaType?.lowercased()
+
+            if preferred == "movie", let movie = response.movieResults.first {
+                return movie.asSearchResult
+            }
+
+            if preferred == "tv", let show = response.tvResults.first {
+                return show.asSearchResult
+            }
+
+            if let movie = response.movieResults.first {
+                return movie.asSearchResult
+            }
+
+            return response.tvResults.first?.asSearchResult
+        } catch {
+            throw TMDBError.networkError(error)
+        }
+    }
     
     // MARK: - Search Movies
     func searchMovies(query: String) async throws -> [TMDBMovie] {

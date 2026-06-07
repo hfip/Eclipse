@@ -101,6 +101,78 @@ class CatalogManager: ObservableObject {
     func getEnabledCatalogs() -> [Catalog] {
         catalogs.filter { $0.isEnabled }.sorted { $0.order < $1.order }
     }
+
+    func syncStremioAddonCatalogs(from addons: [StremioAddon]) {
+        let addonCatalogs = addons.flatMap { addon in
+            addon.manifest.homeCatalogs.compactMap { stremioCatalog -> Catalog? in
+                guard !stremioCatalog.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      let mediaType = stremioCatalog.lunaMediaType else {
+                    return nil
+                }
+                let catalogId = Catalog.stremioCatalogId(addon: addon, stremioCatalog: stremioCatalog)
+                let name = Self.stremioCatalogDisplayName(addon: addon, stremioCatalog: stremioCatalog)
+                return Catalog(
+                    id: catalogId,
+                    name: name,
+                    source: .stremio,
+                    isEnabled: true,
+                    order: 0,
+                    stremioAddonId: addon.id,
+                    stremioAddonName: addon.manifest.name,
+                    stremioCatalogId: stremioCatalog.id,
+                    stremioCatalogType: stremioCatalog.type,
+                    stremioMediaType: mediaType
+                )
+            }
+        }
+
+        let validStremioIds = Set(addonCatalogs.map(\.id))
+        var existingById = Dictionary(uniqueKeysWithValues: catalogs.map { ($0.id, $0) })
+        var merged = catalogs.filter { catalog in
+            catalog.source != .stremio || validStremioIds.contains(catalog.id)
+        }
+
+        for addonCatalog in addonCatalogs {
+            if let index = merged.firstIndex(where: { $0.id == addonCatalog.id }) {
+                let existing = merged[index]
+                merged[index] = addonCatalog.updatingUserState(isEnabled: existing.isEnabled, order: existing.order)
+            } else if let existing = existingById[addonCatalog.id] {
+                merged.append(addonCatalog.updatingUserState(isEnabled: existing.isEnabled, order: existing.order))
+            } else {
+                let nextOrder = (merged.map(\.order).max() ?? -1) + 1
+                merged.append(addonCatalog.updatingUserState(isEnabled: true, order: nextOrder))
+            }
+            existingById[addonCatalog.id] = addonCatalog
+        }
+
+        merged = merged
+            .sorted { $0.order < $1.order }
+            .enumerated()
+            .map { index, catalog in
+                var updated = catalog
+                updated.order = index
+                return updated
+            }
+
+        guard merged.map(\.id) != catalogs.map(\.id) ||
+              zip(merged, catalogs).contains(where: { $0.name != $1.name || $0.isEnabled != $1.isEnabled || $0.order != $1.order }) else {
+            return
+        }
+
+        catalogs = merged
+        saveCatalogs()
+    }
+
+    private static func stremioCatalogDisplayName(addon: StremioAddon, stremioCatalog: StremioCatalog) -> String {
+        let rawName = stremioCatalog.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let catalogName = rawName?.isEmpty == false ? rawName! : stremioCatalog.type.capitalized
+        let addonName = addon.manifest.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !addonName.isEmpty else { return catalogName }
+        if catalogName.localizedCaseInsensitiveContains(addonName) {
+            return catalogName
+        }
+        return "\(addonName) - \(catalogName)"
+    }
 }
 
 struct Catalog: Identifiable, Codable {
@@ -110,11 +182,22 @@ struct Catalog: Identifiable, Codable {
     var isEnabled: Bool
     var order: Int
     var displayStyle: CatalogDisplayStyle
+    var stremioAddonId: UUID?
+    var stremioAddonName: String?
+    var stremioCatalogId: String?
+    var stremioCatalogType: String?
+    var stremioMediaType: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, source, isEnabled, order, displayStyle
+        case stremioAddonId, stremioAddonName, stremioCatalogId, stremioCatalogType, stremioMediaType
+    }
     
     enum CatalogSource: String, Codable {
         case tmdb = "TMDB"
         case anilist = "AniList"
         case local = "Local"
+        case stremio = "Stremio"
     }
     
     enum CatalogDisplayStyle: String, Codable {
@@ -126,13 +209,30 @@ struct Catalog: Identifiable, Codable {
         case featured
     }
     
-    init(id: String, name: String, source: CatalogSource, isEnabled: Bool, order: Int, displayStyle: CatalogDisplayStyle = .standard) {
+    init(
+        id: String,
+        name: String,
+        source: CatalogSource,
+        isEnabled: Bool,
+        order: Int,
+        displayStyle: CatalogDisplayStyle = .standard,
+        stremioAddonId: UUID? = nil,
+        stremioAddonName: String? = nil,
+        stremioCatalogId: String? = nil,
+        stremioCatalogType: String? = nil,
+        stremioMediaType: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.source = source
         self.isEnabled = isEnabled
         self.order = order
         self.displayStyle = displayStyle
+        self.stremioAddonId = stremioAddonId
+        self.stremioAddonName = stremioAddonName
+        self.stremioCatalogId = stremioCatalogId
+        self.stremioCatalogType = stremioCatalogType
+        self.stremioMediaType = stremioMediaType
     }
     
     init(from decoder: Decoder) throws {
@@ -143,5 +243,30 @@ struct Catalog: Identifiable, Codable {
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         order = try container.decode(Int.self, forKey: .order)
         displayStyle = try container.decodeIfPresent(CatalogDisplayStyle.self, forKey: .displayStyle) ?? .standard
+        stremioAddonId = try container.decodeIfPresent(UUID.self, forKey: .stremioAddonId)
+        stremioAddonName = try container.decodeIfPresent(String.self, forKey: .stremioAddonName)
+        stremioCatalogId = try container.decodeIfPresent(String.self, forKey: .stremioCatalogId)
+        stremioCatalogType = try container.decodeIfPresent(String.self, forKey: .stremioCatalogType)
+        stremioMediaType = try container.decodeIfPresent(String.self, forKey: .stremioMediaType)
+    }
+
+    static func stremioCatalogId(addon: StremioAddon, stremioCatalog: StremioCatalog) -> String {
+        "stremio:\(addon.id.uuidString):\(stremioCatalog.type):\(stremioCatalog.id)"
+    }
+
+    func updatingUserState(isEnabled: Bool, order: Int) -> Catalog {
+        Catalog(
+            id: id,
+            name: name,
+            source: source,
+            isEnabled: isEnabled,
+            order: order,
+            displayStyle: displayStyle,
+            stremioAddonId: stremioAddonId,
+            stremioAddonName: stremioAddonName,
+            stremioCatalogId: stremioCatalogId,
+            stremioCatalogType: stremioCatalogType,
+            stremioMediaType: stremioMediaType
+        )
     }
 }

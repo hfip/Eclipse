@@ -14,9 +14,23 @@ class StremioAddonManager: ObservableObject {
 
     @Published var addons: [StremioAddon] = []
     @Published var isDownloading = false
+    private var catalogResolutionCache: [String: TMDBSearchResult] = [:]
+    private var catalogResolutionMisses: Set<String> = []
 
     var activeAddons: [StremioAddon] {
         addons.filter { $0.isActive }
+    }
+
+    var activeStreamAddons: [StremioAddon] {
+        activeAddons.filter { $0.manifest.supportsStreams }
+    }
+
+    var activeSubtitleAddons: [StremioAddon] {
+        activeAddons.filter { $0.manifest.supportsSubtitles }
+    }
+
+    var activeCatalogAddons: [StremioAddon] {
+        activeAddons.filter { $0.manifest.supportsCatalogs }
     }
 
     private init() {
@@ -27,6 +41,7 @@ class StremioAddonManager: ObservableObject {
 
     func loadAddons() {
         addons = StremioAddonStore.shared.getAddons()
+        CatalogManager.shared.syncStremioAddonCatalogs(from: addons)
     }
 
     // MARK: - Add Addon
@@ -37,7 +52,7 @@ class StremioAddonManager: ObservableObject {
 
         let manifest = try await StremioClient.shared.fetchManifest(from: url)
 
-        guard manifest.supportsStreams else {
+        guard manifest.supportsInstallableResources else {
             throw StremioAddonError.noStreamSupport
         }
 
@@ -58,7 +73,9 @@ class StremioAddonManager: ObservableObject {
             manifestJSON: manifestJSON,
             isActive: true
         )
-        AutoModeSourceSelection.appendSourceIfNeeded("stremio:\(id.uuidString)")
+        if manifest.supportsStreams {
+            AutoModeSourceSelection.appendSourceIfNeeded("stremio:\(id.uuidString)")
+        }
 
         loadAddons()
         Logger.shared.log("Stremio: Added addon '\(manifest.name)' (\(manifest.id))", type: "Stremio")
@@ -89,7 +106,7 @@ class StremioAddonManager: ObservableObject {
     func reconfigureAddon(_ addon: StremioAddon, newURL: String) async throws {
         let manifest = try await StremioClient.shared.fetchManifest(from: newURL)
 
-        guard manifest.supportsStreams else {
+        guard manifest.supportsInstallableResources else {
             throw StremioAddonError.noStreamSupport
         }
 
@@ -104,6 +121,13 @@ class StremioAddonManager: ObservableObject {
             manifestJSON: manifestJSON,
             isActive: addon.isActive
         )
+
+        let sourceId = "stremio:\(addon.id.uuidString)"
+        if manifest.supportsStreams {
+            AutoModeSourceSelection.appendSourceIfNeeded(sourceId)
+        } else {
+            AutoModeSourceSelection.removeSource(sourceId)
+        }
 
         loadAddons()
         Logger.shared.log("Stremio: Reconfigured addon '\(manifest.name)' (\(manifest.id))", type: "Stremio")
@@ -159,6 +183,12 @@ class StremioAddonManager: ObservableObject {
         let streams: [StremioStream]
     }
 
+    struct AddonSubtitleResult: Identifiable {
+        let id = UUID()
+        let addon: StremioAddon
+        let subtitle: StremioSubtitle
+    }
+
     private struct RankedCatalogMeta {
         let catalog: StremioCatalog
         let meta: StremioMetaPreview
@@ -181,10 +211,10 @@ class StremioAddonManager: ObservableObject {
         onResult: @escaping (StremioAddon, [StremioStream]) -> Void,
         onComplete: @escaping () -> Void
     ) async {
-        let active = activeAddons
-        Logger.shared.log("Stremio: fetchStreamsFromAddons — \(active.count) active addon(s), tmdbId=\(tmdbId) imdbId=\(imdbId ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
+        let active = activeStreamAddons
+        Logger.shared.log("Stremio: fetchStreamsFromAddons — \(active.count) active stream addon(s), tmdbId=\(tmdbId) imdbId=\(imdbId ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
         guard !active.isEmpty else {
-            Logger.shared.log("Stremio: No active addons, skipping", type: "Stremio")
+            Logger.shared.log("Stremio: No active stream addons, skipping", type: "Stremio")
             onComplete()
             return
         }
@@ -268,6 +298,11 @@ class StremioAddonManager: ObservableObject {
         titleCandidates: [String] = [],
         expectedYear: Int? = nil
     ) async -> [StremioStream] {
+        guard addon.manifest.supportsStreams else {
+            Logger.shared.log("Stremio: Skipping stream fetch for subtitle-only addon '\(addon.manifest.name)'", type: "Stremio")
+            return []
+        }
+
         let effectivePlaybackContext = await Self.enrichedPlaybackContextForKitsuIfNeeded(
             playbackContext,
             addons: [addon],
@@ -291,7 +326,254 @@ class StremioAddonManager: ObservableObject {
         )
     }
 
+    // MARK: - Fetch Subtitles from Active Addons
+
+    func fetchSubtitlesFromAddons(
+        tmdbId: Int,
+        imdbId: String?,
+        type: String,
+        season: Int?,
+        episode: Int?,
+        anilistId: Int? = nil,
+        playbackContext: EpisodePlaybackContext? = nil,
+        titleCandidates: [String] = [],
+        expectedYear: Int? = nil
+    ) async -> [AddonSubtitleResult] {
+        let active = activeSubtitleAddons.filter { addon in
+            addon.manifest.supportsResource("subtitles", type: type)
+        }
+        Logger.shared.log("Stremio: fetchSubtitlesFromAddons - \(active.count) active subtitle addon(s), tmdbId=\(tmdbId) imdbId=\(imdbId ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
+        guard !active.isEmpty else { return [] }
+
+        let client = StremioClient.shared
+        let effectivePlaybackContext = await Self.enrichedPlaybackContextForKitsuIfNeeded(
+            playbackContext,
+            addons: active,
+            type: type,
+            titleCandidates: titleCandidates,
+            expectedYear: expectedYear,
+            resourceName: "subtitles"
+        )
+        let maxConcurrent = 2
+
+        var results: [AddonSubtitleResult] = []
+        await withTaskGroup(of: (StremioAddon, [StremioSubtitle]).self) { group in
+            var nextIndex = 0
+
+            while nextIndex < active.count && nextIndex < maxConcurrent {
+                let addon = active[nextIndex]
+                group.addTask {
+                    let subtitles = await Self.resolveSubtitlesForAddon(
+                        addon,
+                        client: client,
+                        tmdbId: tmdbId,
+                        imdbId: imdbId,
+                        type: type,
+                        season: season,
+                        episode: episode,
+                        anilistId: anilistId,
+                        playbackContext: effectivePlaybackContext
+                    )
+                    return (addon, subtitles)
+                }
+                nextIndex += 1
+            }
+
+            for await (addon, subtitles) in group {
+                results.append(contentsOf: subtitles.map { subtitle in
+                    AddonSubtitleResult(addon: addon, subtitle: subtitle)
+                })
+
+                if nextIndex < active.count {
+                    let addon = active[nextIndex]
+                    group.addTask {
+                        let subtitles = await Self.resolveSubtitlesForAddon(
+                            addon,
+                            client: client,
+                            tmdbId: tmdbId,
+                            imdbId: imdbId,
+                            type: type,
+                            season: season,
+                            episode: episode,
+                            anilistId: anilistId,
+                            playbackContext: effectivePlaybackContext
+                        )
+                        return (addon, subtitles)
+                    }
+                    nextIndex += 1
+                }
+            }
+        }
+
+        return Self.dedupeSubtitleResults(results)
+    }
+
+    // MARK: - Fetch Home Catalogs from Active Addons
+
+    func fetchCatalogItems(for catalog: Catalog, tmdbService: TMDBService, limit: Int = 15) async -> [TMDBSearchResult] {
+        guard catalog.source == .stremio,
+              let addonId = catalog.stremioAddonId,
+              let catalogId = catalog.stremioCatalogId,
+              let catalogType = catalog.stremioCatalogType else {
+            return []
+        }
+
+        guard let addon = activeCatalogAddons.first(where: { $0.id == addonId }) else {
+            Logger.shared.log("Stremio: catalog \(catalog.id) skipped because addon is inactive or missing", type: "Stremio")
+            return []
+        }
+
+        guard let stremioCatalog = addon.manifest.homeCatalogs.first(where: {
+            $0.id == catalogId && $0.type == catalogType
+        }) else {
+            Logger.shared.log("Stremio: catalog \(catalog.id) skipped because manifest no longer exposes a compatible feed", type: "Stremio")
+            return []
+        }
+
+        do {
+            let metas = try await StremioClient.shared.fetchCatalogMetas(
+                baseURL: addon.configuredURL,
+                catalog: stremioCatalog,
+                skip: stremioCatalog.shouldSendInitialSkip ? 0 : nil
+            )
+            let results = await resolveCatalogMetas(
+                metas,
+                catalog: stremioCatalog,
+                addon: addon,
+                tmdbService: tmdbService,
+                limit: limit
+            )
+            Logger.shared.log("Stremio: catalog \(catalog.id) resolved \(results.count) item(s) from \(metas.count) meta preview(s)", type: "Stremio")
+            return results
+        } catch {
+            Logger.shared.log("Stremio: catalog \(catalog.id) fetch failed: \(error.localizedDescription)", type: "Stremio")
+            return []
+        }
+    }
+
     // MARK: - Helpers
+
+    private func resolveCatalogMetas(
+        _ metas: [StremioMetaPreview],
+        catalog: StremioCatalog,
+        addon: StremioAddon,
+        tmdbService: TMDBService,
+        limit: Int
+    ) async -> [TMDBSearchResult] {
+        var results: [TMDBSearchResult] = []
+        var seen = Set<String>()
+        let candidateLimit = max(limit * 2, limit)
+
+        for meta in metas.prefix(candidateLimit) {
+            if Task.isCancelled { break }
+            guard let result = await resolveCatalogMeta(meta, catalog: catalog, addon: addon, tmdbService: tmdbService),
+                  seen.insert(result.stableIdentity).inserted else {
+                continue
+            }
+            results.append(result)
+            if results.count >= limit { break }
+        }
+
+        return results
+    }
+
+    private func resolveCatalogMeta(
+        _ meta: StremioMetaPreview,
+        catalog: StremioCatalog,
+        addon: StremioAddon,
+        tmdbService: TMDBService
+    ) async -> TMDBSearchResult? {
+        guard let mediaType = Self.lunaMediaType(from: meta.type) ?? catalog.lunaMediaType else {
+            return nil
+        }
+
+        let cacheKey = "\(mediaType)|\(meta.id)"
+        if let cached = catalogResolutionCache[cacheKey] {
+            return cached
+        }
+        if catalogResolutionMisses.contains(cacheKey) {
+            return nil
+        }
+
+        if let tmdbId = Self.tmdbId(from: meta.id) {
+            let result = Self.searchResult(from: meta, tmdbId: tmdbId, mediaType: mediaType)
+            catalogResolutionCache[cacheKey] = result
+            return result
+        }
+
+        if let imdbId = Self.imdbId(from: meta.id) {
+            do {
+                if let result = try await tmdbService.findByIMDbId(imdbId, preferredMediaType: mediaType) {
+                    catalogResolutionCache[cacheKey] = result
+                    return result
+                }
+            } catch {
+                Logger.shared.log("Stremio: catalog meta IMDb resolve failed addon=\(addon.manifest.name) id=\(meta.id): \(error.localizedDescription)", type: "Stremio")
+            }
+        }
+
+        catalogResolutionMisses.insert(cacheKey)
+        return nil
+    }
+
+    private static func lunaMediaType(from stremioType: String?) -> String? {
+        guard let stremioType else { return nil }
+        let normalized = stremioType.lowercased()
+        if normalized == "movie" { return "movie" }
+        if normalized == "series" || normalized == "tv" { return "tv" }
+        return nil
+    }
+
+    private static func tmdbId(from stremioId: String) -> Int? {
+        let lowercased = stremioId.lowercased()
+        let prefixes = ["tmdb:", "tmdb_id:"]
+        for prefix in prefixes where lowercased.hasPrefix(prefix) {
+            let remainder = String(stremioId.dropFirst(prefix.count))
+            for component in remainder.split(separator: ":") {
+                if let id = Int(component) {
+                    return id
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func imdbId(from stremioId: String) -> String? {
+        let pattern = #"^tt\d+"#
+        guard let range = stremioId.range(of: pattern, options: .regularExpression) else {
+            return nil
+        }
+        return String(stremioId[range])
+    }
+
+    private static func searchResult(from meta: StremioMetaPreview, tmdbId: Int, mediaType: String) -> TMDBSearchResult {
+        let releaseDate = catalogDate(from: meta.released) ?? meta.releaseInfo
+        let rating = Double(meta.imdbRating ?? "")
+        return TMDBSearchResult(
+            id: tmdbId,
+            mediaType: mediaType,
+            title: mediaType == "movie" ? meta.name : nil,
+            name: mediaType == "tv" ? meta.name : nil,
+            overview: meta.description,
+            posterPath: meta.poster,
+            backdropPath: meta.background,
+            releaseDate: mediaType == "movie" ? releaseDate : nil,
+            firstAirDate: mediaType == "tv" ? releaseDate : nil,
+            voteAverage: rating,
+            popularity: 0,
+            adult: nil,
+            genreIds: nil
+        )
+    }
+
+    private static func catalogDate(from value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        if value.count >= 10 {
+            return String(value.prefix(10))
+        }
+        return value
+    }
 
     private static func fetchStreamsForAddon(
         _ addon: StremioAddon,
@@ -327,7 +609,8 @@ class StremioAddonManager: ObservableObject {
         addons: [StremioAddon],
         type: String,
         titleCandidates: [String],
-        expectedYear: Int?
+        expectedYear: Int?,
+        resourceName: String = "stream"
     ) async -> EpisodePlaybackContext? {
         guard type == "series",
               let playbackContext,
@@ -335,7 +618,7 @@ class StremioAddonManager: ObservableObject {
               playbackContext.anilistMediaId != nil,
               !playbackContext.isSpecial,
               !playbackContext.titleOnlySearch,
-              addons.contains(where: supportsKitsuContentIds),
+              addons.contains(where: { supportsKitsuContentIds($0, resourceName: resourceName) }),
               !titleCandidates.isEmpty else {
             return playbackContext
         }
@@ -356,8 +639,10 @@ class StremioAddonManager: ObservableObject {
         return playbackContext.withKitsuMediaId(kitsuId)
     }
 
-    private static func supportsKitsuContentIds(_ addon: StremioAddon) -> Bool {
-        let prefixes = addon.manifest.streamIdPrefixes ?? []
+    private static func supportsKitsuContentIds(_ addon: StremioAddon, resourceName: String) -> Bool {
+        let prefixes = resourceName == "subtitles"
+            ? (addon.manifest.subtitleIdPrefixes ?? [])
+            : (addon.manifest.streamIdPrefixes ?? [])
         guard !prefixes.isEmpty else { return true }
         return prefixes.contains { prefix in
             let lowercased = prefix.lowercased()
@@ -378,6 +663,10 @@ class StremioAddonManager: ObservableObject {
         titleCandidates: [String],
         expectedYear: Int?
     ) async -> [StremioStream] {
+        guard addon.manifest.supportsStreams else {
+            return []
+        }
+
         Logger.shared.log("Stremio: Starting fetch for addon '\(addon.manifest.name)' baseURL=\(addon.configuredURL)", type: "Stremio")
 
         let contentIds = client.buildContentIds(
@@ -446,6 +735,62 @@ class StremioAddonManager: ObservableObject {
         }
 
         return []
+    }
+
+    private static func resolveSubtitlesForAddon(
+        _ addon: StremioAddon,
+        client: StremioClient,
+        tmdbId: Int,
+        imdbId: String?,
+        type: String,
+        season: Int?,
+        episode: Int?,
+        anilistId: Int?,
+        playbackContext: EpisodePlaybackContext?
+    ) async -> [StremioSubtitle] {
+        guard addon.manifest.supportsSubtitles,
+              addon.manifest.supportsResource("subtitles", type: type) else {
+            return []
+        }
+
+        let contentIds = client.buildContentIds(
+            tmdbId: tmdbId,
+            imdbId: imdbId,
+            type: type,
+            season: season,
+            episode: episode,
+            anilistId: anilistId,
+            anilistSeason: animeLocalStremioSeason(from: playbackContext),
+            anilistEpisode: animeLocalStremioEpisode(from: playbackContext),
+            kitsuId: playbackContext?.kitsuMediaId,
+            kitsuEpisode: animeLocalKitsuEpisode(from: playbackContext),
+            alternateSeason: animeLocalSeriesSeason(from: playbackContext),
+            alternateEpisode: animeLocalSeriesEpisode(from: playbackContext),
+            idPrefixes: addon.manifest.subtitleIdPrefixes,
+            addonName: addon.manifest.name
+        )
+
+        guard !contentIds.isEmpty else {
+            Logger.shared.log("Stremio: No supported subtitle content ID for \(addon.manifest.name)", type: "Stremio")
+            return []
+        }
+
+        var subtitles: [StremioSubtitle] = []
+        for contentId in contentIds {
+            do {
+                let fetched = try await client.fetchSubtitles(
+                    baseURL: addon.configuredURL,
+                    type: type,
+                    id: contentId
+                )
+                Logger.shared.log("Stremio: \(addon.manifest.name) returned \(fetched.count) subtitle(s) for '\(contentId)'", type: "Stremio")
+                subtitles.append(contentsOf: fetched)
+            } catch {
+                Logger.shared.log("Stremio: \(addon.manifest.name) subtitle fetch failed id='\(contentId)': \(error.localizedDescription)", type: "Stremio")
+            }
+        }
+
+        return dedupeSubtitles(subtitles)
     }
 
     private static func fetchStreamsByCatalogSearch(
@@ -852,6 +1197,35 @@ class StremioAddonManager: ObservableObject {
         }
     }
 
+    private static func dedupeSubtitles(_ subtitles: [StremioSubtitle]) -> [StremioSubtitle] {
+        var seen = Set<String>()
+        return subtitles.filter { subtitle in
+            guard let url = subtitle.url?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !url.isEmpty else {
+                return false
+            }
+            return seen.insert(url.lowercased()).inserted
+        }
+    }
+
+    private static func dedupeSubtitleResults(_ results: [AddonSubtitleResult]) -> [AddonSubtitleResult] {
+        var seen = Set<String>()
+        return results
+            .sorted { lhs, rhs in
+                if lhs.addon.sortIndex != rhs.addon.sortIndex {
+                    return lhs.addon.sortIndex < rhs.addon.sortIndex
+                }
+                return lhs.addon.manifest.name.localizedCaseInsensitiveCompare(rhs.addon.manifest.name) == .orderedAscending
+            }
+            .filter { result in
+                guard let url = result.subtitle.url?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !url.isEmpty else {
+                    return false
+                }
+                return seen.insert(url.lowercased()).inserted
+            }
+    }
+
     private func generateAddonUUID(manifest: StremioManifest) -> UUID {
         let input = manifest.id
         let hash = SHA256.hash(data: Data(input.utf8))
@@ -870,7 +1244,7 @@ class StremioAddonManager: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .noStreamSupport: return "This addon does not support streams"
+            case .noStreamSupport: return "This addon does not support streams, subtitles, or catalogs"
             case .alreadyExists: return "This addon is already installed"
             }
         }
