@@ -5598,7 +5598,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return onlineSubtitleLoadedTrackNames.contains(normalized) ||
             onlineSubtitleLoadedTrackNames.contains { loaded in
                 guard loaded.count >= 4, normalized.count >= 4 else { return false }
-                normalized.contains(loaded) || loaded.contains(normalized)
+                return normalized.contains(loaded) || loaded.contains(normalized)
             }
     }
 
