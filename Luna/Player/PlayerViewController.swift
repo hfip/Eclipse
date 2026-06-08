@@ -1932,6 +1932,46 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
+    private func configureMPVAppExitPictureInPictureAutomation(reason: String) {
+        guard isMPVRenderer, !isVLCPlayer else {
+            pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
+            return
+        }
+
+        let enabled = Settings.shared.mpvAppExitPictureInPictureEnabled
+        pipController?.setCanStartPictureInPictureAutomaticallyFromInline(enabled)
+        if !enabled {
+            cancelPendingMPVAppExitPictureInPictureStart(reason: "\(reason)-disabled")
+            mpvAppExitPiPStartRequested = false
+        }
+        logPictureInPicture("MPV app-exit auto PiP automation configured reason=\(reason) enabled=\(enabled)")
+    }
+
+    private func primeMPVAppExitPictureInPictureIfNeeded(source: String) {
+        guard isMPVRenderer, !isVLCPlayer else { return }
+        guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
+            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): disabled")
+            return
+        }
+        guard let pip = pipController else {
+            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): controller missing")
+            return
+        }
+        let active = pip.isPictureInPictureActive
+        let supported = pip.isPictureInPictureSupported
+        let paused = rendererIsPausedState()
+        let playbackReady = playbackDidStart || cachedPosition > 0.1
+        guard isRunning, !isClosing, !active, !paused, playbackReady, supported else {
+            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source) running=\(isRunning) closing=\(isClosing) active=\(active) paused=\(paused) ready=\(playbackReady) supported=\(supported)")
+            return
+        }
+
+        configureMPVAppExitPictureInPictureAutomation(reason: "\(source)-prime")
+        let primed = prepareMPVPictureInPictureRenderer(source: "\(source)-app-exit-prime", activateLayer: false)
+        pip.updatePlaybackState()
+        logPictureInPicture("MPV app-exit auto PiP primed source=\(source) primed=\(primed) possible=\(pip.isPictureInPicturePossible) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+    }
+
     private func updatePlayerTitle() {
         let title = playerDisplayTitle()
         playerTitleLabel.text = title
@@ -2347,6 +2387,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if isMPVRenderer {
             pipController = PiPController(sampleBufferDisplayLayer: displayLayer)
             pipController?.delegate = self
+            configureMPVAppExitPictureInPictureAutomation(reason: "viewDidLoad")
         } else {
             pipController = nil
             logVLCUI("skipping MPV sample-buffer PiPController for VLC renderer", type: "Player")
@@ -6792,6 +6833,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             rendererApplySubtitleStyle(currentSubtitleStyle())
         }
+        configureMPVAppExitPictureInPictureAutomation(reason: "settings")
         updatePiPButtonVisibility()
         updateEpisodeBrowserButtonVisibility()
         updatePerformanceOverlayVisibility()
@@ -9406,9 +9448,11 @@ extension PlayerViewController: PiPControllerDelegate {
             return
         }
         if Thread.isMainThread {
+            primeMPVAppExitPictureInPictureIfNeeded(source: "will-resign-active")
             scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "will-resign-active")
         } else {
             DispatchQueue.main.async { [weak self] in
+                self?.primeMPVAppExitPictureInPictureIfNeeded(source: "will-resign-active")
                 self?.scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "will-resign-active")
             }
         }
@@ -9436,9 +9480,11 @@ extension PlayerViewController: PiPControllerDelegate {
         switch phase {
         case "inactive":
             if Thread.isMainThread {
+                primeMPVAppExitPictureInPictureIfNeeded(source: "scene-phase-inactive")
                 scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-phase-inactive")
             } else {
                 DispatchQueue.main.async { [weak self] in
+                    self?.primeMPVAppExitPictureInPictureIfNeeded(source: "scene-phase-inactive")
                     self?.scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-phase-inactive")
                 }
             }
@@ -9463,6 +9509,7 @@ extension PlayerViewController: PiPControllerDelegate {
 
     private func scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: String, delay: TimeInterval = 0.35) {
         guard !isVLCPlayer, isMPVRenderer else { return }
+        configureMPVAppExitPictureInPictureAutomation(reason: source)
         guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
             logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): disabled")
             return
@@ -9513,6 +9560,7 @@ extension PlayerViewController: PiPControllerDelegate {
             logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): disabled")
             return
         }
+        configureMPVAppExitPictureInPictureAutomation(reason: source)
         guard let pip = pipController else {
             logPictureInPicture("app-exit auto PiP skipped source=\(source): controller missing")
             return
@@ -9577,14 +9625,17 @@ extension PlayerViewController: PiPControllerDelegate {
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
         if metalMPVRenderer != nil {
             logPictureInPicture("scene-will-deactivate pending Metal sample-buffer PiP until background confirmation")
+            primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate-metal")
             scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate-metal", delay: 0.35)
             return
         }
 #endif
         if Thread.isMainThread {
+            primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate")
             scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate")
         } else {
             DispatchQueue.main.async { [weak self] in
+                self?.primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate")
                 self?.scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate")
             }
         }
@@ -9598,11 +9649,13 @@ extension PlayerViewController: PiPControllerDelegate {
             return
         }
         if Thread.isMainThread {
+            primeMPVAppExitPictureInPictureIfNeeded(source: "scene-did-enter-background")
             cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-did-enter-background")
             attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
             scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background")
         } else {
             DispatchQueue.main.async { [weak self] in
+                self?.primeMPVAppExitPictureInPictureIfNeeded(source: "scene-did-enter-background")
                 self?.cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-did-enter-background")
                 self?.attemptMPVAppExitPictureInPictureStart(source: "scene-did-enter-background")
                 self?.scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background")
@@ -9645,6 +9698,7 @@ extension PlayerViewController: PiPControllerDelegate {
             }
 
             self.cancelPendingMPVAppExitPictureInPictureStart(reason: "did-enter-background")
+            self.primeMPVAppExitPictureInPictureIfNeeded(source: "did-enter-background")
             self.attemptMPVAppExitPictureInPictureStart(source: "did-enter-background")
             self.scheduleMPVBackgroundAudioFallback(source: "did-enter-background")
         }

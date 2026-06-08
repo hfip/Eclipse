@@ -387,12 +387,17 @@ final class TrackerManager: NSObject, ObservableObject {
         return try await refreshedMALAccountIfNeeded(account)
     }
 
-    private func refreshedMALAccountIfNeeded(_ account: TrackerAccount) async throws -> TrackerAccount {
+    private func refreshedMALAccountIfNeeded(_ account: TrackerAccount, force: Bool = false) async throws -> TrackerAccount {
         guard account.service == .myAnimeList else { return account }
-        guard let expiresAt = account.expiresAt else { return account }
-        guard expiresAt.timeIntervalSinceNow <= tokenRefreshLeeway else { return account }
+        let latestAccount = await MainActor.run {
+            self.trackerState.getAccount(for: .myAnimeList) ?? account
+        }
+        if !force {
+            guard let expiresAt = latestAccount.expiresAt else { return latestAccount }
+            guard expiresAt.timeIntervalSinceNow <= tokenRefreshLeeway else { return latestAccount }
+        }
 
-        guard let refreshToken = account.refreshToken, !refreshToken.isEmpty else {
+        guard let refreshToken = latestAccount.refreshToken, !refreshToken.isEmpty else {
             throw NSError(
                 domain: "MALAuth",
                 code: 401,
@@ -401,7 +406,7 @@ final class TrackerManager: NSObject, ObservableObject {
         }
 
         let token = try await refreshMALToken(refreshToken)
-        var refreshedAccount = account
+        var refreshedAccount = latestAccount
         refreshedAccount.updateTokens(
             access: token.accessToken,
             refresh: token.refreshToken ?? refreshToken,
@@ -414,7 +419,7 @@ final class TrackerManager: NSObject, ObservableObject {
             self.trackerState.addOrUpdateAccount(accountToSave)
             self.saveTrackerState()
         }
-        Logger.shared.log("MAL token refreshed before tracker library operation", type: "Tracker")
+        Logger.shared.log(force ? "MAL token refreshed after invalid_token response" : "MAL token refreshed before tracker library operation", type: "Tracker")
         return accountToSave
     }
 
@@ -1500,25 +1505,56 @@ final class TrackerManager: NSObject, ObservableObject {
         )
     }
 
-    private func saveMALAnimeRatingAndNote(account: TrackerAccount, malId: Int, rating: Double, note: String?) async {
-        let clampedRating = Self.normalizedRatingOutOf10(rating)
-        let malRating = Self.myAnimeListScore(from: clampedRating)
-        let displayRating = Self.ratingDisplayString(clampedRating)
-        let url = URL(string: "https://api.myanimelist.net/v2/anime/\(malId)/my_list_status")!
+    private func sendMALListStatusRequest(
+        account: TrackerAccount,
+        mediaPath: String,
+        mediaId: Int,
+        values: [String: String],
+        allowsRefreshRetry: Bool = true
+    ) async throws -> (Data, HTTPURLResponse) {
+        let account = try await refreshedMALAccountIfNeeded(account)
+        let url = URL(string: "https://api.myanimelist.net/v2/\(mediaPath)/\(mediaId)/my_list_status")!
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = formURLEncodedBody(values)
+
+        let (data, response) = try await sendTrackerRequest(request, provider: .myAnimeList)
+        if response.statusCode == 401, allowsRefreshRetry {
+            let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            Logger.shared.log("MAL \(mediaPath) list status returned 401; refreshing token and retrying once: \(bodyPreview)", type: "Tracker")
+            let refreshed = try await refreshedMALAccountIfNeeded(account, force: true)
+            return try await sendMALListStatusRequest(
+                account: refreshed,
+                mediaPath: mediaPath,
+                mediaId: mediaId,
+                values: values,
+                allowsRefreshRetry: false
+            )
+        }
+
+        return (data, response)
+    }
+
+    private func saveMALAnimeRatingAndNote(account: TrackerAccount, malId: Int, rating: Double, note: String?) async {
+        let clampedRating = Self.normalizedRatingOutOf10(rating)
+        let malRating = Self.myAnimeListScore(from: clampedRating)
+        let displayRating = Self.ratingDisplayString(clampedRating)
         var values = [
             "score": String(malRating)
         ]
         if let note {
             values["comments"] = note
         }
-        request.httpBody = formURLEncodedBody(values)
 
         do {
-            let (data, response) = try await sendTrackerRequest(request, provider: .myAnimeList)
+            let (data, response) = try await sendMALListStatusRequest(
+                account: account,
+                mediaPath: "anime",
+                mediaId: malId,
+                values: values
+            )
             if (200...299).contains(response.statusCode) {
                 let malSuffix = malRating == Int(clampedRating) && clampedRating.truncatingRemainder(dividingBy: 1) == 0
                     ? ""
@@ -1803,18 +1839,18 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private func saveMALAnimeProgress(account: TrackerAccount, malId: Int, watchedEpisodes: Int, status: String) async {
-        let url = URL(string: "https://api.myanimelist.net/v2/anime/\(malId)/my_list_status")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "PATCH"
-        request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formURLEncodedBody([
+        let values = [
             "status": status,
             "num_watched_episodes": String(max(watchedEpisodes, 0))
-        ])
+        ]
 
         do {
-            let (data, response) = try await sendTrackerRequest(request, provider: .myAnimeList)
+            let (data, response) = try await sendMALListStatusRequest(
+                account: account,
+                mediaPath: "anime",
+                mediaId: malId,
+                values: values
+            )
             if (200...299).contains(response.statusCode) {
                 Logger.shared.log("Synced to MAL: animeId=\(malId) episodes=\(watchedEpisodes) status=\(status)", type: "Tracker")
             } else {
@@ -1827,18 +1863,18 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private func saveMALMangaProgress(account: TrackerAccount, malId: Int, chaptersRead: Int, status: String) async {
-        let url = URL(string: "https://api.myanimelist.net/v2/manga/\(malId)/my_list_status")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "PATCH"
-        request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formURLEncodedBody([
+        let values = [
             "status": status,
             "num_chapters_read": String(max(chaptersRead, 0))
-        ])
+        ]
 
         do {
-            let (data, response) = try await sendTrackerRequest(request, provider: .myAnimeList)
+            let (data, response) = try await sendMALListStatusRequest(
+                account: account,
+                mediaPath: "manga",
+                mediaId: malId,
+                values: values
+            )
             if (200...299).contains(response.statusCode) {
                 Logger.shared.log("Synced manga to MAL: mangaId=\(malId) chapters=\(chaptersRead) status=\(status)", type: "Tracker")
             } else {

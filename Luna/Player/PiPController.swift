@@ -28,6 +28,7 @@ final class PiPController: NSObject {
     private var isStartRequestPending = false
     private var timeRangeRequestCount = 0
     private var currentTimeRequestCount = 0
+    private var automaticFromInlineEnabled = false
     
     weak var delegate: PiPControllerDelegate?
     
@@ -72,6 +73,15 @@ final class PiPController: NSObject {
         pipController?.canStartPictureInPictureAutomaticallyFromInline = false
         #endif
         Logger.shared.log("[PiPController] initialized supported=\(isPictureInPictureSupported) possible=\(pipController?.isPictureInPicturePossible ?? false) autoInline=false layer={\(layerSnapshot())}", type: "MPV")
+    }
+
+    func setCanStartPictureInPictureAutomaticallyFromInline(_ enabled: Bool) {
+        #if !os(tvOS)
+        guard automaticFromInlineEnabled != enabled else { return }
+        automaticFromInlineEnabled = enabled
+        pipController?.canStartPictureInPictureAutomaticallyFromInline = enabled
+        Logger.shared.log("[PiPController] autoInline set to \(enabled) possible=\(pipController?.isPictureInPicturePossible ?? false) layer={\(layerSnapshot())}", type: "MPV")
+        #endif
     }
 
     func startPictureInPicture() {
