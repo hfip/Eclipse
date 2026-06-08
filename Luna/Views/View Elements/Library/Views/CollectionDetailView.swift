@@ -32,8 +32,8 @@ struct CollectionDetailView: View {
                 .padding(.top, 100)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: isIPad ? 160 : 120))], spacing: 16) {
-                    ForEach(Array(collection.items.enumerated()), id: \.offset) { index, item in
-                        let heroID = "collection-\(collection.id)-\(index)-\(item.searchResult.stableIdentity)"
+                    ForEach(collection.items, id: \.searchResult.stableIdentity) { item in
+                        let heroID = "collection-\(collection.id)-\(item.searchResult.stableIdentity)"
                         NavigationLink(destination: MediaDetailView(searchResult: item.searchResult)
                             .heroDestination(id: heroID, namespace: heroNamespace)
                         ) {

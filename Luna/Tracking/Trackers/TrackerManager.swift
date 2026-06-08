@@ -15,6 +15,7 @@ import UIKit
 private enum TrackerRequestProvider: Hashable {
     case anilist
     case myAnimeList
+    case trakt
 }
 
 private actor TrackerRequestScheduler {
@@ -23,7 +24,8 @@ private actor TrackerRequestScheduler {
     private var nextAllowedAt: [TrackerRequestProvider: Date] = [:]
     private var minimumSpacing: [TrackerRequestProvider: TimeInterval] = [
         .anilist: 0.8,
-        .myAnimeList: 1.2
+        .myAnimeList: 1.2,
+        .trakt: 1.05
     ]
 
     func waitForSlot(provider: TrackerRequestProvider) async {
@@ -156,6 +158,15 @@ final class TrackerManager: NSObject, ObservableObject {
     private var traktMediaIdCache: [String: Int] = [:]
     private let traktMediaIdCacheQueue = DispatchQueue(label: "com.luna.traktMediaIdCache")
     private var traktTokenRefreshTask: Task<TrackerAccount, Error>?
+    private var traktContinueWatchingCache: (accountUserId: String, fetchedAt: Date, items: [ContinueWatchingItem])?
+    private let traktContinueWatchingCacheQueue = DispatchQueue(label: "com.luna.traktContinueWatchingCache")
+    private let traktContinueWatchingCacheTTL: TimeInterval = 90
+    private var traktScrobbleLastActionByKey: [String: TraktScrobbleAction] = [:]
+    private var traktScrobbleLastStampByKey: [String: (action: TraktScrobbleAction, progress: Double, sentAt: Date)] = [:]
+    private var traktScrobblePendingByKey: [String: (action: TraktScrobbleAction, progress: Double, queuedAt: Date)] = [:]
+    private let traktScrobbleQueue = DispatchQueue(label: "com.luna.traktScrobbleDedupe")
+    private let traktScrobbleMinimumInterval: TimeInterval = 8
+    private let traktScrobbleProgressWindow: Double = 1.5
 
     // OAuth config is supplied by ignored local build settings.
     private func bundledCredential(_ key: String) -> String {
@@ -238,6 +249,15 @@ final class TrackerManager: NSObject, ObservableObject {
 
     func setMergeTraktContinueWatching(_ enabled: Bool) {
         trackerState.mergeTraktContinueWatching = enabled
+        invalidateTraktContinueWatchingCache()
+        saveTrackerState()
+    }
+
+    func setLiveTraktScrobbling(_ enabled: Bool) {
+        trackerState.liveTraktScrobbling = enabled
+        if !enabled {
+            resetTraktScrobbleState()
+        }
         saveTrackerState()
     }
 
@@ -294,7 +314,12 @@ final class TrackerManager: NSObject, ObservableObject {
         return shouldStart
     }
 
-    private func sendTrackerRequest(_ request: URLRequest, provider: TrackerRequestProvider, maxRetries: Int = 2) async throws -> (Data, HTTPURLResponse) {
+    private func sendTrackerRequest(
+        _ request: URLRequest,
+        provider: TrackerRequestProvider,
+        maxRetries: Int = 2,
+        reportRateLimitStatus: Bool = true
+    ) async throws -> (Data, HTTPURLResponse) {
         var lastError: Error?
 
         for attempt in 0..<maxRetries {
@@ -309,9 +334,11 @@ final class TrackerManager: NSObject, ObservableObject {
             if let retryDelay = await TrackerRequestScheduler.shared.recordResponse(provider: provider, response: httpResponse),
                attempt < maxRetries - 1 {
                 Logger.shared.log("Tracker request paused for rate limit (\(provider)) for \(Int(retryDelay))s", type: "Tracker")
-                await MainActor.run {
-                    self.syncToolStatus = "Paused for rate limit. Resuming in \(Int(retryDelay))s..."
-                    self.syncToolProgressDetail = "Paused for rate limit. Resuming in \(Int(retryDelay))s..."
+                if reportRateLimitStatus {
+                    await MainActor.run {
+                        self.syncToolStatus = "Paused for rate limit. Resuming in \(Int(retryDelay))s..."
+                        self.syncToolProgressDetail = "Paused for rate limit. Resuming in \(Int(retryDelay))s..."
+                    }
                 }
                 try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
                 try Task.checkCancellation()
@@ -1948,6 +1975,17 @@ final class TrackerManager: NSObject, ObservableObject {
         guard progress.isFinite, progress > 0 else { return }
         guard let account = trackerState.getAccount(for: .trakt) else { return }
 
+        if trackerState.liveTraktScrobbling {
+            scrobbleTraktPlayback(
+                .stop,
+                for: .episode(showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber),
+                progress: progress,
+                playbackContext: playbackContext,
+                force: force
+            )
+            return
+        }
+
         guard let resolved = resolvedTraktEpisodeNumbers(
             seasonNumber: seasonNumber,
             episodeNumber: episodeNumber,
@@ -1972,6 +2010,11 @@ final class TrackerManager: NSObject, ObservableObject {
         guard progress.isFinite, progress > 0 else { return }
         guard let account = trackerState.getAccount(for: .trakt) else { return }
 
+        if trackerState.liveTraktScrobbling {
+            scrobbleTraktPlayback(.stop, for: .movie(id: movieId, title: ""), progress: progress, force: force)
+            return
+        }
+
         let key = "movie|\(movieId)"
         guard shouldStartTraktPlaybackSync(key: key, force: force) else { return }
         Task {
@@ -1979,10 +2022,45 @@ final class TrackerManager: NSObject, ObservableObject {
         }
     }
 
+    func scrobbleTraktPlayback(
+        _ action: TraktScrobbleAction,
+        for mediaInfo: MediaInfo,
+        progress: Double,
+        playbackContext: EpisodePlaybackContext? = nil,
+        force: Bool = false
+    ) {
+        guard !isBackupRestoreSyncSuppressed(),
+              trackerState.syncEnabled,
+              trackerState.liveTraktScrobbling else { return }
+        guard progress.isFinite else { return }
+        let normalizedProgress = normalizedTraktScrobbleProgress(progress)
+        if action != .start {
+            guard normalizedProgress > 0 else { return }
+        }
+        guard let account = trackerState.getAccount(for: .trakt) else { return }
+        guard let key = traktScrobbleKey(for: mediaInfo, playbackContext: playbackContext) else { return }
+        guard shouldQueueTraktScrobble(action: action, key: key, progress: normalizedProgress, force: force) else { return }
+
+        Task {
+            let sent = await sendTraktScrobble(
+                action: action,
+                account: account,
+                mediaInfo: mediaInfo,
+                progress: normalizedProgress,
+                playbackContext: playbackContext
+            )
+            finishTraktScrobble(action: action, key: key, progress: normalizedProgress, sent: sent)
+        }
+    }
+
     func fetchTraktContinueWatchingItems() async -> [ContinueWatchingItem] {
         guard trackerState.mergeTraktContinueWatching,
               let account = trackerState.getAccount(for: .trakt) else {
             return []
+        }
+
+        if let cached = cachedTraktContinueWatchingItems(for: account) {
+            return cached
         }
 
         do {
@@ -2040,22 +2118,49 @@ final class TrackerManager: NSObject, ObservableObject {
                     traktPlaybackId: playback.id
                 )
             }
-            return shows + movies
+            let items = shows + movies
+            storeTraktContinueWatchingItems(items, for: refreshedAccount)
+            return items
         } catch {
             Logger.shared.log("Failed to fetch Trakt Continue Watching: \(error.localizedDescription)", type: "Error")
             return []
         }
     }
 
+    private func cachedTraktContinueWatchingItems(for account: TrackerAccount) -> [ContinueWatchingItem]? {
+        let now = Date()
+        return traktContinueWatchingCacheQueue.sync {
+            guard let cache = traktContinueWatchingCache,
+                  cache.accountUserId == account.userId,
+                  now.timeIntervalSince(cache.fetchedAt) < traktContinueWatchingCacheTTL else {
+                return nil
+            }
+            return cache.items
+        }
+    }
+
+    private func storeTraktContinueWatchingItems(_ items: [ContinueWatchingItem], for account: TrackerAccount) {
+        traktContinueWatchingCacheQueue.sync {
+            traktContinueWatchingCache = (account.userId, Date(), items)
+        }
+    }
+
+    private func invalidateTraktContinueWatchingCache() {
+        traktContinueWatchingCacheQueue.sync {
+            traktContinueWatchingCache = nil
+        }
+    }
+
     private func fetchTraktPlaybackData(path: String, account: TrackerAccount, allowsRefreshRetry: Bool = true) async throws -> Data {
         let url = URL(string: "https://api.trakt.tv/\(path)")!
         var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
         request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("2", forHTTPHeaderField: "trakt-api-version")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let (data, response) = try await sendTrackerRequest(request, provider: .trakt, reportRateLimitStatus: false)
+        let statusCode = response.statusCode
         if statusCode == 401, allowsRefreshRetry {
             let refreshedAccount = try await refreshedTraktAccountIfNeeded(account, force: true)
             return try await fetchTraktPlaybackData(path: path, account: refreshedAccount, allowsRefreshRetry: false)
@@ -2093,6 +2198,7 @@ final class TrackerManager: NSObject, ObservableObject {
                 let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
                 guard !traktClientId.isEmpty else { return }
                 try await deleteTraktPlaybackItem(playbackId, account: refreshedAccount)
+                invalidateTraktContinueWatchingCache()
                 if let completion {
                     await MainActor.run {
                         completion()
@@ -2108,12 +2214,13 @@ final class TrackerManager: NSObject, ObservableObject {
         let url = URL(string: "https://api.trakt.tv/sync/playback/\(playbackId)")!
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
         request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("2", forHTTPHeaderField: "trakt-api-version")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let (data, response) = try await sendTrackerRequest(request, provider: .trakt, reportRateLimitStatus: false)
+        let statusCode = response.statusCode
         if statusCode == 401, allowsRefreshRetry {
             let refreshedAccount = try await refreshedTraktAccountIfNeeded(account, force: true)
             return try await deleteTraktPlaybackItem(playbackId, account: refreshedAccount, allowsRefreshRetry: false)
@@ -2140,6 +2247,167 @@ final class TrackerManager: NSObject, ObservableObject {
             }
         }
         return shouldStart
+    }
+
+    private func traktScrobbleKey(for mediaInfo: MediaInfo, playbackContext: EpisodePlaybackContext?) -> String? {
+        switch mediaInfo {
+        case .movie(let id, _, _, _):
+            return "movie|\(id)"
+        case .episode(let showId, let seasonNumber, let episodeNumber, _, _, _):
+            guard let resolved = resolvedTraktEpisodeNumbers(
+                seasonNumber: seasonNumber,
+                episodeNumber: episodeNumber,
+                playbackContext: playbackContext
+            ) else { return nil }
+            return "episode|\(showId)|\(resolved.season)|\(resolved.episode)"
+        }
+    }
+
+    private func shouldQueueTraktScrobble(
+        action: TraktScrobbleAction,
+        key: String,
+        progress: Double,
+        force: Bool
+    ) -> Bool {
+        let now = Date()
+        return traktScrobbleQueue.sync {
+            traktScrobbleLastStampByKey = traktScrobbleLastStampByKey.filter {
+                now.timeIntervalSince($0.value.sentAt) < 10 * 60
+            }
+            traktScrobblePendingByKey = traktScrobblePendingByKey.filter {
+                now.timeIntervalSince($0.value.queuedAt) < 2 * 60
+            }
+
+            if !force {
+                if action == .start, traktScrobbleLastActionByKey[key] == .start {
+                    return false
+                }
+
+                if let pending = traktScrobblePendingByKey[key] {
+                    if action == .start, pending.action == .start {
+                        return false
+                    }
+                    if pending.action == action,
+                       now.timeIntervalSince(pending.queuedAt) < traktScrobbleMinimumInterval,
+                       abs(pending.progress - progress) <= traktScrobbleProgressWindow {
+                        return false
+                    }
+                }
+
+                if let stamp = traktScrobbleLastStampByKey[key],
+                   stamp.action == action,
+                   now.timeIntervalSince(stamp.sentAt) < traktScrobbleMinimumInterval,
+                   abs(stamp.progress - progress) <= traktScrobbleProgressWindow {
+                    return false
+                }
+
+                if action != .start,
+                   let lastAction = traktScrobbleLastActionByKey[key],
+                   lastAction == action,
+                   let stamp = traktScrobbleLastStampByKey[key],
+                   abs(stamp.progress - progress) <= traktScrobbleProgressWindow {
+                    return false
+                }
+            }
+
+            traktScrobblePendingByKey[key] = (action, progress, now)
+            return true
+        }
+    }
+
+    private func resetTraktScrobbleState() {
+        traktScrobbleQueue.sync {
+            traktScrobbleLastActionByKey.removeAll()
+            traktScrobbleLastStampByKey.removeAll()
+            traktScrobblePendingByKey.removeAll()
+        }
+    }
+
+    private func finishTraktScrobble(
+        action: TraktScrobbleAction,
+        key: String,
+        progress: Double,
+        sent: Bool
+    ) {
+        let now = Date()
+        traktScrobbleQueue.sync {
+            if let pending = traktScrobblePendingByKey[key],
+               pending.action == action,
+               abs(pending.progress - progress) <= 0.1 {
+                traktScrobblePendingByKey.removeValue(forKey: key)
+            }
+            if sent {
+                traktScrobbleLastActionByKey[key] = action
+                traktScrobbleLastStampByKey[key] = (action, progress, now)
+            }
+        }
+    }
+
+    private func sendTraktScrobble(
+        action: TraktScrobbleAction,
+        account: TrackerAccount,
+        mediaInfo: MediaInfo,
+        progress: Double,
+        playbackContext: EpisodePlaybackContext?
+    ) async -> Bool {
+        do {
+            let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+            let payload: [String: Any]
+
+            switch mediaInfo {
+            case .movie(let movieId, let title, _, _):
+                guard let traktId = await getTraktIdFromTmdbId(movieId, mediaType: .movie) else {
+                    Logger.shared.log("Skipping Trakt scrobble \(action.rawValue); no Trakt movie ID for TMDB \(movieId)", type: "Tracker")
+                    return false
+                }
+                var moviePayload: [String: Any] = ["ids": ["trakt": traktId]]
+                if !title.isEmpty {
+                    moviePayload["title"] = title
+                }
+                payload = [
+                    "progress": progress,
+                    "movie": moviePayload
+                ]
+
+            case .episode(let showId, let seasonNumber, let episodeNumber, _, _, _):
+                guard let resolved = resolvedTraktEpisodeNumbers(
+                    seasonNumber: seasonNumber,
+                    episodeNumber: episodeNumber,
+                    playbackContext: playbackContext
+                ) else { return false }
+                guard let traktId = await getTraktIdFromTmdbId(showId, mediaType: .show) else {
+                    Logger.shared.log("Skipping Trakt scrobble \(action.rawValue); no Trakt show ID for TMDB \(showId)", type: "Tracker")
+                    return false
+                }
+                guard let traktEpisodeId = await getTraktEpisodeId(
+                    showTraktId: traktId,
+                    seasonNumber: resolved.season,
+                    episodeNumber: resolved.episode,
+                    account: refreshedAccount
+                ) else { return false }
+                payload = [
+                    "progress": progress,
+                    "episode": ["ids": ["trakt": traktEpisodeId]]
+                ]
+            }
+
+            _ = try await postTraktJSON(
+                path: "scrobble/\(action.rawValue)",
+                account: refreshedAccount,
+                payload: payload,
+                additionalAcceptedStatusCodes: [409],
+                maxRetries: action == .stop ? 3 : 2
+            )
+
+            if action != .start {
+                invalidateTraktContinueWatchingCache()
+            }
+            Logger.shared.log("Trakt scrobble \(action.rawValue) sent at \(Int(progress.rounded()))%", type: "Tracker")
+            return true
+        } catch {
+            Logger.shared.log("Failed Trakt scrobble \(action.rawValue): \(error.localizedDescription)", type: "Error")
+            return false
+        }
     }
 
     private func syncToTrakt(account: TrackerAccount, showId: Int, seasonNumber: Int, episodeNumber: Int, progress: Double) async {
@@ -2256,11 +2524,20 @@ final class TrackerManager: NSObject, ObservableObject {
         }
     }
 
-    private func normalizedTraktScrobbleProgress(_ progress: Double) -> Int {
-        Int(min(max(progress.rounded(), 0), 100))
+    private func normalizedTraktScrobbleProgress(_ progress: Double) -> Double {
+        let percent = progress <= 1.0 ? progress * 100.0 : progress
+        let clamped = min(max(percent, 0), 100)
+        return (clamped * 10).rounded() / 10
     }
 
-    private func postTraktJSON(path: String, account: TrackerAccount, payload: [String: Any], allowsRefreshRetry: Bool = true) async throws -> Data {
+    private func postTraktJSON(
+        path: String,
+        account: TrackerAccount,
+        payload: [String: Any],
+        allowsRefreshRetry: Bool = true,
+        additionalAcceptedStatusCodes: Set<Int> = [],
+        maxRetries: Int = 2
+    ) async throws -> Data {
         guard !traktClientId.isEmpty else {
             throw NSError(domain: "Trakt", code: -1, userInfo: [NSLocalizedDescriptionKey: "TRAKT_CLIENT_ID is not configured."])
         }
@@ -2268,19 +2545,32 @@ final class TrackerManager: NSObject, ObservableObject {
         let url = URL(string: "https://api.trakt.tv/\(path)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
         request.setValue("Bearer \(account.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("2", forHTTPHeaderField: "trakt-api-version")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        let (data, response) = try await sendTrackerRequest(
+            request,
+            provider: .trakt,
+            maxRetries: maxRetries,
+            reportRateLimitStatus: false
+        )
+        let statusCode = response.statusCode
         if statusCode == 401, allowsRefreshRetry {
             let refreshedAccount = try await refreshedTraktAccountIfNeeded(account, force: true)
-            return try await postTraktJSON(path: path, account: refreshedAccount, payload: payload, allowsRefreshRetry: false)
+            return try await postTraktJSON(
+                path: path,
+                account: refreshedAccount,
+                payload: payload,
+                allowsRefreshRetry: false,
+                additionalAcceptedStatusCodes: additionalAcceptedStatusCodes,
+                maxRetries: maxRetries
+            )
         }
-        guard (200...299).contains(statusCode) else {
+        guard (200...299).contains(statusCode) || additionalAcceptedStatusCodes.contains(statusCode) else {
             let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
             throw NSError(domain: "Trakt", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Trakt \(path) returned status \(statusCode): \(bodyPreview)"])
         }
@@ -2301,13 +2591,14 @@ final class TrackerManager: NSObject, ObservableObject {
 
             let url = URL(string: "https://api.trakt.tv/search/tmdb/\(tmdbId)?type=\(mediaType.rawValue)")!
             var request = URLRequest(url: url)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
             request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
             request.setValue("2", forHTTPHeaderField: "trakt-api-version")
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+            let (data, response) = try await sendTrackerRequest(request, provider: .trakt, reportRateLimitStatus: false)
+            if response.statusCode != 200 {
                 let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-                Logger.shared.log("Trakt tmdb lookup failed (HTTP \(status)): \(bodyPreview)", type: "Tracker")
+                Logger.shared.log("Trakt tmdb lookup failed (HTTP \(response.statusCode)): \(bodyPreview)", type: "Tracker")
                 return nil
             }
 

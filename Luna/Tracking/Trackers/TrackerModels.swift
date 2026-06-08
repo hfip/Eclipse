@@ -67,6 +67,7 @@ struct TrackerState: Codable {
     var syncEnabled: Bool = true
     var autoSyncRatings: Bool = false
     var mergeTraktContinueWatching: Bool = false
+    var liveTraktScrobbling: Bool = true
     var lastSyncDate: Date?
 
     enum CodingKeys: String, CodingKey {
@@ -74,6 +75,7 @@ struct TrackerState: Codable {
         case syncEnabled
         case autoSyncRatings
         case mergeTraktContinueWatching
+        case liveTraktScrobbling
         case lastSyncDate
     }
 
@@ -85,6 +87,7 @@ struct TrackerState: Codable {
         syncEnabled = try container.decodeIfPresent(Bool.self, forKey: .syncEnabled) ?? true
         autoSyncRatings = try container.decodeIfPresent(Bool.self, forKey: .autoSyncRatings) ?? false
         mergeTraktContinueWatching = try container.decodeIfPresent(Bool.self, forKey: .mergeTraktContinueWatching) ?? false
+        liveTraktScrobbling = try container.decodeIfPresent(Bool.self, forKey: .liveTraktScrobbling) ?? true
         lastSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastSyncDate)
     }
 
@@ -105,6 +108,12 @@ struct TrackerState: Codable {
             accounts[index].isConnected = false
         }
     }
+}
+
+enum TraktScrobbleAction: String {
+    case start
+    case pause
+    case stop
 }
 
 // AniList Models

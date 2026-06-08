@@ -703,6 +703,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var brightnessLevel: Float = 1.0
     private let twoFingerSettingKey = "playerTwoFingerTapPlayPauseEnabled"
     private let legacyTwoFingerSettingKey = "mpvTwoFingerTapEnabled"
+    private let centerTapPlayPauseSettingKey = "playerCenterTapPlayPauseEnabled"
     private let doubleTapSeekEnabledKey = "vlcDoubleTapSeekEnabled"
     private let playerSeekSecondsKey = "vlcDoubleTapSeekSeconds"
     
@@ -1289,6 +1290,60 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             DispatchQueue.main.async(execute: apply)
         }
         logSharedPlayerControl("idle timer disabled=\(disabled) reason=\(reason)")
+    }
+
+    private func currentTraktProgressFraction() -> Double? {
+        guard let mediaInfo,
+              cachedPosition.isFinite,
+              cachedDuration.isFinite,
+              cachedDuration >= 5,
+              cachedPosition >= 0,
+              cachedPosition <= cachedDuration + 2 else {
+            return nil
+        }
+        switch mediaInfo {
+        case .movie, .episode:
+            return min(max(cachedPosition / cachedDuration, 0), 1)
+        }
+    }
+
+    private func playbackContextForTraktScrobble(_ info: MediaInfo) -> EpisodePlaybackContext? {
+        guard case .episode(_, _, let episodeNumber, _, _, _) = info else {
+            return nil
+        }
+        return episodePlaybackContext?.forEpisodeNumber(episodeNumber)
+    }
+
+    private func sendTraktScrobble(_ action: TraktScrobbleAction, reason: String, force: Bool = false) {
+        guard let info = mediaInfo,
+              let progress = currentTraktProgressFraction() else { return }
+        Logger.shared.log("PlayerViewController: Trakt scrobble \(action.rawValue) queued reason=\(reason) progress=\(Int((progress * 100).rounded()))%", type: "Tracker")
+        TrackerManager.shared.scrobbleTraktPlayback(
+            action,
+            for: info,
+            progress: progress,
+            playbackContext: playbackContextForTraktScrobble(info),
+            force: force
+        )
+    }
+
+    private func updateTraktScrobbleFromProgress(position: Double, duration: Double) {
+        guard !rendererIsPausedState(),
+              playbackDidStart,
+              position.isFinite,
+              duration.isFinite,
+              duration >= 5,
+              position >= 0,
+              position <= duration + 2,
+              let info = mediaInfo else {
+            return
+        }
+        TrackerManager.shared.scrobbleTraktPlayback(
+            .start,
+            for: info,
+            progress: min(max(position / duration, 0), 1),
+            playbackContext: playbackContextForTraktScrobble(info)
+        )
     }
 
     private func rendererSeek(to seconds: Double) {
@@ -2194,6 +2249,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return true
         }
         return UserDefaults.standard.bool(forKey: doubleTapSeekEnabledKey)
+    }
+    private var isCenterTapPlayPauseEnabled: Bool {
+        if UserDefaults.standard.object(forKey: centerTapPlayPauseSettingKey) == nil {
+            UserDefaults.standard.set(true, forKey: centerTapPlayPauseSettingKey)
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: centerTapPlayPauseSettingKey)
     }
     private var playerSeekSeconds: Double {
         let savedSeconds = UserDefaults.standard.double(forKey: playerSeekSecondsKey)
@@ -3250,7 +3312,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
         }
         
-        let tap = UITapGestureRecognizer(target: self, action: #selector(containerTapped))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(containerTapped(_:)))
         tap.delegate = self
         tap.cancelsTouchesInView = false
         tap.delaysTouchesBegan = false
@@ -5231,10 +5293,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        if nextEpisodePreviewTask != nil {
-            return
-        }
-
         if nextEpisodePreviewUnavailableKeys.contains(nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber)) {
             hideNextEpisodeButton()
             return
@@ -7172,8 +7230,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let host = UIHostingController(rootView: AnyView(ProgressHostView(model: progressModel, onEditingChanged: { [weak self] editing in
             guard let self = self else { return }
             self.isSeeking = editing
+            self.controlsHideWorkItem?.cancel()
             if !editing {
                 self.rendererSeek(to: max(0, self.progressModel.position))
+                self.showControlsTemporarily()
             }
         })))
 
@@ -7351,8 +7411,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         dismiss(animated: true, completion: nil)
     }
     
-    @objc private func containerTapped() {
+    @objc private func containerTapped(_ gesture: UITapGestureRecognizer) {
         pendingContainerTapWorkItem?.cancel()
+        if isCenterTapPlayPauseEnabled, isCentralPlaybackTap(gesture) {
+            togglePlaybackFromVideoTap()
+            return
+        }
+
         guard !isMPVRenderer, isDoubleTapSeekEnabled else {
             performContainerTapToggle()
             return
@@ -7371,6 +7436,26 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             hideControls()
         } else {
             showControlsTemporarily()
+        }
+    }
+
+    private func isCentralPlaybackTap(_ gesture: UITapGestureRecognizer) -> Bool {
+        guard gesture.state == .ended else { return false }
+        let bounds = videoContainer.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return false }
+        let centralRect = bounds.insetBy(dx: bounds.width * 0.30, dy: bounds.height * 0.28)
+        return centralRect.contains(gesture.location(in: videoContainer))
+    }
+
+    private func togglePlaybackFromVideoTap() {
+        logSharedPlayerControl("central video tap toggled playback paused=\(rendererIsPausedState())")
+        if rendererIsPausedState() {
+            markBackgroundRecoveryForegrounded(source: "central-video-tap")
+            rendererPlay()
+            updatePlayPauseButton(isPaused: false, shouldShowControls: false)
+        } else {
+            rendererPausePlayback()
+            updatePlayPauseButton(isPaused: true, shouldShowControls: false)
         }
     }
 
@@ -7955,6 +8040,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 isAnime: isAnime || episodePlaybackContext?.hasAnimeMediaId == true
             )
         }
+        updateTraktScrobbleFromProgress(position: persistPosition, duration: effectiveDuration)
     }
 
     private func logVLCUIProgressIfNeeded(rawPosition: Double, rawDuration: Double, safePosition: Double, effectiveDuration: Double, durationIsReliable: Bool, waitingForInitialResume: Bool) {
@@ -8075,6 +8161,15 @@ struct PlayerEpisodeBrowserItem: Identifiable {
 
 @MainActor
 final class PlayerEpisodeBrowserViewModel: ObservableObject {
+    private struct CachedEpisodeBrowserLoad {
+        let seasons: [PlayerEpisodeBrowserSeason]
+        let currentItemID: String?
+        let storedAt: Date
+    }
+
+    private static var loadCache: [String: CachedEpisodeBrowserLoad] = [:]
+    private static let loadCacheTTL: TimeInterval = 10 * 60
+
     @Published var seasons: [PlayerEpisodeBrowserSeason] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -8111,6 +8206,16 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
 
     private func load() async {
         didLoad = true
+        let cacheKey = Self.cacheKey(for: seed)
+        if let cached = Self.cachedLoad(for: cacheKey) {
+            seasons = cached.seasons
+            currentItemID = cached.currentItemID
+            isLoading = false
+            errorMessage = nil
+            Logger.shared.log("Player episode browser cache hit key=\(cacheKey) seasons=\(cached.seasons.count)", type: "Player")
+            return
+        }
+
         isLoading = true
         errorMessage = nil
         seasons = []
@@ -8234,10 +8339,36 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
                 currentItemID = current.id
             }
             seasons = loaded
+            Self.storeLoad(seasons: loaded, currentItemID: currentItemID, for: cacheKey)
             isLoading = false
         } catch {
             isLoading = false
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private static func cacheKey(for seed: PlayerEpisodeBrowserSeed) -> String {
+        let contextKey = [
+            seed.currentPlaybackContext?.anilistMediaId.map(String.init) ?? "nil",
+            seed.currentPlaybackContext?.kitsuMediaId.map(String.init) ?? "nil",
+            seed.currentPlaybackContext?.isSpecial == true ? "special" : "regular"
+        ].joined(separator: ":")
+        return "\(seed.showId)|S\(seed.currentSeasonNumber)|E\(seed.currentEpisodeNumber)|anime=\(seed.isAnime)|\(contextKey)"
+    }
+
+    private static func cachedLoad(for key: String) -> CachedEpisodeBrowserLoad? {
+        let now = Date()
+        loadCache = loadCache.filter { now.timeIntervalSince($0.value.storedAt) < loadCacheTTL }
+        return loadCache[key]
+    }
+
+    private static func storeLoad(seasons: [PlayerEpisodeBrowserSeason], currentItemID: String?, for key: String) {
+        loadCache[key] = CachedEpisodeBrowserLoad(seasons: seasons, currentItemID: currentItemID, storedAt: Date())
+        if loadCache.count > 12 {
+            let sortedKeys = loadCache.sorted { $0.value.storedAt < $1.value.storedAt }.map(\.key)
+            for key in sortedKeys.prefix(loadCache.count - 12) {
+                loadCache[key] = nil
+            }
         }
     }
 
@@ -8886,6 +9017,9 @@ extension PlayerViewController: MPVNativeRendererDelegate {
         if !isPaused {
             markPlaybackStarted(reason: "playing")
             rendererResumeForegroundRendering(reason: "mpv-unpause")
+            sendTraktScrobble(.start, reason: "mpv-unpause")
+        } else {
+            sendTraktScrobble(.pause, reason: "mpv-pause")
         }
         refreshIdleTimerForPlayback(reason: "mpv-pause-changed")
         if isRendererLoading && !isPaused {
@@ -9005,6 +9139,9 @@ extension PlayerViewController: VLCRendererDelegate {
 
         if !isPaused {
             markPlaybackStarted(reason: "playing")
+            sendTraktScrobble(.start, reason: "vlc-unpause")
+        } else {
+            sendTraktScrobble(.pause, reason: "vlc-pause")
         }
         refreshIdleTimerForPlayback(reason: "vlc-pause-changed")
         if isRendererLoading && !isPaused {

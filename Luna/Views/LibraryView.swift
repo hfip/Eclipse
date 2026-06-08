@@ -82,8 +82,8 @@ struct LibraryView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         // Show oldest bookmarks first so order is predictable
-                        ForEach(Array(bookmarksCollection.items.sorted(by: { $0.dateAdded < $1.dateAdded }).enumerated()), id: \.offset) { index, item in
-                            let heroID = "library-bookmark-\(index)-\(item.searchResult.stableIdentity)"
+                        ForEach(bookmarksCollection.items.sorted(by: { $0.dateAdded < $1.dateAdded }), id: \.searchResult.stableIdentity) { item in
+                            let heroID = "library-bookmark-\(item.searchResult.stableIdentity)"
                             NavigationLink(destination: MediaDetailView(searchResult: item.searchResult)
                                 .heroDestination(id: heroID, namespace: heroNamespace)
                             ) {

@@ -186,6 +186,11 @@ class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {
             if player.timeControlStatus == .playing {
                 DispatchQueue.main.async {
                     self?.markPlaybackStarted()
+                    self?.sendTraktScrobble(.start, reason: "avplayer-playing")
+                }
+            } else if player.timeControlStatus == .paused {
+                DispatchQueue.main.async {
+                    self?.sendTraktScrobble(.pause, reason: "avplayer-paused")
                 }
             }
         }
@@ -219,6 +224,41 @@ class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {
         if let context = playbackLaunchContext {
             SourceHealthStore.shared.recordPlaybackSuccess(sourceId: context.sourceId, sourceName: context.sourceName)
         }
+    }
+
+    private func currentTraktProgressFraction() -> Double? {
+        guard let player,
+              let currentItem = player.currentItem else { return nil }
+        let currentTime = player.currentTime().seconds
+        let duration = currentItem.duration.seconds
+        guard currentTime.isFinite,
+              duration.isFinite,
+              duration >= 5,
+              currentTime >= 0,
+              currentTime <= duration + 2 else {
+            return nil
+        }
+        return min(max(currentTime / duration, 0), 1)
+    }
+
+    private func playbackContextForTraktScrobble(_ info: MediaInfo) -> EpisodePlaybackContext? {
+        guard case .episode(_, _, let episodeNumber, _, _, _) = info else {
+            return nil
+        }
+        return episodePlaybackContext?.forEpisodeNumber(episodeNumber)
+    }
+
+    private func sendTraktScrobble(_ action: TraktScrobbleAction, reason: String, force: Bool = false) {
+        guard let info = mediaInfo,
+              let progress = currentTraktProgressFraction() else { return }
+        Logger.shared.log("NormalPlayer: Trakt scrobble \(action.rawValue) queued reason=\(reason) progress=\(Int((progress * 100).rounded()))%", type: "Tracker")
+        TrackerManager.shared.scrobbleTraktPlayback(
+            action,
+            for: info,
+            progress: progress,
+            playbackContext: playbackContextForTraktScrobble(info),
+            force: force
+        )
     }
 
     private func runPlaybackStartupProbe(url: URL, headers: [String: String]) {

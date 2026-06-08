@@ -111,6 +111,15 @@ struct TrackersSettingsView: View {
                     )
 
                     if trackerManager.trackerState.getAccount(for: .trakt) != nil {
+                        Toggle("Live Trakt Scrobbling", isOn: Binding(
+                            get: { trackerManager.trackerState.liveTraktScrobbling },
+                            set: { trackerManager.setLiveTraktScrobbling($0) }
+                        ))
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(12)
+
                         Toggle("Merge Trakt Continue Watching", isOn: Binding(
                             get: { trackerManager.trackerState.mergeTraktContinueWatching },
                             set: { trackerManager.setMergeTraktContinueWatching($0) }

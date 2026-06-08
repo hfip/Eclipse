@@ -892,8 +892,16 @@ final class ProgressManager: ObservableObject {
             switch mediaInfo {
             case .movie(let id, let title, let posterURL, _):
                 self.updateMovieProgress(movieId: id, title: title, currentTime: currentTime, totalDuration: duration, posterURL: posterURL)
+                if player.timeControlStatus == .playing {
+                    TrackerManager.shared.scrobbleTraktPlayback(
+                        .start,
+                        for: mediaInfo,
+                        progress: currentTime / duration
+                    )
+                }
 
             case .episode(let showId, let seasonNumber, let episodeNumber, let showTitle, let showPosterURL, let isAnime):
+                let resolvedPlaybackContext = playbackContext?.forEpisodeNumber(episodeNumber)
                 self.updateEpisodeProgress(
                     showId: showId,
                     seasonNumber: seasonNumber,
@@ -902,9 +910,17 @@ final class ProgressManager: ObservableObject {
                     totalDuration: duration,
                     showTitle: showTitle,
                     showPosterURL: showPosterURL,
-                    playbackContext: playbackContext?.forEpisodeNumber(episodeNumber),
+                    playbackContext: resolvedPlaybackContext,
                     isAnime: isAnime || playbackContext?.hasAnimeMediaId == true
                 )
+                if player.timeControlStatus == .playing {
+                    TrackerManager.shared.scrobbleTraktPlayback(
+                        .start,
+                        for: mediaInfo,
+                        progress: currentTime / duration,
+                        playbackContext: resolvedPlaybackContext
+                    )
+                }
             }
         }
     }

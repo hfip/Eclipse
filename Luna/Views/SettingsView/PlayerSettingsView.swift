@@ -138,6 +138,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(playerTwoFingerTapPlayPauseEnabled, forKey: "playerTwoFingerTapPlayPauseEnabled") }
     }
 
+    @Published var playerCenterTapPlayPauseEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerCenterTapPlayPauseEnabled, forKey: "playerCenterTapPlayPauseEnabled") }
+    }
+
     @Published var vlcDoubleTapSeekEnabled: Bool {
         didSet { UserDefaults.standard.set(vlcDoubleTapSeekEnabled, forKey: "vlcDoubleTapSeekEnabled") }
     }
@@ -241,6 +245,13 @@ final class PlayerSettingsStore: ObservableObject {
             }
         } else {
             self.playerTwoFingerTapPlayPauseEnabled = UserDefaults.standard.bool(forKey: "playerTwoFingerTapPlayPauseEnabled")
+        }
+
+        if UserDefaults.standard.object(forKey: "playerCenterTapPlayPauseEnabled") == nil {
+            UserDefaults.standard.set(true, forKey: "playerCenterTapPlayPauseEnabled")
+            self.playerCenterTapPlayPauseEnabled = true
+        } else {
+            self.playerCenterTapPlayPauseEnabled = UserDefaults.standard.bool(forKey: "playerCenterTapPlayPauseEnabled")
         }
 
         if UserDefaults.standard.object(forKey: "vlcDoubleTapSeekEnabled") == nil {
@@ -720,6 +731,12 @@ struct PlayerSettingsView: View {
                             title: "Two-Finger Play/Pause",
                             detail: "Toggle play and pause with a two-finger tap.",
                             binding: $store.playerTwoFingerTapPlayPauseEnabled
+                        )
+
+                        settingsToggleRow(
+                            title: "Center-Tap Play/Pause",
+                            detail: "Tap the center of the video to play or pause without opening controls.",
+                            binding: $store.playerCenterTapPlayPauseEnabled
                         )
 
                         settingsToggleRow(
