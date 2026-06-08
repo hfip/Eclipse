@@ -20,6 +20,13 @@ struct MangaProgress: Codable {
     var coverURL: String?
     var format: String?
     var totalChapters: Int?
+    var latestChapterNumbers: [String]?
+    var lastSourceRefresh: Date?
+    var sourceRefreshError: String?
+    var trackerAniListId: Int?
+    var trackerMALId: Int?
+    var trackerMatchConfidence: Double?
+    var trackerResolvedAt: Date?
     // Module routing (for module-search sourced content)
     var moduleUUID: String?
     var contentParams: String?
@@ -78,7 +85,7 @@ final class MangaReadingProgressManager: ObservableObject {
     // MARK: - Mutations
 
     /// Mark a chapter as read and optionally sync to AniList.
-    func markChapterRead(mangaId: Int, chapterNumber: String, mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil, route: MangaContentRoute? = nil) {
+    func markChapterRead(mangaId: Int, chapterNumber: String, mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil, route: MangaContentRoute? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
 
         guard !progress.readChapterNumbers.contains(chapterNumber) else {
@@ -88,9 +95,12 @@ final class MangaReadingProgressManager: ObservableObject {
             if let c = coverURL, progress.coverURL != c { progress.coverURL = c; changed = true }
             if let f = format, progress.format != f { progress.format = f; changed = true }
             if let tc = totalChapters, progress.totalChapters != tc { progress.totalChapters = tc; changed = true }
+            if let latestChapterNumbers, progress.latestChapterNumbers != latestChapterNumbers { progress.latestChapterNumbers = latestChapterNumbers; changed = true }
             if let m = moduleUUID, progress.moduleUUID != m { progress.moduleUUID = m; changed = true }
             if let cp = contentParams, progress.contentParams != cp { progress.contentParams = cp; changed = true }
             if let n = isNovel, progress.isNovel != n { progress.isNovel = n; changed = true }
+            if let trackerAniListId, progress.trackerAniListId != trackerAniListId { progress.trackerAniListId = trackerAniListId; changed = true }
+            if let trackerMALId, progress.trackerMALId != trackerMALId { progress.trackerMALId = trackerMALId; changed = true }
             if let route, progress.route != route {
                 applyRoute(route, to: &progress)
                 changed = true
@@ -106,16 +116,24 @@ final class MangaReadingProgressManager: ObservableObject {
         if let c = coverURL { progress.coverURL = c }
         if let f = format { progress.format = f }
         if let tc = totalChapters { progress.totalChapters = tc }
+        if let latestChapterNumbers { progress.latestChapterNumbers = latestChapterNumbers }
         if let m = moduleUUID { progress.moduleUUID = m }
         if let cp = contentParams { progress.contentParams = cp }
         if let n = isNovel { progress.isNovel = n }
+        if let trackerAniListId { progress.trackerAniListId = trackerAniListId }
+        if let trackerMALId { progress.trackerMALId = trackerMALId }
         applyRoute(route, to: &progress)
         progressMap[mangaId] = progress
         save()
 
-        // Sync to AniList if connected; extract numeric chapter for the API.
-        if mangaId > 0, let numericChapter = extractChapterNumber(from: chapterNumber) {
-            TrackerManager.shared.syncMangaProgress(aniListId: mangaId, chapterNumber: numericChapter)
+        if let numericChapter = extractChapterNumber(from: chapterNumber) {
+            syncTrackerProgress(
+                mangaId: mangaId,
+                progress: progress,
+                chapterNumber: numericChapter,
+                explicitTitle: mangaTitle,
+                explicitTotalChapters: totalChapters
+            )
         }
     }
 
@@ -128,7 +146,7 @@ final class MangaReadingProgressManager: ObservableObject {
     }
 
     /// Mark multiple chapters as read and sync the highest chapter to AniList.
-    func markAllRead(mangaId: Int, chapterNumbers: [String]) {
+    func markAllRead(mangaId: Int, chapterNumbers: [String], mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil, route: MangaContentRoute? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
         for ch in chapterNumbers {
             progress.readChapterNumbers.insert(ch)
@@ -137,14 +155,44 @@ final class MangaReadingProgressManager: ObservableObject {
             progress.lastReadChapter = last
             progress.lastReadDate = Date()
         }
+        if let mangaTitle { progress.title = mangaTitle }
+        if let coverURL { progress.coverURL = coverURL }
+        if let format { progress.format = format }
+        if let totalChapters { progress.totalChapters = totalChapters }
+        if let latestChapterNumbers { progress.latestChapterNumbers = latestChapterNumbers }
+        if let moduleUUID { progress.moduleUUID = moduleUUID }
+        if let contentParams { progress.contentParams = contentParams }
+        if let isNovel { progress.isNovel = isNovel }
+        if let trackerAniListId { progress.trackerAniListId = trackerAniListId }
+        if let trackerMALId { progress.trackerMALId = trackerMALId }
+        applyRoute(route, to: &progress)
         progressMap[mangaId] = progress
         save()
 
-        // Sync highest chapter number to AniList
         let highest = chapterNumbers.compactMap { extractChapterNumber(from: $0) }.max()
-        if mangaId > 0, let highest = highest {
-            TrackerManager.shared.syncMangaProgress(aniListId: mangaId, chapterNumber: highest)
+        if let highest = highest {
+            syncTrackerProgress(
+                mangaId: mangaId,
+                progress: progress,
+                chapterNumber: highest,
+                explicitTitle: mangaTitle,
+                explicitTotalChapters: totalChapters
+            )
         }
+    }
+
+    func updateSourceMetadata(mangaId: Int, title: String? = nil, coverURL: String? = nil, format: String? = nil, latestChapterNumbers: [String], route: MangaContentRoute? = nil, sourceRefreshError: String? = nil) {
+        var progress = progressMap[mangaId] ?? MangaProgress()
+        if let title { progress.title = title }
+        if let coverURL { progress.coverURL = coverURL }
+        if let format { progress.format = format }
+        progress.latestChapterNumbers = latestChapterNumbers
+        progress.totalChapters = latestChapterNumbers.count
+        progress.lastSourceRefresh = Date()
+        progress.sourceRefreshError = sourceRefreshError
+        applyRoute(route, to: &progress)
+        progressMap[mangaId] = progress
+        save()
     }
 
     /// Import chapters without syncing back to trackers. Existing local reads are only advanced.
@@ -228,5 +276,35 @@ final class MangaReadingProgressManager: ObservableObject {
             progress.contentParams = contentParams
             progress.isNovel = isNovel
         }
+    }
+
+    private func syncTrackerProgress(mangaId: Int, progress: MangaProgress, chapterNumber: Int, explicitTitle: String?, explicitTotalChapters: Int?) {
+        if mangaId > 0 {
+            TrackerManager.shared.syncMangaProgress(
+                aniListId: mangaId,
+                malId: progress.trackerMALId,
+                title: explicitTitle ?? progress.title,
+                chapterNumber: chapterNumber,
+                totalChapters: explicitTotalChapters ?? progress.totalChapters ?? progress.latestChapterNumbers?.count,
+                format: progress.format,
+                routeKey: progress.route?.stableKey
+            )
+            return
+        }
+
+        guard let title = explicitTitle ?? progress.title else {
+            ReaderLogger.shared.log("Skipping tracker sync for generated manga id \(mangaId): missing title", type: "Tracker")
+            return
+        }
+
+        TrackerManager.shared.syncMangaProgress(
+            title: title,
+            chapterNumber: chapterNumber,
+            totalChapters: explicitTotalChapters ?? progress.totalChapters ?? progress.latestChapterNumbers?.count,
+            format: progress.format,
+            routeKey: progress.route?.stableKey,
+            knownAniListId: progress.trackerAniListId,
+            knownMALId: progress.trackerMALId
+        )
     }
 }

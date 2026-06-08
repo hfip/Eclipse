@@ -48,8 +48,21 @@ struct contentView: View {
             contentId: params,
             title: title,
             coverURL: imageURL,
-            isNovel: parentModule?.moduleData.novel == true
+            isNovel: parentModule?.moduleData.novel == true,
+            sourceName: parentModule?.moduleData.sourceName,
+            latestChapterNumbers: currentChapterNumbers
         )
+    }
+
+    private var currentChapterNumbers: [String]? {
+        chapterNumbers(from: contentChapters)
+    }
+
+    private func chapterNumbers(from groups: [Chapters]?) -> [String]? {
+        groups?
+            .max(by: { $0.chapters.count < $1.chapters.count })?
+            .chapters
+            .map(\.chapterNumber)
     }
 
     private var contentRoute: MangaContentRoute? {
@@ -118,6 +131,9 @@ struct contentView: View {
                     chapterNumber: chapter.chapterNumber,
                     mangaTitle: title,
                     coverURL: imageURL,
+                    format: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                    totalChapters: currentChapterNumbers?.count,
+                    latestChapterNumbers: currentChapterNumbers,
                     moduleUUID: parentModule?.id.uuidString,
                     contentParams: params,
                     isNovel: parentModule?.moduleData.novel == true,
@@ -135,7 +151,10 @@ struct contentView: View {
                         mangaId: stableId,
                         mangaTitle: title,
                         mangaCoverURL: imageURL,
-                        mangaRoute: contentRoute
+                        mangaRoute: contentRoute,
+                        mangaFormat: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                        totalChapters: currentChapterNumbers?.count,
+                        latestChapterNumbers: currentChapterNumbers
                     )
                 } else {
                     readerManagerView(
@@ -215,6 +234,19 @@ struct contentView: View {
                     }
 
                     self.contentChapters = temp
+                    if !temp.isEmpty {
+                        let latestNumbers = chapterNumbers(from: temp) ?? []
+                        libraryManager.updateSavedItem(libraryItem)
+                        progressManager.updateSourceMetadata(
+                            mangaId: stableId,
+                            title: title,
+                            coverURL: imageURL,
+                            format: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                            latestChapterNumbers: latestNumbers,
+                            route: contentRoute,
+                            sourceRefreshError: nil
+                        )
+                    }
                 }
                 self.loadingState = false
             }
@@ -436,7 +468,19 @@ struct contentView: View {
                             }
                         } else {
                             Button {
-                                progressManager.markChapterRead(mangaId: stableId, chapterNumber: chapter.chapterNumber, mangaTitle: title, coverURL: imageURL, moduleUUID: parentModule?.id.uuidString, contentParams: params, isNovel: parentModule?.moduleData.novel == true, route: contentRoute)
+                                progressManager.markChapterRead(
+                                    mangaId: stableId,
+                                    chapterNumber: chapter.chapterNumber,
+                                    mangaTitle: title,
+                                    coverURL: imageURL,
+                                    format: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                                    totalChapters: currentChapterNumbers?.count,
+                                    latestChapterNumbers: currentChapterNumbers,
+                                    moduleUUID: parentModule?.id.uuidString,
+                                    contentParams: params,
+                                    isNovel: parentModule?.moduleData.novel == true,
+                                    route: contentRoute
+                                )
                             } label: {
                                 Label("Mark as Read", systemImage: "eye")
                             }
@@ -448,7 +492,19 @@ struct contentView: View {
                             let allNums = selected.chapters.map { $0.chapterNumber }
                             if let idx = allNums.firstIndex(of: chapter.chapterNumber) {
                                 let toMark = Array(allNums[...idx])
-                                progressManager.markAllRead(mangaId: stableId, chapterNumbers: toMark)
+                                progressManager.markAllRead(
+                                    mangaId: stableId,
+                                    chapterNumbers: toMark,
+                                    mangaTitle: title,
+                                    coverURL: imageURL,
+                                    format: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                                    totalChapters: currentChapterNumbers?.count,
+                                    latestChapterNumbers: currentChapterNumbers,
+                                    moduleUUID: parentModule?.id.uuidString,
+                                    contentParams: params,
+                                    isNovel: parentModule?.moduleData.novel == true,
+                                    route: contentRoute
+                                )
                             }
                         } label: {
                             Label("Mark This & Previous as Read", systemImage: "checkmark.circle")
@@ -456,7 +512,19 @@ struct contentView: View {
 
                         Button {
                             let allNums = selected.chapters.map { $0.chapterNumber }
-                            progressManager.markAllRead(mangaId: stableId, chapterNumbers: allNums)
+                            progressManager.markAllRead(
+                                mangaId: stableId,
+                                chapterNumbers: allNums,
+                                mangaTitle: title,
+                                coverURL: imageURL,
+                                format: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                                totalChapters: currentChapterNumbers?.count,
+                                latestChapterNumbers: currentChapterNumbers,
+                                moduleUUID: parentModule?.id.uuidString,
+                                contentParams: params,
+                                isNovel: parentModule?.moduleData.novel == true,
+                                route: contentRoute
+                            )
                         } label: {
                             Label("Mark All as Read", systemImage: "checkmark.circle.fill")
                         }

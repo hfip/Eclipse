@@ -15,7 +15,6 @@ struct MangaDetailView: View {
     @StateObject private var sourceFinder = MangaSourceFinder()
     @ObservedObject private var libraryManager = MangaLibraryManager.shared
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
-    @AppStorage("kanzenAutoMode") private var autoModeEnabled: Bool = false
 
     /// Full manga detail fetched from AniList (populated on appear if initial data is sparse)
     @State private var manga: AniListManga
@@ -44,13 +43,84 @@ struct MangaDetailView: View {
     private let coverWidth: CGFloat = isIPad ? 150 * iPadScaleSmall : 150
 
     private var libraryItem: MangaLibraryItem {
+        if let selectedSource {
+            return MangaLibraryItem.fromModule(
+                moduleId: selectedSource.module.id,
+                contentId: selectedSource.manga.mangaId,
+                title: selectedSource.manga.title.isEmpty ? manga.displayTitle : selectedSource.manga.title,
+                coverURL: selectedSource.manga.imageURL.isEmpty ? manga.coverURL : selectedSource.manga.imageURL,
+                isNovel: selectedSource.module.moduleData.novel == true,
+                sourceName: selectedSource.module.moduleData.sourceName,
+                latestChapterNumbers: currentChapterNumbers
+            )
+        }
+
         MangaLibraryItem(
             aniListId: manga.id,
             title: manga.displayTitle,
             coverURL: manga.coverURL,
             format: manga.format,
-            totalChapters: manga.chapters
+            totalChapters: manga.chapters,
+            latestChapterNumbers: currentChapterNumbers
         )
+    }
+
+    private var currentChapterNumbers: [String]? {
+        chapterNumbers(from: loadedChapters)
+    }
+
+    private var selectedContentRoute: MangaContentRoute? {
+        guard let selectedSource else { return nil }
+        return .legacyModule(
+            moduleUUID: selectedSource.module.id.uuidString,
+            contentParams: selectedSource.manga.mangaId,
+            isNovel: selectedSource.module.moduleData.novel == true
+        )
+    }
+
+    private var progressMangaId: Int {
+        libraryItem.aniListId
+    }
+
+    private var knownTrackerAniListId: Int? {
+        selectedSource == nil ? nil : manga.id
+    }
+
+    private func chapterNumbers(from groups: [Chapters]?) -> [String]? {
+        groups?
+            .max(by: { $0.chapters.count < $1.chapters.count })?
+            .chapters
+            .map(\.chapterNumber)
+    }
+
+    private var selectedSourceIsNovel: Bool {
+        selectedSource?.module.moduleData.novel == true
+    }
+
+    private var selectedSourceFormat: String? {
+        selectedSourceIsNovel ? "NOVEL" : manga.format
+    }
+
+    private var selectedSourceChapterTotal: Int? {
+        currentChapterNumbers?.count ?? manga.chapters
+    }
+
+    private var selectedSourceModuleUUID: String? {
+        selectedSource?.module.id.uuidString
+    }
+
+    private var selectedSourceContentParams: String? {
+        selectedSource?.manga.mangaId
+    }
+
+    private var selectedSourceDisplayTitle: String {
+        guard let selectedSource, !selectedSource.manga.title.isEmpty else { return manga.displayTitle }
+        return selectedSource.manga.title
+    }
+
+    private var selectedSourceCoverURL: String? {
+        guard let selectedSource, !selectedSource.manga.imageURL.isEmpty else { return manga.coverURL }
+        return selectedSource.manga.imageURL
     }
 
     var body: some View {
@@ -112,10 +182,18 @@ struct MangaDetailView: View {
             // Mark the chapter that was just read
             if let chapter = selectedChapterData {
                 progressManager.markChapterRead(
-                    mangaId: manga.id,
+                    mangaId: progressMangaId,
                     chapterNumber: chapter.chapterNumber,
-                    mangaTitle: manga.displayTitle,
-                    coverURL: manga.coverURL
+                    mangaTitle: selectedSourceDisplayTitle,
+                    coverURL: selectedSourceCoverURL,
+                    format: selectedSourceFormat,
+                    totalChapters: selectedSourceChapterTotal,
+                    latestChapterNumbers: currentChapterNumbers,
+                    moduleUUID: selectedSourceModuleUUID,
+                    contentParams: selectedSourceContentParams,
+                    isNovel: selectedSourceIsNovel,
+                    route: selectedContentRoute,
+                    trackerAniListId: knownTrackerAniListId
                 )
             }
         }) { chapter in
@@ -126,18 +204,23 @@ struct MangaDetailView: View {
                         kanzen: chapterEngine,
                         chapters: chapterList,
                         initialChapter: chapter,
-                        mangaId: manga.id,
-                        mangaTitle: manga.displayTitle,
-                        mangaCoverURL: manga.coverURL ?? ""
+                        mangaId: progressMangaId,
+                        mangaTitle: selectedSourceDisplayTitle,
+                        mangaCoverURL: selectedSourceCoverURL ?? "",
+                        mangaRoute: selectedContentRoute,
+                        mangaFormat: selectedSourceFormat,
+                        totalChapters: selectedSourceChapterTotal,
+                        latestChapterNumbers: currentChapterNumbers
                     )
                 } else {
                     readerManagerView(
                         chapters: chapterList,
                         selectedChapter: chapter,
                         kanzen: chapterEngine,
-                        mangaId: manga.id,
-                        mangaTitle: manga.displayTitle,
-                        mangaCoverURL: manga.coverURL ?? ""
+                        mangaId: progressMangaId,
+                        mangaTitle: selectedSourceDisplayTitle,
+                        mangaCoverURL: selectedSourceCoverURL ?? "",
+                        mangaRoute: selectedContentRoute
                     )
                 }
             }
@@ -154,18 +237,6 @@ struct MangaDetailView: View {
             // Don't re-search if we already have results or are searching
             guard sourceFinder.matches.isEmpty, !sourceFinder.isSearching, !sourceFinder.hasFinished else { return }
             sourceFinder.searchAllModules(for: manga)
-        }
-        .onChange(of: sourceFinder.hasFinished) { finished in
-            guard finished, autoModeEnabled else { return }
-            sourceFinder.refineTopMatchesWithChapterCounts(for: manga)
-        }
-        .onChange(of: sourceFinder.autoPickedMatch?.id) { _ in
-            guard autoModeEnabled, sourceFinder.hasFinished,
-                  let pick = sourceFinder.autoPickedMatch else { return }
-            // Auto mode: select the best source and load chapters inline
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                selectSource(pick)
-            }
         }
     }
 
@@ -321,14 +392,6 @@ struct MangaDetailView: View {
                 Text("Sources")
                     .font(.headline)
                 Spacer()
-                if autoModeEnabled {
-                    Text("Auto Mode")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.2))
-                        .cornerRadius(4)
-                }
             }
 
             if moduleManager.modules.isEmpty {
@@ -533,7 +596,7 @@ struct MangaDetailView: View {
             Divider().padding(.vertical, 4)
 
             ForEach(displayed) { chapter in
-                let isRead = progressManager.isChapterRead(mangaId: manga.id, chapterNumber: chapter.chapterNumber)
+                let isRead = progressManager.isChapterRead(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber)
                 let chapterTitle = chapter.chapterData?.first?.title ?? ""
 
                 Button {
@@ -591,13 +654,26 @@ struct MangaDetailView: View {
                 .contextMenu {
                     if isRead {
                         Button {
-                            progressManager.markChapterUnread(mangaId: manga.id, chapterNumber: chapter.chapterNumber)
+                            progressManager.markChapterUnread(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber)
                         } label: {
                             Label("Mark as Unread", systemImage: "eye.slash")
                         }
                     } else {
                         Button {
-                            progressManager.markChapterRead(mangaId: manga.id, chapterNumber: chapter.chapterNumber, coverURL: manga.coverURL)
+                            progressManager.markChapterRead(
+                                mangaId: progressMangaId,
+                                chapterNumber: chapter.chapterNumber,
+                                mangaTitle: selectedSourceDisplayTitle,
+                                coverURL: selectedSourceCoverURL,
+                                format: selectedSourceFormat,
+                                totalChapters: selectedSourceChapterTotal,
+                                latestChapterNumbers: currentChapterNumbers,
+                                moduleUUID: selectedSourceModuleUUID,
+                                contentParams: selectedSourceContentParams,
+                                isNovel: selectedSourceIsNovel,
+                                route: selectedContentRoute,
+                                trackerAniListId: knownTrackerAniListId
+                            )
                         } label: {
                             Label("Mark as Read", systemImage: "eye")
                         }
@@ -609,7 +685,20 @@ struct MangaDetailView: View {
                         let allNums = selected.chapters.map { $0.chapterNumber }
                         if let idx = allNums.firstIndex(of: chapter.chapterNumber) {
                             let toMark = Array(allNums[...idx])
-                            progressManager.markAllRead(mangaId: manga.id, chapterNumbers: toMark)
+                            progressManager.markAllRead(
+                                mangaId: progressMangaId,
+                                chapterNumbers: toMark,
+                                mangaTitle: selectedSourceDisplayTitle,
+                                coverURL: selectedSourceCoverURL,
+                                format: selectedSourceFormat,
+                                totalChapters: selectedSourceChapterTotal,
+                                latestChapterNumbers: currentChapterNumbers,
+                                moduleUUID: selectedSourceModuleUUID,
+                                contentParams: selectedSourceContentParams,
+                                isNovel: selectedSourceIsNovel,
+                                route: selectedContentRoute,
+                                trackerAniListId: knownTrackerAniListId
+                            )
                         }
                     } label: {
                         Label("Mark This & Previous as Read", systemImage: "checkmark.circle")
@@ -617,13 +706,26 @@ struct MangaDetailView: View {
 
                     Button {
                         let allNums = selected.chapters.map { $0.chapterNumber }
-                        progressManager.markAllRead(mangaId: manga.id, chapterNumbers: allNums)
+                        progressManager.markAllRead(
+                            mangaId: progressMangaId,
+                            chapterNumbers: allNums,
+                            mangaTitle: selectedSourceDisplayTitle,
+                            coverURL: selectedSourceCoverURL,
+                            format: selectedSourceFormat,
+                            totalChapters: selectedSourceChapterTotal,
+                            latestChapterNumbers: currentChapterNumbers,
+                            moduleUUID: selectedSourceModuleUUID,
+                            contentParams: selectedSourceContentParams,
+                            isNovel: selectedSourceIsNovel,
+                            route: selectedContentRoute,
+                            trackerAniListId: knownTrackerAniListId
+                        )
                     } label: {
                         Label("Mark All as Read", systemImage: "checkmark.circle.fill")
                     }
 
                     Button(role: .destructive) {
-                        progressManager.markAllUnread(mangaId: manga.id)
+                        progressManager.markAllUnread(mangaId: progressMangaId)
                     } label: {
                         Label("Mark All as Unread", systemImage: "xmark.circle")
                     }
@@ -637,7 +739,7 @@ struct MangaDetailView: View {
 
     @ViewBuilder
     private func readButton(chapters: [Chapter]) -> some View {
-        let lastRead = progressManager.lastReadChapter(for: manga.id)
+        let lastRead = progressManager.lastReadChapter(for: progressMangaId)
         let hasProgress = lastRead != nil
 
         // Find the chapter to resume/start
@@ -746,6 +848,19 @@ struct MangaDetailView: View {
 
                     ReaderLogger.shared.log("MangaDetail.selectSource: parsed \(parsed.count) language groups, total chapters=\(parsed.reduce(0) { $0 + $1.chapters.count })", type: "Debug")
                     self.loadedChapters = parsed
+                    if !parsed.isEmpty {
+                        let latestNumbers = self.chapterNumbers(from: parsed) ?? []
+                        self.libraryManager.updateSavedItem(self.libraryItem)
+                        self.progressManager.updateSourceMetadata(
+                            mangaId: self.progressMangaId,
+                            title: self.selectedSourceDisplayTitle,
+                            coverURL: self.selectedSourceCoverURL,
+                            format: self.selectedSourceFormat,
+                            latestChapterNumbers: latestNumbers,
+                            route: self.selectedContentRoute,
+                            sourceRefreshError: nil
+                        )
+                    }
                 } else {
                     ReaderLogger.shared.log("MangaDetail.selectSource: result is not dict or array, actual type=\(type(of: result))", type: "Error")
                     self.loadedChapters = []

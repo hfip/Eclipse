@@ -12,6 +12,8 @@ import Kingfisher
 struct MangaCollectionDetailView: View {
     @ObservedObject var collection: MangaLibraryCollection
     @ObservedObject var libraryManager: MangaLibraryManager
+    @State private var isRefreshingSources = false
+    @State private var refreshStatus: String?
 
     private let columns = [GridItem(.adaptive(minimum: 120), spacing: 12)]
 
@@ -29,26 +31,50 @@ struct MangaCollectionDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(collection.items) { item in
-                            NavigationLink(destination: mangaDestination(for: item)) {
-                                mangaCard(item)
-                            }
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    libraryManager.removeItem(from: collection.id, item: item)
-                                } label: {
-                                    Label("Remove", systemImage: "trash")
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let refreshStatus {
+                            Text(refreshStatus)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal)
+                        }
+
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(collection.items) { item in
+                                NavigationLink(destination: mangaDestination(for: item)) {
+                                    mangaCard(item)
+                                }
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        libraryManager.removeItem(from: collection.id, item: item)
+                                    } label: {
+                                        Label("Remove", systemImage: "trash")
+                                    }
                                 }
                             }
                         }
+                        .padding()
                     }
-                    .padding()
                 }
             }
         }
         .navigationTitle(collection.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    refreshCollectionSources()
+                } label: {
+                    if isRefreshingSources {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(isRefreshingSources || collection.items.isEmpty)
+                .accessibilityLabel("Refresh Sources")
+            }
+        }
     }
 
     @ViewBuilder
@@ -61,6 +87,9 @@ struct MangaCollectionDetailView: View {
                 .frame(width: 120, height: 180)
                 .clipped()
                 .cornerRadius(8)
+                .overlay(alignment: .topLeading) {
+                    unreadBadge(for: item)
+                }
 
             Text(item.title)
                 .font(.caption)
@@ -73,6 +102,33 @@ struct MangaCollectionDetailView: View {
     @ViewBuilder
     private func mangaDestination(for item: MangaLibraryItem) -> some View {
         MangaLibraryDestinationView(item: item)
+    }
+
+    @ViewBuilder
+    private func unreadBadge(for item: MangaLibraryItem) -> some View {
+        let unread = item.unreadCount(readChapters: MangaReadingProgressManager.shared.readChapters(for: item.aniListId))
+        if unread > 0 {
+            Text("\(unread)")
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.red)
+                .clipShape(Capsule())
+                .padding(4)
+        }
+    }
+
+    private func refreshCollectionSources() {
+        guard !isRefreshingSources else { return }
+        isRefreshingSources = true
+        refreshStatus = "Refreshing saved sources..."
+        Task { @MainActor in
+            let summary = await libraryManager.refreshSource(for: collection)
+            refreshStatus = summary.statusText
+            isRefreshingSources = false
+        }
     }
 }
 #endif

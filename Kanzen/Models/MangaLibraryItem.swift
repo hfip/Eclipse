@@ -11,20 +11,56 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
     var id: Int { aniListId }
 
     let aniListId: Int
-    let title: String
-    let coverURL: String?
-    let format: String?
-    let totalChapters: Int?
+    var title: String
+    var coverURL: String?
+    var format: String?
+    var totalChapters: Int?
     var moduleUUID: String? = nil
     var contentParams: String? = nil
     var isNovel: Bool? = nil
     var route: MangaContentRoute? = nil
     var dateAdded: Date = Date()
+    var sourceName: String? = nil
+    var latestChapterNumbers: [String]? = nil
+    var lastSourceRefresh: Date? = nil
+    var sourceRefreshError: String? = nil
+    var trackerAniListId: Int? = nil
+    var trackerMALId: Int? = nil
+    var trackerMatchConfidence: Double? = nil
+    var trackerResolvedAt: Date? = nil
+
+    var knownChapterNumbers: [String] {
+        if let latestChapterNumbers, !latestChapterNumbers.isEmpty {
+            return latestChapterNumbers
+        }
+        if let totalChapters, totalChapters > 0 {
+            return (1...totalChapters).map(String.init)
+        }
+        return []
+    }
+
+    func unreadCount(readChapters: Set<String>) -> Int {
+        let known = knownChapterNumbers
+        guard !known.isEmpty else { return 0 }
+        return known.reduce(into: 0) { count, chapter in
+            if !readChapters.contains(chapter) {
+                count += 1
+            }
+        }
+    }
 
     /// Create a library item from module search content.
     /// Produces a stable negative ID from the module + content identifier
     /// so it never collides with AniList IDs (which are always positive).
-    static func fromModule(moduleId: UUID, contentId: String, title: String, coverURL: String?, isNovel: Bool) -> MangaLibraryItem {
+    static func fromModule(
+        moduleId: UUID,
+        contentId: String,
+        title: String,
+        coverURL: String?,
+        isNovel: Bool,
+        sourceName: String? = nil,
+        latestChapterNumbers: [String]? = nil
+    ) -> MangaLibraryItem {
         let combined = "\(moduleId.uuidString):\(contentId)"
         // Use a stable hash; make it negative to avoid AniList ID collisions
         let hash = combined.utf8.reduce(into: 5381) { h, c in h = ((h &<< 5) &+ h) &+ Int(c) }
@@ -34,23 +70,35 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
             title: title,
             coverURL: coverURL,
             format: isNovel ? "NOVEL" : "MANGA",
-            totalChapters: nil,
+            totalChapters: latestChapterNumbers?.count,
             moduleUUID: moduleId.uuidString,
             contentParams: contentId,
             isNovel: isNovel,
-            route: .legacyModule(moduleUUID: moduleId.uuidString, contentParams: contentId, isNovel: isNovel)
+            route: .legacyModule(moduleUUID: moduleId.uuidString, contentParams: contentId, isNovel: isNovel),
+            sourceName: sourceName,
+            latestChapterNumbers: latestChapterNumbers
         )
     }
 
-    static func fromAidoku(sourceId: String, mangaKey: String, title: String, coverURL: String?) -> MangaLibraryItem {
+    static func fromAidoku(
+        sourceId: String,
+        mangaKey: String,
+        title: String,
+        coverURL: String?,
+        sourceName: String? = nil,
+        latestChapterNumbers: [String]? = nil,
+        format: String? = "MANGA"
+    ) -> MangaLibraryItem {
         let route = MangaContentRoute.aidoku(sourceId: sourceId, mangaKey: mangaKey)
         return MangaLibraryItem(
             aniListId: route.stableNegativeId,
             title: title,
             coverURL: coverURL,
-            format: "MANGA",
-            totalChapters: nil,
-            route: route
+            format: format,
+            totalChapters: latestChapterNumbers?.count,
+            route: route,
+            sourceName: sourceName,
+            latestChapterNumbers: latestChapterNumbers
         )
     }
 

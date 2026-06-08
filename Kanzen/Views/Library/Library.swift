@@ -14,6 +14,8 @@ struct KanzenLibraryView: View {
     @EnvironmentObject var moduleManager: ModuleManager
     @State private var showCreateCollection = false
     @State private var scrollOffset: CGFloat = 0
+    @State private var isRefreshingSources = false
+    @State private var refreshStatus: String?
 
     private var bookmarksCollection: MangaLibraryCollection? {
         libraryManager.collections.first { $0.name == "Bookmarks" }
@@ -27,6 +29,14 @@ struct KanzenLibraryView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    if let refreshStatus {
+                        Text(refreshStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                    }
+
                     // MARK: - Bookmarks
                     if let bookmarks = bookmarksCollection, !bookmarks.items.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -161,6 +171,21 @@ struct KanzenLibraryView: View {
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        refreshLibrarySources()
+                    } label: {
+                        if isRefreshingSources {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(isRefreshingSources)
+                    .accessibilityLabel("Refresh Sources")
+                }
+            }
             .sheet(isPresented: $showCreateCollection) {
                 MangaCreateCollectionView()
                     .environmentObject(libraryManager)
@@ -180,7 +205,7 @@ struct KanzenLibraryView: View {
                 .frame(width: 120, height: 180)
                 .clipped()
                 .cornerRadius(16)
-                .overlay(alignment: .topTrailing) {
+                .overlay(alignment: .topLeading) {
                     unreadBadge(for: item)
                 }
 
@@ -202,6 +227,9 @@ struct KanzenLibraryView: View {
                 .frame(height: 180)
                 .clipped()
                 .cornerRadius(16)
+                .overlay(alignment: .topLeading) {
+                    unreadBadge(for: item)
+                }
 
             Text(item.title)
                 .font(.caption)
@@ -256,19 +284,28 @@ struct KanzenLibraryView: View {
 
     @ViewBuilder
     private func unreadBadge(for item: MangaLibraryItem) -> some View {
-        let readCount = MangaReadingProgressManager.shared.readChapters(for: item.aniListId).count
-        let total = item.totalChapters ?? 0
-        let unread = max(0, total - readCount)
+        let unread = item.unreadCount(readChapters: MangaReadingProgressManager.shared.readChapters(for: item.aniListId))
         if unread > 0 {
             Text("\(unread)")
                 .font(.caption2)
                 .fontWeight(.bold)
                 .foregroundColor(.white)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Color.accentColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.red)
                 .clipShape(Capsule())
                 .padding(4)
+        }
+    }
+
+    private func refreshLibrarySources() {
+        guard !isRefreshingSources else { return }
+        isRefreshingSources = true
+        refreshStatus = "Refreshing saved sources..."
+        Task { @MainActor in
+            let summary = await libraryManager.refreshAllSources()
+            refreshStatus = summary.statusText
+            isRefreshingSources = false
         }
     }
 

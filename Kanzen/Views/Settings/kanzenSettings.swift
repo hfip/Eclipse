@@ -12,7 +12,6 @@ struct KanzenSettingsView: View {
     @EnvironmentObject var moduleManager: ModuleManager
     @AppStorage("showKanzen") private var showKanzen: Bool = false
     @State private var autoUpdateModules = ModuleManager.isAutoUpdateEnabled
-    @AppStorage("kanzenAutoMode") private var autoModeEnabled: Bool = false
 
     var body: some View {
         NavigationView {
@@ -32,7 +31,7 @@ struct KanzenSettingsView: View {
 
                 Section(
                     header: Text("Legacy JS Modules"),
-                    footer: Text("Auto Mode only applies to legacy Kanzen JS modules. Aidoku sources are used directly.")
+                    footer: Text("Legacy modules remain available for compatibility. Library items reopen through their saved source route.")
                 ) {
                     NavigationLink(destination: KanzenModuleView().environmentObject(moduleManager)) {
                         Text("Manage Legacy Modules")
@@ -41,7 +40,6 @@ struct KanzenSettingsView: View {
                         .onChange(of: autoUpdateModules) { newValue in
                             ModuleManager.isAutoUpdateEnabled = newValue
                         }
-                    Toggle("Auto Mode", isOn: $autoModeEnabled)
                 }
 
                 Section(header: Text("Activity")) {

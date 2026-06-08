@@ -26,14 +26,11 @@ struct SourceMatch: Identifiable {
 // MARK: - Source Finder
 
 /// Searches all installed modules in parallel for a given AniList manga,
-/// scores and ranks the results, and can auto-pick the best one.
+/// then scores and ranks the results for manual source selection.
 final class MangaSourceFinder: ObservableObject {
     @Published var matches: [SourceMatch] = []
     @Published var isSearching = false
     @Published var hasFinished = false
-
-    /// The auto-picked best match (only used in auto mode).
-    @Published var autoPickedMatch: SourceMatch?
 
     /// Search all installed modules for the given AniList manga.
     /// Uses all title variants (English, Romaji, Native) for each module.
@@ -51,7 +48,6 @@ final class MangaSourceFinder: ObservableObject {
 
         isSearching = true
         matches = []
-        autoPickedMatch = nil
 
         let titleCandidates = manga.allTitleCandidates
         guard !titleCandidates.isEmpty else {
@@ -88,7 +84,6 @@ final class MangaSourceFinder: ObservableObject {
             }
 
             self.matches = sorted
-            self.autoPickedMatch = sorted.first
             self.isSearching = false
             self.hasFinished = true
         }
@@ -171,10 +166,9 @@ final class MangaSourceFinder: ObservableObject {
         }
     }
 
-    // MARK: - Chapter Count Fetching (for auto mode)
+    // MARK: - Chapter Count Fetching
 
-    /// For the top N candidates, fetch chapter counts to make a better auto-pick.
-    /// This is only used when auto mode is enabled.
+    /// For the top N candidates, fetch chapter counts to improve manual ranking.
     func refineTopMatchesWithChapterCounts(for manga: AniListManga, topN: Int = 3) {
         let candidates = Array(matches.prefix(topN))
         guard !candidates.isEmpty else { return }
@@ -263,7 +257,6 @@ final class MangaSourceFinder: ObservableObject {
             updated.removeFirst(removeCount)
             updated.insert(contentsOf: sorted, at: 0)
             self.matches = updated
-            self.autoPickedMatch = updated.first
         }
     }
 }

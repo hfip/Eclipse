@@ -113,8 +113,15 @@ struct AidokuMangaDetailView: View {
             sourceId: sourceId,
             mangaKey: manga.key,
             title: manga.title,
-            coverURL: coverURL
+            coverURL: coverURL,
+            sourceName: sourceManager.metadata(id: sourceId)?.name,
+            latestChapterNumbers: latestChapterNumbers,
+            format: viewerFormat(manga.viewer)
         )
+    }
+
+    private var latestChapterNumbers: [String]? {
+        chapterNumbers(from: manga)
     }
 
     init(sourceId: String, initialManga: AidokuRunner.Manga) {
@@ -192,6 +199,9 @@ struct AidokuMangaDetailView: View {
                     chapterNumber: chapter.chapterNumber,
                     mangaTitle: manga.title,
                     coverURL: coverURL,
+                    format: viewerFormat(manga.viewer),
+                    totalChapters: latestChapterNumbers?.count,
+                    latestChapterNumbers: latestChapterNumbers,
                     route: route
                 )
             }
@@ -236,11 +246,23 @@ struct AidokuMangaDetailView: View {
         isLoading = true
         errorMessage = nil
         do {
-            manga = try await sourceManager.mangaUpdate(
+            let updated = try await sourceManager.mangaUpdate(
                 sourceId: sourceId,
                 manga: manga,
                 needsDetails: true,
                 needsChapters: true
+            )
+            let latestNumbers = chapterNumbers(from: updated) ?? []
+            manga = updated
+            libraryManager.updateSavedItem(libraryItem)
+            progressManager.updateSourceMetadata(
+                mangaId: stableId,
+                title: updated.title,
+                coverURL: updated.cover ?? initialManga.cover,
+                format: viewerFormat(updated.viewer),
+                latestChapterNumbers: latestNumbers,
+                route: route,
+                sourceRefreshError: nil
             )
         } catch {
             errorMessage = error.localizedDescription
@@ -431,6 +453,9 @@ struct AidokuMangaDetailView: View {
                         chapterNumber: chapter.chapterNumber,
                         mangaTitle: manga.title,
                         coverURL: coverURL,
+                        format: viewerFormat(manga.viewer),
+                        totalChapters: latestChapterNumbers?.count,
+                        latestChapterNumbers: latestChapterNumbers,
                         route: route
                     )
                 } label: {
@@ -481,6 +506,13 @@ struct AidokuMangaDetailView: View {
         }
     }
 
+    private func chapterNumbers(from manga: AidokuRunner.Manga) -> [String]? {
+        let numbers = (manga.chapters ?? []).enumerated().map { index, chapter in
+            chapterNumberTitle(chapter, fallbackIndex: index)
+        }
+        return numbers.isEmpty ? nil : numbers
+    }
+
     private func chapterNumberTitle(_ chapter: AidokuRunner.Chapter, fallbackIndex: Int) -> String {
         if let volume = chapter.volumeNumber, let number = chapter.chapterNumber {
             return "Vol. \(formatNumber(volume)) Ch. \(formatNumber(number))"
@@ -504,6 +536,15 @@ struct AidokuMangaDetailView: View {
             return "Webtoon"
         default:
             return "Manga"
+        }
+    }
+
+    private func viewerFormat(_ viewer: AidokuRunner.Viewer) -> String {
+        switch viewer {
+        case .vertical, .webtoon:
+            return "WEBTOON"
+        default:
+            return "MANGA"
         }
     }
 

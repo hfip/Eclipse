@@ -211,10 +211,10 @@ struct KanzenHomeView: View {
             Text("\(source.name) has no home feed")
                 .font(.headline)
                 .foregroundColor(.secondary)
-            NavigationLink(destination: MangaModuleAdvancedSearchView(source: source)) {
-                Label("Search \(source.name)", systemImage: "magnifyingglass")
-            }
-            .buttonStyle(.borderedProminent)
+            Text("Use Search Everything to search across all enabled sources.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()

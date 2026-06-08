@@ -63,7 +63,6 @@ struct BackupData: Codable {
 
     // UI Preferences
     var showKanzen: Bool = false
-    var kanzenAutoMode: Bool = false
     var kanzenAutoUpdateModules: Bool = true
     var seasonMenu: Bool = false
     var horizontalEpisodeList: Bool = false
@@ -128,7 +127,7 @@ struct BackupData: Codable {
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
         case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, kanzenAutoMode, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
+        case showKanzen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, servicesAutoModeQualityPreference
@@ -194,7 +193,6 @@ struct BackupData: Codable {
 
         // UI preferences
         showKanzen = try container.decodeIfPresent(Bool.self, forKey: .showKanzen) ?? false
-        kanzenAutoMode = try container.decodeIfPresent(Bool.self, forKey: .kanzenAutoMode) ?? false
         kanzenAutoUpdateModules = try container.decodeIfPresent(Bool.self, forKey: .kanzenAutoUpdateModules) ?? true
         seasonMenu = try container.decodeIfPresent(Bool.self, forKey: .seasonMenu) ?? false
         horizontalEpisodeList = try container.decodeIfPresent(Bool.self, forKey: .horizontalEpisodeList) ?? false
@@ -344,7 +342,6 @@ struct BackupData: Codable {
 
         // UI preferences
         try container.encode(showKanzen, forKey: .showKanzen)
-        try container.encode(kanzenAutoMode, forKey: .kanzenAutoMode)
         try container.encode(kanzenAutoUpdateModules, forKey: .kanzenAutoUpdateModules)
         try container.encode(seasonMenu, forKey: .seasonMenu)
         try container.encode(horizontalEpisodeList, forKey: .horizontalEpisodeList)
@@ -438,7 +435,6 @@ struct BackupData: Codable {
 
         // UI preferences
         showKanzen: Bool = false,
-        kanzenAutoMode: Bool = false,
         kanzenAutoUpdateModules: Bool = true,
         seasonMenu: Bool = false,
         horizontalEpisodeList: Bool = false,
@@ -527,7 +523,6 @@ struct BackupData: Codable {
         self.subtitleVerticalOffset = subtitleVerticalOffset
 
         self.showKanzen = showKanzen
-        self.kanzenAutoMode = kanzenAutoMode
         self.kanzenAutoUpdateModules = kanzenAutoUpdateModules
         self.seasonMenu = seasonMenu
         self.horizontalEpisodeList = horizontalEpisodeList
@@ -819,7 +814,6 @@ class BackupManager {
 
         // UI preferences
         let showKanzen = userDefaults.bool(forKey: "showKanzen")
-        let kanzenAutoMode = userDefaults.bool(forKey: "kanzenAutoMode")
         let kanzenAutoUpdateModules = ModuleManager.isAutoUpdateEnabled
         let seasonMenu = userDefaults.bool(forKey: "seasonMenu")
         let horizontalEpisodeList = userDefaults.bool(forKey: "horizontalEpisodeList")
@@ -980,7 +974,6 @@ class BackupManager {
             subtitleVerticalOffset: subtitleVerticalOffset,
 
             showKanzen: showKanzen,
-            kanzenAutoMode: kanzenAutoMode,
             kanzenAutoUpdateModules: kanzenAutoUpdateModules,
             seasonMenu: seasonMenu,
             horizontalEpisodeList: horizontalEpisodeList,
@@ -1124,7 +1117,6 @@ class BackupManager {
 
         // UI preferences
         let showKanzen = json["showKanzen"] as? Bool ?? false
-        let kanzenAutoMode = json["kanzenAutoMode"] as? Bool ?? false
         let kanzenAutoUpdateModules = json["kanzenAutoUpdateModules"] as? Bool ?? true
         let seasonMenu = json["seasonMenu"] as? Bool ?? false
         let horizontalEpisodeList = json["horizontalEpisodeList"] as? Bool ?? false
@@ -1328,7 +1320,6 @@ class BackupManager {
             subtitleFontSize: subtitleFontSize,
             subtitleVerticalOffset: subtitleVerticalOffset,
             showKanzen: showKanzen,
-            kanzenAutoMode: kanzenAutoMode,
             kanzenAutoUpdateModules: kanzenAutoUpdateModules,
             seasonMenu: seasonMenu,
             horizontalEpisodeList: horizontalEpisodeList,
@@ -1432,7 +1423,6 @@ class BackupManager {
 
         // UI preferences
         userDefaults.set(backup.showKanzen, forKey: "showKanzen")
-        userDefaults.set(backup.kanzenAutoMode, forKey: "kanzenAutoMode")
         userDefaults.set(backup.kanzenAutoUpdateModules, forKey: "kanzenAutoUpdateModules")
         userDefaults.set(backup.seasonMenu, forKey: "seasonMenu")
         userDefaults.set(backup.horizontalEpisodeList, forKey: "horizontalEpisodeList")

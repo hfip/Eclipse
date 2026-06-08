@@ -100,6 +100,17 @@ private struct RemoteMangaProgress {
     let totalChapters: Int?
 }
 
+private struct MangaTrackerMatch {
+    let aniListId: Int?
+    let malId: Int?
+    let title: String
+    let confidence: Double
+
+    var isUsable: Bool {
+        aniListId != nil || malId != nil
+    }
+}
+
 private struct TrackerSyncToolPlan {
     let action: TrackerSyncToolAction
     let preview: TrackerSyncPreview
@@ -138,6 +149,7 @@ final class TrackerManager: NSObject, ObservableObject {
     private var aniListToMALAnimeIdCache: [Int: Int] = [:]
     private var aniListToMALMangaIdCache: [Int: Int] = [:]
     private var aniListEpisodeCountCache: [Int: Int] = [:]
+    private var mangaTrackerMatchCache: [String: MangaTrackerMatch] = [:]
     private let malListPageLimit = 1000
     private let largeSyncAPICallThreshold = 90
     private let tokenRefreshLeeway: TimeInterval = 5 * 60
@@ -1215,31 +1227,49 @@ final class TrackerManager: NSObject, ObservableObject {
         await getMyAnimeListId(fromAniListId: aniListId, mediaType: "ANIME")
     }
 
-    func syncMangaProgress(title: String, chapterNumber: Int) {
+    func syncMangaProgress(title: String, chapterNumber: Int, totalChapters: Int? = nil, format: String? = nil, routeKey: String? = nil, knownAniListId: Int? = nil, knownMALId: Int? = nil) {
         guard trackerState.syncEnabled else {
-            Logger.shared.log("Skipping manga sync (sync disabled) for \(title) ch \(chapterNumber)", type: "Tracker")
+            ReaderLogger.shared.log("Skipping manga sync (sync disabled) for \(title) ch \(chapterNumber)", type: "Tracker")
             return
         }
 
         let accounts = trackerState.accounts.filter { $0.isConnected && ($0.service == .anilist || $0.service == .myAnimeList) }
         guard !accounts.isEmpty else {
-            Logger.shared.log("Skipping manga sync (no connected manga tracker account) for \(title) ch \(chapterNumber)", type: "Tracker")
+            ReaderLogger.shared.log("Skipping manga sync (no connected manga tracker account) for \(title) ch \(chapterNumber)", type: "Tracker")
             return
         }
 
-        Logger.shared.log("Starting manga sync for \(title) ch \(chapterNumber) across \(accounts.count) account(s)", type: "Tracker")
+        ReaderLogger.shared.log("Starting manga sync for \(title) ch \(chapterNumber) across \(accounts.count) account(s)", type: "Tracker")
 
         Task {
-            guard let mediaId = await getAniListMangaId(title: title) else {
-                Logger.shared.log("Could not find AniList manga ID for title \(title)", type: "Tracker")
+            guard let match = await resolveMangaTrackerMatch(
+                title: title,
+                totalChapters: totalChapters,
+                format: format,
+                routeKey: routeKey,
+                knownAniListId: knownAniListId,
+                knownMALId: knownMALId
+            ) else {
+                ReaderLogger.shared.log("Skipping manga sync for \(title): no confident tracker match", type: "Tracker")
                 return
             }
+
             for account in accounts {
                 switch account.service {
                 case .anilist:
-                    await sendMangaProgressToAniList(mediaId: mediaId, chapterNumber: chapterNumber, account: account)
+                    if let aniListId = match.aniListId {
+                        await sendMangaProgressToAniList(mediaId: aniListId, chapterNumber: chapterNumber, account: account)
+                    } else {
+                        ReaderLogger.shared.log("Skipping AniList manga sync for \(title): resolved match has no AniList ID", type: "Tracker")
+                    }
                 case .myAnimeList:
-                    await sendMangaProgressToMAL(aniListId: mediaId, chapterNumber: chapterNumber, account: account)
+                    if let malId = match.malId {
+                        await sendMangaProgressToMAL(malId: malId, chapterNumber: chapterNumber, account: account)
+                    } else if let aniListId = match.aniListId {
+                        await sendMangaProgressToMAL(aniListId: aniListId, chapterNumber: chapterNumber, account: account)
+                    } else {
+                        ReaderLogger.shared.log("Skipping MAL manga sync for \(title): resolved match has no MAL ID", type: "Tracker")
+                    }
                 case .trakt:
                     break
                 }
@@ -1248,19 +1278,36 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     /// Sync manga reading progress using a known AniList media ID (skips title lookup).
-    func syncMangaProgress(aniListId: Int, chapterNumber: Int) {
+    func syncMangaProgress(aniListId: Int, malId: Int? = nil, title: String? = nil, chapterNumber: Int, totalChapters: Int? = nil, format: String? = nil, routeKey: String? = nil) {
+        guard aniListId > 0 else {
+            if let title {
+                syncMangaProgress(
+                    title: title,
+                    chapterNumber: chapterNumber,
+                    totalChapters: totalChapters,
+                    format: format,
+                    routeKey: routeKey,
+                    knownAniListId: nil,
+                    knownMALId: malId
+                )
+            } else {
+                ReaderLogger.shared.log("Skipping manga sync for generated id \(aniListId): missing title for tracker resolution", type: "Tracker")
+            }
+            return
+        }
+
         guard trackerState.syncEnabled else {
-            Logger.shared.log("Skipping manga sync (sync disabled) for aniListId \(aniListId) ch \(chapterNumber)", type: "Tracker")
+            ReaderLogger.shared.log("Skipping manga sync (sync disabled) for aniListId \(aniListId) ch \(chapterNumber)", type: "Tracker")
             return
         }
 
         let accounts = trackerState.accounts.filter { $0.isConnected && ($0.service == .anilist || $0.service == .myAnimeList) }
         guard !accounts.isEmpty else {
-            Logger.shared.log("Skipping manga sync (no connected manga tracker account) for aniListId \(aniListId) ch \(chapterNumber)", type: "Tracker")
+            ReaderLogger.shared.log("Skipping manga sync (no connected manga tracker account) for aniListId \(aniListId) ch \(chapterNumber)", type: "Tracker")
             return
         }
 
-        Logger.shared.log("Starting manga sync for aniListId \(aniListId) ch \(chapterNumber) across \(accounts.count) account(s)", type: "Tracker")
+        ReaderLogger.shared.log("Starting manga sync for aniListId \(aniListId) ch \(chapterNumber) across \(accounts.count) account(s)", type: "Tracker")
 
         Task {
             for account in accounts {
@@ -1268,7 +1315,11 @@ final class TrackerManager: NSObject, ObservableObject {
                 case .anilist:
                     await sendMangaProgressToAniList(mediaId: aniListId, chapterNumber: chapterNumber, account: account)
                 case .myAnimeList:
-                    await sendMangaProgressToMAL(aniListId: aniListId, chapterNumber: chapterNumber, account: account)
+                    if let malId {
+                        await sendMangaProgressToMAL(malId: malId, chapterNumber: chapterNumber, account: account)
+                    } else {
+                        await sendMangaProgressToMAL(aniListId: aniListId, chapterNumber: chapterNumber, account: account)
+                    }
                 case .trakt:
                     break
                 }
@@ -1599,24 +1650,28 @@ final class TrackerManager: NSObject, ObservableObject {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let errors = json["errors"] as? [[String: Any]], !errors.isEmpty {
                     let errorMsg = (errors.first?["message"] as? String) ?? "Unknown error"
-                    Logger.shared.log("AniList manga sync error: \(errorMsg)", type: "Tracker")
+                    ReaderLogger.shared.log("AniList manga sync error: \(errorMsg)", type: "Tracker")
                 } else {
-                    Logger.shared.log("Synced manga to AniList: chapter \(chapterNumber) for mediaId \(mediaId)", type: "Tracker")
+                    ReaderLogger.shared.log("Synced manga to AniList: chapter \(chapterNumber) for mediaId \(mediaId)", type: "Tracker")
                 }
             } else {
-                Logger.shared.log("AniList manga sync returned status \(response.statusCode)", type: "Tracker")
+                ReaderLogger.shared.log("AniList manga sync returned status \(response.statusCode)", type: "Tracker")
             }
         } catch {
-            Logger.shared.log("Failed to sync manga to AniList: \(error.localizedDescription)", type: "Error")
+            ReaderLogger.shared.log("Failed to sync manga to AniList: \(error.localizedDescription)", type: "Error")
         }
     }
 
     private func sendMangaProgressToMAL(aniListId: Int, chapterNumber: Int, account: TrackerAccount) async {
         guard let malId = await getMyAnimeListId(fromAniListId: aniListId, mediaType: "MANGA") else {
-            Logger.shared.log("Could not find MAL manga ID for AniList manga \(aniListId)", type: "Tracker")
+            ReaderLogger.shared.log("Could not find MAL manga ID for AniList manga \(aniListId)", type: "Tracker")
             return
         }
 
+        await sendMangaProgressToMAL(malId: malId, chapterNumber: chapterNumber, account: account)
+    }
+
+    private func sendMangaProgressToMAL(malId: Int, chapterNumber: Int, account: TrackerAccount) async {
         await saveMALMangaProgress(account: account, malId: malId, chaptersRead: chapterNumber, status: "reading")
     }
 
@@ -1876,13 +1931,13 @@ final class TrackerManager: NSObject, ObservableObject {
                 values: values
             )
             if (200...299).contains(response.statusCode) {
-                Logger.shared.log("Synced manga to MAL: mangaId=\(malId) chapters=\(chaptersRead) status=\(status)", type: "Tracker")
+                ReaderLogger.shared.log("Synced manga to MAL: mangaId=\(malId) chapters=\(chaptersRead) status=\(status)", type: "Tracker")
             } else {
                 let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
-                Logger.shared.log("MAL manga sync returned status \(response.statusCode): \(bodyPreview)", type: "Tracker")
+                ReaderLogger.shared.log("MAL manga sync returned status \(response.statusCode): \(bodyPreview)", type: "Tracker")
             }
         } catch {
-            Logger.shared.log("Failed to sync manga to MAL: \(error.localizedDescription)", type: "Error")
+            ReaderLogger.shared.log("Failed to sync manga to MAL: \(error.localizedDescription)", type: "Error")
         }
     }
 
@@ -2907,39 +2962,288 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private func getAniListMangaId(title: String) async -> Int? {
-        let escaped = title.replacingOccurrences(of: "\"", with: "\\\"")
+        await resolveMangaTrackerMatch(
+            title: title,
+            totalChapters: nil,
+            format: nil,
+            routeKey: nil,
+            knownAniListId: nil,
+            knownMALId: nil
+        )?.aniListId
+    }
+
+    private func resolveMangaTrackerMatch(title: String, totalChapters: Int?, format: String?, routeKey: String?, knownAniListId: Int?, knownMALId: Int?) async -> MangaTrackerMatch? {
+        if let knownAniListId, knownAniListId > 0 {
+            let match = MangaTrackerMatch(aniListId: knownAniListId, malId: knownMALId, title: title, confidence: 100)
+            if let routeKey {
+                mangaTrackerMatchCache[routeKey] = match
+            }
+            return match
+        }
+
+        if let knownMALId, knownMALId > 0, knownAniListId == nil {
+            let match = MangaTrackerMatch(aniListId: nil, malId: knownMALId, title: title, confidence: 100)
+            if let routeKey {
+                mangaTrackerMatchCache[routeKey] = match
+            }
+            return match
+        }
+
+        let cacheKey = routeKey ?? mangaTrackerCacheKey(title: title, totalChapters: totalChapters, format: format)
+        if let cached = mangaTrackerMatchCache[cacheKey] {
+            return cached
+        }
+
+        async let aniListMatch = searchAniListMangaTrackerMatch(title: title, totalChapters: totalChapters, format: format)
+        async let malMatch = searchMALMangaTrackerMatch(title: title, totalChapters: totalChapters, format: format)
+
+        let resolvedAniList = await aniListMatch
+        let resolvedMAL = await malMatch
+        let bestConfidence = max(resolvedAniList?.confidence ?? 0, resolvedMAL?.confidence ?? 0)
+        let threshold = mangaTrackerConfidenceThreshold(totalChapters: totalChapters)
+
+        guard bestConfidence >= threshold else {
+            ReaderLogger.shared.log("Manga tracker resolver dropped '\(title)' confidence=\(Int(bestConfidence)) threshold=\(Int(threshold))", type: "Tracker")
+            return nil
+        }
+
+        let aniListConfidence = resolvedAniList?.confidence ?? 0
+        let malConfidence = resolvedMAL?.confidence ?? 0
+        let resolvedTitle = aniListConfidence >= malConfidence
+            ? (resolvedAniList?.title ?? title)
+            : (resolvedMAL?.title ?? title)
+
+        let match = MangaTrackerMatch(
+            aniListId: resolvedAniList?.aniListId,
+            malId: resolvedMAL?.malId ?? resolvedAniList?.malId,
+            title: resolvedTitle,
+            confidence: bestConfidence
+        )
+
+        guard match.isUsable else { return nil }
+        mangaTrackerMatchCache[cacheKey] = match
+        return match
+    }
+
+    private func searchAniListMangaTrackerMatch(title: String, totalChapters: Int?, format: String?) async -> MangaTrackerMatch? {
+        let escaped = title.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let query = """
         query {
-            Media(search: "\(escaped)", type: MANGA) {
-                id
+            Page(page: 1, perPage: 8) {
+                media(search: "\(escaped)", type: MANGA) {
+                    id
+                    idMal
+                    chapters
+                    format
+                    title {
+                        romaji
+                        english
+                        native
+                    }
+                    synonyms
+                }
             }
         }
         """
 
+        struct Response: Decodable {
+            let data: DataWrapper?
+            struct DataWrapper: Decodable { let Page: PageWrapper? }
+            struct PageWrapper: Decodable { let media: [Media] }
+            struct Media: Decodable {
+                let id: Int
+                let idMal: Int?
+                let chapters: Int?
+                let format: String?
+                let title: Title
+                let synonyms: [String]?
+            }
+            struct Title: Decodable {
+                let romaji: String?
+                let english: String?
+                let native: String?
+            }
+        }
+
         do {
-            let url = URL(string: "https://graphql.anilist.co")!
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: URL(string: "https://graphql.anilist.co")!)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-            let body: [String: Any] = ["query": query]
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
 
             let (data, response) = try await sendTrackerRequest(request, provider: .anilist)
             guard response.statusCode == 200 else { return nil }
 
-            struct Response: Codable {
-                let data: DataWrapper
-                struct DataWrapper: Codable { let Media: MediaData? }
-                struct MediaData: Codable { let id: Int }
-            }
-
             let decoded = try JSONDecoder().decode(Response.self, from: data)
-            return decoded.data.Media?.id
+            return decoded.data?.Page?.media
+                .map { media in
+                    let titles = [media.title.romaji, media.title.english, media.title.native].compactMap { $0 } + (media.synonyms ?? [])
+                    let confidence = mangaMatchConfidence(
+                        query: title,
+                        candidateTitles: titles,
+                        expectedChapters: totalChapters,
+                        candidateChapters: media.chapters,
+                        expectedFormat: format,
+                        candidateFormat: media.format
+                    )
+                    return MangaTrackerMatch(
+                        aniListId: media.id,
+                        malId: media.idMal,
+                        title: titles.first ?? title,
+                        confidence: confidence
+                    )
+                }
+                .max { $0.confidence < $1.confidence }
         } catch {
-            Logger.shared.log("Failed to resolve AniList manga ID: \(error.localizedDescription)", type: "Error")
+            ReaderLogger.shared.log("AniList manga resolver failed for \(title): \(error.localizedDescription)", type: "Tracker")
             return nil
         }
+    }
+
+    private func searchMALMangaTrackerMatch(title: String, totalChapters: Int?, format: String?) async -> MangaTrackerMatch? {
+        guard var components = URLComponents(string: "https://api.myanimelist.net/v2/manga") else { return nil }
+        components.queryItems = [
+            URLQueryItem(name: "q", value: title),
+            URLQueryItem(name: "limit", value: "8"),
+            URLQueryItem(name: "fields", value: "id,title,alternative_titles,num_chapters,media_type")
+        ]
+        guard let url = components.url else { return nil }
+
+        struct Response: Decodable {
+            let data: [Entry]
+            struct Entry: Decodable { let node: Node }
+            struct Node: Decodable {
+                let id: Int
+                let title: String
+                let alternativeTitles: AlternativeTitles?
+                let numChapters: Int?
+                let mediaType: String?
+
+                enum CodingKeys: String, CodingKey {
+                    case id
+                    case title
+                    case alternativeTitles = "alternative_titles"
+                    case numChapters = "num_chapters"
+                    case mediaType = "media_type"
+                }
+            }
+            struct AlternativeTitles: Decodable {
+                let synonyms: [String]?
+                let en: String?
+                let ja: String?
+            }
+        }
+
+        do {
+            var request = URLRequest(url: url)
+            if !malClientId.isEmpty {
+                request.setValue(malClientId, forHTTPHeaderField: "X-MAL-CLIENT-ID")
+            } else if let account = trackerState.accounts.first(where: { $0.isConnected && $0.service == .myAnimeList }),
+                      let refreshed = try? await refreshedMALAccountIfNeeded(account) {
+                request.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
+            } else {
+                return nil
+            }
+
+            let (data, response) = try await sendTrackerRequest(request, provider: .myAnimeList)
+            guard response.statusCode == 200 else { return nil }
+
+            let decoded = try JSONDecoder().decode(Response.self, from: data)
+            return decoded.data
+                .map { entry in
+                    let node = entry.node
+                    let titles = [node.title, node.alternativeTitles?.en, node.alternativeTitles?.ja]
+                        .compactMap { $0 } + (node.alternativeTitles?.synonyms ?? [])
+                    let confidence = mangaMatchConfidence(
+                        query: title,
+                        candidateTitles: titles,
+                        expectedChapters: totalChapters,
+                        candidateChapters: node.numChapters,
+                        expectedFormat: format,
+                        candidateFormat: node.mediaType
+                    )
+                    return MangaTrackerMatch(
+                        aniListId: nil,
+                        malId: node.id,
+                        title: titles.first ?? title,
+                        confidence: confidence
+                    )
+                }
+                .max { $0.confidence < $1.confidence }
+        } catch {
+            ReaderLogger.shared.log("MAL manga resolver failed for \(title): \(error.localizedDescription)", type: "Tracker")
+            return nil
+        }
+    }
+
+    private func mangaTrackerCacheKey(title: String, totalChapters: Int?, format: String?) -> String {
+        "\(normalizedMangaTitle(title))|\(totalChapters.map(String.init) ?? "-")|\(format ?? "-")"
+    }
+
+    private func mangaTrackerConfidenceThreshold(totalChapters: Int?) -> Double {
+        totalChapters == nil ? 78 : 68
+    }
+
+    private func mangaMatchConfidence(query: String, candidateTitles: [String], expectedChapters: Int?, candidateChapters: Int?, expectedFormat: String?, candidateFormat: String?) -> Double {
+        let queryTitle = normalizedMangaTitle(query)
+        guard !queryTitle.isEmpty else { return 0 }
+
+        let titleScore = candidateTitles
+            .map { normalizedMangaTitle($0) }
+            .filter { !$0.isEmpty }
+            .map { candidate -> Double in
+                if candidate == queryTitle { return 82 }
+                if candidate.hasPrefix(queryTitle) || queryTitle.hasPrefix(candidate) { return 70 }
+                if candidate.contains(queryTitle) || queryTitle.contains(candidate) { return 62 }
+                return tokenOverlapScore(queryTitle, candidate) * 58
+            }
+            .max() ?? 0
+
+        var score = titleScore
+        if let expectedChapters, expectedChapters > 0, let candidateChapters, candidateChapters > 0 {
+            let delta = abs(expectedChapters - candidateChapters)
+            if delta == 0 {
+                score += 18
+            } else if delta <= 2 {
+                score += 12
+            } else if delta <= 8 {
+                score += 6
+            } else if delta > max(20, expectedChapters / 3) {
+                score -= 18
+            }
+        }
+
+        let expected = (expectedFormat ?? "").lowercased()
+        let candidate = (candidateFormat ?? "").lowercased()
+        if !expected.isEmpty, !candidate.isEmpty {
+            if expected.contains("novel") && candidate.contains("novel") {
+                score += 8
+            } else if expected.contains("webtoon") && (candidate.contains("manhwa") || candidate.contains("web") || candidate.contains("manga")) {
+                score += 2
+            } else if expected.contains("novel") != candidate.contains("novel") {
+                score -= 8
+            }
+        }
+
+        return max(0, min(100, score))
+    }
+
+    private func normalizedMangaTitle(_ title: String) -> String {
+        title
+            .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func tokenOverlapScore(_ lhs: String, _ rhs: String) -> Double {
+        let lhsTokens = Set(lhs.split(separator: " ").map(String.init))
+        let rhsTokens = Set(rhs.split(separator: " ").map(String.init))
+        guard !lhsTokens.isEmpty, !rhsTokens.isEmpty else { return 0 }
+        let intersection = lhsTokens.intersection(rhsTokens).count
+        let union = lhsTokens.union(rhsTokens).count
+        return union == 0 ? 0 : Double(intersection) / Double(union)
     }
 
     // MARK: - Sync Tools
@@ -4468,14 +4772,14 @@ final class TrackerManager: NSObject, ObservableObject {
             if response.statusCode == 200,
                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let errors = json["errors"] as? [[String: Any]], !errors.isEmpty {
-                Logger.shared.log("AniList manga sync error: \(errors.first?["message"] as? String ?? "Unknown error")", type: "Tracker")
+                ReaderLogger.shared.log("AniList manga sync error: \(errors.first?["message"] as? String ?? "Unknown error")", type: "Tracker")
             } else if response.statusCode == 200 {
-                Logger.shared.log("Synced AniList manga \(anilistId): progress=\(chaptersRead) status=\(status)", type: "Tracker")
+                ReaderLogger.shared.log("Synced AniList manga \(anilistId): progress=\(chaptersRead) status=\(status)", type: "Tracker")
             } else {
-                Logger.shared.log("AniList manga sync returned status \(response.statusCode)", type: "Tracker")
+                ReaderLogger.shared.log("AniList manga sync returned status \(response.statusCode)", type: "Tracker")
             }
         } catch {
-            Logger.shared.log("Failed to sync AniList manga \(anilistId): \(error.localizedDescription)", type: "Error")
+            ReaderLogger.shared.log("Failed to sync AniList manga \(anilistId): \(error.localizedDescription)", type: "Error")
         }
     }
 
