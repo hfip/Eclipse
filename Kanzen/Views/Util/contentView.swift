@@ -617,8 +617,8 @@ struct contentView: View {
             let lhsNumber = numericChapterValue(lhs.chapterNumber)
             let rhsNumber = numericChapterValue(rhs.chapterNumber)
             switch (lhsNumber, rhsNumber) {
-            case let (lhs?, rhs?):
-                if lhs != rhs { return lhs < rhs }
+            case let (lhsValue?, rhsValue?):
+                if lhsValue != rhsValue { return lhsValue < rhsValue }
                 return lhs.idx < rhs.idx
             case (.some, .none):
                 return true
