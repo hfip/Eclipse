@@ -13,6 +13,7 @@ struct KanzenMenu: View {
     private let onStartupReady: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var moduleManager: ModuleManager
+    @AppStorage("showKanzen") private var showKanzen: Bool = false
 
     init(onStartupReady: @escaping () -> Void = {}) {
         self.onStartupReady = onStartupReady
@@ -57,6 +58,23 @@ struct KanzenMenu: View {
                 }
         }
         .environmentObject(kanzen)
+        .overlay(alignment: .topTrailing) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                    showKanzen = false
+                }
+            } label: {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+                    .applyLiquidGlassBackground(cornerRadius: 22)
+            }
+            .accessibilityLabel("Switch to Media Mode")
+            .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+            .padding(.trailing, 16)
+            .padding(.top, 8)
+        }
         .task {
             await moduleManager.autoUpdateModulesIfNeeded()
         }

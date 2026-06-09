@@ -55,7 +55,7 @@ struct MangaDetailView: View {
             )
         }
 
-        MangaLibraryItem(
+        return MangaLibraryItem(
             aniListId: manga.id,
             title: manga.displayTitle,
             coverURL: manga.coverURL,
