@@ -33,6 +33,7 @@ struct KanzenHomeView: View {
             }
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         }
+        .navigationViewStyle(StackNavigationViewStyle())
         .task {
             syncSourcesAndLoad()
         }

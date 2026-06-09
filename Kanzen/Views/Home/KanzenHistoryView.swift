@@ -90,6 +90,7 @@ struct KanzenHistoryView: View {
                 Text("This removes entries from History without clearing read chapters or library items.")
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 
     private var contextDetailLink: some View {

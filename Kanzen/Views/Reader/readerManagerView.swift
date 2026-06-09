@@ -142,6 +142,8 @@ struct readerManagerView:View {
                     .padding(.vertical, 12)
                     .background(Color.black.opacity(0.78))
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .frame(maxWidth: overlayBarMaxWidth(for: proxy.size.width))
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 12)
                     .padding(.top, max(proxy.safeAreaInsets.top, 44) + 8)
 
@@ -213,11 +215,17 @@ struct readerManagerView:View {
                     .padding(.vertical, 12)
                     .background(Color.black.opacity(0.78))
                     .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .frame(maxWidth: overlayBarMaxWidth(for: proxy.size.width))
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 12)
                     .padding(.bottom, max(proxy.safeAreaInsets.bottom, 24) + 8)
                 }
             }
         }
+    }
+
+    private func overlayBarMaxWidth(for width: CGFloat) -> CGFloat {
+        min(max(width - 24, 1), 720)
     }
 
     private func toggleOrientationLock() {

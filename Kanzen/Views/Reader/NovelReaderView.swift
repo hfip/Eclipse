@@ -565,15 +565,22 @@ struct NovelReaderView: View {
     // MARK: - Safe area helpers
 
     private var safeAreaTop: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.safeAreaInsets.top ?? 0
+        activeWindow?.safeAreaInsets.top ?? 0
     }
 
     private var safeAreaBottom: CGFloat {
-        UIApplication.shared.connectedScenes
+        activeWindow?.safeAreaInsets.bottom ?? 0
+    }
+
+    private var activeWindow: UIWindow? {
+        let scenes = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.safeAreaInsets.bottom ?? 0
+        return scenes
+            .first { $0.activationState == .foregroundActive }?
+            .windows
+            .first { $0.isKeyWindow }
+            ?? scenes.first?.windows.first { $0.isKeyWindow }
+            ?? scenes.first?.windows.first
     }
 }
 

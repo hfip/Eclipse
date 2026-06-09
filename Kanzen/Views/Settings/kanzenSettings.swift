@@ -84,6 +84,7 @@ struct KanzenSettingsView: View {
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 #endif

@@ -7,7 +7,9 @@ struct BrowseView: View {
     var body: some View {
         NavigationView(){
             KanzenModuleView()
-        }.environmentObject(kanzen)
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+        .environmentObject(kanzen)
     }
 }
 #endif

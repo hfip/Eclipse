@@ -64,6 +64,7 @@ struct MangaAddToCollectionView: View {
                     .environmentObject(libraryManager)
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 #endif

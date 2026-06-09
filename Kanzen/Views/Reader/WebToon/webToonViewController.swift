@@ -411,9 +411,12 @@ private final class WebtoonImageCell: UICollectionViewCell {
         currentTaskId = taskId
         showLoading()
 
-        let scale = UIScreen.main.scale
-        let targetWidth = max(UIScreen.main.bounds.width * scale, 900)
-        let targetHeight = max(UIScreen.main.bounds.height * scale * 3, targetWidth * 4)
+        let collectionBounds = findCollectionView()?.bounds ?? contentView.bounds
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        let viewportWidth = max(collectionBounds.width, contentView.bounds.width, 1)
+        let viewportHeight = max(collectionBounds.height, contentView.bounds.height, viewportWidth * 1.45)
+        let targetWidth = max(viewportWidth * scale, 900)
+        let targetHeight = max(viewportHeight * scale * 3, targetWidth * 4)
         let processor = DownsamplingImageProcessor(size: CGSize(width: targetWidth, height: targetHeight))
 
         var options: KingfisherOptionsInfo = [

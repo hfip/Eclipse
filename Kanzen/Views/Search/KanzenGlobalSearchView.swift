@@ -202,6 +202,7 @@ struct KanzenGlobalSearchView: View {
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         }
+        .navigationViewStyle(StackNavigationViewStyle())
         .onAppear {
             syncSources()
         }

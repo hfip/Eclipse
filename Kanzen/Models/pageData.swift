@@ -251,11 +251,15 @@ private struct ReaderDataImageView: View {
     let image: UIImage
 
     var body: some View {
-        Image(uiImage: image)
-            .resizable()
-            .scaledToFit()
-            .frame(width: UIScreen.main.bounds.width)
-            .background(Color.black)
+        GeometryReader { proxy in
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: max(proxy.size.width, 1))
+                .frame(maxHeight: .infinity)
+                .background(Color.black)
+        }
+        .background(Color.black)
     }
 }
 
@@ -264,14 +268,18 @@ private struct ReaderKFImage: View {
     let page: PageData
 
     var body: some View {
-        if let modifier = page.requestModifier {
-            baseImage
-                .requestModifier(modifier)
-                .readerPageImageStyle()
-        } else {
-            baseImage
-                .readerPageImageStyle()
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            if let modifier = page.requestModifier {
+                baseImage
+                    .requestModifier(modifier)
+                    .readerPageImageStyle(width: width)
+            } else {
+                baseImage
+                    .readerPageImageStyle(width: width)
+            }
         }
+        .background(Color.black)
     }
 
     private var baseImage: KFImage {
@@ -297,9 +305,10 @@ extension PageData {
 }
 
 private extension KFImage {
-    func readerPageImageStyle() -> some View {
+    func readerPageImageStyle(width: CGFloat) -> some View {
         scaledToFit()
-            .frame(width: UIScreen.main.bounds.width)
+            .frame(width: width)
+            .frame(maxHeight: .infinity)
             .background(Color.black)
     }
 }

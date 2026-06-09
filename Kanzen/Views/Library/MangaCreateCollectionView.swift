@@ -41,6 +41,7 @@ struct MangaCreateCollectionView: View {
                 }
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 #endif

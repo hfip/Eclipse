@@ -163,6 +163,7 @@ struct KanzenLibraryView: View {
                     .environmentObject(libraryManager)
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 
     // MARK: - Card Views
