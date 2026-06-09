@@ -31,7 +31,7 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
 
     var knownChapterNumbers: [String] {
         if let latestChapterNumbers, !latestChapterNumbers.isEmpty {
-            return latestChapterNumbers
+            return ChapterIdentityNormalizer.deduplicatedNumbers(latestChapterNumbers)
         }
         if let totalChapters, totalChapters > 0 {
             return (1...totalChapters).map(String.init)
@@ -42,8 +42,9 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
     func unreadCount(readChapters: Set<String>) -> Int {
         let known = knownChapterNumbers
         guard !known.isEmpty else { return 0 }
+        let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
         return known.reduce(into: 0) { count, chapter in
-            if !readChapters.contains(chapter) {
+            if !readKeys.contains(ChapterIdentityNormalizer.key(for: chapter)) {
                 count += 1
             }
         }
@@ -61,6 +62,7 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
         sourceName: String? = nil,
         latestChapterNumbers: [String]? = nil
     ) -> MangaLibraryItem {
+        let uniqueChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
         let combined = "\(moduleId.uuidString):\(contentId)"
         // Use a stable hash; make it negative to avoid AniList ID collisions
         let hash = combined.utf8.reduce(into: 5381) { h, c in h = ((h &<< 5) &+ h) &+ Int(c) }
@@ -70,13 +72,13 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
             title: title,
             coverURL: coverURL,
             format: isNovel ? "NOVEL" : "MANGA",
-            totalChapters: latestChapterNumbers?.count,
+            totalChapters: uniqueChapterNumbers?.count,
             moduleUUID: moduleId.uuidString,
             contentParams: contentId,
             isNovel: isNovel,
             route: .legacyModule(moduleUUID: moduleId.uuidString, contentParams: contentId, isNovel: isNovel),
             sourceName: sourceName,
-            latestChapterNumbers: latestChapterNumbers
+            latestChapterNumbers: uniqueChapterNumbers
         )
     }
 
@@ -89,16 +91,17 @@ struct MangaLibraryItem: Codable, Identifiable, Equatable {
         latestChapterNumbers: [String]? = nil,
         format: String? = "MANGA"
     ) -> MangaLibraryItem {
+        let uniqueChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
         let route = MangaContentRoute.aidoku(sourceId: sourceId, mangaKey: mangaKey)
         return MangaLibraryItem(
             aniListId: route.stableNegativeId,
             title: title,
             coverURL: coverURL,
             format: format,
-            totalChapters: latestChapterNumbers?.count,
+            totalChapters: uniqueChapterNumbers?.count,
             route: route,
             sourceName: sourceName,
-            latestChapterNumbers: latestChapterNumbers
+            latestChapterNumbers: uniqueChapterNumbers
         )
     }
 

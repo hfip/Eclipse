@@ -108,122 +108,114 @@ struct readerManagerView:View {
     @ViewBuilder
     func readerOverlay() -> some View {
         if showFullScreen {
-            VStack(spacing: 0) {
-                // MARK: - Top Bar
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if !reader_manager.mangaTitle.isEmpty {
-                            Text(reader_manager.mangaTitle)
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
+            GeometryReader { proxy in
+                VStack(spacing: 0) {
+                    // MARK: - Top Bar
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if !reader_manager.mangaTitle.isEmpty {
+                                Text(reader_manager.mangaTitle)
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                            }
+                            Text(reader_manager.selectedChapter?.chapterNumber ?? "")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.72))
                                 .lineLimit(1)
                         }
-                        Text(reader_manager.selectedChapter?.chapterNumber ?? "")
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.7))
-                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            AppDelegate.orientationLock = .all
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.body.bold())
+                                .foregroundColor(.white)
+                                .frame(width: 34, height: 34)
+                                .background(Color.white.opacity(0.12))
+                                .clipShape(Circle())
+                        }
                     }
-                    Spacer()
-                    Button {
-                        AppDelegate.orientationLock = .all
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.body.bold())
-                            .foregroundColor(.white)
-                            .frame(width: 30, height: 30)
-                            .background(Color.white.opacity(0.12))
-                            .clipShape(Circle())
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .padding(.top, 4)
-                .background(
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.7), Color.black.opacity(0)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(.all, edges: .top)
-                )
-
-                Spacer()
-
-                // MARK: - Bottom Bar
-                HStack(spacing: 20) {
-                    // Orientation lock
-                    Button {
-                        toggleOrientationLock()
-                    } label: {
-                        Image(systemName: orientationLocked ? "lock.fill" : "lock.open")
-                            .font(.title2)
-                            .foregroundColor(orientationLocked ? settings.accentColor : .white)
-                    }
-
-                    // Settings
-                    Button {
-                        showReadingModePicker = true
-                    } label: {
-                        Image(systemName: "gearshape.fill")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                    }
-
-                    // Chapter list
-                    Button {
-                        showChapterlist = true
-                    } label: {
-                        Image(systemName: "list.bullet")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.78))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .padding(.horizontal, 12)
+                    .padding(.top, max(proxy.safeAreaInsets.top, 44) + 8)
 
                     Spacer()
 
-                    // Page counter with chapter arrows
-                    HStack(spacing: 10) {
+                    // MARK: - Bottom Bar
+                    HStack(spacing: 18) {
+                        // Orientation lock
                         Button {
-                            reader_manager.goToPreviousChapter()
+                            toggleOrientationLock()
                         } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.callout.bold())
-                                .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) > 0 ? .white : .white.opacity(0.3))
+                            Image(systemName: orientationLocked ? "lock.fill" : "lock.open")
+                                .font(.title2)
+                                .foregroundColor(.white)
                         }
-                        .disabled(reader_manager.selectedChapter?.idx == 0)
 
-                        Text("\(min(reader_manager.index + 1, max(reader_manager.currChapter.count, 1))) of \(max(reader_manager.currChapter.count, 1))")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.white)
-                            .monospacedDigit()
-
+                        // Settings
                         Button {
-                            reader_manager.goToNextChapter()
+                            showReadingModePicker = true
                         } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.callout.bold())
-                                .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) < (reader_manager.chapters?.count ?? 1) - 1 ? .white : .white.opacity(0.3))
+                            Image(systemName: "gearshape.fill")
+                                .font(.title2)
+                                .foregroundColor(.white)
                         }
-                        .disabled(reader_manager.selectedChapter?.idx == (reader_manager.chapters?.count ?? 1) - 1)
+
+                        // Chapter list
+                        Button {
+                            showChapterlist = true
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        // Page counter with chapter arrows
+                        HStack(spacing: 10) {
+                            Button {
+                                reader_manager.goToPreviousChapter()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.callout.bold())
+                                    .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) > 0 ? .white : .white.opacity(0.3))
+                            }
+                            .disabled(reader_manager.selectedChapter?.idx == 0)
+
+                            Text("\(min(reader_manager.index + 1, max(reader_manager.currChapter.count, 1))) of \(max(reader_manager.currChapter.count, 1))")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white)
+                                .monospacedDigit()
+
+                            Button {
+                                reader_manager.goToNextChapter()
+                            } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.callout.bold())
+                                    .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) < (reader_manager.chapters?.count ?? 1) - 1 ? .white : .white.opacity(0.3))
+                            }
+                            .disabled(reader_manager.selectedChapter?.idx == (reader_manager.chapters?.count ?? 1) - 1)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.12))
+                        .cornerRadius(20)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.10))
-                    .cornerRadius(20)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.78))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 24) + 8)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .padding(.bottom, 4)
-                .background(
-                    LinearGradient(
-                        colors: [Color.black.opacity(0), Color.black.opacity(0.7)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(.all, edges: .bottom)
-                )
             }
         }
     }

@@ -108,6 +108,77 @@ struct Chapter: Identifiable {
     let chapterData: [ChapterData]?
 }
 
+enum ChapterIdentityNormalizer {
+    static func key(for chapterNumber: String) -> String {
+        let lowered = chapterNumber
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let numberPattern = #"(\d+(?:\.\d+)?)"#
+
+        if let match = firstMatch(
+            in: lowered,
+            pattern: #"\bvol(?:ume)?\.?\s*\#(numberPattern).*?\b(?:ch(?:apter)?|ep(?:isode)?|episode)\.?\s*\#(numberPattern)"#
+        ),
+           let volumeRange = Range(match.range(at: 1), in: lowered),
+           let chapterRange = Range(match.range(at: 2), in: lowered) {
+            let chapter = normalizedNumericString(String(lowered[chapterRange]))
+            return "v\(normalizedNumericString(String(lowered[volumeRange]))):c\(chapter)"
+        }
+
+        if let match = firstMatch(
+            in: lowered,
+            pattern: #"\b(?:ch(?:apter)?|ep(?:isode)?|episode)\.?\s*\#(numberPattern)"#
+        ),
+           let chapterRange = Range(match.range(at: 1), in: lowered) {
+            return "c\(normalizedNumericString(String(lowered[chapterRange])))"
+        }
+
+        if let match = firstMatch(in: lowered, pattern: #"^\s*\#(numberPattern)\b"#),
+           let chapterRange = Range(match.range(at: 1), in: lowered) {
+            return "c\(normalizedNumericString(String(lowered[chapterRange])))"
+        }
+
+        return lowered
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    }
+
+    static func deduplicatedNumbers(_ numbers: [String]) -> [String] {
+        var seen = Set<String>()
+        return numbers.filter { number in
+            seen.insert(key(for: number)).inserted
+        }
+    }
+
+    static func deduplicatedChapters(_ chapters: [Chapter], reindex: Bool = false) -> [Chapter] {
+        var seen = Set<String>()
+        let unique = chapters.filter { chapter in
+            seen.insert(key(for: chapter.chapterNumber)).inserted
+        }
+
+        guard reindex else { return unique }
+        return unique.enumerated().map { index, chapter in
+            Chapter(
+                chapterNumber: chapter.chapterNumber,
+                idx: index,
+                chapterData: chapter.chapterData
+            )
+        }
+    }
+
+    private static func normalizedNumericString(_ value: String) -> String {
+        guard let number = Double(value) else { return value }
+        if number.truncatingRemainder(dividingBy: 1) == 0 {
+            return String(Int(number))
+        }
+        return String(number)
+    }
+
+    private static func firstMatch(in value: String, pattern: String) -> NSTextCheckingResult? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        return regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value))
+    }
+}
+
 struct ChapterData: Identifiable {
     let id = UUID()
     var scanlationGroup: String = ""

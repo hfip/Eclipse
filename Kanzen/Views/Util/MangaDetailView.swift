@@ -87,10 +87,11 @@ struct MangaDetailView: View {
     }
 
     private func chapterNumbers(from groups: [Chapters]?) -> [String]? {
-        groups?
+        let numbers = groups?
             .max(by: { $0.chapters.count < $1.chapters.count })?
             .chapters
             .map(\.chapterNumber)
+        return numbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
     }
 
     private var selectedSourceIsNovel: Bool {
@@ -199,11 +200,15 @@ struct MangaDetailView: View {
         }) { chapter in
             if let chapters = loadedChapters, chapterLanguageIdx < chapters.count {
                 let chapterList = chapters[chapterLanguageIdx].chapters
+                let readerChapterList = readerChapters(from: chapterList)
+                let selectedReaderChapter = readerChapterList.first {
+                    $0.chapterNumber == chapter.chapterNumber
+                } ?? readerChapterList.first ?? chapter
                 if selectedSource?.module.moduleData.novel == true {
                     NovelReaderView(
                         kanzen: chapterEngine,
-                        chapters: chapterList,
-                        initialChapter: chapter,
+                        chapters: readerChapterList,
+                        initialChapter: selectedReaderChapter,
                         mangaId: progressMangaId,
                         mangaTitle: selectedSourceDisplayTitle,
                         mangaCoverURL: selectedSourceCoverURL ?? "",
@@ -214,8 +219,8 @@ struct MangaDetailView: View {
                     )
                 } else {
                     readerManagerView(
-                        chapters: chapterList,
-                        selectedChapter: chapter,
+                        chapters: readerChapterList,
+                        selectedChapter: selectedReaderChapter,
                         kanzen: chapterEngine,
                         mangaId: progressMangaId,
                         mangaTitle: selectedSourceDisplayTitle,
@@ -740,18 +745,29 @@ struct MangaDetailView: View {
     @ViewBuilder
     private func readButton(chapters: [Chapter]) -> some View {
         let lastRead = progressManager.lastReadChapter(for: progressMangaId)
-        let hasProgress = lastRead != nil
+        let readChapters = progressManager.readChapters(for: progressMangaId)
+        let hasProgress = lastRead != nil || !readChapters.isEmpty
 
         // Find the chapter to resume/start
         let targetChapter: Chapter? = {
             if let lastRead = lastRead {
                 // Find the last-read chapter so we resume in it
-                if let ch = chapters.first(where: { $0.chapterNumber == lastRead }) {
+                let lastReadKey = ChapterIdentityNormalizer.key(for: lastRead)
+                if let ch = chapters.first(where: {
+                    $0.chapterNumber == lastRead ||
+                    ChapterIdentityNormalizer.key(for: $0.chapterNumber) == lastReadKey
+                }) {
                     return ch
                 }
             }
             // No progress — start from first chapter
-            return chapters.first
+            let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
+            if let unread = chronologicalChapters(chapters).first(where: {
+                !readKeys.contains(ChapterIdentityNormalizer.key(for: $0.chapterNumber))
+            }) {
+                return unread
+            }
+            return chronologicalChapters(chapters).first
         }()
 
         if let target = targetChapter {
@@ -772,6 +788,44 @@ struct MangaDetailView: View {
                 .cornerRadius(16)
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    private func chronologicalChapters(_ chapters: [Chapter]) -> [Chapter] {
+        chapters.sorted { lhs, rhs in
+            let lhsNumber = numericChapterValue(lhs.chapterNumber)
+            let rhsNumber = numericChapterValue(rhs.chapterNumber)
+            switch (lhsNumber, rhsNumber) {
+            case let (lhs?, rhs?):
+                if lhs != rhs { return lhs < rhs }
+                return lhs.idx < rhs.idx
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.idx > rhs.idx
+            }
+        }
+    }
+
+    private func numericChapterValue(_ text: String) -> Double? {
+        let pattern = #"(\d+(?:\.\d+)?)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, range: range)
+        guard let match = matches.last,
+              let valueRange = Range(match.range(at: 1), in: text) else { return nil }
+        return Double(text[valueRange])
+    }
+
+    private func readerChapters(from chapters: [Chapter]) -> [Chapter] {
+        ChapterIdentityNormalizer.deduplicatedChapters(chronologicalChapters(chapters), reindex: false).enumerated().map { index, chapter in
+            Chapter(
+                chapterNumber: chapter.chapterNumber,
+                idx: index,
+                chapterData: chapter.chapterData
+            )
         }
     }
 
@@ -844,6 +898,13 @@ struct MangaDetailView: View {
                         if !chapterList.isEmpty {
                             parsed.append(Chapters(language: "default", chapters: chapterList))
                         }
+                    }
+
+                    parsed = parsed.map {
+                        Chapters(
+                            language: $0.language,
+                            chapters: ChapterIdentityNormalizer.deduplicatedChapters($0.chapters, reindex: true)
+                        )
                     }
 
                     ReaderLogger.shared.log("MangaDetail.selectSource: parsed \(parsed.count) language groups, total chapters=\(parsed.reduce(0) { $0 + $1.chapters.count })", type: "Debug")

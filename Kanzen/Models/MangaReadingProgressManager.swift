@@ -87,6 +87,7 @@ final class MangaReadingProgressManager: ObservableObject {
     /// Mark a chapter as read and optionally sync to AniList.
     func markChapterRead(mangaId: Int, chapterNumber: String, mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil, route: MangaContentRoute? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
+        let uniqueLatestChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
 
         guard !progress.readChapterNumbers.contains(chapterNumber) else {
             // Still update metadata if provided even for already-read chapters
@@ -94,8 +95,19 @@ final class MangaReadingProgressManager: ObservableObject {
             if let t = mangaTitle, progress.title != t { progress.title = t; changed = true }
             if let c = coverURL, progress.coverURL != c { progress.coverURL = c; changed = true }
             if let f = format, progress.format != f { progress.format = f; changed = true }
-            if let tc = totalChapters, progress.totalChapters != tc { progress.totalChapters = tc; changed = true }
-            if let latestChapterNumbers, progress.latestChapterNumbers != latestChapterNumbers { progress.latestChapterNumbers = latestChapterNumbers; changed = true }
+            if let uniqueLatestChapterNumbers {
+                if progress.totalChapters != uniqueLatestChapterNumbers.count {
+                    progress.totalChapters = uniqueLatestChapterNumbers.count
+                    changed = true
+                }
+                if progress.latestChapterNumbers != uniqueLatestChapterNumbers {
+                    progress.latestChapterNumbers = uniqueLatestChapterNumbers
+                    changed = true
+                }
+            } else if let tc = totalChapters, progress.totalChapters != tc {
+                progress.totalChapters = tc
+                changed = true
+            }
             if let m = moduleUUID, progress.moduleUUID != m { progress.moduleUUID = m; changed = true }
             if let cp = contentParams, progress.contentParams != cp { progress.contentParams = cp; changed = true }
             if let n = isNovel, progress.isNovel != n { progress.isNovel = n; changed = true }
@@ -115,8 +127,12 @@ final class MangaReadingProgressManager: ObservableObject {
         if let t = mangaTitle { progress.title = t }
         if let c = coverURL { progress.coverURL = c }
         if let f = format { progress.format = f }
-        if let tc = totalChapters { progress.totalChapters = tc }
-        if let latestChapterNumbers { progress.latestChapterNumbers = latestChapterNumbers }
+        if let uniqueLatestChapterNumbers {
+            progress.latestChapterNumbers = uniqueLatestChapterNumbers
+            progress.totalChapters = uniqueLatestChapterNumbers.count
+        } else if let tc = totalChapters {
+            progress.totalChapters = tc
+        }
         if let m = moduleUUID { progress.moduleUUID = m }
         if let cp = contentParams { progress.contentParams = cp }
         if let n = isNovel { progress.isNovel = n }
@@ -148,18 +164,24 @@ final class MangaReadingProgressManager: ObservableObject {
     /// Mark multiple chapters as read and sync the highest chapter to AniList.
     func markAllRead(mangaId: Int, chapterNumbers: [String], mangaTitle: String? = nil, coverURL: String? = nil, format: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, moduleUUID: String? = nil, contentParams: String? = nil, isNovel: Bool? = nil, route: MangaContentRoute? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
-        for ch in chapterNumbers {
+        let uniqueChapterNumbers = ChapterIdentityNormalizer.deduplicatedNumbers(chapterNumbers)
+        let uniqueLatestChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
+        for ch in uniqueChapterNumbers {
             progress.readChapterNumbers.insert(ch)
         }
-        if let last = chapterNumbers.last {
+        if let last = uniqueChapterNumbers.last {
             progress.lastReadChapter = last
             progress.lastReadDate = Date()
         }
         if let mangaTitle { progress.title = mangaTitle }
         if let coverURL { progress.coverURL = coverURL }
         if let format { progress.format = format }
-        if let totalChapters { progress.totalChapters = totalChapters }
-        if let latestChapterNumbers { progress.latestChapterNumbers = latestChapterNumbers }
+        if let uniqueLatestChapterNumbers {
+            progress.latestChapterNumbers = uniqueLatestChapterNumbers
+            progress.totalChapters = uniqueLatestChapterNumbers.count
+        } else if let totalChapters {
+            progress.totalChapters = totalChapters
+        }
         if let moduleUUID { progress.moduleUUID = moduleUUID }
         if let contentParams { progress.contentParams = contentParams }
         if let isNovel { progress.isNovel = isNovel }
@@ -169,7 +191,7 @@ final class MangaReadingProgressManager: ObservableObject {
         progressMap[mangaId] = progress
         save()
 
-        let highest = chapterNumbers.compactMap { extractChapterNumber(from: $0) }.max()
+        let highest = uniqueChapterNumbers.compactMap { extractChapterNumber(from: $0) }.max()
         if let highest = highest {
             syncTrackerProgress(
                 mangaId: mangaId,
@@ -183,11 +205,12 @@ final class MangaReadingProgressManager: ObservableObject {
 
     func updateSourceMetadata(mangaId: Int, title: String? = nil, coverURL: String? = nil, format: String? = nil, latestChapterNumbers: [String], route: MangaContentRoute? = nil, sourceRefreshError: String? = nil) {
         var progress = progressMap[mangaId] ?? MangaProgress()
+        let uniqueLatestChapterNumbers = ChapterIdentityNormalizer.deduplicatedNumbers(latestChapterNumbers)
         if let title { progress.title = title }
         if let coverURL { progress.coverURL = coverURL }
         if let format { progress.format = format }
-        progress.latestChapterNumbers = latestChapterNumbers
-        progress.totalChapters = latestChapterNumbers.count
+        progress.latestChapterNumbers = uniqueLatestChapterNumbers
+        progress.totalChapters = uniqueLatestChapterNumbers.count
         progress.lastSourceRefresh = Date()
         progress.sourceRefreshError = sourceRefreshError
         applyRoute(route, to: &progress)
@@ -221,6 +244,25 @@ final class MangaReadingProgressManager: ObservableObject {
         progress.readChapterNumbers.removeAll()
         progress.lastReadChapter = nil
         progressMap[mangaId] = progress
+        save()
+    }
+
+    func removeFromHistory(mangaId: Int) {
+        guard var progress = progressMap[mangaId] else { return }
+        progress.lastReadChapter = nil
+        progress.lastReadDate = nil
+        progress.pagePositions.removeAll()
+        progressMap[mangaId] = progress
+        save()
+    }
+
+    func clearHistory() {
+        guard progressMap.values.contains(where: { $0.lastReadDate != nil }) else { return }
+        for mangaId in progressMap.keys {
+            progressMap[mangaId]?.lastReadChapter = nil
+            progressMap[mangaId]?.lastReadDate = nil
+            progressMap[mangaId]?.pagePositions.removeAll()
+        }
         save()
     }
 

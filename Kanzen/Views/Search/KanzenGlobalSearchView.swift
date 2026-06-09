@@ -103,7 +103,7 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
                 }
 
                 do {
-                    let items = try await Self.searchSource(source, query: trimmed, page: 0)
+                    let items = try await Self.searchSource(source, query: trimmed, page: 1)
                     guard self.searchToken == token else { return }
                     if !items.isEmpty {
                         sections.append(MangaModuleSearchSection(id: source.id, source: source, items: items))
@@ -539,7 +539,7 @@ private final class MangaAidokuAdvancedSearchViewModel: ObservableObject {
 
         Task { @MainActor in
             do {
-                let results = try await MangaGlobalModuleSearchViewModel.searchSource(source, query: query, page: 0, filters: filters)
+                let results = try await MangaGlobalModuleSearchViewModel.searchSource(source, query: query, page: 1, filters: filters)
                 guard searchToken == token else { return }
                 items = results
                 isSearching = false
@@ -735,12 +735,18 @@ private struct MangaAidokuAdvancedSearchView: View {
                         } label: {
                             Text(option)
                                 .font(.subheadline)
-                                .lineLimit(1)
-                                .foregroundColor(selected ? .white : .primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .foregroundColor(.primary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 7)
                                 .frame(maxWidth: .infinity)
-                                .background(selected ? Color.accentColor : Color.black.opacity(0.35))
+                                .background(selected ? Color.primary.opacity(0.18) : Color.black.opacity(0.35))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(selected ? Color.primary.opacity(0.35) : Color.clear, lineWidth: 1)
+                                )
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)

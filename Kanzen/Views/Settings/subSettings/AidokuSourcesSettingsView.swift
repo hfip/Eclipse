@@ -15,6 +15,7 @@ struct AidokuSourcesSettingsView: View {
     @State private var isImportingPackage = false
     @State private var isBusy = false
     @State private var alertMessage: String?
+    @State private var showAvailableSources = true
 
     private var visibleAvailableSources: [AidokuSourceListEntry] {
         sourceManager.availableSources
@@ -126,12 +127,21 @@ struct AidokuSourcesSettingsView: View {
             .background(LunaScrollTracker())
 
             Section(header: Text("Available Sources")) {
-                if visibleAvailableSources.isEmpty {
-                    Text(sourceManager.sourceLists.isEmpty ? "Add a source list to see installable sources." : "No installable sources found.")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(visibleAvailableSources) { entry in
-                        availableSourceRow(entry)
+                DisclosureGroup(isExpanded: $showAvailableSources) {
+                    if visibleAvailableSources.isEmpty {
+                        Text(sourceManager.sourceLists.isEmpty ? "Add a source list to see installable sources." : "No installable sources found.")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(visibleAvailableSources) { entry in
+                            availableSourceRow(entry)
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text("Installable Sources")
+                        Spacer()
+                        Text("\(visibleAvailableSources.count)")
+                            .foregroundColor(.secondary)
                     }
                 }
             }

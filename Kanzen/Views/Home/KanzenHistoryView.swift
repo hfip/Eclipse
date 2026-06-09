@@ -12,6 +12,9 @@ import Kingfisher
 struct KanzenHistoryView: View {
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
     @State private var scrollOffset: CGFloat = 0
+    @State private var showClearHistoryConfirmation = false
+    @State private var contextDetailItem: MangaLibraryItem?
+    @State private var showContextDetail = false
 
     private var historyItems: [(id: Int, progress: MangaProgress)] {
         progressManager.recentlyReadMangaIds()
@@ -21,8 +24,19 @@ struct KanzenHistoryView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    KanzenRootHeader("History")
+                    KanzenRootHeader("History") {
+                        if !historyItems.isEmpty {
+                            Button("Clear History") {
+                                showClearHistoryConfirmation = true
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Clear History")
+                        }
+                    }
                         .padding(.horizontal, -16)
+
+                    contextDetailLink
 
                     if historyItems.isEmpty {
                         emptyState
@@ -35,6 +49,20 @@ struct KanzenHistoryView: View {
                                     historyRow(for: item)
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button {
+                                        contextDetailItem = libraryItem(for: item)
+                                        showContextDetail = true
+                                    } label: {
+                                        Label("Open Details", systemImage: "info.circle")
+                                    }
+
+                                    Button(role: .destructive) {
+                                        progressManager.removeFromHistory(mangaId: item.id)
+                                    } label: {
+                                        Label("Remove from History", systemImage: "trash")
+                                    }
+                                }
                             }
                         }
                     }
@@ -53,7 +81,29 @@ struct KanzenHistoryView: View {
             .coordinateSpace(name: "kanzenHistoryScroll")
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+            .alert("Clear History?", isPresented: $showClearHistoryConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Clear History", role: .destructive) {
+                    progressManager.clearHistory()
+                }
+            } message: {
+                Text("This removes entries from History without clearing read chapters or library items.")
+            }
         }
+    }
+
+    private var contextDetailLink: some View {
+        NavigationLink(isActive: $showContextDetail) {
+            if let contextDetailItem {
+                MangaLibraryDestinationView(item: contextDetailItem)
+            } else {
+                EmptyView()
+            }
+        } label: {
+            EmptyView()
+        }
+        .hidden()
+        .frame(width: 0, height: 0)
     }
 
     private var emptyState: some View {
@@ -107,25 +157,27 @@ struct KanzenHistoryView: View {
 
     @ViewBuilder
     private func mangaDestination(for item: (id: Int, progress: MangaProgress)) -> some View {
-        MangaLibraryDestinationView(
-            item: MangaLibraryItem(
-                aniListId: item.id,
-                title: item.progress.title ?? "Unknown Manga",
-                coverURL: item.progress.coverURL,
-                format: item.progress.format,
-                totalChapters: item.progress.totalChapters,
-                moduleUUID: item.progress.moduleUUID,
-                contentParams: item.progress.contentParams,
-                isNovel: item.progress.isNovel,
-                route: item.progress.route,
-                latestChapterNumbers: item.progress.latestChapterNumbers,
-                lastSourceRefresh: item.progress.lastSourceRefresh,
-                sourceRefreshError: item.progress.sourceRefreshError,
-                trackerAniListId: item.progress.trackerAniListId,
-                trackerMALId: item.progress.trackerMALId,
-                trackerMatchConfidence: item.progress.trackerMatchConfidence,
-                trackerResolvedAt: item.progress.trackerResolvedAt
-            )
+        MangaLibraryDestinationView(item: libraryItem(for: item))
+    }
+
+    private func libraryItem(for item: (id: Int, progress: MangaProgress)) -> MangaLibraryItem {
+        MangaLibraryItem(
+            aniListId: item.id,
+            title: item.progress.title ?? "Unknown Manga",
+            coverURL: item.progress.coverURL,
+            format: item.progress.format,
+            totalChapters: item.progress.totalChapters,
+            moduleUUID: item.progress.moduleUUID,
+            contentParams: item.progress.contentParams,
+            isNovel: item.progress.isNovel,
+            route: item.progress.route,
+            latestChapterNumbers: item.progress.latestChapterNumbers,
+            lastSourceRefresh: item.progress.lastSourceRefresh,
+            sourceRefreshError: item.progress.sourceRefreshError,
+            trackerAniListId: item.progress.trackerAniListId,
+            trackerMALId: item.progress.trackerMALId,
+            trackerMatchConfidence: item.progress.trackerMatchConfidence,
+            trackerResolvedAt: item.progress.trackerResolvedAt
         )
     }
 }

@@ -67,11 +67,11 @@ struct KanzenHomeView: View {
                                 Text(source.name)
                                     .font(.headline)
                                     .fontWeight(source.id == homeViewModel.selectedSourceID ? .bold : .semibold)
-                                    .foregroundColor(source.id == homeViewModel.selectedSourceID ? .accentColor : .primary.opacity(0.82))
+                                    .foregroundColor(source.id == homeViewModel.selectedSourceID ? .primary : .primary.opacity(0.72))
                                     .lineLimit(1)
 
                                 Capsule()
-                                    .fill(source.id == homeViewModel.selectedSourceID ? Color.accentColor : Color.clear)
+                                    .fill(source.id == homeViewModel.selectedSourceID ? Color.primary.opacity(0.82) : Color.clear)
                                     .frame(height: 3)
                             }
                         }

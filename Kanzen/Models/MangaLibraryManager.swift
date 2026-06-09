@@ -339,7 +339,7 @@ final class MangaLibraryManager: ObservableObject {
     }
 
     private func chapterNumbers(from chapters: [AidokuRunner.Chapter]) -> [String] {
-        chapters.enumerated().map { index, chapter in
+        let numbers = chapters.enumerated().map { index, chapter in
             if let volume = chapter.volumeNumber, let number = chapter.chapterNumber {
                 return "Vol. \(formatNumber(volume)) Ch. \(formatNumber(number))"
             }
@@ -351,6 +351,7 @@ final class MangaLibraryManager: ObservableObject {
             }
             return "Chapter \(index + 1)"
         }
+        return ChapterIdentityNormalizer.deduplicatedNumbers(numbers)
     }
 
     private func legacyChapterNumbers(from result: Any) -> [String] {
@@ -378,7 +379,7 @@ final class MangaLibraryManager: ObservableObject {
                     numbers.append("Chapter \(index + 1)")
                 }
             }
-            return numbers
+            return ChapterIdentityNormalizer.deduplicatedNumbers(numbers)
         }
 
         return []
