@@ -24,7 +24,7 @@ struct KanzenHomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             VStack(spacing: 0) {
                 KanzenRootHeader("Discover")
                 sourceTabs

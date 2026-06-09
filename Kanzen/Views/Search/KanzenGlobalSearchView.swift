@@ -94,10 +94,11 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
             Task { @MainActor in
                 guard self.searchToken == token else { return }
                 defer {
-                    guard self.searchToken == token else { return }
-                    self.pendingSearchCount = max(0, self.pendingSearchCount - 1)
-                    if self.pendingSearchCount == 0 {
-                        self.isSearching = false
+                    if self.searchToken == token {
+                        self.pendingSearchCount = max(0, self.pendingSearchCount - 1)
+                        if self.pendingSearchCount == 0 {
+                            self.isSearching = false
+                        }
                     }
                 }
 
@@ -920,6 +921,12 @@ private struct KanzenModuleSearchBar: View {
 private extension Array {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+private extension AidokuRunner.SelectFilter {
+    var resolvedDefaultValue: String {
+        defaultValue ?? ids?.first ?? options.first ?? ""
     }
 }
 #endif

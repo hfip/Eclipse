@@ -14,7 +14,7 @@ struct KanzenSettingsView: View {
     @State private var scrollOffset: CGFloat = 0
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             ScrollView {
                 VStack(spacing: 28) {
                     KanzenRootHeader("Settings")
