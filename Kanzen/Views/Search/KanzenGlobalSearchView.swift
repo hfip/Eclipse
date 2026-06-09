@@ -50,17 +50,30 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
     @Published var hasSearched = false
 
     private var searchToken = UUID()
+    private var pendingSearchCount = 0
 
     func refreshSources(from modules: [ModuleDataContainer], aidokuManager: AidokuSourceManager) {
         MangaHomeSourceManager.shared.refreshSources(from: modules)
         sources = MangaHomeSourceManager.shared.enabledSources(aidokuManager: aidokuManager, modules: modules)
     }
 
+    func resetSearch() {
+        searchToken = UUID()
+        pendingSearchCount = 0
+        sections = []
+        failedSourceNames = []
+        isSearching = false
+        hasSearched = false
+    }
+
     func searchAll(_ query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else {
+            resetSearch()
+            return
+        }
 
-        let activeSources = sources
+        let activeSources = sources.filter(\.isAidoku)
         guard !activeSources.isEmpty else {
             sections = []
             failedSourceNames = []
@@ -75,28 +88,32 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
         hasSearched = true
         sections = []
         failedSourceNames = []
+        pendingSearchCount = activeSources.count
 
-        Task { @MainActor in
-            var loadedSections: [MangaModuleSearchSection] = []
-            var failures: [String] = []
-
-            for source in activeSources {
+        for source in activeSources {
+            Task { @MainActor in
                 guard self.searchToken == token else { return }
+                defer {
+                    guard self.searchToken == token else { return }
+                    self.pendingSearchCount = max(0, self.pendingSearchCount - 1)
+                    if self.pendingSearchCount == 0 {
+                        self.isSearching = false
+                    }
+                }
+
                 do {
                     let items = try await Self.searchSource(source, query: trimmed, page: 0)
+                    guard self.searchToken == token else { return }
                     if !items.isEmpty {
-                        loadedSections.append(MangaModuleSearchSection(id: source.id, source: source, items: items))
+                        sections.append(MangaModuleSearchSection(id: source.id, source: source, items: items))
                     }
                 } catch {
-                    failures.append(source.name)
+                    guard self.searchToken == token else { return }
+                    failedSourceNames.append(source.name)
+                    failedSourceNames.sort()
                     ReaderLogger.shared.log("Search failed source=\(source.id): \(error.localizedDescription)", type: "AidokuSearch")
                 }
             }
-
-            guard self.searchToken == token else { return }
-            self.sections = loadedSections
-            self.failedSourceNames = failures.sorted()
-            self.isSearching = false
         }
     }
 
@@ -104,7 +121,13 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
         switch source.kind {
         case .aidoku:
             guard let sourceId = source.sourceId else { throw AidokuSourceError.sourceNotInstalled }
-            let result = try await AidokuSourceManager.shared.search(sourceId: sourceId, query: query, page: page, filters: filters)
+            let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = try await AidokuSourceManager.shared.search(
+                sourceId: sourceId,
+                query: normalizedQuery.isEmpty ? nil : normalizedQuery,
+                page: page,
+                filters: filters
+            )
             return result.entries
                 .prefix(MangaHomeViewModel.maxRetainedItemsPerSection)
                 .map { MangaHomeItem(sourceId: sourceId, manga: $0) }
@@ -141,20 +164,26 @@ struct KanzenGlobalSearchView: View {
     @State private var searchText = ""
     @State private var recentSearches = MangaSearchRecentStore.load()
     @State private var scrollOffset: CGFloat = 0
+    @State private var liveSearchTask: Task<Void, Never>?
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    KanzenRootHeader("Search Everything")
+                        .padding(.horizontal, -16)
+
                     KanzenModuleSearchBar(
                         text: $searchText,
                         placeholder: "Search",
-                        onSearch: performSearch
+                        onSearch: { performSearch(recordRecent: true) }
                     )
                     .padding(.top, 8)
+                    .onChange(of: searchText) { newValue in
+                        scheduleLiveSearch(newValue)
+                    }
 
                     sourceCards
-
                     searchStateContent
                 }
                 .padding(.horizontal, 16)
@@ -171,16 +200,6 @@ struct KanzenGlobalSearchView: View {
             .coordinateSpace(name: "kanzenSearchScroll")
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
-            .navigationTitle("Search Everything")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Search") {
-                        performSearch()
-                    }
-                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSearching)
-                }
-            }
         }
         .onAppear {
             syncSources()
@@ -194,16 +213,20 @@ struct KanzenGlobalSearchView: View {
         .onReceive(aidokuManager.objectWillChange) { _ in
             DispatchQueue.main.async { syncSources() }
         }
+        .onDisappear {
+            liveSearchTask?.cancel()
+        }
     }
 
     @ViewBuilder
     private var sourceCards: some View {
-        if viewModel.sources.isEmpty {
+        let aidokuSources = viewModel.sources.filter(\.isAidoku)
+        if aidokuSources.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "shippingbox")
                     .font(.system(size: 34))
                     .foregroundColor(.secondary)
-                Text("No searchable manga sources installed")
+                Text("No searchable Aidoku sources installed")
                     .font(.headline)
                     .foregroundColor(.secondary)
                 NavigationLink(destination: AidokuSourcesSettingsView()) {
@@ -217,8 +240,11 @@ struct KanzenGlobalSearchView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 18)], alignment: .leading, spacing: 18) {
-                ForEach(viewModel.sources) { source in
-                    MangaSearchSourceCard(source: source)
+                ForEach(aidokuSources) { source in
+                    NavigationLink(destination: MangaAidokuAdvancedSearchView(source: source)) {
+                        MangaSearchSourceCard(source: source)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -226,7 +252,31 @@ struct KanzenGlobalSearchView: View {
 
     @ViewBuilder
     private var searchStateContent: some View {
-        if viewModel.isSearching {
+        if viewModel.hasSearched, !viewModel.sections.isEmpty {
+            LazyVStack(alignment: .leading, spacing: 28) {
+                ForEach(viewModel.sections) { section in
+                    MangaModuleSearchSectionView(section: section)
+                }
+
+                if viewModel.isSearching {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Searching more sources...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                }
+
+                if !viewModel.failedSourceNames.isEmpty {
+                    Text("Skipped unavailable sources: \(viewModel.failedSourceNames.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 2)
+                }
+            }
+        } else if viewModel.isSearching {
             HStack(spacing: 10) {
                 ProgressView()
                 Text("Searching sources...")
@@ -236,37 +286,22 @@ struct KanzenGlobalSearchView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 30)
         } else if viewModel.hasSearched {
-            if viewModel.sections.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.largeTitle)
+            VStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.largeTitle)
+                    .foregroundColor(.secondary)
+                Text("No results found")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                if !viewModel.failedSourceNames.isEmpty {
+                    Text("Some sources did not respond: \(viewModel.failedSourceNames.joined(separator: ", "))")
+                        .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("No results found")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    if !viewModel.failedSourceNames.isEmpty {
-                        Text("Some sources did not respond: \(viewModel.failedSourceNames.joined(separator: ", "))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 34)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 28) {
-                    ForEach(viewModel.sections) { section in
-                        MangaModuleSearchSectionView(section: section)
-                    }
-
-                    if !viewModel.failedSourceNames.isEmpty {
-                        Text("Skipped unavailable sources: \(viewModel.failedSourceNames.joined(separator: ", "))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 2)
-                    }
+                        .multilineTextAlignment(.center)
                 }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 34)
         } else {
             recentSearchesView
         }
@@ -296,7 +331,7 @@ struct KanzenGlobalSearchView: View {
                 ForEach(recentSearches, id: \.self) { query in
                     Button {
                         searchText = query
-                        performSearch()
+                        performSearch(recordRecent: true)
                     } label: {
                         HStack {
                             Text(query)
@@ -319,12 +354,34 @@ struct KanzenGlobalSearchView: View {
         }
     }
 
-    private func performSearch() {
+    private func performSearch(recordRecent: Bool) {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
+        guard !query.isEmpty else {
+            viewModel.resetSearch()
+            return
+        }
 
-        recentSearches = MangaSearchRecentStore.add(query)
+        if recordRecent {
+            recentSearches = MangaSearchRecentStore.add(query)
+        }
         viewModel.searchAll(query)
+    }
+
+    private func scheduleLiveSearch(_ value: String) {
+        liveSearchTask?.cancel()
+        let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            viewModel.resetSearch()
+            return
+        }
+
+        liveSearchTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                viewModel.searchAll(query)
+            }
+        }
     }
 
     private func syncSources() {
@@ -334,19 +391,14 @@ struct KanzenGlobalSearchView: View {
 
 private struct MangaModuleSearchSectionView: View {
     let section: MangaModuleSearchSection
-
     private let posterWidth: CGFloat = isIPad ? 132 * iPadScaleSmall : 132
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(section.source.name)
-                    .font(.largeTitle)
-                    .fontWeight(.regular)
-                    .lineLimit(1)
-
-                Spacer()
-            }
+            Text(section.source.name)
+                .font(.largeTitle)
+                .fontWeight(.regular)
+                .lineLimit(1)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
@@ -431,7 +483,7 @@ private struct MangaSearchSourceCard: View {
 
                 KFImage(URL(string: source.iconURL))
                     .placeholder {
-                        Image(systemName: source.isAidoku ? "shippingbox" : "puzzlepiece.extension")
+                        Image(systemName: "shippingbox")
                             .font(.largeTitle)
                             .foregroundColor(.secondary)
                     }
@@ -448,6 +500,386 @@ private struct MangaSearchSourceCard: View {
                 .minimumScaleFactor(0.75)
                 .foregroundColor(.primary)
         }
+    }
+}
+
+@MainActor
+private final class MangaAidokuAdvancedSearchViewModel: ObservableObject {
+    @Published var filters: [AidokuRunner.Filter] = []
+    @Published var items: [MangaHomeItem] = []
+    @Published var isLoadingFilters = false
+    @Published var isSearching = false
+    @Published var errorMessage: String?
+
+    private var searchToken = UUID()
+
+    func loadFilters(source: MangaHomeSource) {
+        guard let sourceId = source.sourceId, filters.isEmpty, !isLoadingFilters else { return }
+        isLoadingFilters = true
+        errorMessage = nil
+
+        Task { @MainActor in
+            do {
+                filters = try await AidokuSourceManager.shared.filters(sourceId: sourceId)
+                isLoadingFilters = false
+            } catch {
+                errorMessage = error.localizedDescription
+                isLoadingFilters = false
+                ReaderLogger.shared.log("Advanced filters failed source=\(source.id): \(error.localizedDescription)", type: "AidokuSearch")
+            }
+        }
+    }
+
+    func search(source: MangaHomeSource, query: String, filters: [AidokuRunner.FilterValue]) {
+        let token = UUID()
+        searchToken = token
+        isSearching = true
+        errorMessage = nil
+
+        Task { @MainActor in
+            do {
+                let results = try await MangaGlobalModuleSearchViewModel.searchSource(source, query: query, page: 0, filters: filters)
+                guard searchToken == token else { return }
+                items = results
+                isSearching = false
+            } catch {
+                guard searchToken == token else { return }
+                items = []
+                errorMessage = error.localizedDescription
+                isSearching = false
+                ReaderLogger.shared.log("Advanced search failed source=\(source.id): \(error.localizedDescription)", type: "AidokuSearch")
+            }
+        }
+    }
+}
+
+private struct MangaAidokuAdvancedSearchView: View {
+    let source: MangaHomeSource
+
+    @StateObject private var viewModel = MangaAidokuAdvancedSearchViewModel()
+    @State private var searchText = ""
+    @State private var textValues: [String: String] = [:]
+    @State private var checkValues: [String: Int] = [:]
+    @State private var selectValues: [String: String] = [:]
+    @State private var sortIndexValues: [String: Int] = [:]
+    @State private var sortAscendingValues: [String: Bool] = [:]
+    @State private var multiIncludedValues: [String: Set<String>] = [:]
+    @State private var debounceTask: Task<Void, Never>?
+
+    private let columns = [GridItem(.adaptive(minimum: 116), spacing: 12)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                KanzenModuleSearchBar(
+                    text: $searchText,
+                    placeholder: "Search \(source.name)",
+                    onSearch: performSearch
+                )
+                .onChange(of: searchText) { _ in scheduleSearch() }
+
+                filtersContent
+                resultsContent
+            }
+            .padding(16)
+        }
+        .navigationTitle(source.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .kanzenGradientBackground()
+        .task {
+            viewModel.loadFilters(source: source)
+        }
+        .onDisappear {
+            debounceTask?.cancel()
+        }
+    }
+
+    @ViewBuilder
+    private var filtersContent: some View {
+        if viewModel.isLoadingFilters {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Loading filters...")
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+        } else if viewModel.filters.isEmpty {
+            Text("This source does not expose advanced filters.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(LunaTheme.shared.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(viewModel.filters.indices, id: \.self) { index in
+                    filterRow(viewModel.filters[index])
+                }
+            }
+            .padding(14)
+            .background(LunaTheme.shared.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private var resultsContent: some View {
+        if viewModel.isSearching {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Searching...")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+        } else if let errorMessage = viewModel.errorMessage {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.largeTitle)
+                    .foregroundColor(.secondary)
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+        } else if viewModel.items.isEmpty {
+            EmptyView()
+        } else {
+            LazyVGrid(columns: columns, spacing: 14) {
+                ForEach(viewModel.items) { item in
+                    NavigationLink(destination: MangaSearchItemDestination(source: source, item: item)) {
+                        MangaSearchPosterCard(item: item, width: 116)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func filterRow(_ filter: AidokuRunner.Filter) -> some View {
+        switch filter.value {
+        case let .text(placeholder):
+            VStack(alignment: .leading, spacing: 6) {
+                Text(filter.title ?? "Text")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextField(placeholder ?? "", text: binding(forTextFilter: filter.id))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+            }
+            .onChange(of: textValues[filter.id] ?? "") { _ in scheduleSearch() }
+
+        case let .check(name, canExclude, defaultValue):
+            let defaultState = defaultValue.map { $0 ? 1 : 2 } ?? 0
+            Button {
+                cycleCheck(filterId: filter.id, canExclude: canExclude, defaultState: defaultState)
+                scheduleSearch()
+            } label: {
+                HStack {
+                    Image(systemName: checkIcon(for: checkValues[filter.id] ?? defaultState))
+                        .frame(width: 24)
+                    Text(name ?? filter.title ?? "Option")
+                    Spacer()
+                }
+                .foregroundColor(.primary)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+
+        case let .select(selectFilter):
+            Picker(filter.title ?? "Select", selection: binding(forSelectFilter: filter.id, defaultValue: selectFilter.resolvedDefaultValue)) {
+                ForEach(Array(selectFilter.options.enumerated()), id: \.offset) { offset, option in
+                    Text(option).tag(selectFilter.ids?[safe: offset] ?? option)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: selectValues[filter.id] ?? selectFilter.resolvedDefaultValue) { _ in scheduleSearch() }
+
+        case let .sort(canAscend, options, defaultValue):
+            VStack(alignment: .leading, spacing: 8) {
+                Picker(filter.title ?? "Sort", selection: binding(forSortIndex: filter.id, defaultValue: defaultValue?.index ?? 0)) {
+                    ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                        Text(option).tag(index)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                if canAscend {
+                    Toggle("Ascending", isOn: binding(forSortAscending: filter.id, defaultValue: defaultValue?.ascending ?? false))
+                }
+            }
+            .onChange(of: sortIndexValues[filter.id] ?? Int(defaultValue?.index ?? 0)) { _ in scheduleSearch() }
+            .onChange(of: sortAscendingValues[filter.id] ?? (defaultValue?.ascending ?? false)) { _ in scheduleSearch() }
+
+        case let .multiselect(multiSelect):
+            VStack(alignment: .leading, spacing: 10) {
+                Text(filter.title ?? "Tags")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(Array(multiSelect.options.enumerated()), id: \.offset) { offset, option in
+                        let value = multiSelect.ids?[safe: offset] ?? option
+                        let defaultValues = Set(multiSelect.defaultIncluded ?? [])
+                        let selected = (multiIncludedValues[filter.id] ?? defaultValues).contains(value)
+                        Button {
+                            toggleMulti(filterId: filter.id, value: value, defaultValues: defaultValues)
+                            scheduleSearch()
+                        } label: {
+                            Text(option)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                                .foregroundColor(selected ? .white : .primary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .frame(maxWidth: .infinity)
+                                .background(selected ? Color.accentColor : Color.black.opacity(0.35))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+        case let .note(text):
+            Text(text)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .range:
+            HStack {
+                Text(filter.title ?? "Range")
+                Spacer()
+                Text("Unsupported")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .opacity(0.55)
+        }
+    }
+
+    private func performSearch() {
+        viewModel.search(source: source, query: searchText, filters: enabledFilters())
+    }
+
+    private func scheduleSearch() {
+        debounceTask?.cancel()
+        debounceTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                performSearch()
+            }
+        }
+    }
+
+    private func enabledFilters() -> [AidokuRunner.FilterValue] {
+        var values: [AidokuRunner.FilterValue] = []
+
+        for (id, value) in textValues where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            values.append(.text(id: id, value: value))
+        }
+        for filter in viewModel.filters {
+            switch filter.value {
+            case let .check(_, _, defaultValue):
+                let defaultState = defaultValue.map { $0 ? 1 : 2 } ?? 0
+                let value = checkValues[filter.id] ?? defaultState
+                if value != defaultState {
+                    values.append(.check(id: filter.id, value: value))
+                }
+            case let .select(selectFilter):
+                let selected = selectValues[filter.id] ?? selectFilter.resolvedDefaultValue
+                if selected != selectFilter.resolvedDefaultValue {
+                    values.append(.select(id: filter.id, value: selected))
+                }
+            case let .sort(_, _, defaultValue):
+                let selectedIndex = sortIndexValues[filter.id] ?? Int(defaultValue?.index ?? 0)
+                let ascending = sortAscendingValues[filter.id] ?? (defaultValue?.ascending ?? false)
+                if selectedIndex != Int(defaultValue?.index ?? 0) || ascending != (defaultValue?.ascending ?? false) {
+                    values.append(.sort(.init(id: filter.id, index: selectedIndex, ascending: ascending)))
+                }
+            case let .multiselect(multiSelect):
+                let defaultIncluded = multiSelect.defaultIncluded ?? []
+                let defaultExcluded = multiSelect.defaultExcluded ?? []
+                let included = Array(multiIncludedValues[filter.id] ?? Set(defaultIncluded)).sorted()
+                let excluded = defaultExcluded.sorted()
+                if included != defaultIncluded || excluded != defaultExcluded {
+                    values.append(.multiselect(id: filter.id, included: included, excluded: excluded))
+                }
+            default:
+                break
+            }
+        }
+
+        return values
+    }
+
+    private func binding(forTextFilter id: String) -> Binding<String> {
+        Binding(
+            get: { textValues[id] ?? "" },
+            set: { textValues[id] = $0 }
+        )
+    }
+
+    private func binding(forSelectFilter id: String, defaultValue: String) -> Binding<String> {
+        Binding(
+            get: { selectValues[id] ?? defaultValue },
+            set: { selectValues[id] = $0 }
+        )
+    }
+
+    private func binding(forSortIndex id: String, defaultValue: Int) -> Binding<Int> {
+        Binding(
+            get: { sortIndexValues[id] ?? defaultValue },
+            set: { sortIndexValues[id] = $0 }
+        )
+    }
+
+    private func binding(forSortAscending id: String, defaultValue: Bool) -> Binding<Bool> {
+        Binding(
+            get: { sortAscendingValues[id] ?? defaultValue },
+            set: { sortAscendingValues[id] = $0 }
+        )
+    }
+
+    private func cycleCheck(filterId: String, canExclude: Bool, defaultState: Int) {
+        let current = checkValues[filterId] ?? defaultState
+        switch current {
+        case 0:
+            checkValues[filterId] = 1
+        case 1:
+            checkValues[filterId] = canExclude ? 2 : 0
+        default:
+            checkValues[filterId] = 0
+        }
+    }
+
+    private func checkIcon(for state: Int) -> String {
+        switch state {
+        case 1:
+            return "checkmark.square.fill"
+        case 2:
+            return "xmark.square.fill"
+        default:
+            return "square"
+        }
+    }
+
+    private func toggleMulti(filterId: String, value: String, defaultValues: Set<String>) {
+        var values = multiIncludedValues[filterId] ?? defaultValues
+        if values.contains(value) {
+            values.remove(value)
+        } else {
+            values.insert(value)
+        }
+        multiIncludedValues[filterId] = values
     }
 }
 

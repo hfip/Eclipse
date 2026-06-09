@@ -8,12 +8,72 @@
 import SwiftUI
 
 #if !os(tvOS)
+enum KanzenRootTab: Hashable {
+    case home
+    case library
+    case search
+    case history
+    case settings
+}
+
+struct KanzenModeSwitchButton: View {
+    @AppStorage("showKanzen") private var showKanzen: Bool = false
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                showKanzen = false
+            }
+        } label: {
+            Image(systemName: "play.rectangle.fill")
+        }
+        .accessibilityLabel("Switch to Media Mode")
+    }
+}
+
+struct KanzenRootHeader<Trailing: View>: View {
+    let title: String
+    @ViewBuilder let trailing: () -> Trailing
+
+    init(_ title: String, @ViewBuilder trailing: @escaping () -> Trailing) {
+        self.title = title
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
+            Spacer()
+
+            trailing()
+
+            KanzenModeSwitchButton()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
+    }
+}
+
+extension KanzenRootHeader where Trailing == EmptyView {
+    init(_ title: String) {
+        self.title = title
+        self.trailing = { EmptyView() }
+    }
+}
+
 struct KanzenMenu: View {
     let kanzen = KanzenEngine()
     private let onStartupReady: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var moduleManager: ModuleManager
-    @AppStorage("showKanzen") private var showKanzen: Bool = false
+    @StateObject private var aidokuManager = AidokuSourceManager.shared
+    @State private var selectedTab: KanzenRootTab = .home
 
     init(onStartupReady: @escaping () -> Void = {}) {
         self.onStartupReady = onStartupReady
@@ -31,57 +91,47 @@ struct KanzenMenu: View {
         UITabBar.appearance().scrollEdgeAppearance = appearance
     }
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             KanzenHomeView(onStartupReady: onStartupReady)
                 .tabItem {
                     Label("Home", systemImage: "house")
                 }
+                .tag(KanzenRootTab.home)
 
             KanzenLibraryView()
                 .tabItem {
                     Label("Library", systemImage: "books.vertical")
                 }
+                .tag(KanzenRootTab.library)
 
             KanzenGlobalSearchView()
                 .tabItem {
                     Label("Search", systemImage: "magnifyingglass")
                 }
+                .tag(KanzenRootTab.search)
 
             KanzenHistoryView()
                 .tabItem {
                     Label("History", systemImage: "clock")
                 }
+                .tag(KanzenRootTab.history)
 
             KanzenSettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
+                .tag(KanzenRootTab.settings)
         }
         .environmentObject(kanzen)
-        .overlay(alignment: .topTrailing) {
-            Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-                    showKanzen = false
-                }
-            } label: {
-                Image(systemName: "play.rectangle.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 44, height: 44)
-                    .applyLiquidGlassBackground(cornerRadius: 22)
-            }
-            .accessibilityLabel("Switch to Media Mode")
-            .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-            .padding(.trailing, 16)
-            .padding(.top, 8)
-        }
         .task {
             await moduleManager.autoUpdateModulesIfNeeded()
+            await aidokuManager.autoUpdateInstalledSourcesIfNeeded(reason: "reader-open")
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {
                 Task {
                     await moduleManager.autoUpdateModulesIfNeeded()
+                    await aidokuManager.autoUpdateInstalledSourcesIfNeeded(reason: "reader-active")
                 }
             }
         }

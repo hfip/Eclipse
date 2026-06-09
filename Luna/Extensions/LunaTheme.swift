@@ -55,21 +55,41 @@ class LunaTheme: ObservableObject {
     static let shared = LunaTheme()
     
     // MARK: - Persisted Settings
+
+    @Published var globalAppearanceEnabled: Bool {
+        didSet { UserDefaults.standard.set(globalAppearanceEnabled, forKey: "readerGlobalAppearanceEnabled") }
+    }
     
     @Published var settingsGradientColor: Color {
         didSet { saveColor(settingsGradientColor, key: "lunaThemeGradientColor") }
+    }
+
+    @Published var readerSettingsGradientColor: Color {
+        didSet { saveColor(readerSettingsGradientColor, key: "readerThemeGradientColor") }
     }
 
     @Published var atmosphereStyle: AtmosphereStyle {
         didSet { UserDefaults.standard.set(atmosphereStyle.rawValue, forKey: "atmosphereStyle") }
     }
 
+    @Published var readerAtmosphereStyle: AtmosphereStyle {
+        didSet { UserDefaults.standard.set(readerAtmosphereStyle.rawValue, forKey: "readerAtmosphereStyle") }
+    }
+
     @Published var atmosphereSolidColorSource: AtmosphereSolidColorSource {
         didSet { UserDefaults.standard.set(atmosphereSolidColorSource.rawValue, forKey: "atmosphereSolidColorSource") }
     }
 
+    @Published var readerAtmosphereSolidColorSource: AtmosphereSolidColorSource {
+        didSet { UserDefaults.standard.set(readerAtmosphereSolidColorSource.rawValue, forKey: "readerAtmosphereSolidColorSource") }
+    }
+
     @Published var atmosphereSolidColor: Color {
         didSet { saveColor(atmosphereSolidColor, key: "atmosphereSolidColor") }
+    }
+
+    @Published var readerAtmosphereSolidColor: Color {
+        didSet { saveColor(readerAtmosphereSolidColor, key: "readerAtmosphereSolidColor") }
     }
     
     // MARK: - Constants
@@ -95,15 +115,42 @@ class LunaTheme: ObservableObject {
     private init() {
         let styleRaw = UserDefaults.standard.string(forKey: "atmosphereStyle") ?? AtmosphereStyle.gradient.rawValue
         let sourceRaw = UserDefaults.standard.string(forKey: "atmosphereSolidColorSource") ?? AtmosphereSolidColorSource.dominant.rawValue
+        let readerStyleRaw = UserDefaults.standard.string(forKey: "readerAtmosphereStyle") ?? styleRaw
+        let readerSourceRaw = UserDefaults.standard.string(forKey: "readerAtmosphereSolidColorSource") ?? sourceRaw
 
+        self.globalAppearanceEnabled = UserDefaults.standard.object(forKey: "readerGlobalAppearanceEnabled") == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: "readerGlobalAppearanceEnabled")
         self.settingsGradientColor = Self.loadColor(key: "lunaThemeGradientColor") ?? Self.gradientPresets[0].color
+        self.readerSettingsGradientColor = Self.loadColor(key: "readerThemeGradientColor") ?? Self.loadColor(key: "lunaThemeGradientColor") ?? Self.gradientPresets[0].color
         self.atmosphereStyle = AtmosphereStyle(rawValue: styleRaw) ?? .gradient
+        self.readerAtmosphereStyle = AtmosphereStyle(rawValue: readerStyleRaw) ?? .gradient
         self.atmosphereSolidColorSource = AtmosphereSolidColorSource(rawValue: sourceRaw) ?? .dominant
+        self.readerAtmosphereSolidColorSource = AtmosphereSolidColorSource(rawValue: readerSourceRaw) ?? .dominant
         self.atmosphereSolidColor = Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
+        self.readerAtmosphereSolidColor = Self.loadColor(key: "readerAtmosphereSolidColor") ?? Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
     }
 
     func atmosphereColor(dominant: Color) -> Color {
         atmosphereSolidColorSource == .custom ? atmosphereSolidColor : dominant
+    }
+
+    func scopedGradientColor(isReaderMode: Bool? = nil) -> Color {
+        let readerMode = isReaderMode ?? UserDefaults.standard.bool(forKey: "showKanzen")
+        return readerMode && !globalAppearanceEnabled ? readerSettingsGradientColor : settingsGradientColor
+    }
+
+    func scopedAtmosphereStyle(isReaderMode: Bool? = nil) -> AtmosphereStyle {
+        let readerMode = isReaderMode ?? UserDefaults.standard.bool(forKey: "showKanzen")
+        return readerMode && !globalAppearanceEnabled ? readerAtmosphereStyle : atmosphereStyle
+    }
+
+    func scopedAtmosphereColor(dominant: Color, isReaderMode: Bool? = nil) -> Color {
+        let readerMode = isReaderMode ?? UserDefaults.standard.bool(forKey: "showKanzen")
+        if readerMode && !globalAppearanceEnabled {
+            return readerAtmosphereSolidColorSource == .custom ? readerAtmosphereSolidColor : dominant
+        }
+        return atmosphereColor(dominant: dominant)
     }
     
     // MARK: - Persistence

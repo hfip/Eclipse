@@ -24,15 +24,14 @@ struct KanzenHomeView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
+                KanzenRootHeader("Discover")
                 sourceTabs
                 Divider().opacity(homeViewModel.sources.isEmpty ? 0 : 1)
                 content
             }
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
-            .navigationTitle("Discover")
-            .navigationBarTitleDisplayMode(.large)
         }
         .task {
             syncSourcesAndLoad()
@@ -94,7 +93,11 @@ struct KanzenHomeView: View {
         } else if homeViewModel.sources.isEmpty {
             disabledSourcesView
         } else if let source = homeViewModel.selectedSource {
-            sourceContent(source)
+            if source.isAidoku && !aidokuManager.isRuntimeReady {
+                preparingSourceView(source)
+            } else {
+                sourceContent(source)
+            }
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -220,10 +223,35 @@ struct KanzenHomeView: View {
         .padding()
     }
 
+    private func preparingSourceView(_ source: MangaHomeSource) -> some View {
+        VStack(spacing: 10) {
+            ProgressView()
+            Text("Preparing \(source.name)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            await aidokuManager.ensureRuntimeReady()
+            await MainActor.run {
+                syncSourcesAndLoad()
+            }
+        }
+    }
+
     private func syncSourcesAndLoad() {
         sourceManager.refreshSources(from: moduleManager.modules)
         let sources = sourceManager.enabledSources(aidokuManager: aidokuManager, modules: moduleManager.modules)
         homeViewModel.updateSources(sources)
+        if homeViewModel.selectedSource?.isAidoku == true, !aidokuManager.isRuntimeReady {
+            Task {
+                await aidokuManager.ensureRuntimeReady()
+                await MainActor.run {
+                    syncSourcesAndLoad()
+                }
+            }
+            return
+        }
         homeViewModel.loadSelectedSource(force: false)
     }
 

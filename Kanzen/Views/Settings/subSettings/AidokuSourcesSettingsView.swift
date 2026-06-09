@@ -94,6 +94,16 @@ struct AidokuSourcesSettingsView: View {
 
             Section(header: Text("Installed Sources"), footer: Text("Disabled or hidden mature sources do not appear on Discover or Search.")) {
                 Toggle("Show Mature Sources", isOn: $sourceManager.showMatureSources)
+                Toggle("Auto-Update Sources", isOn: $sourceManager.autoUpdateSources)
+
+                Button {
+                    Task {
+                        await sourceManager.updateAllInstalledSources()
+                    }
+                } label: {
+                    Label(sourceManager.isUpdatingSources ? "Updating Sources..." : "Update All Sources", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(sourceManager.isUpdatingSources || installedSources.isEmpty)
 
                 if installedSources.isEmpty {
                     Text("No Aidoku sources installed")
@@ -126,15 +136,6 @@ struct AidokuSourcesSettingsView: View {
                 }
             }
             .background(LunaScrollTracker())
-
-            Section(header: Text("Legacy Compatibility"), footer: Text("Older Kanzen JS modules remain available separately for compatibility.")) {
-                NavigationLink(destination: KanzenModuleView().environmentObject(moduleManager)) {
-                    Text("Legacy JS Modules")
-                }
-                NavigationLink(destination: MangaCatalogSettingsView().environmentObject(moduleManager)) {
-                    Text("Home Source Order")
-                }
-            }
         }
         .navigationTitle("Aidoku Sources")
         .navigationBarTitleDisplayMode(.inline)
@@ -170,15 +171,9 @@ struct AidokuSourcesSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                if let lastUpdated = source.lastUpdated {
-                    Text("\(source.isEnabled ? "Enabled" : "Disabled") - updated \(lastUpdated, style: .relative)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text(source.isEnabled ? "Enabled" : "Disabled")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+                Text(statusText(for: source))
+                    .font(.caption2)
+                    .foregroundColor(source.lastError == nil ? .secondary : .red)
                 if let error = source.lastError {
                     Text(error)
                         .font(.caption)
@@ -197,6 +192,7 @@ struct AidokuSourcesSettingsView: View {
                 Button("Update") {
                     Task { await sourceManager.updateInstalledSource(source) }
                 }
+                .disabled(source.packageURL == nil)
 
                 Button(role: .destructive) {
                     sourceManager.remove(source)
@@ -207,6 +203,19 @@ struct AidokuSourcesSettingsView: View {
                 Image(systemName: "ellipsis.circle")
             }
         }
+    }
+
+    private func statusText(for source: AidokuInstalledSource) -> String {
+        if source.lastError != nil {
+            return source.isEnabled ? "Enabled - needs attention" : "Disabled - needs attention"
+        }
+        if source.packageURL == nil {
+            return source.isEnabled ? "Enabled - local package" : "Disabled - local package"
+        }
+        if sourceManager.isUpdatingSources {
+            return "Checking for updates"
+        }
+        return source.isEnabled ? "Enabled - current" : "Disabled - current"
     }
 
     private func availableSourceRow(_ entry: AidokuSourceListEntry) -> some View {

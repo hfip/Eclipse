@@ -5,37 +5,246 @@
 //  Created by Dawud Osman on 22/05/2025.
 //
 import SwiftUI
+import UIKit
 
 #if !os(tvOS)
 struct KanzenGeneralSettingsView: View {
-    @EnvironmentObject var settings : Settings
+    @EnvironmentObject var settings: Settings
+    @StateObject private var theme = LunaTheme.shared
+    @StateObject private var accentColorManager = AccentColorManager.shared
+    @AppStorage("readerFontSize") private var readerFontSize: Double = 16
+    @AppStorage("readerFontFamily") private var readerFontFamily = "-apple-system"
+    @AppStorage("readerFontWeight") private var readerFontWeight = "normal"
+    @AppStorage("readerColorPreset") private var readerColorPreset = 0
+    @AppStorage("readerTextAlignment") private var readerTextAlignment = "left"
+    @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.6
+    @AppStorage("readerMargin") private var readerMargin: Double = 4
+
     var body: some View {
         Form {
             Section(header: Text("Interface")) {
-                ColorPicker("Accent Color", selection: $settings.accentColor)
-                
+                Toggle("Global Appearance", isOn: $theme.globalAppearanceEnabled)
+                    .onChange(of: theme.globalAppearanceEnabled) { _ in
+                        settings.updateAppearance()
+                    }
+
+                ColorPicker("Accent Color", selection: accentColorBinding)
+
                 HStack {
-                    
                     Text("Appearance")
                     Spacer()
-                    Picker("Appearance", selection: $settings.selectedAppearance) {
+                    Picker("Appearance", selection: appearanceBinding) {
                         Text("System").tag(Appearance.system)
                         Text("Light").tag(Appearance.light)
                         Text("Dark").tag(Appearance.dark)
                     }
                     .pickerStyle(SegmentedPickerStyle())
                     .frame(maxWidth: 300)
-                    
-
                 }
-                
-                
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Theme Color")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    HStack(spacing: 12) {
+                        ForEach(LunaTheme.gradientPresets, id: \.name) { preset in
+                            Button {
+                                gradientColorBinding.wrappedValue = preset.color
+                            } label: {
+                                Circle()
+                                    .fill(preset.color)
+                                    .frame(width: 32, height: 32)
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(Color.white, lineWidth: colorsMatch(preset.color, gradientColorBinding.wrappedValue) ? 2.5 : 0)
+                                    )
                             }
+                            .buttonStyle(.plain)
+                        }
+
+                        Spacer()
+
+                        ColorPicker("", selection: gradientColorBinding)
+                            .labelsHidden()
+                    }
+                }
+
+                Picker("Atmosphere", selection: atmosphereStyleBinding) {
+                    ForEach(AtmosphereStyle.allCases) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+
+                if atmosphereStyleBinding.wrappedValue == .solid {
+                    Picker("Solid Color Source", selection: atmosphereSolidSourceBinding) {
+                        ForEach(AtmosphereSolidColorSource.allCases) { source in
+                            Text(source.displayName).tag(source)
+                        }
+                    }
+
+                    if atmosphereSolidSourceBinding.wrappedValue == .custom {
+                        ColorPicker("Custom Atmosphere Color", selection: atmosphereSolidColorBinding)
+                    }
+                }
+            }
+            .background(LunaScrollTracker())
+
+            Section(header: Text("Reader Text")) {
+                HStack {
+                    Text("Font Size")
+                    Slider(value: $readerFontSize, in: 12...32, step: 1)
+                    Text("\(Int(readerFontSize))")
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+
+                Picker("Font", selection: $readerFontFamily) {
+                    Text("System").tag("-apple-system")
+                    Text("Serif").tag("Georgia")
+                    Text("Monospace").tag("Menlo")
+                    Text("Rounded").tag("ui-rounded")
+                }
+
+                Picker("Weight", selection: $readerFontWeight) {
+                    Text("Regular").tag("normal")
+                    Text("Medium").tag("500")
+                    Text("Bold").tag("700")
+                }
+
+                Picker("Color Preset", selection: $readerColorPreset) {
+                    Text("Black").tag(0)
+                    Text("Sepia").tag(1)
+                    Text("White").tag(2)
+                }
+
+                Picker("Text Alignment", selection: $readerTextAlignment) {
+                    Text("Left").tag("left")
+                    Text("Center").tag("center")
+                    Text("Justified").tag("justify")
+                }
+
+                HStack {
+                    Text("Line Spacing")
+                    Slider(value: $readerLineSpacing, in: 1...3, step: 0.1)
+                    Text(String(format: "%.1f", readerLineSpacing))
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+
+                HStack {
+                    Text("Margin")
+                    Slider(value: $readerMargin, in: 0...30, step: 1)
+                    Text("\(Int(readerMargin))")
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+            }
             .background(LunaScrollTracker())
         }
-        .navigationTitle(Text("Preferences"))
+        .navigationTitle(Text("Appearance"))
         .lunaSettingsStyle()
     }
 
+    private var accentColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                theme.globalAppearanceEnabled ? settings.accentColor : settings.readerAccentColor
+            },
+            set: { color in
+                if theme.globalAppearanceEnabled {
+                    settings.accentColor = color
+                    accentColorManager.saveAccentColor(color)
+                } else {
+                    settings.readerAccentColor = color
+                }
+            }
+        )
+    }
+
+    private var appearanceBinding: Binding<Appearance> {
+        Binding(
+            get: {
+                theme.globalAppearanceEnabled ? settings.selectedAppearance : settings.readerSelectedAppearance
+            },
+            set: { appearance in
+                if theme.globalAppearanceEnabled {
+                    settings.selectedAppearance = appearance
+                } else {
+                    settings.readerSelectedAppearance = appearance
+                }
+            }
+        )
+    }
+
+    private var gradientColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                theme.globalAppearanceEnabled ? theme.settingsGradientColor : theme.readerSettingsGradientColor
+            },
+            set: { color in
+                if theme.globalAppearanceEnabled {
+                    theme.settingsGradientColor = color
+                } else {
+                    theme.readerSettingsGradientColor = color
+                }
+            }
+        )
+    }
+
+    private var atmosphereStyleBinding: Binding<AtmosphereStyle> {
+        Binding(
+            get: {
+                theme.globalAppearanceEnabled ? theme.atmosphereStyle : theme.readerAtmosphereStyle
+            },
+            set: { style in
+                if theme.globalAppearanceEnabled {
+                    theme.atmosphereStyle = style
+                } else {
+                    theme.readerAtmosphereStyle = style
+                }
+            }
+        )
+    }
+
+    private var atmosphereSolidSourceBinding: Binding<AtmosphereSolidColorSource> {
+        Binding(
+            get: {
+                theme.globalAppearanceEnabled ? theme.atmosphereSolidColorSource : theme.readerAtmosphereSolidColorSource
+            },
+            set: { source in
+                if theme.globalAppearanceEnabled {
+                    theme.atmosphereSolidColorSource = source
+                } else {
+                    theme.readerAtmosphereSolidColorSource = source
+                }
+            }
+        )
+    }
+
+    private var atmosphereSolidColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                theme.globalAppearanceEnabled ? theme.atmosphereSolidColor : theme.readerAtmosphereSolidColor
+            },
+            set: { color in
+                if theme.globalAppearanceEnabled {
+                    theme.atmosphereSolidColor = color
+                } else {
+                    theme.readerAtmosphereSolidColor = color
+                }
+            }
+        )
+    }
+
+    private func colorsMatch(_ a: Color, _ b: Color) -> Bool {
+        let uiA = UIColor(a)
+        let uiB = UIColor(b)
+        var rA: CGFloat = 0, gA: CGFloat = 0, bA: CGFloat = 0, aA: CGFloat = 0
+        var rB: CGFloat = 0, gB: CGFloat = 0, bB: CGFloat = 0, aB: CGFloat = 0
+        uiA.getRed(&rA, green: &gA, blue: &bA, alpha: &aA)
+        uiB.getRed(&rB, green: &gB, blue: &bB, alpha: &aB)
+        return abs(rA - rB) < 0.02 && abs(gA - gB) < 0.02 && abs(bA - bB) < 0.02
+    }
 }
 #endif

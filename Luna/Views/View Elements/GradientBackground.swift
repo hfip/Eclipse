@@ -29,15 +29,16 @@ struct SettingsGradientBackground: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height * 2.5
-            if theme.atmosphereStyle == .solid {
-                theme.atmosphereColor(dominant: theme.settingsGradientColor)
+            let gradientColor = theme.scopedGradientColor()
+            if theme.scopedAtmosphereStyle() == .solid {
+                theme.scopedAtmosphereColor(dominant: gradientColor)
                     .frame(height: h)
             } else {
                 LinearGradient(
                     stops: [
                         .init(color: theme.backgroundBase, location: 0.0),
-                        .init(color: theme.settingsGradientColor.opacity(0.6), location: 0.15),
-                        .init(color: theme.settingsGradientColor.opacity(0.3), location: 0.35),
+                        .init(color: gradientColor.opacity(0.6), location: 0.15),
+                        .init(color: gradientColor.opacity(0.3), location: 0.35),
                         .init(color: theme.backgroundBase, location: 0.6)
                     ],
                     startPoint: .top,
@@ -71,7 +72,7 @@ struct GlobalGradientBackground: View {
     var scrollOffset: CGFloat = 0
     
     private var gradientColor: Color {
-        overrideColor ?? theme.settingsGradientColor
+        overrideColor ?? theme.scopedGradientColor()
     }
     
     private var gradientOffset: CGFloat {
@@ -81,8 +82,8 @@ struct GlobalGradientBackground: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height * 5.0
-            if theme.atmosphereStyle == .solid {
-                theme.atmosphereColor(dominant: gradientColor)
+            if theme.scopedAtmosphereStyle() == .solid {
+                theme.scopedAtmosphereColor(dominant: gradientColor)
                     .frame(height: h)
             } else {
                 LinearGradient(

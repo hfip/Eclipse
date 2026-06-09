@@ -25,6 +25,24 @@ struct AlternativeUIView: View {
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
+                        Text("Global Appearance")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Text("Share appearance changes between media and reader mode.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $theme.globalAppearanceEnabled)
+                        .tint(accentColorManager.currentAccentColor)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Accent Color")
                             .font(.subheadline)
                             .fontWeight(.medium)

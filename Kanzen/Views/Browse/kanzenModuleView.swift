@@ -84,14 +84,7 @@ struct KanzenModuleView: View {
                                  .animation(.spring(response: 0.3, dampingFraction: 0.4), value: selectedModule)
                                  .scaleEffect(selectedModule ? 1.02 : 1.0)
                              }
-                             let destination = KanzenSearchView(module: item)
-                             NavigationLink(destination: destination){
-                                 row
-                                     .allowsHitTesting(true)
-                                     .buttonStyle(.plain)
-                             }
-                             .allowsHitTesting(true)
-                             .buttonStyle(.plain)
+                             row
                              .simultaneousGesture(
                                  LongPressGesture(minimumDuration: 0.3)
                                      .onEnded { _ in

@@ -29,6 +29,21 @@ struct KanzenLibraryView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    KanzenRootHeader("Library") {
+                        Button {
+                            refreshLibrarySources()
+                        } label: {
+                            if isRefreshingSources {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                        .disabled(isRefreshingSources)
+                        .accessibilityLabel("Refresh Sources")
+                    }
+                    .padding(.horizontal, -16)
+
                     if let refreshStatus {
                         Text(refreshStatus)
                             .font(.caption)
@@ -113,32 +128,6 @@ struct KanzenLibraryView: View {
                         }
                     }
 
-                    // MARK: - All Bookmarks Grid (if any)
-                    if let bookmarks = bookmarksCollection, !bookmarks.items.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("All Bookmarks")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .padding(.horizontal, 16)
-
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 12)], spacing: 12) {
-                                ForEach(bookmarks.items.sorted(by: { $0.dateAdded > $1.dateAdded })) { item in
-                                    NavigationLink(destination: mangaDestination(for: item)) {
-                                        mangaGridCard(item)
-                                    }
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            libraryManager.removeItem(from: bookmarks.id, item: item)
-                                        } label: {
-                                            Label("Remove", systemImage: "trash")
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-                    }
-
                     if (bookmarksCollection?.items.isEmpty ?? true) && userCollections.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "books.vertical")
@@ -168,24 +157,7 @@ struct KanzenLibraryView: View {
             }
             .coordinateSpace(name: "kanzenLibScroll")
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
-            .navigationTitle("Library")
-            .navigationBarTitleDisplayMode(.inline)
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        refreshLibrarySources()
-                    } label: {
-                        if isRefreshingSources {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .disabled(isRefreshingSources)
-                    .accessibilityLabel("Refresh Sources")
-                }
-            }
             .sheet(isPresented: $showCreateCollection) {
                 MangaCreateCollectionView()
                     .environmentObject(libraryManager)

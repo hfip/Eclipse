@@ -312,11 +312,30 @@ class Settings: ObservableObject {
             saveAccentColor(accentColor)
         }
     }
+    @Published var readerAccentColor: Color {
+        didSet {
+            saveReaderAccentColor(readerAccentColor)
+        }
+    }
     @Published var selectedAppearance: Appearance {
         didSet {
             UserDefaults.standard.set(selectedAppearance.rawValue, forKey: "selectedAppearance")
             updateAppearance()
         }
+    }
+    @Published var readerSelectedAppearance: Appearance {
+        didSet {
+            UserDefaults.standard.set(readerSelectedAppearance.rawValue, forKey: "readerSelectedAppearance")
+            updateAppearance()
+        }
+    }
+
+    var effectiveAccentColor: Color {
+        UserDefaults.standard.bool(forKey: "showKanzen") && !LunaTheme.shared.globalAppearanceEnabled ? readerAccentColor : accentColor
+    }
+
+    var effectiveAppearance: Appearance {
+        UserDefaults.standard.bool(forKey: "showKanzen") && !LunaTheme.shared.globalAppearanceEnabled ? readerSelectedAppearance : selectedAppearance
     }
     
     // VLC Player Settings
@@ -487,17 +506,33 @@ class Settings: ObservableObject {
     }
     
     init() {
+        let resolvedAccentColor: Color
         if let colorData = UserDefaults.standard.data(forKey: "accentColor"),
            let uiColor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: colorData) {
-            self.accentColor = Color(uiColor)
+            resolvedAccentColor = Color(uiColor)
         } else {
-            self.accentColor = .accentColor
+            resolvedAccentColor = .accentColor
         }
+        self.accentColor = resolvedAccentColor
+        if let colorData = UserDefaults.standard.data(forKey: "readerAccentColor"),
+           let uiColor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: colorData) {
+            self.readerAccentColor = Color(uiColor)
+        } else {
+            self.readerAccentColor = resolvedAccentColor
+        }
+        let resolvedAppearance: Appearance
         if let appearanceRawValue = UserDefaults.standard.string(forKey: "selectedAppearance"),
            let appearance = Appearance(rawValue: appearanceRawValue) {
-            self.selectedAppearance = appearance
+            resolvedAppearance = appearance
         } else {
-            self.selectedAppearance = .system
+            resolvedAppearance = .system
+        }
+        self.selectedAppearance = resolvedAppearance
+        if let appearanceRawValue = UserDefaults.standard.string(forKey: "readerSelectedAppearance"),
+           let appearance = Appearance(rawValue: appearanceRawValue) {
+            self.readerSelectedAppearance = appearance
+        } else {
+            self.readerSelectedAppearance = resolvedAppearance
         }
         updateAppearance()
     }
@@ -512,10 +547,20 @@ class Settings: ObservableObject {
             ReaderLogger.shared.log("Failed to save accent color: \(error.localizedDescription)")
         }
     }
+
+    private func saveReaderAccentColor(_ color: Color) {
+        let uiColor = UIColor(color)
+        do {
+            let colorData = try NSKeyedArchiver.archivedData(withRootObject: uiColor, requiringSecureCoding: false)
+            UserDefaults.standard.set(colorData, forKey: "readerAccentColor")
+        } catch {
+            ReaderLogger.shared.log("Failed to save reader accent color: \(error.localizedDescription)")
+        }
+    }
     
     func updateAppearance() {
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-        switch selectedAppearance {
+        switch effectiveAppearance {
         case .system:
             windowScene.windows.first?.overrideUserInterfaceStyle = .unspecified
         case .light:

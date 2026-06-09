@@ -28,6 +28,7 @@ struct WebtoonView: UIViewRepresentable {
         collectionView.dataSource = context.coordinator
         collectionView.delegate = context.coordinator
         collectionView.isPagingEnabled = false
+        collectionView.isPrefetchingEnabled = false
         collectionView.alwaysBounceVertical = true
         collectionView.showsVerticalScrollIndicator = false
         collectionView.contentInset = .zero
@@ -36,7 +37,6 @@ struct WebtoonView: UIViewRepresentable {
             collectionView.contentInsetAdjustmentBehavior = .never
         }
         collectionView.register(WebtoonImageCell.self, forCellWithReuseIdentifier: WebtoonImageCell.reuseIdentifier)
-        collectionView.register(WebtoonTransitionCell.self, forCellWithReuseIdentifier: WebtoonTransitionCell.reuseIdentifier)
 
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
@@ -52,18 +52,17 @@ struct WebtoonView: UIViewRepresentable {
         context.coordinator.onTap = onTap
 
         if reader_manager.currChapter.count > 0,
-           !context.coordinator.chapters.contains(reader_manager.currChapter) {
-            context.coordinator.reset(to: reader_manager.currChapter)
+           context.coordinator.needsReset(for: reader_manager) {
+            context.coordinator.reset(to: reader_manager)
             uiView.reloadData()
             uiView.collectionViewLayout.invalidateLayout()
             uiView.layoutIfNeeded()
         }
 
         if reader_manager.changeIndex,
-           let chapterIndex = context.coordinator.chapters.firstIndex(of: reader_manager.currChapter),
            reader_manager.index >= 0,
            reader_manager.index < reader_manager.currChapter.count {
-            let indexPath = IndexPath(item: reader_manager.index, section: chapterIndex * 2)
+            let indexPath = IndexPath(item: reader_manager.index, section: 0)
             uiView.scrollToItem(at: indexPath, at: .centeredVertically, animated: false)
             reader_manager.changeIndex = false
         }
@@ -72,21 +71,21 @@ struct WebtoonView: UIViewRepresentable {
     class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
         var reader_manager: readerManager
         var onTap: () -> Void
-        var chapters: [[PageData]]
-        var transitionPages: [String]
+        private var pages: [PageData]
+        private var chapterIdentity: String
         weak var collectionView: UICollectionView?
 
         private var imageSizes: [String: CGSize] = [:]
         private var loadingPrevious = false
         private var loadingNext = false
         private var lastReportedPage = -1
-        private var lastReportedChapterKey = ""
+        private var lastScrollLogTime = Date.distantPast
 
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
             self.onTap = onTap
-            self.chapters = reader_manager.currChapter.isEmpty ? [] : [reader_manager.currChapter]
-            self.transitionPages = [reader_manager.selectedChapter?.chapterNumber ?? "0"]
+            self.pages = reader_manager.currChapter
+            self.chapterIdentity = Self.identity(for: reader_manager)
         }
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -103,41 +102,31 @@ struct WebtoonView: UIViewRepresentable {
             return true
         }
 
-        func reset(to chapter: [PageData]) {
-            chapters = [chapter]
-            transitionPages = [reader_manager.selectedChapter?.chapterNumber ?? "0"]
+        func needsReset(for manager: readerManager) -> Bool {
+            chapterIdentity != Self.identity(for: manager) || pages.map(\.id) != manager.currChapter.map(\.id)
+        }
+
+        func reset(to manager: readerManager) {
+            pages = manager.currChapter
+            chapterIdentity = Self.identity(for: manager)
             loadingPrevious = false
             loadingNext = false
             lastReportedPage = -1
-            lastReportedChapterKey = ""
+            ReaderLogger.shared.log(
+                "Webtoon reset chapter=\(manager.selectedChapter?.chapterNumber ?? "<none>") pages=\(pages.count)",
+                type: "ReaderWebtoon"
+            )
         }
 
         func numberOfSections(in collectionView: UICollectionView) -> Int {
-            chapters.count * 2
+            1
         }
 
         func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-            if section % 2 == 1 { return 1 }
-            let chapterIndex = section / 2
-            guard chapterIndex < chapters.count else { return 0 }
-            return chapters[chapterIndex].count
+            pages.count
         }
 
         func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-            let chapterIndex = indexPath.section / 2
-
-            if indexPath.section % 2 == 1 {
-                guard let cell = collectionView.dequeueReusableCell(
-                    withReuseIdentifier: WebtoonTransitionCell.reuseIdentifier,
-                    for: indexPath
-                ) as? WebtoonTransitionCell else {
-                    fatalError("Could not dequeue transition cell")
-                }
-                let chapterNumber = chapterIndex < transitionPages.count ? transitionPages[chapterIndex] : ""
-                cell.set(chapterNumber: chapterNumber)
-                return cell
-            }
-
             guard let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: WebtoonImageCell.reuseIdentifier,
                 for: indexPath
@@ -145,12 +134,12 @@ struct WebtoonView: UIViewRepresentable {
                 fatalError("Could not dequeue image cell")
             }
 
-            guard chapterIndex < chapters.count, indexPath.item < chapters[chapterIndex].count else {
+            guard indexPath.item < pages.count else {
                 cell.setInvalid()
                 return cell
             }
 
-            cell.set(page: chapters[chapterIndex][indexPath.item], coordinator: self, indexPath: indexPath)
+            cell.set(page: pages[indexPath.item], coordinator: self, indexPath: indexPath)
             return cell
         }
 
@@ -160,23 +149,18 @@ struct WebtoonView: UIViewRepresentable {
             sizeForItemAt indexPath: IndexPath
         ) -> CGSize {
             let width = max(collectionView.bounds.width, 1)
-            if indexPath.section % 2 == 1 {
-                return CGSize(width: width, height: 160)
-            }
-
-            let chapterIndex = indexPath.section / 2
-            guard chapterIndex < chapters.count, indexPath.item < chapters[chapterIndex].count else {
+            guard indexPath.item < pages.count else {
                 return CGSize(width: width, height: 1)
             }
 
             return CGSize(
                 width: width,
-                height: height(for: chapters[chapterIndex][indexPath.item], width: width)
+                height: height(for: pages[indexPath.item], width: width)
             )
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard let collectionView = scrollView as? UICollectionView, !chapters.isEmpty else { return }
+            guard let collectionView = scrollView as? UICollectionView, !pages.isEmpty else { return }
             updateCurrentPage(collectionView)
             loadAdjacentChaptersIfNeeded(collectionView)
         }
@@ -189,18 +173,23 @@ struct WebtoonView: UIViewRepresentable {
             let newHeight = height(for: page, width: collectionView.bounds.width)
             let delta = newHeight - oldHeight
 
-            UIView.performWithoutAnimation {
+            DispatchQueue.main.async { [weak collectionView] in
+                guard let collectionView else { return }
+                guard indexPath.item < self.pages.count, self.pages[indexPath.item].id == page.id else { return }
                 let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame ?? .zero
-                collectionView.collectionViewLayout.invalidateLayout()
-                collectionView.layoutIfNeeded()
+                UIView.performWithoutAnimation {
+                    collectionView.collectionViewLayout.invalidateLayout()
+                    collectionView.layoutIfNeeded()
 
-                if delta != 0, frame.maxY <= collectionView.contentOffset.y + 1 {
-                    let adjusted = CGPoint(
-                        x: collectionView.contentOffset.x,
-                        y: max(0, collectionView.contentOffset.y + delta)
-                    )
-                    collectionView.setContentOffset(adjusted, animated: false)
+                    if delta != 0, frame.maxY <= collectionView.contentOffset.y + 1 {
+                        let adjusted = CGPoint(
+                            x: collectionView.contentOffset.x,
+                            y: max(0, collectionView.contentOffset.y + delta)
+                        )
+                        collectionView.setContentOffset(adjusted, animated: false)
+                    }
                 }
+                ReaderLogger.shared.log("Webtoon image size updated page=\(indexPath.item) h=\(Int(newHeight))", type: "ReaderWebtoon")
             }
         }
 
@@ -227,28 +216,17 @@ struct WebtoonView: UIViewRepresentable {
                 y: collectionView.contentOffset.y + collectionView.bounds.height * 0.5
             )
             guard let indexPath = collectionView.indexPathForItem(at: point),
-                  indexPath.section % 2 == 0 else { return }
+                  indexPath.item < pages.count else { return }
 
-            let windowChapterIndex = indexPath.section / 2
-            guard windowChapterIndex < chapters.count else { return }
-
-            if let currentWindowIndex = chapters.firstIndex(of: reader_manager.currChapter),
-               windowChapterIndex != currentWindowIndex {
-                if windowChapterIndex > currentWindowIndex {
-                    reader_manager.shiftRight()
-                    reader_manager.fetchTask(bool: true)
-                } else {
-                    reader_manager.shiftLeft()
-                    reader_manager.fetchTask(bool: false)
-                }
-            }
-
-            let chapterKey = chapters[windowChapterIndex].first?.cacheKey ?? "\(windowChapterIndex)"
-            if lastReportedPage != indexPath.item || lastReportedChapterKey != chapterKey {
+            if lastReportedPage != indexPath.item {
                 lastReportedPage = indexPath.item
-                lastReportedChapterKey = chapterKey
                 reader_manager.setIndex(indexPath.item)
                 reader_manager.preloadAdjacentPages()
+                let now = Date()
+                if now.timeIntervalSince(lastScrollLogTime) > 2 {
+                    lastScrollLogTime = now
+                    ReaderLogger.shared.log("Webtoon current page=\(indexPath.item + 1)/\(pages.count)", type: "ReaderProgress")
+                }
             }
         }
 
@@ -269,40 +247,15 @@ struct WebtoonView: UIViewRepresentable {
         private func prependPreviousChapterIfNeeded(_ collectionView: UICollectionView) {
             guard !loadingPrevious else { return }
             guard (reader_manager.selectedChapter?.idx ?? 0) > 0 else { return }
+            guard reader_manager.prevChapter.isEmpty else { return }
 
-            if reader_manager.prevChapter.isEmpty {
-                loadingPrevious = true
-                reader_manager.fetchTask(bool: false) { [weak self, weak collectionView] in
-                    DispatchQueue.main.async {
-                        guard let self, let collectionView else { return }
-                        self.loadingPrevious = false
-                        self.prependPreviousChapterIfNeeded(collectionView)
-                    }
-                }
-                return
-            }
-
-            guard !chapters.contains(reader_manager.prevChapter) else { return }
             loadingPrevious = true
-
-            let oldContentHeight = collectionView.collectionViewLayout.collectionViewContentSize.height
-            let oldOffset = collectionView.contentOffset
-
-            chapters.insert(reader_manager.prevChapter, at: 0)
-            transitionPages.insert(reader_manager.getPrevChapterIdx(), at: 0)
-
-            UIView.performWithoutAnimation {
-                collectionView.performBatchUpdates({
-                    collectionView.insertSections(IndexSet(integersIn: 0..<2))
-                }, completion: { _ in
-                    let newContentHeight = collectionView.collectionViewLayout.collectionViewContentSize.height
-                    collectionView.setContentOffset(
-                        CGPoint(x: oldOffset.x, y: oldOffset.y + (newContentHeight - oldContentHeight)),
-                        animated: false
-                    )
-                    self.trimWindowIfNeeded(collectionView, keepingTop: true)
+            ReaderLogger.shared.log("Webtoon prefetch previous boundary", type: "ReaderWebtoon")
+            reader_manager.fetchTask(bool: false) { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self else { return }
                     self.loadingPrevious = false
-                })
+                }
             }
         }
 
@@ -311,71 +264,20 @@ struct WebtoonView: UIViewRepresentable {
             guard let selectedChapter = reader_manager.selectedChapter,
                   let allChapters = reader_manager.chapters,
                   selectedChapter.idx < allChapters.count - 1 else { return }
+            guard reader_manager.nextChapter.isEmpty else { return }
 
-            if reader_manager.nextChapter.isEmpty {
-                loadingNext = true
-                reader_manager.fetchTask(bool: true) { [weak self, weak collectionView] in
-                    DispatchQueue.main.async {
-                        guard let self, let collectionView else { return }
-                        self.loadingNext = false
-                        self.appendNextChapterIfNeeded(collectionView)
-                    }
-                }
-                return
-            }
-
-            guard !chapters.contains(reader_manager.nextChapter) else { return }
             loadingNext = true
-
-            chapters.append(reader_manager.nextChapter)
-            transitionPages.append(reader_manager.getNextChapterIdx())
-
-            UIView.performWithoutAnimation {
-                let newSectionStart = (chapters.count - 1) * 2
-                collectionView.performBatchUpdates({
-                    collectionView.insertSections(IndexSet(integersIn: newSectionStart..<(newSectionStart + 2)))
-                }, completion: { _ in
-                    self.trimWindowIfNeeded(collectionView, keepingTop: false)
+            ReaderLogger.shared.log("Webtoon prefetch next boundary", type: "ReaderWebtoon")
+            reader_manager.fetchTask(bool: true) { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self else { return }
                     self.loadingNext = false
-                })
+                }
             }
         }
 
-        private func trimWindowIfNeeded(_ collectionView: UICollectionView, keepingTop: Bool) {
-            guard chapters.count > 3 else { return }
-
-            if keepingTop {
-                let sectionStart = (chapters.count - 1) * 2
-                chapters.removeLast()
-                transitionPages.removeLast()
-                collectionView.performBatchUpdates({
-                    collectionView.deleteSections(IndexSet(integersIn: sectionStart..<(sectionStart + 2)))
-                })
-            } else {
-                let removedHeight = heightForWindowChapter(at: 0, collectionView: collectionView)
-                chapters.removeFirst()
-                transitionPages.removeFirst()
-                collectionView.performBatchUpdates({
-                    collectionView.deleteSections(IndexSet(integersIn: 0..<2))
-                }, completion: { _ in
-                    collectionView.setContentOffset(
-                        CGPoint(
-                            x: collectionView.contentOffset.x,
-                            y: max(0, collectionView.contentOffset.y - removedHeight)
-                        ),
-                        animated: false
-                    )
-                })
-            }
-        }
-
-        private func heightForWindowChapter(at index: Int, collectionView: UICollectionView) -> CGFloat {
-            guard index < chapters.count else { return 0 }
-            let width = max(collectionView.bounds.width, 1)
-            let pagesHeight = chapters[index].reduce(CGFloat(0)) { total, page in
-                total + height(for: page, width: width)
-            }
-            return pagesHeight + 160
+        private static func identity(for manager: readerManager) -> String {
+            "\(manager.selectedChapter?.idx ?? -1):\(manager.selectedChapter?.chapterNumber ?? "")"
         }
     }
 }
@@ -493,7 +395,8 @@ private final class WebtoonImageCell: UICollectionViewCell {
             }
             imageView.image = image
             showImage()
-            if let coordinator, let indexPath, let collectionView = findCollectionView() {
+            if let coordinator, let indexPath, let collectionView = findCollectionView(),
+               collectionView.indexPath(for: self) == indexPath {
                 coordinator.updateImageSize(for: page, size: image.size, indexPath: indexPath, collectionView: collectionView)
             }
             return
@@ -535,7 +438,8 @@ private final class WebtoonImageCell: UICollectionViewCell {
             switch result {
             case .success(let value):
                 self.showImage()
-                if let collectionView = self.findCollectionView() {
+                if let collectionView = self.findCollectionView(),
+                   collectionView.indexPath(for: self) == indexPath {
                     coordinator.updateImageSize(
                         for: page,
                         size: value.image.size,
@@ -594,39 +498,5 @@ private final class WebtoonImageCell: UICollectionViewCell {
             view = current.superview
         }
         return nil
-    }
-}
-
-private final class WebtoonTransitionCell: UICollectionViewCell {
-    static let reuseIdentifier = "WebtoonTransitionCell"
-
-    private let label = UILabel()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setup()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func set(chapterNumber: String) {
-        label.text = chapterNumber.isEmpty ? "Chapter End" : "Chapter \(chapterNumber) End"
-    }
-
-    private func setup() {
-        contentView.backgroundColor = .black
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.textColor = UIColor.white.withAlphaComponent(0.72)
-        label.font = .preferredFont(forTextStyle: .headline)
-        label.textAlignment = .center
-        contentView.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            label.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
-        ])
     }
 }

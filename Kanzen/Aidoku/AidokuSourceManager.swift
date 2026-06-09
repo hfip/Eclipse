@@ -351,14 +351,26 @@ final class AidokuSourceManager: ObservableObject {
     static let rootDirectory = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("KanzenAidoku", isDirectory: true)
+    private static let autoUpdateKey = "kanzenAidokuAutoUpdateSources"
+    private static let lastAutoUpdateKey = "kanzenAidokuLastAutoUpdate"
+    private static let autoUpdateCooldown: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var sourceLists: [AidokuSourceListRecord] = []
     @Published private(set) var availableSources: [AidokuSourceListEntry] = []
     @Published private(set) var installedSources: [AidokuInstalledSource] = []
     @Published private(set) var isRefreshing = false
+    @Published private(set) var isRuntimeReady = false
+    @Published private(set) var isRuntimeLoading = false
+    @Published private(set) var isUpdatingSources = false
+    @Published private(set) var lastAutoUpdate: Date?
     @Published var showMatureSources: Bool {
         didSet {
             UserDefaults.standard.set(showMatureSources, forKey: matureSourcesKey)
+        }
+    }
+    @Published var autoUpdateSources: Bool {
+        didSet {
+            UserDefaults.standard.set(autoUpdateSources, forKey: Self.autoUpdateKey)
         }
     }
 
@@ -377,10 +389,15 @@ final class AidokuSourceManager: ObservableObject {
 
     private init() {
         showMatureSources = UserDefaults.standard.bool(forKey: matureSourcesKey)
+        autoUpdateSources = UserDefaults.standard.object(forKey: Self.autoUpdateKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: Self.autoUpdateKey)
+        lastAutoUpdate = UserDefaults.standard.object(forKey: Self.lastAutoUpdateKey) as? Date
         loadPersistedState()
         ensureDirectories()
         Task {
-            await reloadInstalledSources()
+            await ensureRuntimeReady()
+            await autoUpdateInstalledSourcesIfNeeded(reason: "launch")
             await refreshSourceLists()
         }
     }
@@ -478,6 +495,51 @@ final class AidokuSourceManager: ObservableObject {
         ReaderLogger.shared.log("Installed Aidoku source \(installed.id) \(installed.name) version=\(installed.version)", type: "AidokuSource")
     }
 
+    func ensureRuntimeReady() async {
+        if isRuntimeReady { return }
+
+        if isRuntimeLoading {
+            while isRuntimeLoading && !isRuntimeReady {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            return
+        }
+
+        isRuntimeLoading = true
+        ReaderLogger.shared.log("Preparing Aidoku runtime sources count=\(installedSources.count)", type: "AidokuRuntime")
+        await reloadInstalledSources()
+        isRuntimeReady = true
+        isRuntimeLoading = false
+        ReaderLogger.shared.log("Aidoku runtime ready loaded=\(runtimeSources.count)", type: "AidokuRuntime")
+    }
+
+    func autoUpdateInstalledSourcesIfNeeded(reason: String) async {
+        guard autoUpdateSources else { return }
+        guard !installedSources.isEmpty else { return }
+        if let lastAutoUpdate, Date().timeIntervalSince(lastAutoUpdate) < Self.autoUpdateCooldown {
+            return
+        }
+        await updateAllInstalledSources(reason: reason)
+    }
+
+    func updateAllInstalledSources(reason: String = "manual") async {
+        guard !isUpdatingSources else { return }
+        isUpdatingSources = true
+        defer { isUpdatingSources = false }
+
+        await ensureRuntimeReady()
+        let updateCandidates = installedSources.filter { $0.packageURL != nil }
+        ReaderLogger.shared.log("Updating Aidoku sources reason=\(reason) count=\(updateCandidates.count)", type: "AidokuSource")
+
+        for source in updateCandidates {
+            await updateInstalledSource(source)
+        }
+
+        let now = Date()
+        lastAutoUpdate = now
+        UserDefaults.standard.set(now, forKey: Self.lastAutoUpdateKey)
+    }
+
     func updateInstalledSource(_ source: AidokuInstalledSource) async {
         guard
             let packageURLString = source.packageURL,
@@ -512,6 +574,7 @@ final class AidokuSourceManager: ObservableObject {
                 packageURL: packageURLString,
                 externalIconURL: source.externalIconURL
             )
+            ReaderLogger.shared.log("Updated Aidoku source \(source.id)", type: "AidokuSource")
         } catch {
             updateError(sourceId: source.id, message: error.localizedDescription)
         }
@@ -588,6 +651,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func search(sourceId: String, query: String?, page: Int, filters: [AidokuRunner.FilterValue]) async throws -> AidokuRunner.MangaPageResult {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -598,6 +662,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func mangaUpdate(sourceId: String, manga: AidokuRunner.Manga, needsDetails: Bool, needsChapters: Bool) async throws -> AidokuRunner.Manga {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -608,6 +673,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func pageList(sourceId: String, manga: AidokuRunner.Manga, chapter: AidokuRunner.Chapter) async throws -> [PageData] {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -621,6 +687,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func home(sourceId: String) async throws -> AidokuRunner.Home {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -631,6 +698,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func listings(sourceId: String) async throws -> [AidokuRunner.Listing] {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -641,6 +709,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func mangaList(sourceId: String, listing: AidokuRunner.Listing, page: Int) async throws -> AidokuRunner.MangaPageResult {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -651,6 +720,7 @@ final class AidokuSourceManager: ObservableObject {
     }
 
     func filters(sourceId: String) async throws -> [AidokuRunner.Filter] {
+        await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
         }
@@ -739,6 +809,7 @@ final class AidokuSourceManager: ObservableObject {
             installedSources.append(metadata)
         }
 
+        isRuntimeReady = true
         saveInstalledSources()
         return metadata
     }

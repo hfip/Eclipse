@@ -21,6 +21,9 @@ struct KanzenHistoryView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    KanzenRootHeader("History")
+                        .padding(.horizontal, -16)
+
                     if historyItems.isEmpty {
                         emptyState
                             .frame(maxWidth: .infinity)
@@ -49,8 +52,6 @@ struct KanzenHistoryView: View {
             }
             .coordinateSpace(name: "kanzenHistoryScroll")
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
-            .navigationTitle("History")
-            .navigationBarTitleDisplayMode(.large)
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         }
     }

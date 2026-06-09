@@ -29,6 +29,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 struct SoraApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var settings = Settings()
+    @StateObject private var theme = LunaTheme.shared
     @StateObject private var moduleManager = ModuleManager.shared
     @StateObject private var favouriteManager = FavouriteManager.shared
 
@@ -64,13 +65,15 @@ struct SoraApp: App {
                 if showKanzen {
                     KanzenMenu(onStartupReady: markStartupReady)
                         .environmentObject(settings)
+                        .environmentObject(theme)
                         .environmentObject(moduleManager)
                         .environmentObject(favouriteManager)
                         .environment(\.managedObjectContext, favouriteManager.container.viewContext)
-                        .accentColor(settings.accentColor)
+                        .accentColor(settings.effectiveAccentColor)
                         .onAppear { scheduleStartupFallback() }
                 } else {
                     ContentView(onStartupReady: markStartupReady)
+                        .environmentObject(theme)
                         .onAppear { scheduleStartupFallback() }
                 }
 #endif
