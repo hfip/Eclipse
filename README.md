@@ -65,6 +65,11 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 
 ## Install
 
+Get the latest release from the releases page:
+
+https://github.com/Soupy-dev/Eclipse/releases
+
+
 AltStore and SideStore users can add this source:
 
 ```text
