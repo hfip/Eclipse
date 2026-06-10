@@ -31,7 +31,9 @@ struct WebtoonView: UIViewRepresentable {
         collectionView.prefetchDataSource = context.coordinator
         collectionView.isPagingEnabled = false
         collectionView.isPrefetchingEnabled = true
-        collectionView.alwaysBounceVertical = true
+        collectionView.bounces = false
+        collectionView.alwaysBounceVertical = false
+        collectionView.scrollsToTop = false
         collectionView.showsVerticalScrollIndicator = false
         collectionView.contentInset = .zero
         collectionView.scrollIndicatorInsets = .zero
@@ -567,19 +569,22 @@ struct WebtoonView: UIViewRepresentable {
     }
 }
 
-private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate {
+private final class WebtoonImageCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     static let reuseIdentifier = "WebtoonImageCell"
 
-    private let imageScrollView = UIScrollView()
     private let imageView = UIImageView()
     private let textLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let retryButton = UIButton(type: .system)
+    private lazy var pinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+    private lazy var panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
 
     private weak var coordinator: WebtoonView.Coordinator?
     private var page: PageData?
     private var indexPath: IndexPath?
     private var currentTaskId: UUID?
+    private var zoomScale: CGFloat = 1
+    private var zoomTranslation: CGPoint = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -594,7 +599,7 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
         super.prepareForReuse()
         imageView.kf.cancelDownloadTask()
         imageView.image = nil
-        imageScrollView.setZoomScale(1, animated: false)
+        resetZoom(animated: false)
         currentTaskId = nil
         coordinator = nil
         page = nil
@@ -615,26 +620,21 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
 
     private func setup() {
         contentView.backgroundColor = .black
-
-        imageScrollView.translatesAutoresizingMaskIntoConstraints = false
-        imageScrollView.backgroundColor = .black
-        imageScrollView.minimumZoomScale = 1
-        imageScrollView.maximumZoomScale = 4
-        imageScrollView.delegate = self
-        imageScrollView.bouncesZoom = true
-        imageScrollView.showsHorizontalScrollIndicator = false
-        imageScrollView.showsVerticalScrollIndicator = false
-        imageScrollView.contentInsetAdjustmentBehavior = .never
-        imageScrollView.delaysContentTouches = false
-        imageScrollView.canCancelContentTouches = true
-        imageScrollView.panGestureRecognizer.minimumNumberOfTouches = 2
-        contentView.addSubview(imageScrollView)
+        contentView.clipsToBounds = true
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .black
         imageView.clipsToBounds = true
-        imageScrollView.addSubview(imageView)
+        imageView.isUserInteractionEnabled = false
+        contentView.addSubview(imageView)
+
+        pinchGesture.delegate = self
+        panGesture.delegate = self
+        panGesture.minimumNumberOfTouches = 2
+        panGesture.maximumNumberOfTouches = 2
+        contentView.addGestureRecognizer(pinchGesture)
+        contentView.addGestureRecognizer(panGesture)
 
         textLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.numberOfLines = 0
@@ -657,17 +657,10 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
         contentView.addSubview(retryButton)
 
         NSLayoutConstraint.activate([
-            imageScrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            imageScrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            imageScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            imageScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-
-            imageView.topAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.bottomAnchor),
-            imageView.leadingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.trailingAnchor),
-            imageView.widthAnchor.constraint(equalTo: imageScrollView.frameLayoutGuide.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo: imageScrollView.frameLayoutGuide.heightAnchor),
+            imageView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
 
             textLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             textLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
@@ -781,7 +774,7 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
     }
 
     private func showLoading() {
-        imageScrollView.isHidden = true
+        imageView.isHidden = true
         textLabel.isHidden = true
         retryButton.isHidden = true
         activityIndicator.isHidden = false
@@ -789,7 +782,7 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
     }
 
     private func showImage() {
-        imageScrollView.isHidden = false
+        imageView.isHidden = false
         textLabel.isHidden = true
         retryButton.isHidden = true
         activityIndicator.stopAnimating()
@@ -797,7 +790,7 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
     }
 
     private func showText() {
-        imageScrollView.isHidden = true
+        imageView.isHidden = true
         textLabel.isHidden = false
         retryButton.isHidden = true
         activityIndicator.stopAnimating()
@@ -805,7 +798,7 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
     }
 
     private func showFailure() {
-        imageScrollView.isHidden = true
+        imageView.isHidden = true
         textLabel.isHidden = true
         activityIndicator.stopAnimating()
         activityIndicator.isHidden = true
@@ -827,7 +820,74 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
         return nil
     }
 
-    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        imageView.image == nil ? nil : imageView
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard imageView.image != nil else { return }
+
+        switch gesture.state {
+        case .began, .changed:
+            zoomScale = min(max(zoomScale * gesture.scale, 1), 4)
+            gesture.scale = 1
+            if zoomScale <= 1.01 {
+                resetZoom(animated: false)
+            } else {
+                constrainZoomTranslation()
+                applyZoomTransform(animated: false)
+            }
+        case .ended, .cancelled, .failed:
+            if zoomScale <= 1.05 {
+                resetZoom(animated: true)
+            } else {
+                constrainZoomTranslation()
+                applyZoomTransform(animated: true)
+            }
+        default:
+            break
+        }
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard imageView.image != nil, zoomScale > 1 else { return }
+        let delta = gesture.translation(in: contentView)
+        zoomTranslation.x += delta.x
+        zoomTranslation.y += delta.y
+        gesture.setTranslation(.zero, in: contentView)
+        constrainZoomTranslation()
+        applyZoomTransform(animated: false)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === pinchGesture || gestureRecognizer === panGesture
+    }
+
+    private func resetZoom(animated: Bool) {
+        zoomScale = 1
+        zoomTranslation = .zero
+        applyZoomTransform(animated: animated)
+    }
+
+    private func constrainZoomTranslation() {
+        guard zoomScale > 1 else {
+            zoomTranslation = .zero
+            return
+        }
+        let maxX = contentView.bounds.width * (zoomScale - 1) * 0.5
+        let maxY = contentView.bounds.height * (zoomScale - 1) * 0.5
+        zoomTranslation.x = min(max(zoomTranslation.x, -maxX), maxX)
+        zoomTranslation.y = min(max(zoomTranslation.y, -maxY), maxY)
+    }
+
+    private func applyZoomTransform(animated: Bool) {
+        let changes = {
+            self.imageView.transform = CGAffineTransform(
+                translationX: self.zoomTranslation.x,
+                y: self.zoomTranslation.y
+            ).scaledBy(x: self.zoomScale, y: self.zoomScale)
+        }
+
+        if animated {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: changes)
+        } else {
+            changes()
+        }
     }
 }
