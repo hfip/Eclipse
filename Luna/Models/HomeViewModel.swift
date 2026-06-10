@@ -21,6 +21,7 @@ final class HomeViewModel: ObservableObject {
     private var heroCarouselItems: [TMDBSearchResult] = []
     private var heroCarouselIndex = 0
     private var heroLaunchSelectionCatalogId: String?
+    private var activeLoadTask: Task<Void, Never>?
     
     init() {
         // Init body can be simplified if needed
@@ -35,38 +36,49 @@ final class HomeViewModel: ObservableObject {
         guard !hasLoadedContent else {
             return
         }
+        guard activeLoadTask == nil else {
+            return
+        }
         
         isLoading = true
         errorMessage = nil
         hasCompletedInitialLoad = false
-        let enabledCatalogSnapshot = catalogManager.getEnabledCatalogs()
         
-        Task {
-            async let trending: [TMDBSearchResult] = self.loadHomeCatalog("trending") {
+        activeLoadTask = Task {
+            let enabledCatalogSnapshot = await MainActor.run {
+                StremioAddonManager.shared.loadAddons()
+                return catalogManager.getEnabledCatalogs()
+            }
+            let enabledCatalogIds = Set(enabledCatalogSnapshot.map(\.id))
+            let needsTopRatedTVShows = enabledCatalogIds.contains("topRatedTVShows") || enabledCatalogIds.contains("bestTVShows")
+            let needsTopRatedMovies = enabledCatalogIds.contains("topRatedMovies") || enabledCatalogIds.contains("bestMovies")
+            let needsTopRatedAnime = enabledCatalogIds.contains("topRatedAnime") || enabledCatalogIds.contains("bestAnime")
+
+            async let trending: [TMDBSearchResult] = self.loadHomeCatalogIfNeeded("trending", shouldLoad: enabledCatalogIds.contains("trending")) {
                 try await tmdbService.getTrending()
             }
-            async let popularM: [TMDBMovie] = self.loadHomeCatalog("popularMovies") {
+            async let popularM: [TMDBMovie] = self.loadHomeCatalogIfNeeded("popularMovies", shouldLoad: enabledCatalogIds.contains("popularMovies")) {
                 try await tmdbService.getPopularMovies()
             }
-            async let nowPlayingM: [TMDBMovie] = self.loadHomeCatalog("nowPlayingMovies") {
+            async let nowPlayingM: [TMDBMovie] = self.loadHomeCatalogIfNeeded("nowPlayingMovies", shouldLoad: enabledCatalogIds.contains("nowPlayingMovies")) {
                 try await tmdbService.getNowPlayingMovies()
             }
-            async let upcomingM: [TMDBMovie] = self.loadHomeCatalog("upcomingMovies") {
+            async let upcomingM: [TMDBMovie] = self.loadHomeCatalogIfNeeded("upcomingMovies", shouldLoad: enabledCatalogIds.contains("upcomingMovies")) {
                 try await tmdbService.getUpcomingMovies()
             }
-            async let popularTV: [TMDBTVShow] = self.loadHomeCatalog("popularTVShows") {
+            async let popularTV: [TMDBTVShow] = self.loadHomeCatalogIfNeeded("popularTVShows", shouldLoad: enabledCatalogIds.contains("popularTVShows")) {
                 try await tmdbService.getPopularTVShows()
             }
-            async let onTheAirTV: [TMDBTVShow] = self.loadHomeCatalog("onTheAirTV") {
+            async let onTheAirTV: [TMDBTVShow] = self.loadHomeCatalogIfNeeded("onTheAirTV", shouldLoad: enabledCatalogIds.contains("onTheAirTV")) {
                 try await tmdbService.getOnTheAirTVShows()
             }
-            async let airingTodayTV: [TMDBTVShow] = self.loadHomeCatalog("airingTodayTV") {
+            async let airingTodayTV: [TMDBTVShow] = self.loadHomeCatalogIfNeeded("airingTodayTV", shouldLoad: enabledCatalogIds.contains("airingTodayTV")) {
                 try await tmdbService.getAiringTodayTVShows()
             }
-            async let topRatedTV: [TMDBTVShow] = self.loadHomeCatalog("topRatedTVShows") {
+            async let topRatedTV: [TMDBTVShow] = self.loadHomeCatalogIfNeeded("topRatedTVShows", shouldLoad: needsTopRatedTVShows) {
                 try await tmdbService.getTopRatedTVShows()
             }
-            async let topRatedM: [TMDBMovie] = self.loadHomeCatalog("topRatedMovies") {
+            async let topRatedM: [TMDBMovie] = self.loadHomeCatalogIfNeeded("topRatedMovies", shouldLoad: needsTopRatedMovies) {
                 try await tmdbService.getTopRatedMovies()
             }
 
@@ -74,6 +86,7 @@ final class HomeViewModel: ObservableObject {
                 trending, popularM, nowPlayingM, upcomingM, popularTV, onTheAirTV,
                 airingTodayTV, topRatedTV, topRatedM
             )
+            guard !Task.isCancelled else { return }
 
             let tmdbLoadedCatalogs: [String: [TMDBSearchResult]] = [
                 "trending": tmdbResults.0,
@@ -92,14 +105,20 @@ final class HomeViewModel: ObservableObject {
                 await MainActor.run {
                     self.catalogResults = tmdbLoadedCatalogs
                     self.applyHeroBannerSelection()
-                    self.isLoading = false
-                    self.hasLoadedContent = true
                     self.errorMessage = nil
                 }
             }
 
-            // Fetch all anime catalogs in a single AniList query (1 API call instead of 5)
-            let animeCatalogs = await self.loadAnimeCatalogs(tmdbService: tmdbService)
+            // Fetch AniList only when at least one AniList-backed row or ranked anime row is enabled.
+            let requiredAnimeCatalogs = self.requiredAnimeCatalogKinds(
+                enabledCatalogIds: enabledCatalogIds,
+                needsTopRatedAnime: needsTopRatedAnime
+            )
+            let animeCatalogs = await self.loadAnimeCatalogs(
+                tmdbService: tmdbService,
+                requiredKinds: requiredAnimeCatalogs
+            )
+            guard !Task.isCancelled else { return }
             let trendingAnime = animeCatalogs[.trending] ?? []
             let popularAnime = animeCatalogs[.popular] ?? []
             let topRatedAnime = animeCatalogs[.topRated] ?? []
@@ -114,54 +133,56 @@ final class HomeViewModel: ObservableObject {
                 "upcomingAnime": upcomingAnime
             ]
             let loadedCatalogs = tmdbLoadedCatalogs.merging(animeLoadedCatalogs) { _, anime in anime }
-            let loadedCatalogCount = loadedCatalogs.values.filter { !$0.isEmpty }.count
 
             await MainActor.run {
                 self.catalogResults = loadedCatalogs
                 self.applyHeroBannerSelection()
-                self.isLoading = false
-                self.hasLoadedContent = loadedCatalogCount > 0
-                self.hasCompletedInitialLoad = true
-                self.errorMessage = loadedCatalogCount == 0
-                    ? "Unable to load home catalogs. Check your internet connection and API configuration, then try again."
-                    : nil
+                self.errorMessage = nil
             }
 
-            guard loadedCatalogCount > 0 else { return }
-
-            // Generate "Just For You" recommendations after catalogs are populated
-            let currentResults = await MainActor.run { self.catalogResults }
-            let forYou = await RecommendationEngine.shared.generateRecommendations(
-                catalogResults: currentResults,
-                tmdbService: tmdbService
-            )
-            if !forYou.isEmpty {
-                await MainActor.run {
-                    self.catalogResults["forYou"] = forYou
-                    self.applyHeroBannerSelection()
+            let loadedCatalogCount = loadedCatalogs.values.filter { !$0.isEmpty }.count
+            if loadedCatalogCount > 0 {
+                // Generate "Just For You" recommendations after catalogs are populated
+                let currentResults = await MainActor.run { self.catalogResults }
+                if enabledCatalogSnapshot.contains(where: { $0.id == "forYou" }) {
+                    let forYou = await RecommendationEngine.shared.generateRecommendations(
+                        catalogResults: currentResults,
+                        tmdbService: tmdbService
+                    )
+                    if !forYou.isEmpty {
+                        await MainActor.run {
+                            self.catalogResults["forYou"] = forYou
+                            self.applyHeroBannerSelection()
+                        }
+                    }
                 }
-            }
 
-            // Generate "Because you watched X" catalog
-            let (bywTitle, bywResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
-                tmdbService: tmdbService
-            )
-            if !bywResults.isEmpty {
-                await MainActor.run {
-                    self.catalogResults["becauseYouWatched"] = bywResults
-                    self.becauseYouWatchedTitle = bywTitle
-                    self.applyHeroBannerSelection()
+                // Generate "Because you watched X" catalog
+                if enabledCatalogSnapshot.contains(where: { $0.id == "becauseYouWatched" }) {
+                    let (bywTitle, bywResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
+                        tmdbService: tmdbService
+                    )
+                    if !bywResults.isEmpty {
+                        await MainActor.run {
+                            self.catalogResults["becauseYouWatched"] = bywResults
+                            self.becauseYouWatchedTitle = bywTitle
+                            self.applyHeroBannerSelection()
+                        }
+                    }
                 }
+
             }
 
-            // Load widget data in secondary pass (non-blocking, progressive)
-            self.loadWidgetData(tmdbService: tmdbService, catalogManager: catalogManager)
+            // Load enabled widget/catalog rows before ending the initial media-home load.
+            await self.loadWidgetData(tmdbService: tmdbService, enabledCatalogs: enabledCatalogSnapshot)
+            guard !Task.isCancelled else { return }
 
             let stremioCatalogs = await self.loadStremioCatalogs(
                 enabledCatalogs: enabledCatalogSnapshot,
                 tmdbService: tmdbService,
                 contentFilter: contentFilter
             )
+            guard !Task.isCancelled else { return }
             if !stremioCatalogs.isEmpty {
                 await MainActor.run {
                     self.catalogResults.merge(stremioCatalogs) { _, stremio in stremio }
@@ -169,6 +190,20 @@ final class HomeViewModel: ObservableObject {
                     self.errorMessage = nil
                     self.applyHeroBannerSelection()
                 }
+            }
+
+            let finalLoadedCount = await MainActor.run {
+                self.catalogResults.values.filter { !$0.isEmpty }.count + self.widgetData.values.filter { !$0.isEmpty }.count
+            }
+
+            await MainActor.run {
+                self.isLoading = false
+                self.hasLoadedContent = finalLoadedCount > 0
+                self.hasCompletedInitialLoad = true
+                self.errorMessage = finalLoadedCount == 0
+                    ? "Unable to load home catalogs. Check your internet connection and API configuration, then try again."
+                    : nil
+                self.activeLoadTask = nil
             }
         }
     }
@@ -184,15 +219,43 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    private func loadAnimeCatalogs(tmdbService: TMDBService) async -> [AniListService.AniListCatalogKind: [TMDBSearchResult]] {
+    private func loadHomeCatalogIfNeeded<T>(
+        _ id: String,
+        shouldLoad: Bool,
+        fetch: () async throws -> [T]
+    ) async -> [T] {
+        guard shouldLoad else { return [] }
+        return await loadHomeCatalog(id, fetch: fetch)
+    }
+
+    private func requiredAnimeCatalogKinds(
+        enabledCatalogIds: Set<String>,
+        needsTopRatedAnime: Bool
+    ) -> Set<AniListService.AniListCatalogKind> {
+        var kinds = Set<AniListService.AniListCatalogKind>()
+        if enabledCatalogIds.contains("trendingAnime") { kinds.insert(.trending) }
+        if enabledCatalogIds.contains("popularAnime") { kinds.insert(.popular) }
+        if needsTopRatedAnime { kinds.insert(.topRated) }
+        if enabledCatalogIds.contains("airingAnime") { kinds.insert(.airing) }
+        if enabledCatalogIds.contains("upcomingAnime") { kinds.insert(.upcoming) }
+        return kinds
+    }
+
+    private func loadAnimeCatalogs(
+        tmdbService: TMDBService,
+        requiredKinds: Set<AniListService.AniListCatalogKind>
+    ) async -> [AniListService.AniListCatalogKind: [TMDBSearchResult]] {
+        guard !requiredKinds.isEmpty else { return [:] }
+
         do {
             let catalogs = try await AniListService.shared.fetchAllAnimeCatalogs(tmdbService: tmdbService)
-            let loadedSummary = catalogs
+            let filteredCatalogs = catalogs.filter { requiredKinds.contains($0.key) }
+            let loadedSummary = filteredCatalogs
                 .map { "\(String(describing: $0.key))=\($0.value.count)" }
                 .sorted()
                 .joined(separator: ",")
-            Logger.shared.log("HomeViewModel: anime catalogs loaded \(loadedSummary)", type: "AniList")
-            return catalogs
+            Logger.shared.log("HomeViewModel: enabled anime catalogs loaded \(loadedSummary)", type: "AniList")
+            return filteredCatalogs
         } catch {
             Logger.shared.log("HomeViewModel: anime catalogs failed: \(error.localizedDescription)", type: "Error")
             return [:]
@@ -268,11 +331,9 @@ final class HomeViewModel: ObservableObject {
     
     func loadWidgetData(
         tmdbService: TMDBService,
-        catalogManager: CatalogManager
-    ) {
-        let enabledCatalogs = catalogManager.getEnabledCatalogs()
-        
-        Task {
+        enabledCatalogs: [Catalog]
+    ) async {
+            guard !Task.isCancelled else { return }
             // Ranked lists reuse existing catalog data — zero extra API calls
             let rankedMappings: [(catalogId: String, sourceKey: String)] = [
                 ("bestTVShows", "topRatedTVShows"),
@@ -300,6 +361,7 @@ final class HomeViewModel: ObservableObject {
                         }
                     }
                     for await (networkId, results) in group {
+                        guard !Task.isCancelled else { return }
                         if !results.isEmpty {
                             await MainActor.run {
                                 self.widgetData["network_\(networkId)"] = results
@@ -320,6 +382,7 @@ final class HomeViewModel: ObservableObject {
                         }
                     }
                     for await (genreId, results) in group {
+                        guard !Task.isCancelled else { return }
                         if !results.isEmpty {
                             await MainActor.run {
                                 self.widgetData["genre_\(genreId)"] = results
@@ -340,6 +403,7 @@ final class HomeViewModel: ObservableObject {
                         }
                     }
                     for await (companyId, results) in group {
+                        guard !Task.isCancelled else { return }
                         if !results.isEmpty {
                             await MainActor.run {
                                 self.widgetData["company_\(companyId)"] = results
@@ -352,6 +416,7 @@ final class HomeViewModel: ObservableObject {
             
             // Featured — pick a random popular genre
             if enabledCatalogs.contains(where: { $0.id == "featured" }) {
+                guard !Task.isCancelled else { return }
                 let randomGenre = WidgetGenre.curated.randomElement() ?? WidgetGenre.curated[0]
                 let results = (try? await tmdbService.discoverByGenre(genreId: randomGenre.id, mediaType: "tv")) ?? []
                 if !results.isEmpty {
@@ -364,7 +429,6 @@ final class HomeViewModel: ObservableObject {
                     await MainActor.run {
                         self.featuredGenreName = randomGenre.name
                     }
-                }
             }
         }
     }
@@ -448,6 +512,8 @@ final class HomeViewModel: ObservableObject {
     }
     
     func resetContent() {
+        activeLoadTask?.cancel()
+        activeLoadTask = nil
         catalogResults = [:]
         widgetData = [:]
         isLoading = true

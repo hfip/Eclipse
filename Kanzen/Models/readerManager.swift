@@ -20,8 +20,10 @@ class readerManager: ObservableObject {
     @Published var isLoadingCurrentChapter = false
     @Published var currentErrorMessage: String?
     @AppStorage("readingMode") var readingModeRaw: Int = ReadingMode.WEBTOON.rawValue
-    var pagePrefetcher: ImagePrefetcher?
-    var backgroundPagePrefetcher: ImagePrefetcher?
+    var pagePrefetchers: [ImagePrefetcher] = []
+    var backgroundPagePrefetchers: [ImagePrefetcher] = []
+    private var lastAdjacentPrefetchSignature: String?
+    private var lastBackgroundPrefetchSignature: String?
     var readingMode: ReadingMode {
         let mode = ReadingMode(rawValue: readingModeRaw) ?? .WEBTOON
         return mode == .VERTICAL ? .WEBTOON : mode
@@ -146,8 +148,10 @@ var nextControllers: [UIViewController]?
             task.cancel()
         }
         loadPagesTasks.removeAll()
-        pagePrefetcher?.stop()
-        backgroundPagePrefetcher?.stop()
+        ReaderPageImageOptions.stop(&pagePrefetchers)
+        ReaderPageImageOptions.stop(&backgroundPagePrefetchers)
+        lastAdjacentPrefetchSignature = nil
+        lastBackgroundPrefetchSignature = nil
     }
     
     // Cancel specific loadPages task
@@ -179,8 +183,9 @@ var nextControllers: [UIViewController]?
                 self.changeIndex = true
             }
             persistCurrentPagePosition(page: self.index)
-            preloadRemainingCurrentChapterPages()
         }
+        preloadAdjacentPages()
+        preloadRemainingCurrentChapterPages()
     }
     
     func setPrevChapter(_ prevChapter: [PageData]) {
@@ -554,62 +559,48 @@ var nextControllers: [UIViewController]?
     
     func preloadAdjacentPages()
     {
-        pagePrefetcher?.stop()
-        var pagesURLs: [URL] = []
-        var seen = Set<String>()
-
-        func appendURL(from page: PageData?) {
-            guard let value = page?.urlString,
-                  !seen.contains(value),
-                  let url = URL(string: value) else { return }
-            seen.insert(value)
-            pagesURLs.append(url)
-        }
-
         guard !currChapter.isEmpty else { return }
 
-        let lowerBound = max(index - 4, 0)
-        let upperBound = min(index + 8, currChapter.count - 1)
+        let anchor = max(0, (index / 4) * 4)
+        let lowerBound = max(anchor - 2, 0)
+        let upperBound = min(anchor + 12, currChapter.count - 1)
+        var pagesToPrefetch: [PageData] = []
+
         for pageIndex in lowerBound...upperBound where pageIndex != index {
-            appendURL(from: currChapter[pageIndex])
+            pagesToPrefetch.append(currChapter[pageIndex])
         }
 
         if index >= currChapter.count - 3 {
             for page in nextChapter.prefix(4) {
-                appendURL(from: page)
+                pagesToPrefetch.append(page)
             }
         }
 
         if index <= 2 {
             for page in prevChapter.suffix(4) {
-                appendURL(from: page)
+                pagesToPrefetch.append(page)
             }
         }
 
-        guard !pagesURLs.isEmpty else { return }
-        pagePrefetcher = ImagePrefetcher(urls: pagesURLs)
-        pagePrefetcher?.start()
+        let signature = pagesToPrefetch.map(\.cacheKey).joined(separator: "|")
+        guard signature != lastAdjacentPrefetchSignature else { return }
+        lastAdjacentPrefetchSignature = signature
+
+        ReaderPageImageOptions.stop(&pagePrefetchers)
+        pagePrefetchers = ReaderPageImageOptions.makePrefetchers(for: pagesToPrefetch)
+        ReaderPageImageOptions.start(pagePrefetchers)
         
     }
 
     func preloadRemainingCurrentChapterPages() {
-        backgroundPagePrefetcher?.stop()
-        var urls: [URL] = []
-        var seen = Set<String>()
+        let signature = currChapter.map(\.cacheKey).joined(separator: "|")
+        guard signature != lastBackgroundPrefetchSignature else { return }
+        lastBackgroundPrefetchSignature = signature
 
-        for page in currChapter {
-            guard let value = page.urlString,
-                  !seen.contains(value),
-                  let url = URL(string: value) else { continue }
-            seen.insert(value)
-            urls.append(url)
-        }
-
-        guard !urls.isEmpty else { return }
-        let prefetcher = ImagePrefetcher(urls: urls)
-        backgroundPagePrefetcher = prefetcher
-        prefetcher.start()
-        ReaderLogger.shared.log("Background prefetching \(urls.count) reader pages", type: "ReaderProgress")
+        ReaderPageImageOptions.stop(&backgroundPagePrefetchers)
+        backgroundPagePrefetchers = ReaderPageImageOptions.makePrefetchers(for: currChapter)
+        ReaderPageImageOptions.start(backgroundPagePrefetchers)
+        ReaderLogger.shared.log("Background prefetching \(backgroundPagePrefetchers.count) reader page groups", type: "ReaderProgress")
     }
     func getNextChapterIdx() -> String{
         if let idx = selectedChapter?.idx, let currChapters = chapters, idx + 1 < currChapters.count  {

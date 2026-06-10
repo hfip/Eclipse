@@ -27,8 +27,9 @@ struct WebtoonView: UIViewRepresentable {
         collectionView.backgroundColor = .black
         collectionView.dataSource = context.coordinator
         collectionView.delegate = context.coordinator
+        collectionView.prefetchDataSource = context.coordinator
         collectionView.isPagingEnabled = false
-        collectionView.isPrefetchingEnabled = false
+        collectionView.isPrefetchingEnabled = true
         collectionView.alwaysBounceVertical = true
         collectionView.showsVerticalScrollIndicator = false
         collectionView.contentInset = .zero
@@ -57,6 +58,7 @@ struct WebtoonView: UIViewRepresentable {
             uiView.reloadData()
             uiView.collectionViewLayout.invalidateLayout()
             uiView.layoutIfNeeded()
+            context.coordinator.prefetchInitialPages(in: uiView)
         }
 
         if reader_manager.changeIndex,
@@ -68,7 +70,7 @@ struct WebtoonView: UIViewRepresentable {
         }
     }
 
-    class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
+    class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
         var reader_manager: readerManager
         var onTap: () -> Void
         private var pages: [PageData]
@@ -80,6 +82,9 @@ struct WebtoonView: UIViewRepresentable {
         private var loadingNext = false
         private var lastReportedPage = -1
         private var lastScrollLogTime = Date.distantPast
+        private var activeWarmKeys = Set<String>()
+        private var warmedKeys = Set<String>()
+        private var lastWarmAnchor = -1
 
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
@@ -112,6 +117,9 @@ struct WebtoonView: UIViewRepresentable {
             loadingPrevious = false
             loadingNext = false
             lastReportedPage = -1
+            activeWarmKeys.removeAll()
+            warmedKeys.removeAll()
+            lastWarmAnchor = -1
             ReaderLogger.shared.log(
                 "Webtoon reset chapter=\(manager.selectedChapter?.chapterNumber ?? "<none>") pages=\(pages.count)",
                 type: "ReaderWebtoon"
@@ -141,6 +149,10 @@ struct WebtoonView: UIViewRepresentable {
 
             cell.set(page: pages[indexPath.item], coordinator: self, indexPath: indexPath)
             return cell
+        }
+
+        func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
+            warmPages(at: indexPaths, collectionView: collectionView)
         }
 
         func collectionView(
@@ -194,6 +206,10 @@ struct WebtoonView: UIViewRepresentable {
             }
         }
 
+        func prefetchInitialPages(in collectionView: UICollectionView) {
+            warmWindow(around: max(0, reader_manager.index), collectionView: collectionView, force: true)
+        }
+
         private func height(for page: PageData, width: CGFloat) -> CGFloat {
             if let size = imageSizes[page.cacheKey], size.width > 0 {
                 return max(1, width * (size.height / size.width))
@@ -223,12 +239,90 @@ struct WebtoonView: UIViewRepresentable {
                 lastReportedPage = indexPath.item
                 reader_manager.setIndex(indexPath.item)
                 reader_manager.preloadAdjacentPages()
+                warmWindow(around: indexPath.item, collectionView: collectionView)
                 let now = Date()
                 if now.timeIntervalSince(lastScrollLogTime) > 2 {
                     lastScrollLogTime = now
                     ReaderLogger.shared.log("Webtoon current page=\(indexPath.item + 1)/\(pages.count)", type: "ReaderProgress")
                 }
             }
+        }
+
+        private func warmWindow(around index: Int, collectionView: UICollectionView, force: Bool = false) {
+            guard !pages.isEmpty else { return }
+            let anchor = max(0, (index / 4) * 4)
+            guard force || anchor != lastWarmAnchor else { return }
+            lastWarmAnchor = anchor
+
+            let lowerBound = max(anchor - 1, 0)
+            let upperBound = min(anchor + 18, pages.count - 1)
+            guard lowerBound <= upperBound else { return }
+
+            let indexPaths = (lowerBound...upperBound).map { IndexPath(item: $0, section: 0) }
+            warmPages(at: indexPaths, collectionView: collectionView)
+        }
+
+        private func warmPages(at indexPaths: [IndexPath], collectionView: UICollectionView) {
+            guard !indexPaths.isEmpty, !pages.isEmpty else { return }
+            let targetSize = targetImageSize(for: collectionView)
+            let scale = collectionView.window?.screen.scale ?? UIScreen.main.scale
+
+            for indexPath in indexPaths {
+                guard indexPath.item >= 0, indexPath.item < pages.count else { continue }
+                let page = pages[indexPath.item]
+
+                if let data = page.imageData, let image = UIImage(data: data) {
+                    updateImageSize(for: page, size: image.size, indexPath: indexPath, collectionView: collectionView)
+                    continue
+                }
+
+                guard let value = page.urlString,
+                      let url = URL(string: value) else { continue }
+
+                let warmKey = "\(page.cacheKey)|\(Int(targetSize.width))x\(Int(targetSize.height))"
+                guard !activeWarmKeys.contains(warmKey), !warmedKeys.contains(warmKey) else { continue }
+                activeWarmKeys.insert(warmKey)
+
+                KingfisherManager.shared.retrieveImage(
+                    with: url,
+                    options: ReaderPageImageOptions.options(for: page, targetSize: targetSize, scaleFactor: scale)
+                ) { [weak self, weak collectionView] result in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.activeWarmKeys.remove(warmKey)
+
+                        guard indexPath.item < self.pages.count,
+                              self.pages[indexPath.item].id == page.id else { return }
+
+                        switch result {
+                        case .success(let value):
+                            self.warmedKeys.insert(warmKey)
+                            if let collectionView {
+                                self.updateImageSize(
+                                    for: page,
+                                    size: value.image.size,
+                                    indexPath: indexPath,
+                                    collectionView: collectionView
+                                )
+                            }
+                        case .failure(let error):
+                            ReaderLogger.shared.log(
+                                "Webtoon warm failed page=\(indexPath.item) error=\(error.localizedDescription)",
+                                type: "ReaderWebtoon"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        private func targetImageSize(for collectionView: UICollectionView) -> CGSize {
+            let scale = collectionView.window?.screen.scale ?? UIScreen.main.scale
+            let viewportWidth = max(collectionView.bounds.width, 1)
+            let viewportHeight = max(collectionView.bounds.height, viewportWidth * 1.45)
+            let targetWidth = max(viewportWidth * scale, 900)
+            let targetHeight = max(viewportHeight * scale * 3, targetWidth * 4)
+            return CGSize(width: targetWidth, height: targetHeight)
         }
 
         private func loadAdjacentChaptersIfNeeded(_ collectionView: UICollectionView) {
@@ -441,16 +535,12 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
         let viewportHeight = max(collectionBounds.height, contentView.bounds.height, viewportWidth * 1.45)
         let targetWidth = max(viewportWidth * scale, 900)
         let targetHeight = max(viewportHeight * scale * 3, targetWidth * 4)
-        let processor = DownsamplingImageProcessor(size: CGSize(width: targetWidth, height: targetHeight))
 
-        var options: KingfisherOptionsInfo = [
-            .processor(processor),
-            .cacheOriginalImage,
-            .transition(.none)
-        ]
-        if let modifier = page.requestModifier {
-            options.append(.requestModifier(modifier))
-        }
+        let options = ReaderPageImageOptions.options(
+            for: page,
+            targetSize: CGSize(width: targetWidth, height: targetHeight),
+            scaleFactor: scale
+        )
 
         imageView.kf.setImage(
             with: url,

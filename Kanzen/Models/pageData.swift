@@ -304,6 +304,93 @@ extension PageData {
     }
 }
 
+enum ReaderPageImageOptions {
+    static func options(
+        for page: PageData,
+        targetSize: CGSize? = nil,
+        scaleFactor: CGFloat? = nil
+    ) -> KingfisherOptionsInfo {
+        options(headers: page.headers, targetSize: targetSize, scaleFactor: scaleFactor)
+    }
+
+    static func makePrefetchers(
+        for pages: [PageData],
+        targetSize: CGSize? = nil,
+        scaleFactor: CGFloat? = nil
+    ) -> [ImagePrefetcher] {
+        var seen = Set<String>()
+        var groups: [String: (headers: [String: String], urls: [URL])] = [:]
+
+        for page in pages {
+            guard let value = page.urlString,
+                  let url = URL(string: value) else { continue }
+
+            let groupKey = headerKey(page.headers)
+            let seenKey = "\(groupKey)|\(value)"
+            guard seen.insert(seenKey).inserted else { continue }
+
+            var group = groups[groupKey] ?? (headers: page.headers, urls: [])
+            group.urls.append(url)
+            groups[groupKey] = group
+        }
+
+        return groups.values.map { group in
+            ImagePrefetcher(
+                urls: group.urls,
+                options: options(headers: group.headers, targetSize: targetSize, scaleFactor: scaleFactor)
+            )
+        }
+    }
+
+    static func start(_ prefetchers: [ImagePrefetcher]) {
+        prefetchers.forEach { $0.start() }
+    }
+
+    static func stop(_ prefetchers: inout [ImagePrefetcher]) {
+        prefetchers.forEach { $0.stop() }
+        prefetchers.removeAll()
+    }
+
+    private static func options(
+        headers: [String: String],
+        targetSize: CGSize?,
+        scaleFactor: CGFloat?
+    ) -> KingfisherOptionsInfo {
+        var values: KingfisherOptionsInfo = [
+            .cacheOriginalImage,
+            .transition(.none),
+            .backgroundDecode
+        ]
+
+        if let targetSize {
+            values.append(.processor(DownsamplingImageProcessor(size: targetSize)))
+        }
+
+        if let scaleFactor {
+            values.append(.scaleFactor(scaleFactor))
+        }
+
+        if !headers.isEmpty {
+            values.append(.requestModifier(AnyModifier { request in
+                var request = request
+                for (field, value) in headers {
+                    request.setValue(value, forHTTPHeaderField: field)
+                }
+                return request
+            }))
+        }
+
+        return values
+    }
+
+    private static func headerKey(_ headers: [String: String]) -> String {
+        headers
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: "\u{1F}")
+    }
+}
+
 private extension KFImage {
     func readerPageImageStyle(width: CGFloat) -> some View {
         scaledToFit()
@@ -377,10 +464,8 @@ struct ZoomablePageView: UIViewRepresentable {
                 return
             }
 
-            var options: KingfisherOptionsInfo = []
-            if let modifier = page.requestModifier {
-                options.append(.requestModifier(modifier))
-            }
+            let scale = scrollView?.window?.screen.scale ?? UIScreen.main.scale
+            let options = ReaderPageImageOptions.options(for: page, scaleFactor: scale)
             imageView?.kf.setImage(with: url, options: options)
         }
 
