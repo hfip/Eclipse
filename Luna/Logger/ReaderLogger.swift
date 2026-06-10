@@ -31,7 +31,7 @@ class ReaderLogger: @unchecked Sendable {
     private let maxLogEntries = 1000
     private let maxLogFileBytes = 1_000_000
     private let noisyTypes: Set<String> = [
-        "ReaderDebug", "AidokuRuntime", "AidokuNetwork", "ReaderNetwork", "ReaderProgress"
+        "ReaderDebug", "AidokuRuntime", "AidokuNetwork", "ReaderNetwork", "ReaderProgress", "ReaderPerf"
     ]
     private let noisyWindowDuration: TimeInterval = 20
     private let noisyTypeBurstLimit = 30
@@ -62,6 +62,8 @@ class ReaderLogger: @unchecked Sendable {
             return "Aidoku"
         case "readerdebug", "readerprogress":
             return "Reader"
+        case "readerperf":
+            return "Reader Performance"
         case "readernetwork", "aidokunetwork":
             return "Reader Network"
         case "readersandbox", "aidokusandbox":

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Kingfisher
+import QuartzCore
 
 struct WebtoonView: UIViewRepresentable {
     @ObservedObject var reader_manager: readerManager
@@ -45,6 +46,7 @@ struct WebtoonView: UIViewRepresentable {
         collectionView.addGestureRecognizer(tap)
 
         context.coordinator.collectionView = collectionView
+        context.coordinator.startPerfMonitoring()
         return collectionView
     }
 
@@ -70,6 +72,10 @@ struct WebtoonView: UIViewRepresentable {
         }
     }
 
+    static func dismantleUIView(_ uiView: UICollectionView, coordinator: Coordinator) {
+        coordinator.stopPerfMonitoring()
+    }
+
     class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
         var reader_manager: readerManager
         var onTap: () -> Void
@@ -89,6 +95,11 @@ struct WebtoonView: UIViewRepresentable {
         private var backgroundWarmWorkItem: DispatchWorkItem?
         private var pendingOffsetAdjustment: CGFloat = 0
         private var pendingLayoutWorkItem: DispatchWorkItem?
+        private var displayLink: CADisplayLink?
+        private var lastDisplayTimestamp: CFTimeInterval?
+        private var lastHitchLogTime = Date.distantPast
+        private var lastWarmLogTime = Date.distantPast
+        private var totalLayoutInvalidations = 0
 
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
@@ -130,9 +141,60 @@ struct WebtoonView: UIViewRepresentable {
             pendingOffsetAdjustment = 0
             pendingLayoutWorkItem?.cancel()
             pendingLayoutWorkItem = nil
+            lastDisplayTimestamp = nil
+            totalLayoutInvalidations = 0
             ReaderLogger.shared.log(
                 "Webtoon reset chapter=\(manager.selectedChapter?.chapterNumber ?? "<none>") pages=\(pages.count)",
                 type: "ReaderWebtoon"
+            )
+        }
+
+        deinit {
+            displayLink?.invalidate()
+            pendingLayoutWorkItem?.cancel()
+            backgroundWarmWorkItem?.cancel()
+        }
+
+        func startPerfMonitoring() {
+            guard displayLink == nil else { return }
+            let link = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+
+        func stopPerfMonitoring() {
+            displayLink?.invalidate()
+            displayLink = nil
+            lastDisplayTimestamp = nil
+        }
+
+        @objc private func displayLinkTick(_ link: CADisplayLink) {
+            guard let previous = lastDisplayTimestamp else {
+                lastDisplayTimestamp = link.timestamp
+                return
+            }
+            lastDisplayTimestamp = link.timestamp
+
+            let deltaMs = (link.timestamp - previous) * 1000
+            guard deltaMs >= 95 else { return }
+
+            let now = Date()
+            guard now.timeIntervalSince(lastHitchLogTime) >= 1.5 else { return }
+            lastHitchLogTime = now
+
+            let collectionView = collectionView
+            let visibleItems = collectionView?.indexPathsForVisibleItems.map(\.item).sorted() ?? []
+            let visibleRange = visibleItems.isEmpty
+                ? "none"
+                : "\(visibleItems.first ?? 0)-\(visibleItems.last ?? 0)"
+            let offset = Int(collectionView?.contentOffset.y ?? 0)
+            let contentHeight = Int(collectionView?.contentSize.height ?? 0)
+            let dragging = collectionView?.isDragging == true
+            let decelerating = collectionView?.isDecelerating == true
+
+            ReaderLogger.shared.log(
+                "Webtoon frame hitch deltaMs=\(Int(deltaMs)) page=\(lastReportedPage + 1)/\(pages.count) visible=\(visibleRange) offset=\(offset)/\(contentHeight) dragging=\(dragging) decel=\(decelerating) activeWarm=\(activeWarmKeys.count) pendingLayout=\(pendingLayoutWorkItem != nil)",
+                type: "ReaderPerf"
             )
         }
 
@@ -230,6 +292,7 @@ struct WebtoonView: UIViewRepresentable {
                 let adjustment = self.pendingOffsetAdjustment
                 self.pendingOffsetAdjustment = 0
                 self.pendingLayoutWorkItem = nil
+                self.totalLayoutInvalidations += 1
 
                 UIView.performWithoutAnimation {
                     collectionView.collectionViewLayout.invalidateLayout()
@@ -241,6 +304,12 @@ struct WebtoonView: UIViewRepresentable {
                         )
                         collectionView.setContentOffset(adjusted, animated: false)
                     }
+                }
+                if abs(adjustment) >= 8 || self.totalLayoutInvalidations % 10 == 0 {
+                    ReaderLogger.shared.log(
+                        "Webtoon layout batch count=\(self.totalLayoutInvalidations) offsetAdjust=\(Int(adjustment)) activeWarm=\(self.activeWarmKeys.count) knownSizes=\(self.imageSizes.count)/\(self.pages.count)",
+                        type: "ReaderPerf"
+                    )
                 }
             }
             pendingLayoutWorkItem = workItem
@@ -313,6 +382,7 @@ struct WebtoonView: UIViewRepresentable {
             guard lowerBound <= upperBound else { return }
 
             let indexPaths = (lowerBound...upperBound).map { IndexPath(item: $0, section: 0) }
+            logWarmPlan(kind: "foreground", range: "\(lowerBound)-\(upperBound)", count: indexPaths.count)
             warmPages(at: indexPaths, collectionView: collectionView)
         }
 
@@ -326,7 +396,18 @@ struct WebtoonView: UIViewRepresentable {
             let start = min(max(index + 19, 0), pages.count)
             guard start < pages.count else { return }
             let indexPaths = (start..<pages.count).map { IndexPath(item: $0, section: 0) }
+            logWarmPlan(kind: "background", range: "\(start)-\(pages.count - 1)", count: indexPaths.count)
             warmBackgroundChunks(indexPaths, collectionView: collectionView, offset: 0)
+        }
+
+        private func logWarmPlan(kind: String, range: String, count: Int) {
+            let now = Date()
+            guard now.timeIntervalSince(lastWarmLogTime) >= 2 else { return }
+            lastWarmLogTime = now
+            ReaderLogger.shared.log(
+                "Webtoon warm plan kind=\(kind) range=\(range) count=\(count) active=\(activeWarmKeys.count) warmed=\(warmedKeys.count)",
+                type: "ReaderPerf"
+            )
         }
 
         private func warmBackgroundChunks(
@@ -370,6 +451,7 @@ struct WebtoonView: UIViewRepresentable {
                 let warmKey = "\(page.cacheKey)|\(Int(targetSize.width))x\(Int(targetSize.height))"
                 guard !activeWarmKeys.contains(warmKey), !warmedKeys.contains(warmKey) else { continue }
                 activeWarmKeys.insert(warmKey)
+                let startedAt = CACurrentMediaTime()
 
                 KingfisherManager.shared.retrieveImage(
                     with: url,
@@ -385,6 +467,13 @@ struct WebtoonView: UIViewRepresentable {
                         switch result {
                         case .success(let value):
                             self.warmedKeys.insert(warmKey)
+                            let elapsedMs = Int((CACurrentMediaTime() - startedAt) * 1000)
+                            if elapsedMs >= 180 || value.cacheType == .none {
+                                ReaderLogger.shared.log(
+                                    "Webtoon warm image page=\(indexPath.item + 1)/\(self.pages.count) elapsedMs=\(elapsedMs) cache=\(Self.cacheTypeName(value.cacheType)) active=\(self.activeWarmKeys.count)",
+                                    type: "ReaderPerf"
+                                )
+                            }
                             if let collectionView {
                                 self.updateImageSize(
                                     for: page,
@@ -395,12 +484,25 @@ struct WebtoonView: UIViewRepresentable {
                             }
                         case .failure(let error):
                             ReaderLogger.shared.log(
-                                "Webtoon warm failed page=\(indexPath.item) error=\(error.localizedDescription)",
-                                type: "ReaderWebtoon"
+                                "Webtoon warm failed page=\(indexPath.item + 1)/\(self.pages.count) elapsedMs=\(Int((CACurrentMediaTime() - startedAt) * 1000)) error=\(error.localizedDescription)",
+                                type: "ReaderPerf"
                             )
                         }
                     }
                 }
+            }
+        }
+
+        static func cacheTypeName(_ cacheType: CacheType) -> String {
+            switch cacheType {
+            case .none:
+                return "none"
+            case .memory:
+                return "memory"
+            case .disk:
+                return "disk"
+            @unknown default:
+                return "unknown"
             }
         }
 
@@ -595,9 +697,17 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
         }
 
         if let data = page.imageData {
+            let startedAt = CACurrentMediaTime()
             guard let image = UIImage(data: data) else {
                 showFailure()
                 return
+            }
+            let elapsedMs = Int((CACurrentMediaTime() - startedAt) * 1000)
+            if elapsedMs >= 45 {
+                ReaderLogger.shared.log(
+                    "Webtoon visible data decode page=\((indexPath?.item ?? 0) + 1) elapsedMs=\(elapsedMs) bytes=\(data.count)",
+                    type: "ReaderPerf"
+                )
             }
             imageView.image = image
             showImage()
@@ -616,6 +726,7 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
         let taskId = UUID()
         currentTaskId = taskId
         showLoading()
+        let startedAt = CACurrentMediaTime()
 
         let collectionBounds = findCollectionView()?.bounds ?? contentView.bounds
         let scale = window?.screen.scale ?? UIScreen.main.scale
@@ -642,6 +753,13 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
 
             switch result {
             case .success(let value):
+                let elapsedMs = Int((CACurrentMediaTime() - startedAt) * 1000)
+                if elapsedMs >= 120 || value.cacheType == .none {
+                    ReaderLogger.shared.log(
+                        "Webtoon visible image page=\(indexPath.item + 1) elapsedMs=\(elapsedMs) cache=\(WebtoonView.Coordinator.cacheTypeName(value.cacheType)) size=\(Int(value.image.size.width))x\(Int(value.image.size.height))",
+                        type: "ReaderPerf"
+                    )
+                }
                 self.showImage()
                 if let collectionView = self.findCollectionView(),
                    collectionView.indexPath(for: self) == indexPath {
@@ -652,7 +770,11 @@ private final class WebtoonImageCell: UICollectionViewCell, UIScrollViewDelegate
                         collectionView: collectionView
                     )
                 }
-            case .failure:
+            case .failure(let error):
+                ReaderLogger.shared.log(
+                    "Webtoon visible image failed page=\(indexPath.item + 1) elapsedMs=\(Int((CACurrentMediaTime() - startedAt) * 1000)) error=\(error.localizedDescription)",
+                    type: "ReaderPerf"
+                )
                 self.showFailure()
             }
         }

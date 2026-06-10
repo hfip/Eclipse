@@ -406,27 +406,33 @@ var nextControllers: [UIViewController]?
                 try Task.checkCancellation()
                 
                 ReaderLogger.shared.log("Loading chapter position=\(position)", type: "Reader")
+                let loadStartedAt = Date()
 
                 let pages: [PageData]
+                let loadSource: String
                 if let route = self.mangaRoute,
                    let chapter,
                    let localPages = ReaderDownloadManager.shared.pages(for: route, chapterNumber: chapter.chapterNumber) {
                     pages = localPages
+                    loadSource = "download"
                     ReaderLogger.shared.log("Loaded downloaded chapter position=\(position) pages=\(localPages.count)", type: "ReaderDownload")
                 } else if let payload = params as? ReaderDownloadedChapterPayload {
                     if let localPages = ReaderDownloadManager.shared.pages(for: payload.route, chapterNumber: payload.chapterNumber) {
                         pages = localPages
+                        loadSource = "downloadPayload"
                         ReaderLogger.shared.log("Loaded downloaded chapter payload position=\(position) pages=\(localPages.count)", type: "ReaderDownload")
                     } else {
                         throw NSError(domain: "ReaderDownload", code: 404, userInfo: [NSLocalizedDescriptionKey: "Downloaded chapter files are missing."])
                     }
                 } else if let payload = params as? AidokuChapterPayload {
+                    loadSource = "aidoku"
                     pages = try await AidokuSourceManager.shared.pageList(
                         sourceId: payload.sourceId,
                         manga: payload.manga,
                         chapter: payload.chapter
                     )
                 } else {
+                    loadSource = "legacy"
                     let result = await withCheckedContinuation { continuation in
                         self.kanzen.extractImages(params: params) { result in
                             continuation.resume(returning: result)
@@ -437,6 +443,16 @@ var nextControllers: [UIViewController]?
                 
                 // Check for cancellation after network call
                 try Task.checkCancellation()
+                let loadElapsedMs = Int(Date().timeIntervalSince(loadStartedAt) * 1000)
+                let urlCount = pages.filter { $0.urlString != nil }.count
+                let dataCount = pages.filter { $0.imageData != nil }.count
+                let textCount = pages.filter { $0.textContent != nil }.count
+                if position == .curr || loadElapsedMs >= 500 {
+                    ReaderLogger.shared.log(
+                        "Chapter pages loaded position=\(position) source=\(loadSource) elapsedMs=\(loadElapsedMs) pages=\(pages.count) url=\(urlCount) data=\(dataCount) text=\(textCount)",
+                        type: "ReaderPerf"
+                    )
+                }
                 
        
                 
