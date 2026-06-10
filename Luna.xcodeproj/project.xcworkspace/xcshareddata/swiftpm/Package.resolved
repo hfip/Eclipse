@@ -64,6 +64,15 @@
       }
     },
     {
+      "identity" : "texture",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Skittyblock/Texture.git",
+      "state" : {
+        "revision" : "6a6475db9bf9f7e04731ab60053c3ca4934c1ac6",
+        "version" : "3.1.1"
+      }
+    },
+    {
       "identity" : "swiftlintplugins",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/SimplyDanny/SwiftLintPlugins",

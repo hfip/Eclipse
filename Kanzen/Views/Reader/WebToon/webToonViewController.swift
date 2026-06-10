@@ -10,6 +10,7 @@ import UIKit
 import QuartzCore
 import ImageIO
 import Nuke
+import AsyncDisplayKit
 
 struct WebtoonView: UIViewRepresentable {
     @ObservedObject var reader_manager: readerManager
@@ -19,13 +20,15 @@ struct WebtoonView: UIViewRepresentable {
         Coordinator(reader_manager: reader_manager, onTap: onTap)
     }
 
-    func makeUIView(context: Context) -> WebtoonCollectionView {
+    func makeUIView(context: Context) -> WebtoonTextureContainerView {
         let layout = WebtoonCollectionLayout()
-        let collectionView = WebtoonCollectionView(frame: .zero, collectionViewLayout: layout)
+        let containerView = WebtoonTextureContainerView(layout: layout)
+        let collectionNode = containerView.collectionNode
+        let collectionView = collectionNode.view
+        collectionNode.backgroundColor = .black
+        collectionNode.dataSource = context.coordinator
+        collectionNode.delegate = context.coordinator
         collectionView.backgroundColor = .black
-        collectionView.dataSource = context.coordinator
-        collectionView.delegate = context.coordinator
-        collectionView.prefetchDataSource = context.coordinator
         collectionView.isPagingEnabled = false
         collectionView.bounces = false
         collectionView.alwaysBounceVertical = false
@@ -38,10 +41,9 @@ struct WebtoonView: UIViewRepresentable {
         if #available(iOS 11.0, *) {
             collectionView.contentInsetAdjustmentBehavior = .never
         }
-        collectionView.register(WebtoonImageCell.self, forCellWithReuseIdentifier: WebtoonImageCell.reuseIdentifier)
-        collectionView.onLayout = { [weak coordinator = context.coordinator, weak collectionView] in
-            guard let collectionView else { return }
-            coordinator?.collectionViewDidLayout(collectionView)
+        containerView.onLayout = { [weak coordinator = context.coordinator, weak collectionNode] in
+            guard let collectionNode else { return }
+            coordinator?.collectionNodeDidLayout(collectionNode)
         }
 
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
@@ -49,26 +51,26 @@ struct WebtoonView: UIViewRepresentable {
         tap.delegate = context.coordinator
         collectionView.addGestureRecognizer(tap)
 
-        context.coordinator.collectionView = collectionView
+        context.coordinator.collectionNode = collectionNode
         context.coordinator.startPerfMonitoring()
-        return collectionView
+        return containerView
     }
 
-    func updateUIView(_ uiView: WebtoonCollectionView, context: Context) {
+    func updateUIView(_ uiView: WebtoonTextureContainerView, context: Context) {
         context.coordinator.reader_manager = reader_manager
         context.coordinator.onTap = onTap
-        context.coordinator.configure(uiView, manager: reader_manager)
+        context.coordinator.configure(uiView.collectionNode, manager: reader_manager)
     }
 
-    static func dismantleUIView(_ uiView: WebtoonCollectionView, coordinator: Coordinator) {
+    static func dismantleUIView(_ uiView: WebtoonTextureContainerView, coordinator: Coordinator) {
         coordinator.stopPerfMonitoring()
         coordinator.cancelWork()
     }
 
-    final class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, ASCollectionDataSource, ASCollectionDelegate, UIGestureRecognizerDelegate {
         var reader_manager: readerManager
         var onTap: () -> Void
-        weak var collectionView: WebtoonCollectionView?
+        weak var collectionNode: ASCollectionNode?
 
         private var pages: [PageData] = []
         private var pageHeights: [String: CGFloat] = [:]
@@ -111,11 +113,11 @@ struct WebtoonView: UIViewRepresentable {
             return true
         }
 
-        func configure(_ collectionView: WebtoonCollectionView, manager: readerManager) {
+        func configure(_ collectionNode: ASCollectionNode, manager: readerManager) {
             let identity = Self.identity(for: manager)
             let needsInitialBuild = pages.isEmpty && !manager.currChapter.isEmpty
             if needsInitialBuild || identity != chapterIdentity || pages.map(\.id) != manager.currChapter.map(\.id) {
-                reset(collectionView, manager: manager)
+                reset(collectionNode, manager: manager)
             }
 
             if manager.changeIndex,
@@ -123,23 +125,25 @@ struct WebtoonView: UIViewRepresentable {
                manager.index < pages.count {
                 pendingScrollToPage = manager.index
                 manager.changeIndex = false
-                scrollToPendingPage(in: collectionView)
+                scrollToPendingPage(in: collectionNode)
             } else if !didInitialPosition, !pages.isEmpty {
                 pendingScrollToPage = min(max(manager.index, 0), pages.count - 1)
-                scrollToPendingPage(in: collectionView)
+                scrollToPendingPage(in: collectionNode)
             }
         }
 
-        func collectionViewDidLayout(_ collectionView: WebtoonCollectionView) {
+        func collectionNodeDidLayout(_ collectionNode: ASCollectionNode) {
+            let collectionView = collectionNode.view
             let width = max(collectionView.bounds.width, 1)
             if abs(width - lastKnownWidth) >= 1 {
                 lastKnownWidth = width
-                updateAllPageHeights(in: collectionView, preserveCurrentPage: didInitialPosition)
+                updateAllPageHeights(in: collectionNode, preserveCurrentPage: didInitialPosition)
             }
-            scrollToPendingPage(in: collectionView)
+            scrollToPendingPage(in: collectionNode)
         }
 
-        private func reset(_ collectionView: WebtoonCollectionView, manager: readerManager) {
+        private func reset(_ collectionNode: ASCollectionNode, manager: readerManager) {
+            let collectionView = collectionNode.view
             cancelWork()
             pages = manager.currChapter
             chapterIdentity = Self.identity(for: manager)
@@ -162,20 +166,19 @@ struct WebtoonView: UIViewRepresentable {
             }
 
             updateLayoutHeights(in: collectionView)
-            collectionView.reloadData()
-            collectionView.layoutIfNeeded()
 
             ReaderLogger.shared.log(
                 "Webtoon virtualized reset chapter=\(manager.selectedChapter?.chapterNumber ?? "<none>") pages=\(pages.count)",
                 type: "ReaderWebtoon"
             )
 
-            DispatchQueue.main.async { [weak self, weak collectionView] in
-                guard let self, let collectionView else { return }
-                collectionView.layoutIfNeeded()
-                self.scrollToPendingPage(in: collectionView)
-                self.prefetchWindow(around: max(0, self.reader_manager.index), in: collectionView, force: true)
-                self.startChapterWarmup(in: collectionView, around: max(0, self.reader_manager.index))
+            Task { @MainActor [weak self, weak collectionNode] in
+                guard let self, let collectionNode else { return }
+                await collectionNode.reloadData()
+                collectionNode.view.layoutIfNeeded()
+                self.scrollToPendingPage(in: collectionNode)
+                self.prefetchWindow(around: max(0, self.reader_manager.index), in: collectionNode, force: true)
+                self.startChapterWarmup(in: collectionNode, around: max(0, self.reader_manager.index))
             }
         }
 
@@ -184,7 +187,7 @@ struct WebtoonView: UIViewRepresentable {
             pendingLayoutWorkItem = nil
             chapterWarmTask?.cancel()
             chapterWarmTask = nil
-            collectionView?.visibleCells.forEach { ($0 as? WebtoonImageCell)?.cancelLoad() }
+            collectionNode?.visibleNodes.compactMap { $0 as? WebtoonTexturePageNode }.forEach { $0.cancelLoad() }
         }
 
         func startPerfMonitoring() {
@@ -214,7 +217,7 @@ struct WebtoonView: UIViewRepresentable {
             guard now.timeIntervalSince(lastHitchLogTime) >= 1.5 else { return }
             lastHitchLogTime = now
 
-            let collectionView = collectionView
+            let collectionView = collectionNode?.view
             let offset = Int(collectionView?.contentOffset.y ?? 0)
             let contentHeight = Int(collectionView?.contentSize.height ?? 0)
             let visible = collectionView?.indexPathsForVisibleItems.map(\.item).sorted() ?? []
@@ -224,66 +227,64 @@ struct WebtoonView: UIViewRepresentable {
             )
         }
 
-        func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        func numberOfSections(in collectionNode: ASCollectionNode) -> Int {
+            1
+        }
+
+        func collectionNode(_ collectionNode: ASCollectionNode, numberOfItemsInSection section: Int) -> Int {
             pages.count
         }
 
-        func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-            guard let cell = collectionView.dequeueReusableCell(
-                withReuseIdentifier: WebtoonImageCell.reuseIdentifier,
-                for: indexPath
-            ) as? WebtoonImageCell,
-                  indexPath.item < pages.count else {
-                return UICollectionViewCell()
+        func collectionNode(_ collectionNode: ASCollectionNode, nodeBlockForItemAt indexPath: IndexPath) -> ASCellNodeBlock {
+            guard indexPath.item < pages.count else {
+                return { ASCellNode() }
             }
-
             let page = pages[indexPath.item]
-            let targetSize = targetImageSize(for: collectionView)
-            let scale = collectionView.window?.screen.scale ?? UIScreen.main.scale
-            cell.configure(
-                page: page,
-                index: indexPath.item,
-                targetSize: targetSize,
-                scale: scale,
-                onImageSize: { [weak self, weak collectionView] page, size, index in
-                    guard let self, let collectionView else { return }
-                    self.updateImageSize(page: page, size: size, index: index, collectionView: collectionView)
+            let index = indexPath.item
+            let targetSize = targetImageSize(for: collectionNode)
+            let scale = collectionNode.view.window?.screen.scale ?? UIScreen.main.scale
+            let estimatedRatio = estimatedImageAspectRatio()
+            return { [weak self, weak collectionNode] in
+                let node = WebtoonTexturePageNode(
+                    page: page,
+                    index: index,
+                    targetSize: targetSize,
+                    scale: scale,
+                    estimatedRatio: estimatedRatio
+                )
+                node.onImageSize = { [weak self, weak collectionNode] page, size, index in
+                    guard let self, let collectionNode else { return }
+                    self.updateImageSize(page: page, size: size, index: index, collectionView: collectionNode.view)
                 }
-            )
-            return cell
-        }
-
-        func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-            let indexes = indexPaths.map(\.item).filter { $0 >= 0 && $0 < pages.count }
-            warmPages(indexes, collectionView: collectionView)
-        }
-
-        func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
-            (cell as? WebtoonImageCell)?.releaseDisplayedImage()
+                return node
+            }
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            guard let collectionView = scrollView as? WebtoonCollectionView, !pages.isEmpty else { return }
+            guard let collectionNode, !pages.isEmpty else { return }
+            let collectionView = collectionNode.view
             updateCurrentPage(in: collectionView)
-            loadAdjacentChaptersIfNeeded(collectionView)
+            loadAdjacentChaptersIfNeeded(collectionNode)
         }
 
-        private func scrollToPendingPage(in collectionView: WebtoonCollectionView) {
+        private func scrollToPendingPage(in collectionNode: ASCollectionNode) {
             guard let index = pendingScrollToPage,
                   index >= 0,
                   index < pages.count else { return }
+            let collectionView = collectionNode.view
             collectionView.layoutIfNeeded()
             let indexPath = IndexPath(item: index, section: 0)
             guard collectionView.numberOfItems(inSection: 0) > index else { return }
-            collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+            collectionNode.scrollToItem(at: indexPath, at: .top, animated: false)
             pendingScrollToPage = nil
             didInitialPosition = true
             updateCurrentPage(in: collectionView, force: true)
-            prefetchWindow(around: index, in: collectionView, force: true)
+            prefetchWindow(around: index, in: collectionNode, force: true)
         }
 
-        private func updateAllPageHeights(in collectionView: WebtoonCollectionView, preserveCurrentPage: Bool) {
+        private func updateAllPageHeights(in collectionNode: ASCollectionNode, preserveCurrentPage: Bool) {
             let currentPage = preserveCurrentPage ? max(lastReportedPage, 0) : nil
+            let collectionView = collectionNode.view
             let width = max(collectionView.bounds.width, 1)
             for page in pages {
                 pageHeights[page.cacheKey] = height(for: page, width: width)
@@ -292,7 +293,7 @@ struct WebtoonView: UIViewRepresentable {
             collectionView.layoutIfNeeded()
             if let currentPage, currentPage < pages.count {
                 pendingScrollToPage = currentPage
-                scrollToPendingPage(in: collectionView)
+                scrollToPendingPage(in: collectionNode)
             }
         }
 
@@ -396,7 +397,7 @@ struct WebtoonView: UIViewRepresentable {
             return min(max(median, 1.6), 6.0)
         }
 
-        private func updateCurrentPage(in collectionView: WebtoonCollectionView, force: Bool = false) {
+        private func updateCurrentPage(in collectionView: UICollectionView, force: Bool = false) {
             guard !pages.isEmpty else { return }
             let midpoint = collectionView.contentOffset.y + collectionView.bounds.height * 0.5
             let visibleIndex = (collectionView.collectionViewLayout as? WebtoonCollectionLayout)?.indexForY(midpoint)
@@ -406,7 +407,9 @@ struct WebtoonView: UIViewRepresentable {
             if force || lastReportedPage != visibleIndex {
                 lastReportedPage = visibleIndex
                 reader_manager.setIndex(visibleIndex)
-                prefetchWindow(around: visibleIndex, in: collectionView)
+                if let collectionNode {
+                    prefetchWindow(around: visibleIndex, in: collectionNode)
+                }
 
                 let now = Date()
                 if force || now.timeIntervalSince(lastScrollLogTime) > 2 {
@@ -416,7 +419,7 @@ struct WebtoonView: UIViewRepresentable {
             }
         }
 
-        private func prefetchWindow(around index: Int, in collectionView: UICollectionView, force: Bool = false) {
+        private func prefetchWindow(around index: Int, in collectionNode: ASCollectionNode, force: Bool = false) {
             guard !pages.isEmpty else { return }
             let anchor = max(0, (index / 4) * 4)
             guard force || anchor != lastWarmAnchor else { return }
@@ -425,12 +428,12 @@ struct WebtoonView: UIViewRepresentable {
             let lower = max(index - 4, 0)
             let upper = min(index + 18, pages.count - 1)
             guard lower <= upper else { return }
-            warmPages(Array(lower...upper), collectionView: collectionView)
+            warmPages(Array(lower...upper), collectionNode: collectionNode)
         }
 
-        private func warmPages(_ indexes: [Int], collectionView: UICollectionView) {
-            let targetSize = targetImageSize(for: collectionView)
-            let scale = collectionView.window?.screen.scale ?? UIScreen.main.scale
+        private func warmPages(_ indexes: [Int], collectionNode: ASCollectionNode) {
+            let targetSize = targetImageSize(for: collectionNode)
+            let scale = collectionNode.view.window?.screen.scale ?? UIScreen.main.scale
 
             for index in indexes {
                 guard index >= 0, index < pages.count else { continue }
@@ -440,14 +443,14 @@ struct WebtoonView: UIViewRepresentable {
                     let warmKey = "data|\(page.cacheKey)"
                     guard !activeWarmKeys.contains(warmKey), !warmedKeys.contains(warmKey) else { continue }
                     activeWarmKeys.insert(warmKey)
-                    Task.detached(priority: .utility) { [weak self, weak collectionView] in
+                    Task.detached(priority: .utility) { [weak self, weak collectionNode] in
                         let image = try? await ReaderWebtoonImagePipeline.loadImage(for: page, targetSize: targetSize, scale: scale)
                         await MainActor.run {
                             guard let self else { return }
                             self.activeWarmKeys.remove(warmKey)
-                            guard let image, let collectionView else { return }
+                            guard let image, let collectionNode else { return }
                             self.warmedKeys.insert(warmKey)
-                            self.updateImageSize(page: page, size: image.size, index: index, collectionView: collectionView)
+                            self.updateImageSize(page: page, size: image.size, index: index, collectionView: collectionNode.view)
                         }
                     }
                     continue
@@ -458,7 +461,7 @@ struct WebtoonView: UIViewRepresentable {
                 guard !activeWarmKeys.contains(warmKey), !warmedKeys.contains(warmKey) else { continue }
                 activeWarmKeys.insert(warmKey)
 
-                Task.detached(priority: .utility) { [weak self, weak collectionView] in
+                Task.detached(priority: .utility) { [weak self, weak collectionNode] in
                     let image = try? await ReaderWebtoonImagePipeline.loadImage(for: page, targetSize: targetSize, scale: scale)
                     await MainActor.run {
                         guard let self else { return }
@@ -466,8 +469,8 @@ struct WebtoonView: UIViewRepresentable {
                         guard index < self.pages.count, self.pages[index].id == page.id else { return }
                         if let image {
                             self.warmedKeys.insert(warmKey)
-                            if let collectionView {
-                                self.updateImageSize(page: page, size: image.size, index: index, collectionView: collectionView)
+                            if let collectionNode {
+                                self.updateImageSize(page: page, size: image.size, index: index, collectionView: collectionNode.view)
                             }
                         }
                     }
@@ -475,18 +478,18 @@ struct WebtoonView: UIViewRepresentable {
             }
         }
 
-        private func startChapterWarmup(in collectionView: UICollectionView, around index: Int) {
+        private func startChapterWarmup(in collectionNode: ASCollectionNode, around index: Int) {
             chapterWarmTask?.cancel()
 
             let total = pages.count
             guard total > 1 else { return }
 
             let orderedIndexes = warmupOrder(total: total, around: index)
-            let targetSize = targetImageSize(for: collectionView)
-            let scale = collectionView.window?.screen.scale ?? UIScreen.main.scale
+            let targetSize = targetImageSize(for: collectionNode)
+            let scale = collectionNode.view.window?.screen.scale ?? UIScreen.main.scale
             let maxWarmPages = min(total, 80)
 
-            chapterWarmTask = Task { @MainActor [weak self, weak collectionView] in
+            chapterWarmTask = Task { @MainActor [weak self, weak collectionNode] in
                 guard let self else { return }
                 var warmedCount = 0
                 for chunkStart in stride(from: 0, to: orderedIndexes.count, by: 3) {
@@ -515,11 +518,11 @@ struct WebtoonView: UIViewRepresentable {
                             let warmKey = "\(page.cacheKey)|chapter|w\(Int(targetSize.width * scale))"
                             self.activeWarmKeys.remove(warmKey)
                             guard let image,
-                                  let collectionView,
+                                  let collectionNode,
                                   pageIndex < self.pages.count,
                                   self.pages[pageIndex].id == page.id else { continue }
                             self.warmedKeys.insert(warmKey)
-                            self.updateImageSize(page: page, size: image.size, index: pageIndex, collectionView: collectionView)
+                            self.updateImageSize(page: page, size: image.size, index: pageIndex, collectionView: collectionNode.view)
                             warmedCount += 1
                         }
                     }
@@ -561,13 +564,15 @@ struct WebtoonView: UIViewRepresentable {
             return ordered
         }
 
-        private func targetImageSize(for collectionView: UICollectionView) -> CGSize {
+        private func targetImageSize(for collectionNode: ASCollectionNode) -> CGSize {
+            let collectionView = collectionNode.view
             let viewportWidth = max(collectionView.bounds.width, 1)
             let viewportHeight = max(collectionView.bounds.height, viewportWidth * 1.45)
             return CGSize(width: viewportWidth, height: viewportHeight)
         }
 
-        private func loadAdjacentChaptersIfNeeded(_ collectionView: UICollectionView) {
+        private func loadAdjacentChaptersIfNeeded(_ collectionNode: ASCollectionNode) {
+            let collectionView = collectionNode.view
             let threshold = max(collectionView.bounds.height * 1.25, 420)
             let topDistance = collectionView.contentOffset.y
             let bottomDistance = collectionView.contentSize.height - (collectionView.contentOffset.y + collectionView.bounds.height)
@@ -611,6 +616,244 @@ struct WebtoonView: UIViewRepresentable {
         private static func identity(for manager: readerManager) -> String {
             "\(manager.selectedChapter?.idx ?? -1):\(manager.selectedChapter?.chapterNumber ?? "")"
         }
+    }
+}
+
+final class WebtoonTextureContainerView: UIView {
+    let collectionNode: ASCollectionNode
+    var onLayout: (() -> Void)?
+
+    init(layout: UICollectionViewLayout) {
+        self.collectionNode = ASCollectionNode(collectionViewLayout: layout)
+        super.init(frame: .zero)
+        backgroundColor = .black
+        collectionNode.view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(collectionNode.view)
+        NSLayoutConstraint.activate([
+            collectionNode.view.topAnchor.constraint(equalTo: topAnchor),
+            collectionNode.view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            collectionNode.view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            collectionNode.view.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
+private final class WebtoonTexturePageNode: ASCellNode {
+    private enum RenderState {
+        case loading
+        case image
+        case text
+        case failure
+    }
+
+    let page: PageData
+    let pageIndex: Int
+    let targetSize: CGSize
+    let scale: CGFloat
+    let estimatedRatio: CGFloat
+    var onImageSize: ((PageData, CGSize, Int) -> Void)?
+
+    private let imageNode = ASImageNode()
+    private let textNode = ASTextNode()
+    private let statusNode = ASTextNode()
+    private let retryButtonNode = ASButtonNode()
+    private var renderState: RenderState = .loading
+    private var imageRatio: CGFloat?
+    private var didAttemptLoad = false
+    private var imageLoadTask: Task<Void, Never>?
+    private var imageTask: ImageTask?
+
+    init(
+        page: PageData,
+        index: Int,
+        targetSize: CGSize,
+        scale: CGFloat,
+        estimatedRatio: CGFloat
+    ) {
+        self.page = page
+        self.pageIndex = index
+        self.targetSize = targetSize
+        self.scale = scale
+        self.estimatedRatio = estimatedRatio
+        super.init()
+        automaticallyManagesSubnodes = true
+        shouldAnimateSizeChanges = false
+        backgroundColor = .black
+
+        imageNode.backgroundColor = .black
+        imageNode.contentMode = .scaleToFill
+        imageNode.isUserInteractionEnabled = false
+
+        textNode.backgroundColor = .black
+        textNode.maximumNumberOfLines = 0
+
+        statusNode.attributedText = Self.statusText("Loading...")
+        retryButtonNode.setAttributedTitle(Self.buttonText("Retry"), for: .normal)
+        retryButtonNode.contentEdgeInsets = UIEdgeInsets(top: 10, left: 18, bottom: 10, right: 18)
+        retryButtonNode.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        retryButtonNode.addTarget(self, action: #selector(retryTapped), forControlEvents: .touchUpInside)
+    }
+
+    deinit {
+        cancelLoad()
+    }
+
+    override func didEnterPreloadState() {
+        super.didEnterPreloadState()
+        loadIfNeeded()
+    }
+
+    override func didEnterDisplayState() {
+        super.didEnterDisplayState()
+        loadIfNeeded()
+    }
+
+    override func didExitDisplayState() {
+        super.didExitDisplayState()
+        guard !isVisible else { return }
+        imageTask?.cancel()
+        imageLoadTask?.cancel()
+        imageTask = nil
+        imageLoadTask = nil
+        imageNode.image = nil
+        if renderState == .image {
+            didAttemptLoad = false
+            renderState = .loading
+        }
+    }
+
+    override func layoutSpecThatFits(_ constrainedSize: ASSizeRange) -> ASLayoutSpec {
+        let ratio = max(imageRatio ?? estimatedRatio, 0.2)
+        let child: ASLayoutElement
+
+        switch renderState {
+        case .image:
+            child = imageNode
+        case .text:
+            let inset = ASInsetLayoutSpec(
+                insets: UIEdgeInsets(top: 24, left: 24, bottom: 24, right: 24),
+                child: textNode
+            )
+            child = inset
+        case .failure:
+            child = ASCenterLayoutSpec(
+                horizontalPosition: .center,
+                verticalPosition: .center,
+                sizingOption: [],
+                child: retryButtonNode
+            )
+        case .loading:
+            child = ASCenterLayoutSpec(
+                horizontalPosition: .center,
+                verticalPosition: .center,
+                sizingOption: [],
+                child: statusNode
+            )
+        }
+
+        return ASRatioLayoutSpec(ratio: ratio, child: child)
+    }
+
+    func cancelLoad() {
+        imageTask?.cancel()
+        imageLoadTask?.cancel()
+        imageTask = nil
+        imageLoadTask = nil
+    }
+
+    private func loadIfNeeded() {
+        guard !didAttemptLoad else { return }
+        didAttemptLoad = true
+
+        if let text = page.textContent {
+            textNode.attributedText = NSAttributedString(
+                string: text,
+                attributes: [
+                    .font: UIFont.preferredFont(forTextStyle: .body),
+                    .foregroundColor: UIColor.white
+                ]
+            )
+            renderState = .text
+            setNeedsLayout()
+            return
+        }
+
+        guard page.imageData != nil || page.urlString != nil else {
+            renderState = .failure
+            setNeedsLayout()
+            return
+        }
+
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
+        renderState = .loading
+        setNeedsLayout()
+
+        imageLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let image = try await ReaderWebtoonImagePipeline.loadImage(
+                    for: page,
+                    targetSize: targetSize,
+                    scale: scale,
+                    taskSink: { [weak self] task in
+                        Task { @MainActor in
+                            self?.imageTask = task
+                        }
+                    }
+                )
+                await MainActor.run {
+                    self.imageNode.image = image
+                    self.imageRatio = image.size.width > 0 ? image.size.height / image.size.width : self.estimatedRatio
+                    self.renderState = .image
+                    self.onImageSize?(self.page, image.size, self.pageIndex)
+                    self.setNeedsLayout()
+                }
+            } catch {
+                await MainActor.run {
+                    self.renderState = .failure
+                    self.setNeedsLayout()
+                }
+            }
+        }
+    }
+
+    @objc private func retryTapped() {
+        cancelLoad()
+        imageNode.image = nil
+        didAttemptLoad = false
+        renderState = .loading
+        setNeedsLayout()
+        loadIfNeeded()
+    }
+
+    private static func statusText(_ value: String) -> NSAttributedString {
+        NSAttributedString(
+            string: value,
+            attributes: [
+                .font: UIFont.preferredFont(forTextStyle: .callout),
+                .foregroundColor: UIColor.white.withAlphaComponent(0.7)
+            ]
+        )
+    }
+
+    private static func buttonText(_ value: String) -> NSAttributedString {
+        NSAttributedString(
+            string: value,
+            attributes: [
+                .font: UIFont.preferredFont(forTextStyle: .callout),
+                .foregroundColor: UIColor.white
+            ]
+        )
     }
 }
 
