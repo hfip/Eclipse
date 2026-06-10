@@ -19,6 +19,8 @@ struct KanzenGeneralSettingsView: View {
     @AppStorage("readerTextAlignment") private var readerTextAlignment = "left"
     @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.6
     @AppStorage("readerMargin") private var readerMargin: Double = 4
+    @State private var readerDetailElements = ReaderDetailElement.orderedElements()
+    @State private var hiddenReaderDetailElements = ReaderDetailElement.hiddenElements()
 
     var body: some View {
         Form {
@@ -141,9 +143,42 @@ struct KanzenGeneralSettingsView: View {
                 }
             }
             .background(LunaScrollTracker())
+
+            Section(
+                header: Text("Reader Detail Page"),
+                footer: Text("Drag rows to change their order. Hidden rows will not appear on manga, manhwa, or light novel detail pages.")
+            ) {
+                ForEach(readerDetailElements) { element in
+                    readerDetailElementRow(element)
+                }
+                .onMove(perform: moveReaderDetailElements)
+
+                Button(action: resetReaderDetailElements) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Reset Reader Detail Layout")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            Text("Restore the default order and visibility.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "arrow.counterclockwise")
+                            .foregroundColor(accentColorManager.currentAccentColor)
+                    }
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .background(LunaScrollTracker())
         }
         .navigationTitle(Text("Appearance"))
         .lunaSettingsStyle()
+        .onAppear(perform: reloadReaderDetailElements)
     }
 
     private var accentColorBinding: Binding<Color> {
@@ -245,6 +280,61 @@ struct KanzenGeneralSettingsView: View {
         uiA.getRed(&rA, green: &gA, blue: &bA, alpha: &aA)
         uiB.getRed(&rB, green: &gB, blue: &bB, alpha: &aB)
         return abs(rA - rB) < 0.02 && abs(gA - gB) < 0.02 && abs(bA - bB) < 0.02
+    }
+
+    private func readerDetailElementRow(_ element: ReaderDetailElement) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(element.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Text(element.settingsDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+
+                Text(hiddenReaderDetailElements.contains(element) ? "Hidden" : "Visible")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { !hiddenReaderDetailElements.contains(element) },
+                set: { setReaderDetailElement(element, visible: $0) }
+            ))
+            .labelsHidden()
+            .tint(accentColorManager.currentAccentColor)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func reloadReaderDetailElements() {
+        readerDetailElements = ReaderDetailElement.orderedElements()
+        hiddenReaderDetailElements = ReaderDetailElement.hiddenElements()
+    }
+
+    private func moveReaderDetailElements(from source: IndexSet, to destination: Int) {
+        readerDetailElements.move(fromOffsets: source, toOffset: destination)
+        ReaderDetailElement.saveOrder(readerDetailElements)
+    }
+
+    private func setReaderDetailElement(_ element: ReaderDetailElement, visible: Bool) {
+        if visible {
+            hiddenReaderDetailElements.remove(element)
+        } else {
+            hiddenReaderDetailElements.insert(element)
+        }
+        ReaderDetailElement.saveHiddenElements(hiddenReaderDetailElements)
+    }
+
+    private func resetReaderDetailElements() {
+        readerDetailElements = ReaderDetailElement.defaultOrder
+        hiddenReaderDetailElements = []
+        ReaderDetailElement.saveOrder(readerDetailElements)
+        ReaderDetailElement.saveHiddenElements(hiddenReaderDetailElements)
     }
 }
 #endif

@@ -130,6 +130,17 @@ struct KanzenHistoryView: View {
                 .frame(width: 50, height: 75)
                 .clipped()
                 .cornerRadius(12)
+                .overlay(alignment: .topTrailing) {
+                    if ReaderDownloadManager.shared.isDownloaded(route: item.progress.route) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(4)
+                            .background(Color.black.opacity(0.65))
+                            .clipShape(Circle())
+                            .padding(3)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.progress.title ?? "Unknown Manga")

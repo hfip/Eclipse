@@ -218,6 +218,36 @@ final class MangaReadingProgressManager: ObservableObject {
         save()
     }
 
+    func updateTrackerMatch(mangaId: Int, aniListId: Int?, malId: Int?, confidence: Double?) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async {
+                self.updateTrackerMatch(mangaId: mangaId, aniListId: aniListId, malId: malId, confidence: confidence)
+            }
+            return
+        }
+
+        var progress = progressMap[mangaId] ?? MangaProgress()
+        var changed = false
+
+        if let aniListId, aniListId > 0, progress.trackerAniListId != aniListId {
+            progress.trackerAniListId = aniListId
+            changed = true
+        }
+        if let malId, malId > 0, progress.trackerMALId != malId {
+            progress.trackerMALId = malId
+            changed = true
+        }
+        if let confidence, progress.trackerMatchConfidence != confidence {
+            progress.trackerMatchConfidence = confidence
+            changed = true
+        }
+        if changed {
+            progress.trackerResolvedAt = Date()
+            progressMap[mangaId] = progress
+            save()
+        }
+    }
+
     /// Import chapters without syncing back to trackers. Existing local reads are only advanced.
     func bulkMarkChaptersReadForImport(mangaId: Int, throughChapter: Int, mangaTitle: String? = nil, coverURL: String? = nil, totalChapters: Int? = nil) {
         guard throughChapter >= 1 else { return }

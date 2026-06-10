@@ -86,6 +86,7 @@ struct AidokuMangaDetailView: View {
 
     @ObservedObject private var libraryManager = MangaLibraryManager.shared
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
+    @ObservedObject private var downloadManager = ReaderDownloadManager.shared
     @StateObject private var sourceManager = AidokuSourceManager.shared
     @StateObject private var kanzen = KanzenEngine()
     @State private var manga: AidokuRunner.Manga
@@ -95,6 +96,8 @@ struct AidokuMangaDetailView: View {
     @State private var showAddToCollection = false
     @State private var reverseChapterList = false
     @State private var scrollOffset: CGFloat = 0
+    @AppStorage(ReaderDetailElement.orderStorageKey) private var readerDetailElementOrder = ReaderDetailElement.defaultOrderRawValue
+    @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
     private var route: MangaContentRoute {
         .aidoku(sourceId: sourceId, mangaKey: manga.key)
@@ -124,6 +127,12 @@ struct AidokuMangaDetailView: View {
         chapterNumbers(from: manga)
     }
 
+    private var visibleReaderDetailElements: [ReaderDetailElement] {
+        ReaderDetailElement.orderedElements(from: readerDetailElementOrder)
+            .filter { ReaderDetailElement.isVisible($0, hiddenRawValue: readerDetailHiddenElements) }
+            .filter(readerDetailElementHasContent)
+    }
+
     init(sourceId: String, initialManga: AidokuRunner.Manga) {
         self.sourceId = sourceId
         self.initialManga = initialManga
@@ -135,45 +144,9 @@ struct AidokuMangaDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 headerSection
 
-                if let description = manga.description, !description.isEmpty {
+                ForEach(visibleReaderDetailElements) { element in
                     Divider()
-                    descriptionSection(description)
-                }
-
-                if let tags = manga.tags, !tags.isEmpty {
-                    Divider()
-                    tagsSection(tags)
-                }
-
-                Divider()
-
-                if isLoading && (manga.chapters?.isEmpty ?? true) {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Loading chapters...")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                } else if let errorMessage {
-                    VStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                        Text(errorMessage)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        Button("Retry") {
-                            Task { await loadDetails(force: true) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                } else {
-                    chaptersView()
+                    readerDetailElementView(element)
                 }
             }
             .padding(.horizontal, 16)
@@ -347,6 +320,76 @@ struct AidokuMangaDetailView: View {
         }
     }
 
+    private func readerDetailElementHasContent(_ element: ReaderDetailElement) -> Bool {
+        switch element {
+        case .overview:
+            return !(manga.description ?? "").isEmpty
+        case .tags:
+            return !(manga.tags ?? []).isEmpty
+        case .ratingNotes, .chapters:
+            return true
+        }
+    }
+
+    @ViewBuilder
+    private func readerDetailElementView(_ element: ReaderDetailElement) -> some View {
+        switch element {
+        case .overview:
+            if let description = manga.description, !description.isEmpty {
+                descriptionSection(description)
+            }
+        case .tags:
+            if let tags = manga.tags, !tags.isEmpty {
+                tagsSection(tags)
+            }
+        case .ratingNotes:
+            let progress = progressManager.progress(for: stableId)
+            ReaderRatingNotesView(
+                itemId: stableId,
+                title: manga.title,
+                routeKey: route.stableKey,
+                knownAniListId: progress?.trackerAniListId,
+                knownMALId: progress?.trackerMALId,
+                totalChapters: latestChapterNumbers?.count,
+                format: viewerFormat(manga.viewer)
+            )
+        case .chapters:
+            chaptersElementView()
+        }
+    }
+
+    @ViewBuilder
+    private func chaptersElementView() -> some View {
+        if isLoading && (manga.chapters?.isEmpty ?? true) {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Loading chapters...")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        } else if let errorMessage {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+                Text(errorMessage)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    Task { await loadDetails(force: true) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        } else {
+            chaptersView()
+        }
+    }
+
     @ViewBuilder
     private func chaptersView() -> some View {
         let chapters = chapterModels()
@@ -362,7 +405,7 @@ struct AidokuMangaDetailView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
         } else {
-            let displayed = reverseChapterList ? chapters.reversed() : chapters
+            let displayed = reverseChapterList ? Array(chapters.reversed()) : chapters
             VStack(alignment: .leading, spacing: 0) {
                 readButton(chapters: chapters)
                     .padding(.bottom, 8)
@@ -374,6 +417,23 @@ struct AidokuMangaDetailView: View {
                         .foregroundColor(.accentColor)
                     Spacer()
                     Button {
+                        downloadManager.enqueueChapters(
+                            route: route,
+                            mangaId: stableId,
+                            title: manga.title,
+                            coverURL: coverURL,
+                            sourceName: sourceManager.metadata(id: sourceId)?.name,
+                            format: viewerFormat(manga.viewer),
+                            chapters: chapters,
+                            kanzen: kanzen
+                        )
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .foregroundColor(.accentColor)
+                    }
+                    .accessibilityLabel("Download All")
+
+                    Button {
                         reverseChapterList.toggle()
                     } label: {
                         Image(systemName: "arrow.up.arrow.down")
@@ -383,17 +443,19 @@ struct AidokuMangaDetailView: View {
 
                 Divider().padding(.vertical, 4)
 
-                ForEach(displayed) { chapter in
-                    chapterRow(chapter)
+                ForEach(Array(displayed.enumerated()), id: \.element.id) { index, chapter in
+                    chapterRow(chapter, displayedChapters: displayed, displayIndex: index)
                     Divider()
                 }
             }
         }
     }
 
-    private func chapterRow(_ chapter: Chapter) -> some View {
+    private func chapterRow(_ chapter: Chapter, displayedChapters: [Chapter], displayIndex: Int) -> some View {
         let isRead = progressManager.isChapterRead(mangaId: stableId, chapterNumber: chapter.chapterNumber)
         let chapterTitle = chapter.chapterData?.first?.title ?? ""
+        let downloadStatus = downloadManager.status(for: route, chapterNumber: chapter.chapterNumber)
+        let downloadProgress = downloadManager.progress(for: route, chapterNumber: chapter.chapterNumber)
 
         return Button {
             selectedChapterData = chapter
@@ -419,9 +481,17 @@ struct AidokuMangaDetailView: View {
                             .foregroundColor(.accentColor.opacity(0.8))
                             .lineLimit(1)
                     }
+
+                    if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
+                        ProgressView(value: downloadProgress)
+                            .tint(downloadStatus == .paused ? .gray : .accentColor)
+                            .frame(maxWidth: 180)
+                    }
                 }
 
                 Spacer(minLength: 8)
+
+                downloadBadge(for: downloadStatus)
 
                 if isRead {
                     Text("Read")
@@ -463,7 +533,95 @@ struct AidokuMangaDetailView: View {
                     Label("Mark as Read", systemImage: "eye")
                 }
             }
+
+            Divider()
+
+            markRangeMenu(displayedChapters: displayedChapters, displayIndex: displayIndex)
+
+            Divider()
+
+            downloadContextMenu(for: chapter, status: downloadStatus)
         }
+    }
+
+    @ViewBuilder
+    private func downloadBadge(for status: ReaderDownloadStatus) -> some View {
+        switch status {
+        case .completed:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundColor(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+        case .downloading, .queued, .paused:
+            Image(systemName: status == .paused ? "pause.circle" : "arrow.down.circle")
+                .foregroundColor(.secondary)
+        case .none:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func markRangeMenu(displayedChapters: [Chapter], displayIndex: Int) -> some View {
+        Button {
+            let numbers = displayedChapters.prefix(displayIndex + 1).map(\.chapterNumber)
+            markChaptersRead(numbers)
+        } label: {
+            Label("Mark Above as Read", systemImage: "arrow.up.circle")
+        }
+
+        Button {
+            let numbers = displayedChapters.suffix(displayedChapters.count - displayIndex).map(\.chapterNumber)
+            markChaptersRead(Array(numbers))
+        } label: {
+            Label("Mark Below as Read", systemImage: "arrow.down.circle")
+        }
+    }
+
+    @ViewBuilder
+    private func downloadContextMenu(for chapter: Chapter, status: ReaderDownloadStatus) -> some View {
+        switch status {
+        case .completed:
+            Button(role: .destructive) {
+                downloadManager.removeDownload(id: ReaderDownloadManager.downloadId(route: route, chapterNumber: chapter.chapterNumber))
+            } label: {
+                Label("Remove Download", systemImage: "trash")
+            }
+        case .queued, .downloading, .paused:
+            Button(role: .destructive) {
+                downloadManager.cancelDownload(id: ReaderDownloadManager.downloadId(route: route, chapterNumber: chapter.chapterNumber))
+            } label: {
+                Label("Cancel Download", systemImage: "xmark.circle")
+            }
+        case .failed, .none:
+            Button {
+                downloadManager.enqueueChapter(
+                    route: route,
+                    mangaId: stableId,
+                    title: manga.title,
+                    coverURL: coverURL,
+                    sourceName: sourceManager.metadata(id: sourceId)?.name,
+                    format: viewerFormat(manga.viewer),
+                    chapter: chapter,
+                    kanzen: kanzen
+                )
+            } label: {
+                Label(status == .failed ? "Retry Download" : "Download", systemImage: "arrow.down.circle")
+            }
+        }
+    }
+
+    private func markChaptersRead(_ chapterNumbers: [String]) {
+        progressManager.markAllRead(
+            mangaId: stableId,
+            chapterNumbers: chapterNumbers,
+            mangaTitle: manga.title,
+            coverURL: coverURL,
+            format: viewerFormat(manga.viewer),
+            totalChapters: latestChapterNumbers?.count,
+            latestChapterNumbers: latestChapterNumbers,
+            route: route
+        )
     }
 
     private func readButton(chapters: [Chapter]) -> some View {

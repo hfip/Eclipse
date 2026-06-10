@@ -40,6 +40,20 @@ struct KanzenSettingsView: View {
                                 GlassSettingsRow(icon: "slider.horizontal.3", iconColor: .green, title: "Home Sources")
                             }
                             .buttonStyle(.plain)
+
+                            GlassDivider()
+
+                            NavigationLink(destination: KanzenTrackerSettingsView()) {
+                                GlassSettingsRow(icon: "chart.bar.fill", iconColor: .pink, title: "Trackers")
+                            }
+                            .buttonStyle(.plain)
+
+                            GlassDivider()
+
+                            NavigationLink(destination: ReaderDownloadsSettingsView()) {
+                                GlassSettingsRow(icon: "arrow.down.circle.fill", iconColor: .blue, title: "Downloads")
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
 
@@ -85,6 +99,212 @@ struct KanzenSettingsView: View {
             .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         }
         .navigationViewStyle(StackNavigationViewStyle())
+    }
+}
+
+private struct KanzenTrackerSettingsView: View {
+    @StateObject private var trackerManager = TrackerManager.shared
+    @State private var showAniListImportConfirmation = false
+    @State private var showMALImportConfirmation = false
+    @State private var scrollOffset: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                KanzenRootHeader("Trackers")
+                    .padding(.horizontal, -20)
+
+                GlassSection(header: "Reader Sync") {
+                    VStack(spacing: 0) {
+                        GlassSettingsRow(icon: "arrow.triangle.2.circlepath", iconColor: .blue, title: "Enable Sync") {
+                            Toggle("", isOn: Binding(
+                                get: { trackerManager.trackerState.syncEnabled },
+                                set: { trackerManager.setSyncEnabled($0) }
+                            ))
+                            .labelsHidden()
+                        }
+
+                        GlassDivider()
+
+                        GlassSettingsRow(icon: "star.fill", iconColor: .yellow, title: "Auto Sync Reader Ratings") {
+                            Toggle("", isOn: Binding(
+                                get: { trackerManager.trackerState.autoSyncReaderRatings },
+                                set: { trackerManager.setAutoSyncReaderRatings($0) }
+                            ))
+                            .labelsHidden()
+                        }
+
+                        Text("Automatic Reader rating sync only sends the score after a confident AniList/MAL manga match. Notes sync only when you tap a tracker button on a Reader detail page.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                    }
+                }
+
+                GlassSection(header: "Accounts") {
+                    VStack(spacing: 0) {
+                        trackerRow(
+                            service: .anilist,
+                            username: trackerManager.trackerState.getAccount(for: .anilist)?.username,
+                            onConnect: { trackerManager.startAniListAuth() },
+                            onDisconnect: { trackerManager.disconnectTracker(.anilist) }
+                        )
+
+                        if trackerManager.trackerState.getAccount(for: .anilist) != nil {
+                            GlassDivider()
+                            importRow(
+                                title: "Import AniList Library",
+                                subtitle: trackerManager.aniListImportProgress ?? trackerManager.aniListImportError ?? "Import manga lists and reader progress.",
+                                isLoading: trackerManager.isImportingAniList,
+                                action: { showAniListImportConfirmation = true }
+                            )
+                        }
+
+                        GlassDivider()
+
+                        trackerRow(
+                            service: .myAnimeList,
+                            username: trackerManager.trackerState.getAccount(for: .myAnimeList)?.username,
+                            onConnect: { trackerManager.startMALAuth() },
+                            onDisconnect: { trackerManager.disconnectTracker(.myAnimeList) }
+                        )
+
+                        if trackerManager.trackerState.getAccount(for: .myAnimeList) != nil {
+                            GlassDivider()
+                            importRow(
+                                title: "Import MAL Library",
+                                subtitle: trackerManager.malImportProgress ?? trackerManager.malImportError ?? "Import manga lists and reader progress.",
+                                isLoading: trackerManager.isImportingMAL,
+                                action: { showMALImportConfirmation = true }
+                            )
+                        }
+                    }
+                }
+
+                if let error = trackerManager.authError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                        .multilineTextAlignment(.leading)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.12))
+                        .cornerRadius(12)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 32)
+            .frame(maxWidth: isIPad ? 760 : .infinity)
+            .frame(maxWidth: .infinity)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ScrollOffsetPreferenceKey.self,
+                        value: -geo.frame(in: .named("kanzenTrackersScroll")).origin.y
+                    )
+                }
+            )
+        }
+        .coordinateSpace(name: "kanzenTrackersScroll")
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
+        .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .navigationTitle("Trackers")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Import AniList Library", isPresented: $showAniListImportConfirmation) {
+            Button("Import", role: .none) {
+                trackerManager.importAniListToLibrary()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This imports AniList manga lists into Reader collections and progress without deleting or downgrading local entries.")
+        }
+        .alert("Import MAL Library", isPresented: $showMALImportConfirmation) {
+            Button("Import", role: .none) {
+                trackerManager.importMALToLibrary()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This imports MAL manga lists into Reader collections and progress without deleting or downgrading local entries.")
+        }
+    }
+
+    @ViewBuilder
+    private func trackerRow(
+        service: TrackerService,
+        username: String?,
+        onConnect: @escaping () -> Void,
+        onDisconnect: @escaping () -> Void
+    ) -> some View {
+        let isConnected = username != nil
+        HStack(spacing: 12) {
+            Image(systemName: service == .anilist ? "a.circle.fill" : "m.circle.fill")
+                .font(.title2)
+                .foregroundColor(service == .anilist ? .blue : .indigo)
+                .frame(width: 36, height: 36)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(service.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Text(username ?? "Not connected")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            if isConnected {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Button("Disconnect", action: onDisconnect)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            } else {
+                Button("Connect", action: onConnect)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func importRow(title: String, subtitle: String, isLoading: Bool, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.down")
+                .foregroundColor(.teal)
+                .frame(width: 36, height: 36)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            if isLoading {
+                ProgressView()
+            } else {
+                Button("Import", action: action)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 #endif

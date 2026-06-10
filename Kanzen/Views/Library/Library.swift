@@ -181,6 +181,9 @@ struct KanzenLibraryView: View {
                 .overlay(alignment: .topLeading) {
                     unreadBadge(for: item)
                 }
+                .overlay(alignment: .topTrailing) {
+                    downloadedBadge(for: item)
+                }
 
             Text(item.title)
                 .font(.caption)
@@ -271,6 +274,19 @@ struct KanzenLibraryView: View {
         }
     }
 
+    @ViewBuilder
+    private func downloadedBadge(for item: MangaLibraryItem) -> some View {
+        if ReaderDownloadManager.shared.isDownloaded(route: item.route) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(5)
+                .background(Color.black.opacity(0.65))
+                .clipShape(Circle())
+                .padding(4)
+        }
+    }
+
     private func refreshLibrarySources() {
         guard !isRefreshingSources else { return }
         isRefreshingSources = true
@@ -335,19 +351,28 @@ struct MangaLibraryDestinationView: View {
                     isNovel: isNovel
                 )
             } else {
-                MangaModuleUnavailableView(
-                    title: item.title,
-                    message: "The legacy source module may have been removed."
-                )
+                if let downloaded = ReaderDownloadManager.shared.downloadedTitle(for: route) {
+                    ReaderDownloadedTitleDetailView(title: downloaded)
+                } else {
+                    MangaModuleUnavailableView(
+                        title: item.title,
+                        message: "The legacy source module may have been removed."
+                    )
+                }
             }
 
         case .aidoku(let sourceId, let mangaKey):
-            AidokuMangaRouteLoaderView(
-                sourceId: sourceId,
-                mangaKey: mangaKey,
-                title: item.title,
-                coverURL: item.coverURL
-            )
+            if (AidokuSourceManager.shared.metadata(id: sourceId) == nil || AidokuSourceManager.shared.metadata(id: sourceId)?.isEnabled == false),
+               let downloaded = ReaderDownloadManager.shared.downloadedTitle(for: route) {
+                ReaderDownloadedTitleDetailView(title: downloaded)
+            } else {
+                AidokuMangaRouteLoaderView(
+                    sourceId: sourceId,
+                    mangaKey: mangaKey,
+                    title: item.title,
+                    coverURL: item.coverURL
+                )
+            }
         }
     }
 

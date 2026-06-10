@@ -213,6 +213,14 @@ struct NovelReaderView: View {
         ReaderLogger.shared.log("NovelReader: loadChapterContent for chapter '\(currentChapter.chapterNumber)'", type: "ReaderDebug")
         ReaderLogger.shared.log("NovelReader: chapterData count=\(currentChapter.chapterData?.count ?? 0)", type: "ReaderDebug")
 
+        if let mangaRoute,
+           let downloadedText = ReaderDownloadManager.shared.text(for: mangaRoute, chapterNumber: currentChapter.chapterNumber) {
+            ReaderLogger.shared.log("NovelReader: loaded downloaded text for chapter '\(currentChapter.chapterNumber)'", type: "ReaderDownload")
+            htmlContent = downloadedText
+            isLoading = false
+            return
+        }
+
         guard let data = currentChapter.chapterData?.first else {
             ReaderLogger.shared.log("NovelReader: chapterData is nil or empty", type: "Error")
             loadError = "No chapter data available"
@@ -226,6 +234,13 @@ struct NovelReaderView: View {
         guard let params = data.params else {
             ReaderLogger.shared.log("NovelReader: params is nil", type: "Error")
             loadError = "No chapter data available"
+            isLoading = false
+            return
+        }
+
+        if let downloadedPayload = params as? ReaderDownloadedChapterPayload {
+            ReaderLogger.shared.log("NovelReader: downloaded text missing for chapter '\(downloadedPayload.chapterNumber)'", type: "ReaderDownload")
+            loadError = "Downloaded chapter files are missing."
             isLoading = false
             return
         }

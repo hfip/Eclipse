@@ -90,6 +90,9 @@ struct MangaCollectionDetailView: View {
                 .overlay(alignment: .topLeading) {
                     unreadBadge(for: item)
                 }
+                .overlay(alignment: .topTrailing) {
+                    downloadedBadge(for: item)
+                }
 
             Text(item.title)
                 .font(.caption)
@@ -116,6 +119,19 @@ struct MangaCollectionDetailView: View {
                 .padding(.vertical, 3)
                 .background(Color.red)
                 .clipShape(Capsule())
+                .padding(4)
+        }
+    }
+
+    @ViewBuilder
+    private func downloadedBadge(for item: MangaLibraryItem) -> some View {
+        if ReaderDownloadManager.shared.isDownloaded(route: item.route) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(5)
+                .background(Color.black.opacity(0.65))
+                .clipShape(Circle())
                 .padding(4)
         }
     }

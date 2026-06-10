@@ -204,6 +204,210 @@ private struct AidokuCodableSourceList: Codable {
     let sources: [AidokuExternalSourceInfo]
 }
 
+enum AidokuBackupBridge {
+    static let sourceListsKey = "kanzenAidokuSourceLists"
+    static let installedSourcesKey = "kanzenAidokuInstalledSources"
+    static let matureSourcesKey = "kanzenAidokuShowMatureSources"
+    static let autoUpdateKey = "kanzenAidokuAutoUpdateSources"
+    static let lastAutoUpdateKey = "kanzenAidokuLastAutoUpdate"
+
+    private static let rootDirectory = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("KanzenAidoku", isDirectory: true)
+
+    private static var sourcesDirectory: URL {
+        rootDirectory.appendingPathComponent("Sources", isDirectory: true)
+    }
+
+    static func backupSnapshotFromDisk() -> BackupAidokuState {
+        let defaults = UserDefaults.standard
+        let decoder = JSONDecoder()
+        let sourceLists: [AidokuSourceListRecord]
+        if let data = defaults.data(forKey: sourceListsKey),
+           let decoded = try? decoder.decode([AidokuSourceListRecord].self, from: data) {
+            sourceLists = decoded
+        } else {
+            sourceLists = []
+        }
+
+        let installedSources: [AidokuInstalledSource]
+        if let data = defaults.data(forKey: installedSourcesKey),
+           let decoded = try? decoder.decode([AidokuInstalledSource].self, from: data) {
+            installedSources = decoded
+        } else {
+            installedSources = []
+        }
+
+        let backupSources = installedSources.map { source in
+            BackupAidokuInstalledSource(
+                id: source.id,
+                name: source.name,
+                version: source.version,
+                languages: source.languages,
+                iconPath: nil,
+                externalIconURL: source.externalIconURL,
+                contentRatingRawValue: source.contentRatingRawValue,
+                sourceListURL: source.sourceListURL,
+                packageURL: source.packageURL,
+                isEnabled: source.isEnabled,
+                order: source.order,
+                lastUpdated: source.lastUpdated,
+                lastError: source.lastError,
+                payloadArchiveData: archivePayload(sourceId: source.id)
+            )
+        }
+
+        return BackupAidokuState(
+            sourceLists: sourceLists.map {
+                BackupAidokuSourceListRecord(
+                    url: $0.url,
+                    name: $0.name,
+                    sourceCount: $0.sourceCount,
+                    lastRefresh: $0.lastRefresh,
+                    lastError: $0.lastError
+                )
+            },
+            installedSources: backupSources,
+            showMatureSources: defaults.bool(forKey: matureSourcesKey),
+            autoUpdateSources: defaults.object(forKey: autoUpdateKey) == nil ? true : defaults.bool(forKey: autoUpdateKey),
+            lastAutoUpdate: defaults.object(forKey: lastAutoUpdateKey) as? Date
+        )
+    }
+
+    static func restoreBackupSnapshotToDisk(_ state: BackupAidokuState) {
+        let defaults = UserDefaults.standard
+        let sourceLists = state.sourceLists.map {
+            AidokuSourceListRecord(
+                url: $0.url,
+                name: $0.name,
+                sourceCount: $0.sourceCount,
+                lastRefresh: $0.lastRefresh,
+                lastError: $0.lastError
+            )
+        }
+
+        let installedSources = state.installedSources.map {
+            AidokuInstalledSource(
+                id: $0.id,
+                name: $0.name,
+                version: $0.version,
+                languages: $0.languages,
+                iconPath: nil,
+                externalIconURL: $0.externalIconURL,
+                contentRatingRawValue: $0.contentRatingRawValue,
+                sourceListURL: $0.sourceListURL,
+                packageURL: $0.packageURL,
+                isEnabled: $0.isEnabled,
+                order: $0.order,
+                lastUpdated: $0.lastUpdated,
+                lastError: $0.lastError
+            )
+        }
+
+        let encoder = JSONEncoder()
+        if let data = try? encoder.encode(sourceLists) {
+            defaults.set(data, forKey: sourceListsKey)
+        }
+        if let data = try? encoder.encode(installedSources) {
+            defaults.set(data, forKey: installedSourcesKey)
+        }
+        defaults.set(state.showMatureSources, forKey: matureSourcesKey)
+        defaults.set(state.autoUpdateSources, forKey: autoUpdateKey)
+        if let lastAutoUpdate = state.lastAutoUpdate {
+            defaults.set(lastAutoUpdate, forKey: lastAutoUpdateKey)
+        } else {
+            defaults.removeObject(forKey: lastAutoUpdateKey)
+        }
+
+        ensureDirectories()
+        for source in state.installedSources {
+            guard let payloadArchiveData = source.payloadArchiveData else { continue }
+            restorePayload(sourceId: source.id, archiveData: payloadArchiveData)
+        }
+    }
+
+    private static func archivePayload(sourceId: String) -> Data? {
+        let sourceDirectory = sourcesDirectory.appendingPathComponent(sourceId, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: sourceDirectory.path) else { return nil }
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kanzen-aidoku-backup-\(sourceId)-\(UUID().uuidString)")
+            .appendingPathExtension("zip")
+        defer {
+            try? FileManager.default.removeItem(at: archiveURL)
+        }
+
+        do {
+            try FileManager.default.zipItem(at: sourceDirectory, to: archiveURL, shouldKeepParent: false)
+            return try Data(contentsOf: archiveURL)
+        } catch {
+            ReaderLogger.shared.log("Failed to archive Aidoku source \(sourceId) for backup: \(error.localizedDescription)", type: "AidokuBackup")
+            return nil
+        }
+    }
+
+    private static func restorePayload(sourceId: String, archiveData: Data) {
+        guard isValidSourceKey(sourceId) else {
+            ReaderLogger.shared.log("Skipped Aidoku restore for invalid source id \(sourceId)", type: "AidokuBackup")
+            return
+        }
+        guard UInt64(archiveData.count) <= AidokuSourceManager.maxPackageBytes else {
+            ReaderLogger.shared.log("Skipped Aidoku restore for \(sourceId): archive too large", type: "AidokuBackup")
+            return
+        }
+
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kanzen-aidoku-restore-\(sourceId)-\(UUID().uuidString)")
+            .appendingPathExtension("zip")
+        let extractionDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kanzen-aidoku-restore-\(sourceId)-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: archiveURL)
+            try? FileManager.default.removeItem(at: extractionDirectory)
+        }
+
+        do {
+            try archiveData.write(to: archiveURL, options: .atomic)
+            try validateArchivePaths(at: archiveURL)
+            try FileManager.default.createDirectory(at: extractionDirectory, withIntermediateDirectories: true)
+            try FileManager.default.unzipItem(at: archiveURL, to: extractionDirectory)
+
+            let destination = sourcesDirectory.appendingPathComponent(sourceId, isDirectory: true)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: extractionDirectory, to: destination)
+        } catch {
+            ReaderLogger.shared.log("Failed to restore Aidoku source \(sourceId): \(error.localizedDescription)", type: "AidokuBackup")
+        }
+    }
+
+    private static func validateArchivePaths(at url: URL) throws {
+        guard let archive = Archive(url: url, accessMode: .read) else {
+            throw AidokuSourceError.missingPayload
+        }
+        var totalUncompressed: UInt64 = 0
+        for entry in archive {
+            let path = entry.path.replacingOccurrences(of: "\\", with: "/")
+            if path.hasPrefix("/") || path.contains("../") || path.contains("/../") {
+                throw AidokuSourceError.unsafeArchivePath(path)
+            }
+            totalUncompressed += UInt64(entry.uncompressedSize)
+            if totalUncompressed > AidokuSourceManager.maxPackageBytes {
+                throw AidokuSourceError.packageTooLarge
+            }
+        }
+    }
+
+    private static func ensureDirectories() {
+        try? FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: sourcesDirectory, withIntermediateDirectories: true)
+    }
+
+    private static func isValidSourceKey(_ sourceKey: String) -> Bool {
+        guard !sourceKey.isEmpty else { return false }
+        let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-"))
+        return sourceKey.unicodeScalars.allSatisfy { allowedCharacters.contains($0) }
+    }
+}
+
 enum AidokuSourceError: LocalizedError {
     case invalidURL
     case duplicateSourceList
@@ -351,8 +555,8 @@ final class AidokuSourceManager: ObservableObject {
     static let rootDirectory = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("KanzenAidoku", isDirectory: true)
-    private static let autoUpdateKey = "kanzenAidokuAutoUpdateSources"
-    private static let lastAutoUpdateKey = "kanzenAidokuLastAutoUpdate"
+    private static let autoUpdateKey = AidokuBackupBridge.autoUpdateKey
+    private static let lastAutoUpdateKey = AidokuBackupBridge.lastAutoUpdateKey
     private static let autoUpdateCooldown: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var sourceLists: [AidokuSourceListRecord] = []
@@ -374,9 +578,9 @@ final class AidokuSourceManager: ObservableObject {
         }
     }
 
-    private let sourceListsKey = "kanzenAidokuSourceLists"
-    private let installedSourcesKey = "kanzenAidokuInstalledSources"
-    private let matureSourcesKey = "kanzenAidokuShowMatureSources"
+    private let sourceListsKey = AidokuBackupBridge.sourceListsKey
+    private let installedSourcesKey = AidokuBackupBridge.installedSourcesKey
+    private let matureSourcesKey = AidokuBackupBridge.matureSourcesKey
     private var runtimeSources: [String: AidokuRunner.Source] = [:]
 
     private var sourcesDirectory: URL {
@@ -648,6 +852,20 @@ final class AidokuSourceManager: ObservableObject {
         runtimeSources = loadedRuntime
         installedSources = updatedMetadata
         saveInstalledSources()
+    }
+
+    func reloadPersistedStateAfterRestore() async {
+        loadPersistedState()
+        showMatureSources = UserDefaults.standard.bool(forKey: matureSourcesKey)
+        autoUpdateSources = UserDefaults.standard.object(forKey: Self.autoUpdateKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: Self.autoUpdateKey)
+        lastAutoUpdate = UserDefaults.standard.object(forKey: Self.lastAutoUpdateKey) as? Date
+        isRuntimeReady = false
+        runtimeSources.removeAll()
+        await ensureRuntimeReady()
+        await refreshSourceLists()
+        ReaderLogger.shared.log("Reloaded Aidoku source state after backup restore sources=\(installedSources.count)", type: "AidokuBackup")
     }
 
     func search(sourceId: String, query: String?, page: Int, filters: [AidokuRunner.FilterValue]) async throws -> AidokuRunner.MangaPageResult {

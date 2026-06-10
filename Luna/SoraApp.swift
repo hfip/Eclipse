@@ -53,6 +53,12 @@ struct SoraApp: App {
         }
         // Initialize download manager early to reconnect background session
         _ = DownloadManager.shared
+#if !os(tvOS)
+        // Initialize Reader downloads early so interrupted Kanzen queues are recovered separately.
+        Task { @MainActor in
+            _ = ReaderDownloadManager.shared
+        }
+#endif
     }
 
     var body: some Scene {

@@ -15,6 +15,7 @@ struct MangaDetailView: View {
     @StateObject private var sourceFinder = MangaSourceFinder()
     @ObservedObject private var libraryManager = MangaLibraryManager.shared
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
+    @ObservedObject private var downloadManager = ReaderDownloadManager.shared
 
     /// Full manga detail fetched from AniList (populated on appear if initial data is sparse)
     @State private var manga: AniListManga
@@ -39,6 +40,8 @@ struct MangaDetailView: View {
     @State private var reverseChapters: Bool = false
     @State private var selectedChapterData: Chapter?
     @State private var chapterLoadError: String?
+    @AppStorage(ReaderDetailElement.orderStorageKey) private var readerDetailElementOrder = ReaderDetailElement.defaultOrderRawValue
+    @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
     private let coverWidth: CGFloat = isIPad ? 150 * iPadScaleSmall : 150
 
@@ -80,6 +83,18 @@ struct MangaDetailView: View {
 
     private var progressMangaId: Int {
         libraryItem.aniListId
+    }
+
+    private var readerRatingId: Int {
+        let key = selectedContentRoute?.stableKey ?? "anilist:\(manga.id)"
+        let hash = key.utf8.reduce(into: 5381) { h, c in h = ((h &<< 5) &+ h) &+ Int(c) }
+        return hash < 0 ? hash : -hash - 1
+    }
+
+    private var visibleReaderDetailElements: [ReaderDetailElement] {
+        ReaderDetailElement.orderedElements(from: readerDetailElementOrder)
+            .filter { ReaderDetailElement.isVisible($0, hiddenRawValue: readerDetailHiddenElements) }
+            .filter(readerDetailElementHasContent)
     }
 
     private var knownTrackerAniListId: Int? {
@@ -129,25 +144,9 @@ struct MangaDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 headerSection
 
-                Divider()
-
-                if let description = manga.description, !description.isEmpty {
-                    descriptionSection(description)
-                }
-
-                Divider()
-
-                if let genres = manga.genres, !genres.isEmpty {
-                    genresSection(genres)
-                }
-
-                Divider()
-
-                // Show chapters if a source was selected, otherwise show source picker
-                if selectedSource != nil {
-                    chaptersSection
-                } else {
-                    sourcesSection
+                ForEach(visibleReaderDetailElements) { element in
+                    Divider()
+                    readerDetailElementView(element)
                 }
             }
             .padding(.horizontal, 16)
@@ -388,6 +387,49 @@ struct MangaDetailView: View {
         }
     }
 
+    private func readerDetailElementHasContent(_ element: ReaderDetailElement) -> Bool {
+        switch element {
+        case .overview:
+            return !(manga.description ?? "").isEmpty
+        case .tags:
+            return !(manga.genres ?? []).isEmpty
+        case .ratingNotes, .chapters:
+            return true
+        }
+    }
+
+    @ViewBuilder
+    private func readerDetailElementView(_ element: ReaderDetailElement) -> some View {
+        switch element {
+        case .overview:
+            if let description = manga.description, !description.isEmpty {
+                descriptionSection(description)
+            }
+        case .tags:
+            if let genres = manga.genres, !genres.isEmpty {
+                genresSection(genres)
+            }
+        case .ratingNotes:
+            let progress = progressManager.progress(for: progressMangaId)
+            ReaderRatingNotesView(
+                itemId: readerRatingId,
+                title: manga.displayTitle,
+                progressItemId: progressMangaId,
+                routeKey: selectedContentRoute?.stableKey,
+                knownAniListId: manga.id,
+                knownMALId: progress?.trackerMALId,
+                totalChapters: selectedSourceChapterTotal,
+                format: selectedSourceFormat
+            )
+        case .chapters:
+            if selectedSource != nil {
+                chaptersSection
+            } else {
+                sourcesSection
+            }
+        }
+    }
+
     // MARK: - Sources Section
 
     @ViewBuilder
@@ -565,7 +607,7 @@ struct MangaDetailView: View {
     @ViewBuilder
     private func chapterListView(_ allChapters: [Chapters]) -> some View {
         let selected = allChapters[chapterLanguageIdx]
-        let displayed: [Chapter] = reverseChapters ? selected.chapters.reversed() : selected.chapters
+        let displayed: [Chapter] = reverseChapters ? Array(selected.chapters.reversed()) : selected.chapters
 
         VStack(alignment: .leading, spacing: 0) {
             // Read / Continue button
@@ -590,6 +632,25 @@ struct MangaDetailView: View {
                     }
                 }
 
+                if let selectedContentRoute {
+                    Button {
+                        downloadManager.enqueueChapters(
+                            route: selectedContentRoute,
+                            mangaId: progressMangaId,
+                            title: selectedSourceDisplayTitle,
+                            coverURL: selectedSourceCoverURL,
+                            sourceName: selectedSource?.module.moduleData.sourceName,
+                            format: selectedSourceFormat,
+                            chapters: selected.chapters,
+                            kanzen: chapterEngine
+                        )
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .foregroundColor(.accentColor)
+                    }
+                    .accessibilityLabel("Download All")
+                }
+
                 Button {
                     reverseChapters.toggle()
                 } label: {
@@ -600,9 +661,11 @@ struct MangaDetailView: View {
 
             Divider().padding(.vertical, 4)
 
-            ForEach(displayed) { chapter in
+            ForEach(Array(displayed.enumerated()), id: \.element.id) { displayIndex, chapter in
                 let isRead = progressManager.isChapterRead(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber)
                 let chapterTitle = chapter.chapterData?.first?.title ?? ""
+                let downloadStatus = downloadManager.status(for: selectedContentRoute, chapterNumber: chapter.chapterNumber)
+                let downloadProgress = downloadManager.progress(for: selectedContentRoute, chapterNumber: chapter.chapterNumber)
 
                 Button {
                     selectedChapterData = chapter
@@ -635,9 +698,17 @@ struct MangaDetailView: View {
                                     .foregroundColor(.accentColor.opacity(0.8))
                                     .lineLimit(1)
                             }
+
+                            if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
+                                ProgressView(value: downloadProgress)
+                                    .tint(downloadStatus == .paused ? .gray : .accentColor)
+                                    .frame(maxWidth: 180)
+                            }
                         }
 
                         Spacer(minLength: 8)
+
+                        downloadBadge(for: downloadStatus)
 
                         if isRead {
                             Text("Read")
@@ -687,26 +758,15 @@ struct MangaDetailView: View {
                     Divider()
 
                     Button {
-                        let allNums = selected.chapters.map { $0.chapterNumber }
-                        if let idx = allNums.firstIndex(of: chapter.chapterNumber) {
-                            let toMark = Array(allNums[...idx])
-                            progressManager.markAllRead(
-                                mangaId: progressMangaId,
-                                chapterNumbers: toMark,
-                                mangaTitle: selectedSourceDisplayTitle,
-                                coverURL: selectedSourceCoverURL,
-                                format: selectedSourceFormat,
-                                totalChapters: selectedSourceChapterTotal,
-                                latestChapterNumbers: currentChapterNumbers,
-                                moduleUUID: selectedSourceModuleUUID,
-                                contentParams: selectedSourceContentParams,
-                                isNovel: selectedSourceIsNovel,
-                                route: selectedContentRoute,
-                                trackerAniListId: knownTrackerAniListId
-                            )
-                        }
+                        markVisibleChaptersRead(Array(displayed.prefix(displayIndex + 1)))
                     } label: {
-                        Label("Mark This & Previous as Read", systemImage: "checkmark.circle")
+                        Label("Mark Above as Read", systemImage: "arrow.up.circle")
+                    }
+
+                    Button {
+                        markVisibleChaptersRead(Array(displayed.suffix(displayed.count - displayIndex)))
+                    } label: {
+                        Label("Mark Below as Read", systemImage: "arrow.down.circle")
                     }
 
                     Button {
@@ -734,10 +794,88 @@ struct MangaDetailView: View {
                     } label: {
                         Label("Mark All as Unread", systemImage: "xmark.circle")
                     }
+
+                    Divider()
+
+                    downloadContextMenu(for: chapter, status: downloadStatus)
                 }
                 Divider()
             }
         }
+    }
+
+    @ViewBuilder
+    private func downloadBadge(for status: ReaderDownloadStatus) -> some View {
+        switch status {
+        case .completed:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundColor(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+        case .downloading, .queued, .paused:
+            Image(systemName: status == .paused ? "pause.circle" : "arrow.down.circle")
+                .foregroundColor(.secondary)
+        case .none:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func downloadContextMenu(for chapter: Chapter, status: ReaderDownloadStatus) -> some View {
+        if let route = selectedContentRoute {
+            switch status {
+            case .completed:
+                Button(role: .destructive) {
+                    downloadManager.removeDownload(id: ReaderDownloadManager.downloadId(route: route, chapterNumber: chapter.chapterNumber))
+                } label: {
+                    Label("Remove Download", systemImage: "trash")
+                }
+            case .queued, .downloading, .paused:
+                Button(role: .destructive) {
+                    downloadManager.cancelDownload(id: ReaderDownloadManager.downloadId(route: route, chapterNumber: chapter.chapterNumber))
+                } label: {
+                    Label("Cancel Download", systemImage: "xmark.circle")
+                }
+            case .failed, .none:
+                Button {
+                    downloadManager.enqueueChapter(
+                        route: route,
+                        mangaId: progressMangaId,
+                        title: selectedSourceDisplayTitle,
+                        coverURL: selectedSourceCoverURL,
+                        sourceName: selectedSource?.module.moduleData.sourceName,
+                        format: selectedSourceFormat,
+                        chapter: chapter,
+                        kanzen: chapterEngine
+                    )
+                } label: {
+                    Label(status == .failed ? "Retry Download" : "Download", systemImage: "arrow.down.circle")
+                }
+            }
+        } else {
+            Button { } label: {
+                Label("Download unavailable", systemImage: "exclamationmark.triangle")
+            }
+            .disabled(true)
+        }
+    }
+
+    private func markVisibleChaptersRead(_ chapters: [Chapter]) {
+        progressManager.markAllRead(
+            mangaId: progressMangaId,
+            chapterNumbers: chapters.map(\.chapterNumber),
+            mangaTitle: selectedSourceDisplayTitle,
+            coverURL: selectedSourceCoverURL,
+            format: selectedSourceFormat,
+            totalChapters: selectedSourceChapterTotal,
+            latestChapterNumbers: currentChapterNumbers,
+            moduleUUID: selectedSourceModuleUUID,
+            contentParams: selectedSourceContentParams,
+            isNovel: selectedSourceIsNovel,
+            route: selectedContentRoute,
+            trackerAniListId: knownTrackerAniListId
+        )
     }
 
     // MARK: - Read / Continue Button

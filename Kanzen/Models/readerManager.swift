@@ -90,7 +90,7 @@ var nextControllers: [UIViewController]?
                 let currParams = currSources[0].params
             {
                 didStartCurrentLoad = true
-                loadPages(params: currParams, position: .curr)
+                loadPages(chapter: selectedChapter, params: currParams, position: .curr)
             }
             let idx = selectedChapter.idx
             // fetch Prev Images
@@ -101,7 +101,7 @@ var nextControllers: [UIViewController]?
                 if let prevSources = prevChapter.chapterData, prevSources.count > 0,
                     let prevParams = prevSources[0].params
                 {
-                    loadPages(params: prevParams, position: .prev)
+                    loadPages(chapter: prevChapter, params: prevParams, position: .prev)
                     
                 }
                 
@@ -113,7 +113,7 @@ var nextControllers: [UIViewController]?
                     let nextParams = nextSources[0].params
                 {
 
-                    loadPages(params: nextParams, position: .next)
+                    loadPages(chapter: nextChapters, params: nextParams, position: .next)
                 }
             }
 
@@ -351,7 +351,7 @@ var nextControllers: [UIViewController]?
     }
   
     
-    func loadPages(params: Any,position: ChapterPosition, completion: @escaping () -> Void = {}){
+    func loadPages(chapter: Chapter? = nil, params: Any, position: ChapterPosition, completion: @escaping () -> Void = {}){
         // Cancel any existing task for this position
         cancelLoadPagesTask(for: position)
         
@@ -364,7 +364,19 @@ var nextControllers: [UIViewController]?
                 ReaderLogger.shared.log("Loading chapter position=\(position)", type: "Reader")
 
                 let pages: [PageData]
-                if let payload = params as? AidokuChapterPayload {
+                if let route = self.mangaRoute,
+                   let chapter,
+                   let localPages = ReaderDownloadManager.shared.pages(for: route, chapterNumber: chapter.chapterNumber) {
+                    pages = localPages
+                    ReaderLogger.shared.log("Loaded downloaded chapter position=\(position) pages=\(localPages.count)", type: "ReaderDownload")
+                } else if let payload = params as? ReaderDownloadedChapterPayload {
+                    if let localPages = ReaderDownloadManager.shared.pages(for: payload.route, chapterNumber: payload.chapterNumber) {
+                        pages = localPages
+                        ReaderLogger.shared.log("Loaded downloaded chapter payload position=\(position) pages=\(localPages.count)", type: "ReaderDownload")
+                    } else {
+                        throw NSError(domain: "ReaderDownload", code: 404, userInfo: [NSLocalizedDescriptionKey: "Downloaded chapter files are missing."])
+                    }
+                } else if let payload = params as? AidokuChapterPayload {
                     pages = try await AidokuSourceManager.shared.pageList(
                         sourceId: payload.sourceId,
                         manga: payload.manga,
@@ -497,7 +509,7 @@ var nextControllers: [UIViewController]?
                 if let prevSources = prevChapter.chapterData, prevSources.count > 0,
                     let prevParams = prevSources[0].params
                 {
-                    loadPages(params: prevParams, position: .prev,completion: completion)
+                    loadPages(chapter: prevChapter, params: prevParams, position: .prev,completion: completion)
                     
                 }
                 
@@ -512,7 +524,7 @@ var nextControllers: [UIViewController]?
             if let nextSources = nextChapters.chapterData, nextSources.count > 0,
                 let nextParams = nextSources[0].params
             {
-                loadPages(params: nextParams, position: .next,completion: completion)
+                loadPages(chapter: nextChapters, params: nextParams, position: .next,completion: completion)
             }
             
         }

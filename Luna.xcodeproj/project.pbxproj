@@ -52,6 +52,8 @@
 		AD0000032FD9000000AD0003 /* AidokuSourceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000122FD9000000AD0012 /* AidokuSourceManager.swift */; };
 		AD0000042FD9000000AD0004 /* AidokuMangaDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000132FD9000000AD0013 /* AidokuMangaDetailView.swift */; };
 		AD0000052FD9000000AD0005 /* AidokuSourcesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000142FD9000000AD0014 /* AidokuSourcesSettingsView.swift */; };
+		A5D100022FE1000000A5D002 /* ReaderDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D100012FE1000000A5D001 /* ReaderDownloadManager.swift */; };
+		A5D100042FE1000000A5D004 /* ReaderDownloadsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D100032FE1000000A5D003 /* ReaderDownloadsSettingsView.swift */; };
 		AD0000062FD9000000AD0006 /* AidokuRunner in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000222FD9000000AD0022 /* AidokuRunner */; };
 		AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000232FD9000000AD0023 /* ZIPFoundation */; };
 		13A46CFD2EF5943400423BC6 /* FakeWebKit in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFC2EF5943400423BC6 /* FakeWebKit */; };
@@ -363,6 +365,8 @@
 		AD0000122FD9000000AD0012 /* AidokuSourceManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AidokuSourceManager.swift; sourceTree = "<group>"; };
 		AD0000132FD9000000AD0013 /* AidokuMangaDetailView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AidokuMangaDetailView.swift; sourceTree = "<group>"; };
 		AD0000142FD9000000AD0014 /* AidokuSourcesSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AidokuSourcesSettingsView.swift; sourceTree = "<group>"; };
+		A5D100012FE1000000A5D001 /* ReaderDownloadManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ReaderDownloadManager.swift; sourceTree = "<group>"; };
+		A5D100032FE1000000A5D003 /* ReaderDownloadsSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ReaderDownloadsSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -501,6 +505,7 @@
 				FBB222002F40000000FBB220 /* MangaLibraryCollection.swift */,
 				FCC333002F40000000FCC330 /* MangaLibraryManager.swift */,
 				ABB999002F50000000ABB990 /* MangaReadingProgressManager.swift */,
+				A5D100012FE1000000A5D001 /* ReaderDownloadManager.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -626,6 +631,7 @@
 				13E1EDC22ED9E65F00087629 /* kanzenGeneralSettings.swift */,
 				FF8888802F30000000FF8880 /* MangaCatalogSettingsView.swift */,
 				AD0000142FD9000000AD0014 /* AidokuSourcesSettingsView.swift */,
+				A5D100032FE1000000A5D003 /* ReaderDownloadsSettingsView.swift */,
 			);
 			path = subSettings;
 			sourceTree = "<group>";
@@ -1223,6 +1229,8 @@
 				AD0000032FD9000000AD0003 /* AidokuSourceManager.swift in Sources */,
 				AD0000042FD9000000AD0004 /* AidokuMangaDetailView.swift in Sources */,
 				AD0000052FD9000000AD0005 /* AidokuSourcesSettingsView.swift in Sources */,
+				A5D100022FE1000000A5D002 /* ReaderDownloadManager.swift in Sources */,
+				A5D100042FE1000000A5D004 /* ReaderDownloadsSettingsView.swift in Sources */,
 				FAA111012F40000000FAA111 /* MangaLibraryItem.swift in Sources */,
 				FBB222012F40000000FBB221 /* MangaLibraryCollection.swift in Sources */,
 				FCC333012F40000000FCC331 /* MangaLibraryManager.swift in Sources */,

@@ -69,6 +69,8 @@ struct BackupData: Codable {
     var useClassicScheduleUI: Bool = false
     var mediaDetailElementOrder: String = MediaDetailElement.defaultOrderRawValue
     var mediaDetailHiddenElements: String = ""
+    var readerDetailElementOrder: String = ReaderDetailElement.defaultOrderRawValue
+    var readerDetailHiddenElements: String = ""
     var mediaColumnsPortrait: Int = 3
     var mediaColumnsLandscape: Int = 5
 
@@ -113,6 +115,7 @@ struct BackupData: Codable {
     var mangaReadingProgress: [String: MangaProgress] = [:]
     var mangaCatalogs: [MangaCatalog] = []
     var kanzenModules: [BackupKanzenModule] = []
+    var aidokuState: BackupAidokuState?
 
     // Recommendations
     var recommendationCache: [TMDBSearchResult] = []
@@ -127,12 +130,12 @@ struct BackupData: Codable {
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
         case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
+        case showKanzen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, servicesAutoModeQualityPreference
         case collections, progressData, trackerState, catalogs, services, stremioAddons
-        case mangaCollections, mangaReadingProgress, mangaCatalogs, kanzenModules
+        case mangaCollections, mangaReadingProgress, mangaCatalogs, kanzenModules, aidokuState
         case recommendationCache
         case userRatings, userRatingNotes
     }
@@ -199,6 +202,8 @@ struct BackupData: Codable {
         useClassicScheduleUI = try container.decodeIfPresent(Bool.self, forKey: .useClassicScheduleUI) ?? false
         mediaDetailElementOrder = Self.sanitizedMediaDetailElementOrder(try container.decodeIfPresent(String.self, forKey: .mediaDetailElementOrder))
         mediaDetailHiddenElements = Self.sanitizedMediaDetailHiddenElements(try container.decodeIfPresent(String.self, forKey: .mediaDetailHiddenElements))
+        readerDetailElementOrder = Self.sanitizedReaderDetailElementOrder(try container.decodeIfPresent(String.self, forKey: .readerDetailElementOrder))
+        readerDetailHiddenElements = Self.sanitizedReaderDetailHiddenElements(try container.decodeIfPresent(String.self, forKey: .readerDetailHiddenElements))
         mediaColumnsPortrait = try container.decodeIfPresent(Int.self, forKey: .mediaColumnsPortrait) ?? 3
         mediaColumnsLandscape = try container.decodeIfPresent(Int.self, forKey: .mediaColumnsLandscape) ?? 5
 
@@ -230,6 +235,7 @@ struct BackupData: Codable {
         mangaReadingProgress = try container.decodeIfPresent([String: MangaProgress].self, forKey: .mangaReadingProgress) ?? [:]
         mangaCatalogs = try container.decodeIfPresent([MangaCatalog].self, forKey: .mangaCatalogs) ?? []
         kanzenModules = try container.decodeIfPresent([BackupKanzenModule].self, forKey: .kanzenModules) ?? []
+        aidokuState = try container.decodeIfPresent(BackupAidokuState.self, forKey: .aidokuState)
         recommendationCache = try container.decodeIfPresent([TMDBSearchResult].self, forKey: .recommendationCache) ?? []
         userRatings = Self.decodeUserRatings(from: container)
         userRatingNotes = try container.decodeIfPresent([String: String].self, forKey: .userRatingNotes) ?? [:]
@@ -348,6 +354,8 @@ struct BackupData: Codable {
         try container.encode(useClassicScheduleUI, forKey: .useClassicScheduleUI)
         try container.encode(mediaDetailElementOrder, forKey: .mediaDetailElementOrder)
         try container.encode(mediaDetailHiddenElements, forKey: .mediaDetailHiddenElements)
+        try container.encode(readerDetailElementOrder, forKey: .readerDetailElementOrder)
+        try container.encode(readerDetailHiddenElements, forKey: .readerDetailHiddenElements)
         try container.encode(mediaColumnsPortrait, forKey: .mediaColumnsPortrait)
         try container.encode(mediaColumnsLandscape, forKey: .mediaColumnsLandscape)
 
@@ -379,6 +387,7 @@ struct BackupData: Codable {
         try container.encode(mangaReadingProgress, forKey: .mangaReadingProgress)
         try container.encode(mangaCatalogs, forKey: .mangaCatalogs)
         try container.encode(kanzenModules, forKey: .kanzenModules)
+        try container.encodeIfPresent(aidokuState, forKey: .aidokuState)
         try container.encode(recommendationCache, forKey: .recommendationCache)
         try container.encode(userRatings, forKey: .userRatings)
         try container.encode(userRatingNotes, forKey: .userRatingNotes)
@@ -441,6 +450,8 @@ struct BackupData: Codable {
         useClassicScheduleUI: Bool = false,
         mediaDetailElementOrder: String = MediaDetailElement.defaultOrderRawValue,
         mediaDetailHiddenElements: String = "",
+        readerDetailElementOrder: String = ReaderDetailElement.defaultOrderRawValue,
+        readerDetailHiddenElements: String = "",
         mediaColumnsPortrait: Int = 3,
         mediaColumnsLandscape: Int = 5,
 
@@ -472,6 +483,7 @@ struct BackupData: Codable {
         mangaReadingProgress: [String: MangaProgress] = [:],
         mangaCatalogs: [MangaCatalog] = [],
         kanzenModules: [BackupKanzenModule] = [],
+        aidokuState: BackupAidokuState? = nil,
         recommendationCache: [TMDBSearchResult] = [],
         userRatings: [String: Double] = [:],
         userRatingNotes: [String: String] = [:]
@@ -529,6 +541,8 @@ struct BackupData: Codable {
         self.useClassicScheduleUI = useClassicScheduleUI
         self.mediaDetailElementOrder = Self.sanitizedMediaDetailElementOrder(mediaDetailElementOrder)
         self.mediaDetailHiddenElements = Self.sanitizedMediaDetailHiddenElements(mediaDetailHiddenElements)
+        self.readerDetailElementOrder = Self.sanitizedReaderDetailElementOrder(readerDetailElementOrder)
+        self.readerDetailHiddenElements = Self.sanitizedReaderDetailHiddenElements(readerDetailHiddenElements)
         self.mediaColumnsPortrait = mediaColumnsPortrait
         self.mediaColumnsLandscape = mediaColumnsLandscape
 
@@ -557,6 +571,7 @@ struct BackupData: Codable {
         self.mangaReadingProgress = mangaReadingProgress
         self.mangaCatalogs = mangaCatalogs
         self.kanzenModules = kanzenModules
+        self.aidokuState = aidokuState
         self.recommendationCache = recommendationCache
         self.userRatings = userRatings
         self.userRatingNotes = userRatingNotes
@@ -608,6 +623,14 @@ struct BackupData: Codable {
 
     static func sanitizedMediaDetailHiddenElements(_ value: String?) -> String {
         MediaDetailElement.rawValue(for: MediaDetailElement.hiddenElements(from: value, legacyShowCastSection: true))
+    }
+
+    static func sanitizedReaderDetailElementOrder(_ value: String?) -> String {
+        ReaderDetailElement.rawValue(for: ReaderDetailElement.orderedElements(from: value))
+    }
+
+    static func sanitizedReaderDetailHiddenElements(_ value: String?) -> String {
+        ReaderDetailElement.rawValue(for: ReaderDetailElement.hiddenElements(from: value))
     }
 
 }
@@ -662,6 +685,39 @@ struct BackupKanzenModule: Codable {
     let localPath: String
     let moduleurl: String
     let isActive: Bool
+}
+
+struct BackupAidokuSourceListRecord: Codable {
+    let url: String
+    let name: String
+    let sourceCount: Int
+    let lastRefresh: Date?
+    let lastError: String?
+}
+
+struct BackupAidokuInstalledSource: Codable {
+    let id: String
+    let name: String
+    let version: Int
+    let languages: [String]
+    let iconPath: String?
+    let externalIconURL: String?
+    let contentRatingRawValue: Int
+    let sourceListURL: String?
+    let packageURL: String?
+    let isEnabled: Bool
+    let order: Int
+    let lastUpdated: Date?
+    let lastError: String?
+    let payloadArchiveData: Data?
+}
+
+struct BackupAidokuState: Codable {
+    var sourceLists: [BackupAidokuSourceListRecord] = []
+    var installedSources: [BackupAidokuInstalledSource] = []
+    var showMatureSources: Bool = false
+    var autoUpdateSources: Bool = true
+    var lastAutoUpdate: Date?
 }
 
 // Codable wrapper for LibraryCollection
@@ -820,6 +876,8 @@ class BackupManager {
         let useClassicScheduleUI = userDefaults.bool(forKey: "useClassicScheduleUI")
         let mediaDetailElementOrder = BackupData.sanitizedMediaDetailElementOrder(userDefaults.string(forKey: MediaDetailElement.orderStorageKey))
         let mediaDetailHiddenElements = MediaDetailElement.rawValue(for: MediaDetailElement.hiddenElements(defaults: userDefaults))
+        let readerDetailElementOrder = BackupData.sanitizedReaderDetailElementOrder(userDefaults.string(forKey: ReaderDetailElement.orderStorageKey))
+        let readerDetailHiddenElements = ReaderDetailElement.rawValue(for: ReaderDetailElement.hiddenElements(defaults: userDefaults))
         let mediaColumnsPortrait = userDefaults.object(forKey: "mediaColumnsPortrait") != nil ? userDefaults.integer(forKey: "mediaColumnsPortrait") : 3
         let mediaColumnsLandscape = userDefaults.object(forKey: "mediaColumnsLandscape") != nil ? userDefaults.integer(forKey: "mediaColumnsLandscape") : 5
 
@@ -926,6 +984,12 @@ class BackupManager {
                 isActive: mod.isActive
             )
         }
+
+#if !os(tvOS)
+        let aidokuState = AidokuBackupBridge.backupSnapshotFromDisk()
+#else
+        let aidokuState: BackupAidokuState? = nil
+#endif
         
         let backup = BackupData(
             createdDate: Date(),
@@ -980,6 +1044,8 @@ class BackupManager {
             useClassicScheduleUI: useClassicScheduleUI,
             mediaDetailElementOrder: mediaDetailElementOrder,
             mediaDetailHiddenElements: mediaDetailHiddenElements,
+            readerDetailElementOrder: readerDetailElementOrder,
+            readerDetailHiddenElements: readerDetailHiddenElements,
             mediaColumnsPortrait: mediaColumnsPortrait,
             mediaColumnsLandscape: mediaColumnsLandscape,
 
@@ -1008,6 +1074,7 @@ class BackupManager {
             mangaReadingProgress: mangaReadingProgress,
             mangaCatalogs: mangaCatalogs,
             kanzenModules: kanzenModules,
+            aidokuState: aidokuState,
             recommendationCache: RecommendationEngine.shared.getRecommendationCache(),
             userRatings: UserRatingManager.shared.getRatingsForBackup(),
             userRatingNotes: UserRatingManager.shared.getNotesForBackup()
@@ -1123,6 +1190,8 @@ class BackupManager {
         let useClassicScheduleUI = json["useClassicScheduleUI"] as? Bool ?? false
         let mediaDetailElementOrder = BackupData.sanitizedMediaDetailElementOrder(json["mediaDetailElementOrder"] as? String)
         let mediaDetailHiddenElements = BackupData.sanitizedMediaDetailHiddenElements(json["mediaDetailHiddenElements"] as? String)
+        let readerDetailElementOrder = BackupData.sanitizedReaderDetailElementOrder(json["readerDetailElementOrder"] as? String)
+        let readerDetailHiddenElements = BackupData.sanitizedReaderDetailHiddenElements(json["readerDetailHiddenElements"] as? String)
         let mediaColumnsPortrait = json["mediaColumnsPortrait"] as? Int ?? 3
         let mediaColumnsLandscape = json["mediaColumnsLandscape"] as? Int ?? 5
 
@@ -1256,6 +1325,13 @@ class BackupManager {
             }
         }
 
+        var aidokuState: BackupAidokuState?
+        if let aidokuDict = json["aidokuState"] as? [String: Any],
+           let data = try? JSONSerialization.data(withJSONObject: aidokuDict),
+           let decoded = try? JSONDecoder().decode(BackupAidokuState.self, from: data) {
+            aidokuState = decoded
+        }
+
         var recommendationCache: [TMDBSearchResult] = []
         if let recsData = json["recommendationCache"] as? [[String: Any]] {
             for dict in recsData {
@@ -1326,6 +1402,8 @@ class BackupManager {
             useClassicScheduleUI: useClassicScheduleUI,
             mediaDetailElementOrder: mediaDetailElementOrder,
             mediaDetailHiddenElements: mediaDetailHiddenElements,
+            readerDetailElementOrder: readerDetailElementOrder,
+            readerDetailHiddenElements: readerDetailHiddenElements,
             mediaColumnsPortrait: mediaColumnsPortrait,
             mediaColumnsLandscape: mediaColumnsLandscape,
             readingMode: readingMode,
@@ -1350,6 +1428,7 @@ class BackupManager {
             mangaReadingProgress: mangaReadingProgress,
             mangaCatalogs: mangaCatalogs,
             kanzenModules: kanzenModules,
+            aidokuState: aidokuState,
             recommendationCache: recommendationCache,
             userRatings: userRatings,
             userRatingNotes: userRatingNotes
@@ -1431,6 +1510,8 @@ class BackupManager {
         userDefaults.set(BackupData.sanitizedMediaDetailElementOrder(backup.mediaDetailElementOrder), forKey: MediaDetailElement.orderStorageKey)
         userDefaults.set(restoredMediaDetailHiddenElements, forKey: MediaDetailElement.hiddenStorageKey)
         userDefaults.set(!MediaDetailElement.hiddenElements(from: restoredMediaDetailHiddenElements, legacyShowCastSection: true).contains(.cast), forKey: MediaDetailElement.legacyShowCastStorageKey)
+        userDefaults.set(BackupData.sanitizedReaderDetailElementOrder(backup.readerDetailElementOrder), forKey: ReaderDetailElement.orderStorageKey)
+        userDefaults.set(BackupData.sanitizedReaderDetailHiddenElements(backup.readerDetailHiddenElements), forKey: ReaderDetailElement.hiddenStorageKey)
         userDefaults.set(backup.mediaColumnsPortrait, forKey: "mediaColumnsPortrait")
         userDefaults.set(backup.mediaColumnsLandscape, forKey: "mediaColumnsLandscape")
 
@@ -1582,6 +1663,15 @@ class BackupManager {
             }
             kanzenModuleManager.saveModules()
         }
+
+#if !os(tvOS)
+        if let aidokuState = backup.aidokuState {
+            AidokuBackupBridge.restoreBackupSnapshotToDisk(aidokuState)
+            Task { @MainActor in
+                await AidokuSourceManager.shared.reloadPersistedStateAfterRestore()
+            }
+        }
+#endif
 
         // Restore recommendation cache
         if !backup.recommendationCache.isEmpty {

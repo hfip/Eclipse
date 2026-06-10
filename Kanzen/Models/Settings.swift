@@ -154,6 +154,113 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
     }
 }
 
+enum ReaderDetailElement: String, CaseIterable, Identifiable {
+    case overview
+    case tags
+    case ratingNotes
+    case chapters
+
+    var id: String { rawValue }
+
+    static let orderStorageKey = "readerDetailElementOrder"
+    static let hiddenStorageKey = "readerDetailHiddenElements"
+
+    static let defaultOrder: [ReaderDetailElement] = [
+        .overview,
+        .tags,
+        .ratingNotes,
+        .chapters
+    ]
+
+    var displayName: String {
+        switch self {
+        case .overview:
+            return "Overview"
+        case .tags:
+            return "Tags"
+        case .ratingNotes:
+            return "Rating & Notes"
+        case .chapters:
+            return "Chapters"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .overview:
+            return "Synopsis text for the title."
+        case .tags:
+            return "Genres, tags, and source categories."
+        case .ratingNotes:
+            return "Your private star rating and reader notes."
+        case .chapters:
+            return "Source chapter list, language picker, and reading controls."
+        }
+    }
+
+    static var defaultOrderRawValue: String {
+        rawValue(for: defaultOrder)
+    }
+
+    static func rawValue(for elements: [ReaderDetailElement]) -> String {
+        elements.map(\.rawValue).joined(separator: ",")
+    }
+
+    static func rawValue(for hiddenElements: Set<ReaderDetailElement>) -> String {
+        defaultOrder
+            .filter { hiddenElements.contains($0) }
+            .map(\.rawValue)
+            .joined(separator: ",")
+    }
+
+    static func orderedElements(from rawValue: String?) -> [ReaderDetailElement] {
+        var result: [ReaderDetailElement] = []
+        let rawItems = rawValue?
+            .split(separator: ",")
+            .map { String($0) } ?? []
+
+        for rawItem in rawItems {
+            guard let element = ReaderDetailElement(rawValue: rawItem),
+                  !result.contains(element) else { continue }
+            result.append(element)
+        }
+
+        for element in defaultOrder where !result.contains(element) {
+            result.append(element)
+        }
+
+        return result
+    }
+
+    static func orderedElements(defaults: UserDefaults = .standard) -> [ReaderDetailElement] {
+        orderedElements(from: defaults.string(forKey: orderStorageKey))
+    }
+
+    static func hiddenElements(from rawValue: String?) -> Set<ReaderDetailElement> {
+        Set(
+            (rawValue ?? "")
+                .split(separator: ",")
+                .compactMap { ReaderDetailElement(rawValue: String($0)) }
+        )
+    }
+
+    static func hiddenElements(defaults: UserDefaults = .standard) -> Set<ReaderDetailElement> {
+        hiddenElements(from: defaults.string(forKey: hiddenStorageKey))
+    }
+
+    static func isVisible(_ element: ReaderDetailElement, hiddenRawValue: String?) -> Bool {
+        !hiddenElements(from: hiddenRawValue).contains(element)
+    }
+
+    static func saveOrder(_ elements: [ReaderDetailElement], defaults: UserDefaults = .standard) {
+        defaults.set(rawValue(for: elements), forKey: orderStorageKey)
+    }
+
+    static func saveHiddenElements(_ hiddenElements: Set<ReaderDetailElement>, defaults: UserDefaults = .standard) {
+        defaults.set(rawValue(for: hiddenElements), forKey: hiddenStorageKey)
+    }
+}
+
 enum MPVRenderBackend: String, CaseIterable, Identifiable {
     case openGL = "opengl"
     case metal = "metal"
