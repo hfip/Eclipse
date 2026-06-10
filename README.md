@@ -100,7 +100,7 @@ Eclipse is released under the GNU General Public License version 3. See `LICENSE
 
 The original Luna project is available at `https://github.com/cranci1/Luna`.
 
-Source code for builds distributed from this repository is available at `https://github.com/Soupy-dev/Luna`. If you redistribute an IPA or another binary, provide the corresponding source under GPLv3.
+Source code for builds distributed from this repository is available at `https://github.com/Soupy-dev/Eclipse`. If you redistribute an IPA or another binary, provide the corresponding source under GPLv3.
 
 This program comes with no warranty, to the extent permitted by law.
 
