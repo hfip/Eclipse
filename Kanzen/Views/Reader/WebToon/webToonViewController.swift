@@ -77,8 +77,8 @@ struct WebtoonView: UIViewRepresentable {
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
             self.onTap = onTap
-            self.pages = reader_manager.currChapter
-            self.chapterIdentity = Self.identity(for: reader_manager)
+            self.pages = []
+            self.chapterIdentity = ""
         }
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -97,7 +97,8 @@ struct WebtoonView: UIViewRepresentable {
 
         func configure(_ container: WebtoonScrollContainerView, manager: readerManager) {
             let identity = Self.identity(for: manager)
-            if identity != chapterIdentity || pages.map(\.id) != manager.currChapter.map(\.id) {
+            let needsInitialBuild = pageViews.isEmpty && !manager.currChapter.isEmpty
+            if needsInitialBuild || identity != chapterIdentity || pages.map(\.id) != manager.currChapter.map(\.id) {
                 reset(container, manager: manager)
             }
 
