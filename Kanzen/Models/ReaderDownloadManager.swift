@@ -617,7 +617,7 @@ final class ReaderDownloadManager: ObservableObject {
             }) else {
                 throw downloadError("Could not recover this chapter from the source.")
             }
-            return try await AidokuSourceManager.shared.pageList(sourceId: sourceId, manga: manga, chapter: chapter)
+            return try await AidokuSourceManager.shared.pageList(sourceId: sourceId, manga: manga, chapter: chapter, nativePages: false)
 
         case .legacyModule:
             guard let params = item.provider.chapterParams else {
@@ -635,7 +635,8 @@ final class ReaderDownloadManager: ObservableObject {
             return try await AidokuSourceManager.shared.pageList(
                 sourceId: payload.sourceId,
                 manga: payload.manga,
-                chapter: payload.chapter
+                chapter: payload.chapter,
+                nativePages: false
             )
         }
 

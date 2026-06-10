@@ -890,7 +890,7 @@ final class AidokuSourceManager: ObservableObject {
         return result
     }
 
-    func pageList(sourceId: String, manga: AidokuRunner.Manga, chapter: AidokuRunner.Chapter) async throws -> [PageData] {
+    func pageList(sourceId: String, manga: AidokuRunner.Manga, chapter: AidokuRunner.Chapter, nativePages: Bool = true) async throws -> [PageData] {
         await ensureRuntimeReady()
         guard let source = runtimeSources[sourceId] else {
             throw AidokuSourceError.sourceNotInstalled
@@ -898,7 +898,7 @@ final class AidokuSourceManager: ObservableObject {
         let started = Date()
         let pages = try await source.getPageList(manga: manga, chapter: chapter)
         let mapped = try await pages.asyncCompactMap { page in
-            try await makeReaderPage(page, source: source, sourceId: sourceId)
+            try await makeReaderPage(page, source: source, sourceId: sourceId, nativePages: nativePages)
         }
         logOperation("pageList", sourceId: sourceId, started: started, count: mapped.count)
         return mapped
@@ -1131,10 +1131,15 @@ final class AidokuSourceManager: ObservableObject {
     private func makeReaderPage(
         _ page: AidokuRunner.Page,
         source: AidokuRunner.Source,
-        sourceId: String
+        sourceId: String,
+        nativePages: Bool
     ) async throws -> PageData? {
         switch page.content {
         case .url(let url, let context):
+            if nativePages {
+                return PageData(aidokuURL: url, context: context, source: source, sourceId: sourceId)
+            }
+
             var request = URLRequest(url: url)
             if source.features.providesImageRequests {
                 request = (try? await source.getImageRequest(url: url.absoluteString, context: context)) ?? request
@@ -1190,7 +1195,14 @@ final class AidokuSourceManager: ObservableObject {
             return PageData(content: .text(text))
 
         case .zipFile(let url, let filePath):
+            if nativePages, !filePath.lowercased().hasSuffix(".txt") {
+                return PageData(aidokuZipURL: url, filePath: filePath, sourceId: sourceId)
+            }
             let data = try await zipEntryData(url: url, filePath: filePath, sourceId: sourceId)
+            if filePath.lowercased().hasSuffix(".txt"),
+               let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .ascii) {
+                return PageData(content: .text(text))
+            }
             return PageData(content: .imageData(data))
         }
     }

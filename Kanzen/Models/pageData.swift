@@ -8,6 +8,9 @@
 import SwiftUI
 import Foundation
 import Kingfisher
+#if !os(tvOS)
+import AidokuRunner
+#endif
 
 enum ChapterPosition {
     case prev
@@ -25,6 +28,9 @@ enum ReaderPageContent: Equatable {
 struct PageData: Identifiable, Equatable {
     let id = UUID()
     let content: ReaderPageContent
+#if !os(tvOS)
+    let aidokuPage: ReaderAidokuPagePayload?
+#endif
 
     init(content: String) {
         if content == "CHAPTER_END" {
@@ -32,11 +38,35 @@ struct PageData: Identifiable, Equatable {
         } else {
             self.content = .url(content)
         }
+#if !os(tvOS)
+        self.aidokuPage = nil
+#endif
     }
 
     init(content: ReaderPageContent) {
         self.content = content
+#if !os(tvOS)
+        self.aidokuPage = nil
+#endif
     }
+
+#if !os(tvOS)
+    init(aidokuURL url: URL, context: PageContext?, source: AidokuRunner.Source, sourceId: String) {
+        self.content = .url(url.absoluteString)
+        self.aidokuPage = ReaderAidokuPagePayload(
+            kind: .url(url: url, context: context, source: source),
+            sourceId: sourceId
+        )
+    }
+
+    init(aidokuZipURL url: URL, filePath: String, sourceId: String) {
+        self.content = .url(url.absoluteString)
+        self.aidokuPage = ReaderAidokuPagePayload(
+            kind: .zipFile(url: url, filePath: filePath),
+            sourceId: sourceId
+        )
+    }
+#endif
 
     var urlString: String? {
         if case .url(let value, _) = content {
@@ -74,6 +104,11 @@ struct PageData: Identifiable, Equatable {
     }
 
     var cacheKey: String {
+#if !os(tvOS)
+        if let aidokuPage {
+            return aidokuPage.cacheKey
+        }
+#endif
         switch content {
         case .url(let value, _):
             return value
@@ -94,6 +129,33 @@ struct PageData: Identifiable, Equatable {
         lhs.id == rhs.id
     }
 }
+
+#if !os(tvOS)
+final class ReaderAidokuPagePayload {
+    enum Kind {
+        case url(url: URL, context: PageContext?, source: AidokuRunner.Source)
+        case zipFile(url: URL, filePath: String)
+    }
+
+    let kind: Kind
+    let sourceId: String
+
+    init(kind: Kind, sourceId: String) {
+        self.kind = kind
+        self.sourceId = sourceId
+    }
+
+    var cacheKey: String {
+        switch kind {
+        case .url(let url, let context, _):
+            let contextKey = context.map { String(describing: $0).hashValue } ?? 0
+            return "aidoku-url-\(sourceId)-\(url.absoluteString)-\(contextKey)"
+        case .zipFile(let url, let filePath):
+            return "aidoku-zip-\(sourceId)-\(url.absoluteString)-\(filePath)"
+        }
+    }
+}
+#endif
 
 struct Chapters: Identifiable {
     let id = UUID()

@@ -172,9 +172,6 @@ var nextControllers: [UIViewController]?
     }
 
     func setTransientIndex(_ index: Int) {
-        if self.index != index {
-            self.index = index
-        }
         schedulePagePositionPersist(page: index)
     }
 
@@ -185,6 +182,9 @@ var nextControllers: [UIViewController]?
         pendingPagePersistTask = nil
         pendingPagePersist = nil
         pendingPagePersistChapterNumber = nil
+        if self.index != page {
+            self.index = page
+        }
         persistCurrentPagePosition(page: page, chapterNumber: chapterNumber)
     }
 
@@ -479,10 +479,12 @@ var nextControllers: [UIViewController]?
                     }
                 } else if let payload = params as? AidokuChapterPayload {
                     loadSource = "aidoku"
+                    let keepNativePages = self.readingMode == .WEBTOON
                     pages = try await AidokuSourceManager.shared.pageList(
                         sourceId: payload.sourceId,
                         manga: payload.manga,
-                        chapter: payload.chapter
+                        chapter: payload.chapter,
+                        nativePages: keepNativePages
                     )
                 } else {
                     loadSource = "legacy"

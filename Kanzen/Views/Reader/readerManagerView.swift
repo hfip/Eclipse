@@ -23,6 +23,7 @@ struct readerManagerView:View {
     // new Implementation
     
     @StateObject   var reader_manager: readerManager
+    @State private var webtoonPageDisplay = ReaderPageDisplayState()
     init (chapters: [Chapter]?,selectedChapter: Chapter?,kanzen: KanzenEngine, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil, mangaFormat: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil)
     {
         self.kanzen = kanzen
@@ -95,7 +96,12 @@ struct readerManagerView:View {
         case .LTR: pageReader(reader_manager: reader_manager, pageViewConfig: .LTR).id("LTR").onTapGesture {
             showFullScreen.toggle()
         }
-        case .WEBTOON: WebtoonView(reader_manager: reader_manager) {
+        case .WEBTOON: WebtoonView(
+            reader_manager: reader_manager,
+            onPageChanged: { page in
+                webtoonPageDisplay.setIndex(page)
+            }
+        ) {
             showFullScreen.toggle()
         }
         .id("WEBTOON")
@@ -103,7 +109,12 @@ struct readerManagerView:View {
         case .RTL: pageReader(reader_manager: reader_manager,pageViewConfig: .RTL).id("RTL").onTapGesture {
             showFullScreen.toggle()
         }
-        case .VERTICAL: WebtoonView(reader_manager: reader_manager) {
+        case .VERTICAL: WebtoonView(
+            reader_manager: reader_manager,
+            onPageChanged: { page in
+                webtoonPageDisplay.setIndex(page)
+            }
+        ) {
             showFullScreen.toggle()
         }
         .id("VERTICAL")
@@ -199,11 +210,10 @@ struct readerManagerView:View {
                             }
                             .disabled(reader_manager.selectedChapter?.idx == 0)
 
-                            Text("\(min(reader_manager.index + 1, max(reader_manager.currChapter.count, 1))) of \(max(reader_manager.currChapter.count, 1))")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
-                                .monospacedDigit()
+                            ReaderPageCounterText(
+                                readerManager: reader_manager,
+                                webtoonPageDisplay: webtoonPageDisplay
+                            )
 
                             Button {
                                 reader_manager.goToNextChapter()
@@ -312,6 +322,76 @@ struct readerManagerView:View {
         case "landscape": return .landscape
         default: return .all
         }
+    }
+}
+
+final class ReaderPageDisplayState {
+    private weak var label: UILabel?
+    private var pageCount: Int = 1
+    private var fallbackIndex: Int = 0
+    private var usesWebtoonIndex = true
+    private var chapterSignature = ""
+    private(set) var index: Int = 0
+
+    func configure(label: UILabel, pageCount: Int, fallbackIndex: Int, usesWebtoonIndex: Bool, chapterSignature: String) {
+        self.label = label
+        let nextPageCount = max(pageCount, 1)
+        if self.chapterSignature != chapterSignature || self.pageCount != nextPageCount {
+            self.chapterSignature = chapterSignature
+            index = min(max(fallbackIndex, 0), max(nextPageCount - 1, 0))
+        }
+        self.pageCount = nextPageCount
+        self.fallbackIndex = max(fallbackIndex, 0)
+        self.usesWebtoonIndex = usesWebtoonIndex
+        updateLabel()
+    }
+
+    func setIndex(_ index: Int) {
+        let clamped = min(max(index, 0), max(pageCount - 1, 0))
+        guard self.index != clamped else { return }
+        self.index = clamped
+        updateLabel()
+    }
+
+    private func updateLabel() {
+        let current = usesWebtoonIndex ? index : fallbackIndex
+        label?.text = "\(min(current + 1, pageCount)) of \(pageCount)"
+    }
+}
+
+private struct ReaderPageCounterText: UIViewRepresentable {
+    let readerManager: readerManager
+    let webtoonPageDisplay: ReaderPageDisplayState
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.font = UIFont.monospacedDigitSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .medium)
+        label.textColor = .white
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        configure(label)
+        return label
+    }
+
+    func updateUIView(_ uiView: UILabel, context: Context) {
+        configure(uiView)
+    }
+
+    private func configure(_ label: UILabel) {
+        let usesWebtoonIndex: Bool
+        switch readerManager.readingMode {
+        case .WEBTOON, .VERTICAL:
+            usesWebtoonIndex = true
+        case .LTR, .RTL:
+            usesWebtoonIndex = false
+        }
+        webtoonPageDisplay.configure(
+            label: label,
+            pageCount: readerManager.currChapter.count,
+            fallbackIndex: readerManager.index,
+            usesWebtoonIndex: usesWebtoonIndex,
+            chapterSignature: "\(readerManager.selectedChapter?.idx ?? -1):\(readerManager.selectedChapter?.chapterNumber ?? ""):\(readerManager.currChapter.count)"
+        )
     }
 }
 #endif

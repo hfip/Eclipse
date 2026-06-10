@@ -11,18 +11,22 @@ import QuartzCore
 import ImageIO
 import Nuke
 import AsyncDisplayKit
+import AidokuRunner
+import ZIPFoundation
 
-struct WebtoonView: UIViewRepresentable {
-    @ObservedObject var reader_manager: readerManager
+struct WebtoonView: UIViewControllerRepresentable {
+    let reader_manager: readerManager
+    var onPageChanged: (Int) -> Void = { _ in }
     var onTap: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(reader_manager: reader_manager, onTap: onTap)
+        Coordinator(reader_manager: reader_manager, onPageChanged: onPageChanged, onTap: onTap)
     }
 
-    func makeUIView(context: Context) -> WebtoonTextureContainerView {
+    func makeUIViewController(context: Context) -> WebtoonReaderViewController {
         let layout = WebtoonOffsetPreservingLayout()
-        let containerView = WebtoonTextureContainerView(layout: layout)
+        let viewController = WebtoonReaderViewController(layout: layout)
+        let containerView = viewController.containerView
         let collectionNode = containerView.collectionNode
         let collectionView = collectionNode.view
         layout.fallbackHeightProvider = { [weak coordinator = context.coordinator] indexPath, width in
@@ -70,22 +74,24 @@ struct WebtoonView: UIViewRepresentable {
         collectionView.addGestureRecognizer(pinch)
 
         context.coordinator.collectionNode = collectionNode
-        return containerView
+        return viewController
     }
 
-    func updateUIView(_ uiView: WebtoonTextureContainerView, context: Context) {
+    func updateUIViewController(_ uiViewController: WebtoonReaderViewController, context: Context) {
         context.coordinator.reader_manager = reader_manager
+        context.coordinator.onPageChanged = onPageChanged
         context.coordinator.onTap = onTap
-        context.coordinator.configure(uiView.collectionNode, manager: reader_manager)
+        context.coordinator.configure(uiViewController.containerView.collectionNode, manager: reader_manager)
     }
 
-    static func dismantleUIView(_ uiView: WebtoonTextureContainerView, coordinator: Coordinator) {
+    static func dismantleUIViewController(_ uiViewController: WebtoonReaderViewController, coordinator: Coordinator) {
         coordinator.stopPerfMonitoring()
         coordinator.cancelWork()
     }
 
     final class Coordinator: NSObject, ASCollectionDataSource, ASCollectionDelegate, UIGestureRecognizerDelegate {
         var reader_manager: readerManager
+        var onPageChanged: (Int) -> Void
         var onTap: () -> Void
         weak var collectionNode: ASCollectionNode?
 
@@ -110,8 +116,9 @@ struct WebtoonView: UIViewRepresentable {
 
         fileprivate static let defaultImageAspectRatio: CGFloat = 2.25
 
-        init(reader_manager: readerManager, onTap: @escaping () -> Void) {
+        init(reader_manager: readerManager, onPageChanged: @escaping (Int) -> Void, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
+            self.onPageChanged = onPageChanged
             self.onTap = onTap
         }
 
@@ -506,6 +513,7 @@ struct WebtoonView: UIViewRepresentable {
                 } else {
                     reader_manager.setTransientIndex(visibleIndex)
                 }
+                onPageChanged(visibleIndex)
 
                 let now = Date()
                 if force || now.timeIntervalSince(lastScrollLogTime) > 2 {
@@ -600,6 +608,27 @@ struct WebtoonView: UIViewRepresentable {
             let last = pages.last?.cacheKey ?? ""
             return "\(pages.count)|\(first)|\(last)"
         }
+    }
+}
+
+final class WebtoonReaderViewController: UIViewController {
+    let containerView: WebtoonTextureContainerView
+
+    init(layout: UICollectionViewLayout) {
+        self.containerView = WebtoonTextureContainerView(layout: layout)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = containerView
+    }
+
+    override var prefersStatusBarHidden: Bool {
+        true
     }
 }
 
@@ -776,6 +805,7 @@ private final class WebtoonTexturePageNode: ASCellNode {
 
         imageLoadTask = Task { [weak self] in
             guard let self else { return }
+            let startedAt = Date()
             do {
                 let image = try await ReaderWebtoonImagePipeline.loadImage(
                     for: page,
@@ -792,10 +822,12 @@ private final class WebtoonTexturePageNode: ASCellNode {
                     self.imageRatio = image.size.width > 0 ? image.size.height / image.size.width : self.estimatedRatio
                     self.renderState = .image
                     self.onHeightChanged?(self.page, image.size, self.pageIndex)
+                    self.logSlowLoadIfNeeded(startedAt: startedAt, image: image)
                     self.setNeedsLayout()
                 }
             } catch {
                 await MainActor.run {
+                    self.logSlowFailureIfNeeded(startedAt: startedAt, error: error)
                     self.renderState = .failure
                     self.setNeedsLayout()
                 }
@@ -810,6 +842,32 @@ private final class WebtoonTexturePageNode: ASCellNode {
         renderState = .loading
         setNeedsLayout()
         loadIfNeeded()
+    }
+
+    private func logSlowLoadIfNeeded(startedAt: Date, image: UIImage) {
+        let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        guard elapsedMs >= 250 else { return }
+        ReaderLogger.shared.log(
+            "Webtoon page load slow page=\(pageIndex + 1) source=\(sourceKind) elapsedMs=\(elapsedMs) pixels=\(Int(image.size.width))x\(Int(image.size.height))",
+            type: "ReaderPerf"
+        )
+    }
+
+    private func logSlowFailureIfNeeded(startedAt: Date, error: Error) {
+        let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        guard elapsedMs >= 250 else { return }
+        ReaderLogger.shared.log(
+            "Webtoon page load failed page=\(pageIndex + 1) source=\(sourceKind) elapsedMs=\(elapsedMs) error=\(error.localizedDescription)",
+            type: "ReaderPerf"
+        )
+    }
+
+    private var sourceKind: String {
+        if page.textContent != nil { return "text" }
+        if page.imageData != nil { return "data" }
+        if let urlString = page.urlString, URL(string: urlString)?.isFileURL == true { return "file" }
+        if page.urlString != nil { return "network" }
+        return "unknown"
     }
 
     private static func statusText(_ value: String) -> NSAttributedString {
@@ -1381,6 +1439,16 @@ private enum ReaderWebtoonImagePipeline {
         scale: CGFloat,
         taskSink: ((ImageTask) -> Void)? = nil
     ) async throws -> UIImage {
+        if let aidokuPage = page.aidokuPage {
+            return try await loadAidokuImage(
+                aidokuPage,
+                pageKey: page.cacheKey,
+                targetSize: targetSize,
+                scale: scale,
+                taskSink: taskSink
+            )
+        }
+
         if let data = page.imageData {
             return try await decodeImageData(data, targetWidth: targetSize.width, scale: scale)
         }
@@ -1415,6 +1483,192 @@ private enum ReaderWebtoonImagePipeline {
             throw CancellationError()
         }
         return response.image
+    }
+
+    private static func loadAidokuImage(
+        _ payload: ReaderAidokuPagePayload,
+        pageKey: String,
+        targetSize: CGSize,
+        scale: CGFloat,
+        taskSink: ((ImageTask) -> Void)?
+    ) async throws -> UIImage {
+        switch payload.kind {
+        case .url(let url, let context, let source):
+            return try await loadAidokuURLImage(
+                url: url,
+                context: context,
+                source: source,
+                sourceId: payload.sourceId,
+                pageKey: pageKey,
+                targetSize: targetSize,
+                scale: scale,
+                taskSink: taskSink
+            )
+        case .zipFile(let url, let filePath):
+            return try await loadAidokuZipImage(
+                url: url,
+                filePath: filePath,
+                sourceId: payload.sourceId,
+                pageKey: pageKey,
+                targetSize: targetSize,
+                scale: scale
+            )
+        }
+    }
+
+    private static func loadAidokuURLImage(
+        url: URL,
+        context: PageContext?,
+        source: AidokuRunner.Source,
+        sourceId: String,
+        pageKey: String,
+        targetSize: CGSize,
+        scale: CGFloat,
+        taskSink: ((ImageTask) -> Void)?
+    ) async throws -> UIImage {
+        var urlRequest = URLRequest(url: url)
+        if source.features.providesImageRequests {
+            urlRequest = (try? await source.getImageRequest(url: url.absoluteString, context: context)) ?? urlRequest
+        }
+        urlRequest = try AidokuNetworkClient.prepare(urlRequest)
+
+        if source.features.processesPages, !url.isFileURL {
+            return try await loadProcessedAidokuURLImage(
+                request: urlRequest,
+                context: context,
+                source: source,
+                sourceId: sourceId,
+                pageKey: pageKey,
+                targetSize: targetSize,
+                scale: scale
+            )
+        }
+
+        let imageRequest = ImageRequest(
+            urlRequest: urlRequest,
+            processors: [
+                ReaderWebtoonDownsampleProcessor(width: max(targetSize.width, 1), scaleFactor: scale)
+            ]
+        )
+        let task = ImagePipeline.shared.loadImage(
+            with: imageRequest,
+            progress: { _, _, _ in },
+            completion: { _ in }
+        )
+        taskSink?(task)
+        let response = try await task.response
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        return response.image
+    }
+
+    private static func loadProcessedAidokuURLImage(
+        request: URLRequest,
+        context: PageContext?,
+        source: AidokuRunner.Source,
+        sourceId: String,
+        pageKey: String,
+        targetSize: CGSize,
+        scale: CGFloat
+    ) async throws -> UIImage {
+        let cacheRequest = ImageRequest(
+            id: "\(pageKey)-processed-\(Int(max(targetSize.width, 1) * scale))",
+            data: { Data() },
+            userInfo: [:]
+        )
+        if let cached = ImagePipeline.shared.cache.cachedImage(for: cacheRequest)?.image {
+            return cached
+        }
+
+        let (data, response) = try await AidokuNetworkClient.perform(request, sourceId: sourceId, operation: "pageImage")
+        guard let inputImage = UIImage(data: data) else {
+            throw ReaderWebtoonImageError.decodeFailed
+        }
+
+        let pointer = try await source.store(value: inputImage)
+        defer {
+            Task { try? await source.remove(value: pointer) }
+        }
+
+        let http = response as? HTTPURLResponse
+        let headers = http?.allHeaderFields.reduce(into: [String: String]()) { result, item in
+            if let key = item.key as? String {
+                result[key] = String(describing: item.value)
+            }
+        } ?? [:]
+
+        let processed = try await source.processPageImage(
+            response: AidokuRunner.Response(
+                code: http?.statusCode ?? 200,
+                headers: headers,
+                request: AidokuRunner.Request(url: request.url, headers: request.allHTTPHeaderFields ?? [:]),
+                image: pointer
+            ),
+            context: context
+        )
+
+        let output = processed ?? inputImage
+        let downsampled = ReaderWebtoonDownsampleProcessor(
+            width: max(targetSize.width, 1),
+            scaleFactor: scale
+        ).process(output) ?? output
+        ImagePipeline.shared.cache.storeCachedImage(ImageContainer(image: downsampled), for: cacheRequest)
+        return downsampled
+    }
+
+    private static func loadAidokuZipImage(
+        url: URL,
+        filePath: String,
+        sourceId: String,
+        pageKey: String,
+        targetSize: CGSize,
+        scale: CGFloat
+    ) async throws -> UIImage {
+        let cacheRequest = ImageRequest(
+            id: "\(pageKey)-zip-\(Int(max(targetSize.width, 1) * scale))",
+            data: { Data() },
+            userInfo: [:]
+        )
+        if let cached = ImagePipeline.shared.cache.cachedImage(for: cacheRequest)?.image {
+            return cached
+        }
+
+        let localURL = try await localZipURL(for: url, sourceId: sourceId)
+        guard let archive = Archive(url: localURL, accessMode: .read),
+              let entry = archive[filePath] else {
+            throw ReaderWebtoonImageError.decodeFailed
+        }
+
+        var data = Data()
+        _ = try archive.extract(entry) { chunk in
+            data.append(chunk)
+        }
+        let image = try await decodeImageData(data, targetWidth: targetSize.width, scale: scale)
+        ImagePipeline.shared.cache.storeCachedImage(ImageContainer(image: image), for: cacheRequest)
+        return image
+    }
+
+    private static func localZipURL(for url: URL, sourceId: String) async throws -> URL {
+        if url.isFileURL {
+            return url
+        }
+
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ReaderAidokuZipCache", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let fileName = "zip-\(sourceId)-\(url.absoluteString.hashValue.magnitude)"
+        let destination = directory
+            .appendingPathComponent(fileName)
+            .appendingPathExtension(url.pathExtension.isEmpty ? "zip" : url.pathExtension)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            return destination
+        }
+
+        let (data, _) = try await AidokuNetworkClient.perform(URLRequest(url: url), sourceId: sourceId, operation: "zipPage")
+        try data.write(to: destination, options: .atomic)
+        return destination
     }
 
     private static func decodeImageData(_ data: Data, targetWidth: CGFloat, scale: CGFloat) async throws -> UIImage {

@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if !os(tvOS)
+import Nuke
+#endif
 
 class AppDelegate: NSObject, UIApplicationDelegate {
 #if !os(tvOS)
@@ -46,6 +49,9 @@ struct SoraApp: App {
     init() {
         CrashReportManager.shared.start()
         GitHubReleaseChecker.registerDefaults()
+#if !os(tvOS)
+        ReaderImagePipelineConfigurator.configureIfNeeded()
+#endif
 
         // Check and auto-clear cache on app startup if threshold exceeded
         DispatchQueue.global(qos: .background).async {
@@ -109,3 +115,40 @@ struct SoraApp: App {
         }
     }
 }
+
+#if !os(tvOS)
+private enum ReaderImagePipelineConfigurator {
+    private static var didConfigure = false
+
+    static func configureIfNeeded() {
+        guard !didConfigure else { return }
+        didConfigure = true
+
+        DataLoader.sharedUrlCache.diskCapacity = 0
+        DataLoader.sharedUrlCache.memoryCapacity = 0
+
+        let pipeline = ImagePipeline {
+            let configuration = URLSessionConfiguration.default
+            configuration.urlCache = nil
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.httpShouldSetCookies = false
+            configuration.httpCookieStorage = nil
+
+            let dataCache = try? DataCache(name: "com.luna.reader.datacache")
+            dataCache?.sizeLimit = 500 * 1024 * 1024
+
+            let imageCache = Nuke.ImageCache()
+            imageCache.costLimit = 100 * 1024 * 1024
+
+            $0.dataCache = dataCache
+            $0.imageCache = imageCache
+            $0.dataLoader = DataLoader(configuration: configuration)
+            $0.dataCachePolicy = .storeOriginalData
+            $0.isStoringPreviewsInMemoryCache = false
+        }
+
+        ImagePipeline.shared = pipeline
+        ReaderLogger.shared.log("Configured reader image pipeline cache data=500MB image=100MB", type: "ReaderPerf")
+    }
+}
+#endif
