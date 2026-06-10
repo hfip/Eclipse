@@ -36,6 +36,12 @@ struct KanzenModuleView: View {
                 .ignoresSafeArea()
                  Form
                  {
+                     Section {
+                         Text("Aidoku sources are recommended for the best Reader home, search, downloads, and update support. Legacy JS modules are kept for compatibility.")
+                             .font(.footnote)
+                             .foregroundColor(.secondary)
+                     }
+
                      if(moduleManager.modules.isEmpty)
                      {
                          VStack(spacing:10){

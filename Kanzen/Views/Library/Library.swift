@@ -42,7 +42,6 @@ struct KanzenLibraryView: View {
                         .disabled(isRefreshingSources)
                         .accessibilityLabel("Refresh Sources")
                     }
-                    .padding(.horizontal, -16)
 
                     if let refreshStatus {
                         Text(refreshStatus)

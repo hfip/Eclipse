@@ -316,6 +316,10 @@ final class ReaderDownloadManager: ObservableObject {
         processQueue()
     }
 
+    func applyQueueSettingsChanged() {
+        processQueue()
+    }
+
     func cancelDownload(id: String) {
         pausedIds.remove(id)
         activeTasks[id]?.cancel()

@@ -76,6 +76,7 @@ struct BackupData: Codable {
 
     // Manga / Reader
     var readingMode: Int = 2
+    var readerReadThresholdPercent: Double = 80
 
     // Novel Reader
     var readerFontSize: Double = 16
@@ -131,7 +132,7 @@ struct BackupData: Codable {
         case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
         case showKanzen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
-        case readingMode
+        case readingMode, readerReadThresholdPercent
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, servicesAutoModeQualityPreference
         case collections, progressData, trackerState, catalogs, services, stremioAddons
@@ -209,6 +210,7 @@ struct BackupData: Codable {
 
         // Manga / Reader
         readingMode = try container.decodeIfPresent(Int.self, forKey: .readingMode) ?? 2
+        readerReadThresholdPercent = Self.sanitizedReaderReadThresholdPercent(try container.decodeIfPresent(Double.self, forKey: .readerReadThresholdPercent))
 
         // Novel Reader
         readerFontSize = try container.decodeIfPresent(Double.self, forKey: .readerFontSize) ?? 16
@@ -361,6 +363,7 @@ struct BackupData: Codable {
 
         // Manga / Reader
         try container.encode(readingMode, forKey: .readingMode)
+        try container.encode(readerReadThresholdPercent, forKey: .readerReadThresholdPercent)
 
         // Novel Reader
         try container.encode(readerFontSize, forKey: .readerFontSize)
@@ -457,6 +460,7 @@ struct BackupData: Codable {
 
         // Manga / Reader
         readingMode: Int = 2,
+        readerReadThresholdPercent: Double = 80,
 
         // Novel Reader
         readerFontSize: Double = 16,
@@ -547,6 +551,7 @@ struct BackupData: Codable {
         self.mediaColumnsLandscape = mediaColumnsLandscape
 
         self.readingMode = readingMode
+        self.readerReadThresholdPercent = Self.sanitizedReaderReadThresholdPercent(readerReadThresholdPercent)
 
         self.readerFontSize = readerFontSize
         self.readerFontFamily = readerFontFamily
@@ -631,6 +636,11 @@ struct BackupData: Codable {
 
     static func sanitizedReaderDetailHiddenElements(_ value: String?) -> String {
         ReaderDetailElement.rawValue(for: ReaderDetailElement.hiddenElements(from: value))
+    }
+
+    static func sanitizedReaderReadThresholdPercent(_ value: Double?) -> Double {
+        guard let value, value.isFinite else { return 80 }
+        return max(50, min(value, 100))
     }
 
 }
@@ -883,6 +893,7 @@ class BackupManager {
 
         // Manga / Reader
         let readingMode = userDefaults.object(forKey: "readingMode") != nil ? userDefaults.integer(forKey: "readingMode") : ReadingMode.WEBTOON.rawValue
+        let readerReadThresholdPercent = BackupData.sanitizedReaderReadThresholdPercent(userDefaults.object(forKey: "readerReadThresholdPercent") as? Double)
 
         // Novel Reader
         let savedReaderFontSize = userDefaults.double(forKey: "readerFontSize")
@@ -1050,6 +1061,7 @@ class BackupManager {
             mediaColumnsLandscape: mediaColumnsLandscape,
 
             readingMode: readingMode,
+            readerReadThresholdPercent: readerReadThresholdPercent,
 
             readerFontSize: readerFontSize,
             readerFontFamily: readerFontFamily,
@@ -1197,6 +1209,7 @@ class BackupManager {
 
         // Manga / Reader
         let readingMode = json["readingMode"] as? Int ?? 2
+        let readerReadThresholdPercent = BackupData.sanitizedReaderReadThresholdPercent(json["readerReadThresholdPercent"] as? Double)
 
         // Novel Reader
         let readerFontSize = json["readerFontSize"] as? Double ?? 16
@@ -1407,6 +1420,7 @@ class BackupManager {
             mediaColumnsPortrait: mediaColumnsPortrait,
             mediaColumnsLandscape: mediaColumnsLandscape,
             readingMode: readingMode,
+            readerReadThresholdPercent: readerReadThresholdPercent,
             readerFontSize: readerFontSize,
             readerFontFamily: readerFontFamily,
             readerFontWeight: readerFontWeight,
@@ -1517,6 +1531,7 @@ class BackupManager {
 
         // Manga / Reader
         userDefaults.set(backup.readingMode, forKey: "readingMode")
+        userDefaults.set(BackupData.sanitizedReaderReadThresholdPercent(backup.readerReadThresholdPercent), forKey: "readerReadThresholdPercent")
 
         // Novel Reader
         userDefaults.set(backup.readerFontSize, forKey: "readerFontSize")

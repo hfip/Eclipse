@@ -37,6 +37,8 @@ struct NovelReaderView: View {
     @State private var isHeaderVisible: Bool = true
     @State private var isSettingsExpanded: Bool = false
     @State private var readingProgress: Double = 0.0
+    @State private var autoMarkedReadChapters: Set<String> = []
+    @AppStorage("readerReadThresholdPercent") private var readerReadThresholdPercent: Double = 80
 
     // Reader settings (persisted)
     @State private var fontSize: CGFloat
@@ -88,6 +90,10 @@ struct NovelReaderView: View {
 
     private var currentTextColor: Color {
         Color(hex: colorPresets[selectedColorPreset].text)
+    }
+
+    private var readerReadThreshold: Double {
+        max(50, min(readerReadThresholdPercent, 100)) / 100
     }
 
     init(kanzen: KanzenEngine, chapters: [Chapter], initialChapter: Chapter, mangaId: Int, mangaTitle: String, mangaCoverURL: String, mangaRoute: MangaContentRoute? = nil, mangaFormat: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil) {
@@ -162,6 +168,9 @@ struct NovelReaderView: View {
                         chapterKey: currentChapter.id.uuidString,
                         onProgressChanged: { progress in
                             self.readingProgress = progress
+                            if progress >= readerReadThreshold {
+                                self.markCurrentChapterReadIfNeeded()
+                            }
                         }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -293,13 +302,19 @@ struct NovelReaderView: View {
         )
     }
 
+    private func markCurrentChapterReadIfNeeded() {
+        guard !autoMarkedReadChapters.contains(currentChapter.chapterNumber) else { return }
+        autoMarkedReadChapters.insert(currentChapter.chapterNumber)
+        markCurrentChapterRead()
+    }
+
     // MARK: - Header
 
     private var headerView: some View {
         VStack {
             HStack {
                 Button {
-                    if readingProgress >= 0.95 { markCurrentChapterRead() }
+                    if readingProgress >= readerReadThreshold { markCurrentChapterReadIfNeeded() }
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")

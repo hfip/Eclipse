@@ -15,6 +15,8 @@ struct MangaProgress: Codable {
     var lastReadDate: Date?
     /// Page index keyed by chapter number, so reader can resume mid-chapter.
     var pagePositions: [String: Int] = [:]
+    /// Page count keyed by chapter number, so detail rows can display resume progress.
+    var pageCounts: [String: Int] = [:]
     // Display metadata for history
     var title: String?
     var coverURL: String?
@@ -32,6 +34,79 @@ struct MangaProgress: Codable {
     var contentParams: String?
     var isNovel: Bool?
     var route: MangaContentRoute?
+
+    enum CodingKeys: String, CodingKey {
+        case readChapterNumbers
+        case lastReadChapter
+        case lastReadDate
+        case pagePositions
+        case pageCounts
+        case title
+        case coverURL
+        case format
+        case totalChapters
+        case latestChapterNumbers
+        case lastSourceRefresh
+        case sourceRefreshError
+        case trackerAniListId
+        case trackerMALId
+        case trackerMatchConfidence
+        case trackerResolvedAt
+        case moduleUUID
+        case contentParams
+        case isNovel
+        case route
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        readChapterNumbers = try container.decodeIfPresent(Set<String>.self, forKey: .readChapterNumbers) ?? []
+        lastReadChapter = try container.decodeIfPresent(String.self, forKey: .lastReadChapter)
+        lastReadDate = try container.decodeIfPresent(Date.self, forKey: .lastReadDate)
+        pagePositions = try container.decodeIfPresent([String: Int].self, forKey: .pagePositions) ?? [:]
+        pageCounts = try container.decodeIfPresent([String: Int].self, forKey: .pageCounts) ?? [:]
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        coverURL = try container.decodeIfPresent(String.self, forKey: .coverURL)
+        format = try container.decodeIfPresent(String.self, forKey: .format)
+        totalChapters = try container.decodeIfPresent(Int.self, forKey: .totalChapters)
+        latestChapterNumbers = try container.decodeIfPresent([String].self, forKey: .latestChapterNumbers)
+        lastSourceRefresh = try container.decodeIfPresent(Date.self, forKey: .lastSourceRefresh)
+        sourceRefreshError = try container.decodeIfPresent(String.self, forKey: .sourceRefreshError)
+        trackerAniListId = try container.decodeIfPresent(Int.self, forKey: .trackerAniListId)
+        trackerMALId = try container.decodeIfPresent(Int.self, forKey: .trackerMALId)
+        trackerMatchConfidence = try container.decodeIfPresent(Double.self, forKey: .trackerMatchConfidence)
+        trackerResolvedAt = try container.decodeIfPresent(Date.self, forKey: .trackerResolvedAt)
+        moduleUUID = try container.decodeIfPresent(String.self, forKey: .moduleUUID)
+        contentParams = try container.decodeIfPresent(String.self, forKey: .contentParams)
+        isNovel = try container.decodeIfPresent(Bool.self, forKey: .isNovel)
+        route = try container.decodeIfPresent(MangaContentRoute.self, forKey: .route)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(readChapterNumbers, forKey: .readChapterNumbers)
+        try container.encodeIfPresent(lastReadChapter, forKey: .lastReadChapter)
+        try container.encodeIfPresent(lastReadDate, forKey: .lastReadDate)
+        try container.encode(pagePositions, forKey: .pagePositions)
+        try container.encode(pageCounts, forKey: .pageCounts)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(coverURL, forKey: .coverURL)
+        try container.encodeIfPresent(format, forKey: .format)
+        try container.encodeIfPresent(totalChapters, forKey: .totalChapters)
+        try container.encodeIfPresent(latestChapterNumbers, forKey: .latestChapterNumbers)
+        try container.encodeIfPresent(lastSourceRefresh, forKey: .lastSourceRefresh)
+        try container.encodeIfPresent(sourceRefreshError, forKey: .sourceRefreshError)
+        try container.encodeIfPresent(trackerAniListId, forKey: .trackerAniListId)
+        try container.encodeIfPresent(trackerMALId, forKey: .trackerMALId)
+        try container.encodeIfPresent(trackerMatchConfidence, forKey: .trackerMatchConfidence)
+        try container.encodeIfPresent(trackerResolvedAt, forKey: .trackerResolvedAt)
+        try container.encodeIfPresent(moduleUUID, forKey: .moduleUUID)
+        try container.encodeIfPresent(contentParams, forKey: .contentParams)
+        try container.encodeIfPresent(isNovel, forKey: .isNovel)
+        try container.encodeIfPresent(route, forKey: .route)
+    }
 }
 
 // MARK: - Progress Manager
@@ -66,20 +141,89 @@ final class MangaReadingProgressManager: ObservableObject {
         progressMap[mangaId]?.pagePositions[chapterNumber] ?? 0
     }
 
+    func pageProgress(mangaId: Int, chapterNumber: String) -> (page: Int, total: Int)? {
+        guard let progress = progressMap[mangaId],
+              let zeroBasedPage = progress.pagePositions[chapterNumber],
+              let total = progress.pageCounts[chapterNumber],
+              total > 0 else { return nil }
+        return (page: min(max(zeroBasedPage + 1, 1), total), total: total)
+    }
+
+    func pageProgressLabel(mangaId: Int, chapterNumber: String) -> String? {
+        guard let pageProgress = pageProgress(mangaId: mangaId, chapterNumber: chapterNumber) else { return nil }
+        return "Page \(pageProgress.page) of \(pageProgress.total)"
+    }
+
     func progress(for mangaId: Int) -> MangaProgress? {
         progressMap[mangaId]
     }
 
-    func savePagePosition(mangaId: Int, chapterNumber: String, page: Int, mangaTitle: String? = nil, coverURL: String? = nil, route: MangaContentRoute? = nil) {
+    func savePagePosition(
+        mangaId: Int,
+        chapterNumber: String,
+        page: Int,
+        pageCount: Int? = nil,
+        mangaTitle: String? = nil,
+        coverURL: String? = nil,
+        format: String? = nil,
+        totalChapters: Int? = nil,
+        latestChapterNumbers: [String]? = nil,
+        moduleUUID: String? = nil,
+        contentParams: String? = nil,
+        isNovel: Bool? = nil,
+        route: MangaContentRoute? = nil,
+        trackerAniListId: Int? = nil,
+        trackerMALId: Int? = nil,
+        readThreshold: Double = 0.8
+    ) {
         var progress = progressMap[mangaId] ?? MangaProgress()
-        progress.pagePositions[chapterNumber] = page
+        let safePageCount = pageCount.map { max($0, 0) }
+        let safePage = max(page, 0)
+        progress.pagePositions[chapterNumber] = safePage
+        if let safePageCount, safePageCount > 0 {
+            progress.pageCounts[chapterNumber] = safePageCount
+        }
         progress.lastReadChapter = chapterNumber
         progress.lastReadDate = Date()
         if let t = mangaTitle { progress.title = t }
         if let c = coverURL { progress.coverURL = c }
+        if let f = format { progress.format = f }
+        let uniqueLatestChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
+        if let uniqueLatestChapterNumbers {
+            progress.latestChapterNumbers = uniqueLatestChapterNumbers
+            progress.totalChapters = uniqueLatestChapterNumbers.count
+        } else if let totalChapters {
+            progress.totalChapters = totalChapters
+        }
+        if let moduleUUID { progress.moduleUUID = moduleUUID }
+        if let contentParams { progress.contentParams = contentParams }
+        if let isNovel { progress.isNovel = isNovel }
+        if let trackerAniListId { progress.trackerAniListId = trackerAniListId }
+        if let trackerMALId { progress.trackerMALId = trackerMALId }
         applyRoute(route, to: &progress)
+
+        let totalPages = safePageCount ?? progress.pageCounts[chapterNumber] ?? 0
+        var didMarkRead = false
+        if totalPages > 0 {
+            let completion = Double(min(safePage + 1, totalPages)) / Double(totalPages)
+            if completion >= readThreshold, !progress.readChapterNumbers.contains(chapterNumber) {
+                progress.readChapterNumbers.insert(chapterNumber)
+                didMarkRead = true
+            }
+        }
+
         progressMap[mangaId] = progress
         save()
+
+        if didMarkRead, let numericChapter = extractChapterNumber(from: chapterNumber) {
+            syncTrackerProgress(
+                mangaId: mangaId,
+                progress: progress,
+                chapterNumber: numericChapter,
+                explicitTitle: mangaTitle,
+                explicitTotalChapters: totalChapters
+            )
+        }
     }
 
     // MARK: - Mutations
@@ -282,6 +426,7 @@ final class MangaReadingProgressManager: ObservableObject {
         progress.lastReadChapter = nil
         progress.lastReadDate = nil
         progress.pagePositions.removeAll()
+        progress.pageCounts.removeAll()
         progressMap[mangaId] = progress
         save()
     }
@@ -292,6 +437,7 @@ final class MangaReadingProgressManager: ObservableObject {
             progressMap[mangaId]?.lastReadChapter = nil
             progressMap[mangaId]?.lastReadDate = nil
             progressMap[mangaId]?.pagePositions.removeAll()
+            progressMap[mangaId]?.pageCounts.removeAll()
         }
         save()
     }

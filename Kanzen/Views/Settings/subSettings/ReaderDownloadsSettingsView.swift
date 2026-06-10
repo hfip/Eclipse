@@ -26,7 +26,6 @@ struct ReaderDownloadsSettingsView: View {
         ScrollView {
             VStack(spacing: 24) {
                 KanzenRootHeader("Downloads")
-                    .padding(.horizontal, -20)
 
                 Picker("Downloads", selection: $selectedTab) {
                     ForEach(ReaderDownloadsTab.allCases, id: \.self) { tab in
@@ -97,9 +96,31 @@ struct ReaderDownloadsSettingsView: View {
                 GlassDivider()
 
                 GlassSettingsRow(icon: "rectangle.stack.fill", iconColor: .purple, title: "Parallel Downloads") {
-                    Stepper("\(max(1, min(parallelLimit, 4)))", value: $parallelLimit, in: 1...4)
-                        .labelsHidden()
-                        .frame(width: 96)
+                    Menu {
+                        ForEach(1...4, id: \.self) { limit in
+                            Button {
+                                parallelLimit = limit
+                                downloadManager.applyQueueSettingsChanged()
+                            } label: {
+                                HStack {
+                                    Text("\(limit)")
+                                    if parallelLimit == limit {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("\(max(1, min(parallelLimit, 4)))")
+                                .font(.subheadline.weight(.semibold))
+                                .monospacedDigit()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2.weight(.bold))
+                                .foregroundColor(.secondary)
+                        }
+                        .foregroundColor(.white)
+                    }
                 }
             }
         }
@@ -470,7 +491,10 @@ struct ReaderDownloadedTitleDetailView: View {
                     mangaId: title.mangaId,
                     mangaTitle: title.title,
                     mangaCoverURL: title.coverURL ?? "",
-                    mangaRoute: title.route
+                    mangaRoute: title.route,
+                    mangaFormat: title.format,
+                    totalChapters: chapters.count,
+                    latestChapterNumbers: chapters.map(\.chapterNumber)
                 )
             }
         }

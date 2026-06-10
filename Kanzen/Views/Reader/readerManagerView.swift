@@ -18,14 +18,15 @@ struct readerManagerView:View {
     @State private var showFullScreen = true
     @State private var showChapterlist: Bool = false
     @State private var showReadingModePicker = false
-    @State private var orientationLocked = false
+    @AppStorage("readerOrientationLockEnabled") private var orientationLocked = false
+    @AppStorage("readerOrientationLockMask") private var orientationLockMaskRaw = "all"
     // new Implementation
     
     @StateObject   var reader_manager: readerManager
-    init (chapters: [Chapter]?,selectedChapter: Chapter?,kanzen: KanzenEngine, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil)
+    init (chapters: [Chapter]?,selectedChapter: Chapter?,kanzen: KanzenEngine, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil, mangaFormat: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil)
     {
         self.kanzen = kanzen
-        _reader_manager =  StateObject(wrappedValue: readerManager(kanzen:kanzen,chapters: chapters,selectedChapter: selectedChapter, mangaId: mangaId, mangaTitle: mangaTitle, mangaCoverURL: mangaCoverURL, mangaRoute: mangaRoute))
+        _reader_manager =  StateObject(wrappedValue: readerManager(kanzen:kanzen,chapters: chapters,selectedChapter: selectedChapter, mangaId: mangaId, mangaTitle: mangaTitle, mangaCoverURL: mangaCoverURL, mangaRoute: mangaRoute, mangaFormat: mangaFormat, totalChapters: totalChapters, latestChapterNumbers: latestChapterNumbers, trackerAniListId: trackerAniListId, trackerMALId: trackerMALId))
         _chapters = State(initialValue: chapters)
         _selectedChapter = State(initialValue: selectedChapter)
     }
@@ -76,8 +77,15 @@ struct readerManagerView:View {
         .sheet(isPresented: $showReadingModePicker){
             readerManagerSettings(readerManager: reader_manager)
         }
+        .onAppear {
+            applyPersistedOrientationLockIfNeeded()
+        }
         .onDisappear {
-            AppDelegate.orientationLock = .all
+            if orientationLocked {
+                applyOrientationMask(mask(for: orientationLockMaskRaw), requestGeometryUpdate: false)
+            } else {
+                AppDelegate.orientationLock = .all
+            }
         }
         .navigationBarBackButtonHidden(true)
         .task {
@@ -231,21 +239,70 @@ struct readerManagerView:View {
     private func toggleOrientationLock() {
         orientationLocked.toggle()
         if orientationLocked {
-            if #available(iOS 16.0, *) {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-                let orientation = windowScene.interfaceOrientation
-                let mask: UIInterfaceOrientationMask = orientation.isPortrait ? .portrait : .landscape
-                AppDelegate.orientationLock = mask
-                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
-            } else {
-                AppDelegate.orientationLock = .portrait
-            }
+            let mask = currentExactOrientationMask()
+            orientationLockMaskRaw = rawValue(for: mask)
+            applyOrientationMask(mask, requestGeometryUpdate: false)
         } else {
-            AppDelegate.orientationLock = .all
-            if #available(iOS 16.0, *) {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .all))
-            }
+            orientationLockMaskRaw = "all"
+            applyOrientationMask(.all, requestGeometryUpdate: false)
+        }
+    }
+
+    private func applyPersistedOrientationLockIfNeeded() {
+        guard orientationLocked else { return }
+        applyOrientationMask(mask(for: orientationLockMaskRaw), requestGeometryUpdate: false)
+    }
+
+    private func currentExactOrientationMask() -> UIInterfaceOrientationMask {
+        guard let orientation = activeWindowScene?.interfaceOrientation else {
+            return .portrait
+        }
+        switch orientation {
+        case .portrait:
+            return .portrait
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        case .landscapeLeft:
+            return .landscapeLeft
+        case .landscapeRight:
+            return .landscapeRight
+        default:
+            return orientation.isLandscape ? .landscape : .portrait
+        }
+    }
+
+    private func applyOrientationMask(_ mask: UIInterfaceOrientationMask, requestGeometryUpdate: Bool) {
+        AppDelegate.orientationLock = mask
+        if #available(iOS 16.0, *), requestGeometryUpdate, let windowScene = activeWindowScene {
+            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+        }
+        activeWindowScene?.windows.first { $0.isKeyWindow }?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+    }
+
+    private var activeWindowScene: UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+    }
+
+    private func rawValue(for mask: UIInterfaceOrientationMask) -> String {
+        switch mask {
+        case .portrait: return "portrait"
+        case .portraitUpsideDown: return "portraitUpsideDown"
+        case .landscapeLeft: return "landscapeLeft"
+        case .landscapeRight: return "landscapeRight"
+        case .landscape: return "landscape"
+        default: return "all"
+        }
+    }
+
+    private func mask(for rawValue: String) -> UIInterfaceOrientationMask {
+        switch rawValue {
+        case "portrait": return .portrait
+        case "portraitUpsideDown": return .portraitUpsideDown
+        case "landscapeLeft": return .landscapeLeft
+        case "landscapeRight": return .landscapeRight
+        case "landscape": return .landscape
+        default: return .all
         }
     }
 }

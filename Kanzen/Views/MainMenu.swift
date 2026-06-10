@@ -26,7 +26,13 @@ struct KanzenModeSwitchButton: View {
             }
         } label: {
             Image(systemName: "play.rectangle.fill")
+                .font(.headline.weight(.semibold))
+                .foregroundColor(.white)
+                .frame(width: 42, height: 42)
+                .background(Color.accentColor.opacity(0.82))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Switch to Media Mode")
     }
 }

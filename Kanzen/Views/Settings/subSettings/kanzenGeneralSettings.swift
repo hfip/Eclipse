@@ -19,6 +19,7 @@ struct KanzenGeneralSettingsView: View {
     @AppStorage("readerTextAlignment") private var readerTextAlignment = "left"
     @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.6
     @AppStorage("readerMargin") private var readerMargin: Double = 4
+    @AppStorage("readerReadThresholdPercent") private var readerReadThresholdPercent: Double = 80
     @State private var readerDetailElements = ReaderDetailElement.orderedElements()
     @State private var hiddenReaderDetailElements = ReaderDetailElement.hiddenElements()
 
@@ -138,6 +139,20 @@ struct KanzenGeneralSettingsView: View {
                     Text("Margin")
                     Slider(value: $readerMargin, in: 0...30, step: 1)
                     Text("\(Int(readerMargin))")
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .background(LunaScrollTracker())
+
+            Section(
+                header: Text("Reader Progress"),
+                footer: Text("A chapter is marked read once you reach this percentage. This also controls when tracker progress can sync.")
+            ) {
+                HStack {
+                    Text("Mark as Read")
+                    Slider(value: $readerReadThresholdPercent, in: 50...100, step: 5)
+                    Text("\(Int(readerReadThresholdPercent))%")
                         .foregroundColor(.secondary)
                         .monospacedDigit()
                 }

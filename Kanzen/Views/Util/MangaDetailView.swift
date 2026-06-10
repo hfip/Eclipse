@@ -178,25 +178,7 @@ struct MangaDetailView: View {
             MangaAddToCollectionView(item: libraryItem)
                 .environmentObject(libraryManager)
         }
-        .fullScreenCover(item: $selectedChapterData, onDismiss: {
-            // Mark the chapter that was just read
-            if let chapter = selectedChapterData {
-                progressManager.markChapterRead(
-                    mangaId: progressMangaId,
-                    chapterNumber: chapter.chapterNumber,
-                    mangaTitle: selectedSourceDisplayTitle,
-                    coverURL: selectedSourceCoverURL,
-                    format: selectedSourceFormat,
-                    totalChapters: selectedSourceChapterTotal,
-                    latestChapterNumbers: currentChapterNumbers,
-                    moduleUUID: selectedSourceModuleUUID,
-                    contentParams: selectedSourceContentParams,
-                    isNovel: selectedSourceIsNovel,
-                    route: selectedContentRoute,
-                    trackerAniListId: knownTrackerAniListId
-                )
-            }
-        }) { chapter in
+        .fullScreenCover(item: $selectedChapterData) { chapter in
             if let chapters = loadedChapters, chapterLanguageIdx < chapters.count {
                 let chapterList = chapters[chapterLanguageIdx].chapters
                 let readerChapterList = readerChapters(from: chapterList)
@@ -224,7 +206,11 @@ struct MangaDetailView: View {
                         mangaId: progressMangaId,
                         mangaTitle: selectedSourceDisplayTitle,
                         mangaCoverURL: selectedSourceCoverURL ?? "",
-                        mangaRoute: selectedContentRoute
+                        mangaRoute: selectedContentRoute,
+                        mangaFormat: selectedSourceFormat,
+                        totalChapters: selectedSourceChapterTotal,
+                        latestChapterNumbers: currentChapterNumbers,
+                        trackerAniListId: knownTrackerAniListId
                     )
                 }
             }
@@ -699,6 +685,13 @@ struct MangaDetailView: View {
                                     .lineLimit(1)
                             }
 
+                            if !isRead, let progressLabel = progressManager.pageProgressLabel(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber) {
+                                Text(progressLabel)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+
                             if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
                                 ProgressView(value: downloadProgress)
                                     .tint(downloadStatus == .paused ? .gray : .accentColor)
@@ -884,6 +877,7 @@ struct MangaDetailView: View {
     private func readButton(chapters: [Chapter]) -> some View {
         let lastRead = progressManager.lastReadChapter(for: progressMangaId)
         let readChapters = progressManager.readChapters(for: progressMangaId)
+        let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
         let hasProgress = lastRead != nil || !readChapters.isEmpty
 
         // Find the chapter to resume/start
@@ -891,7 +885,8 @@ struct MangaDetailView: View {
             if let lastRead = lastRead {
                 // Find the last-read chapter so we resume in it
                 let lastReadKey = ChapterIdentityNormalizer.key(for: lastRead)
-                if let ch = chapters.first(where: {
+                if !readKeys.contains(lastReadKey),
+                   let ch = chapters.first(where: {
                     $0.chapterNumber == lastRead ||
                     ChapterIdentityNormalizer.key(for: $0.chapterNumber) == lastReadKey
                 }) {
@@ -899,7 +894,6 @@ struct MangaDetailView: View {
                 }
             }
             // No progress — start from first chapter
-            let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
             if let unread = chronologicalChapters(chapters).first(where: {
                 !readKeys.contains(ChapterIdentityNormalizer.key(for: $0.chapterNumber))
             }) {

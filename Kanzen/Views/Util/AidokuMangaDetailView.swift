@@ -165,20 +165,7 @@ struct AidokuMangaDetailView: View {
         .task {
             await loadDetails(force: false)
         }
-        .fullScreenCover(item: $selectedChapterData, onDismiss: {
-            if let chapter = selectedChapterData {
-                progressManager.markChapterRead(
-                    mangaId: stableId,
-                    chapterNumber: chapter.chapterNumber,
-                    mangaTitle: manga.title,
-                    coverURL: coverURL,
-                    format: viewerFormat(manga.viewer),
-                    totalChapters: latestChapterNumbers?.count,
-                    latestChapterNumbers: latestChapterNumbers,
-                    route: route
-                )
-            }
-        }) { chapter in
+        .fullScreenCover(item: $selectedChapterData) { chapter in
             let chapters = readerChapters(from: chapterModels())
             let selected = chapters.first { $0.chapterNumber == chapter.chapterNumber } ?? chapters.first ?? chapter
             readerManagerView(
@@ -188,7 +175,10 @@ struct AidokuMangaDetailView: View {
                 mangaId: stableId,
                 mangaTitle: manga.title,
                 mangaCoverURL: coverURL,
-                mangaRoute: route
+                mangaRoute: route,
+                mangaFormat: viewerFormat(manga.viewer),
+                totalChapters: latestChapterNumbers?.count,
+                latestChapterNumbers: latestChapterNumbers
             )
         }
         .navigationTitle(manga.title)
@@ -482,6 +472,13 @@ struct AidokuMangaDetailView: View {
                             .lineLimit(1)
                     }
 
+                    if !isRead, let progressLabel = progressManager.pageProgressLabel(mangaId: stableId, chapterNumber: chapter.chapterNumber) {
+                        Text(progressLabel)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
                     if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
                         ProgressView(value: downloadProgress)
                             .tint(downloadStatus == .paused ? .gray : .accentColor)
@@ -652,6 +649,7 @@ struct AidokuMangaDetailView: View {
     private func targetChapterForReading(chapters: [Chapter], lastRead: String?, readChapters: Set<String>) -> Chapter? {
         let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
         if let lastRead,
+           !readKeys.contains(ChapterIdentityNormalizer.key(for: lastRead)),
            let chapter = chapters.first(where: {
                $0.chapterNumber == lastRead ||
                ChapterIdentityNormalizer.key(for: $0.chapterNumber) == ChapterIdentityNormalizer.key(for: lastRead)

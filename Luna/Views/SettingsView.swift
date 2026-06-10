@@ -493,6 +493,11 @@ struct LegalNoticeView: View {
                 Link("Original Luna Project", destination: originalProjectURL)
             }
 
+            Section("Credits") {
+                Text("Reader mode includes Aidoku source compatibility work inspired by the Aidoku project.")
+                Link("Aidoku/Aidoku", destination: URL(string: "https://github.com/Aidoku/Aidoku")!)
+            }
+
             Section("Warranty") {
                 Text("This program comes with no warranty, to the extent permitted by law.")
             }

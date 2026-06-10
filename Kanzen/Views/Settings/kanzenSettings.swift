@@ -18,7 +18,6 @@ struct KanzenSettingsView: View {
             ScrollView {
                 VStack(spacing: 28) {
                     KanzenRootHeader("Settings")
-                        .padding(.horizontal, -20)
 
                     GlassSection(header: "General") {
                         VStack(spacing: 0) {

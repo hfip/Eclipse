@@ -112,23 +112,7 @@ struct contentView: View {
             getContentData()
             toggleFavourite = checkIfFavorited()
         }
-        .fullScreenCover(item: $selectedChapterData, onDismiss: {
-            if let chapter = selectedChapterData {
-                progressManager.markChapterRead(
-                    mangaId: stableId,
-                    chapterNumber: chapter.chapterNumber,
-                    mangaTitle: title,
-                    coverURL: imageURL,
-                    format: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
-                    totalChapters: currentChapterNumbers?.count,
-                    latestChapterNumbers: currentChapterNumbers,
-                    moduleUUID: parentModule?.id.uuidString,
-                    contentParams: params,
-                    isNovel: parentModule?.moduleData.novel == true,
-                    route: contentRoute
-                )
-            }
-        }){ chapter in
+        .fullScreenCover(item: $selectedChapterData) { chapter in
             if let contentChapters = self.contentChapters{
                 let chapterList = contentChapters[langaugeIdx].chapters
                 let readerChapterList = readerChapters(from: chapterList)
@@ -156,7 +140,10 @@ struct contentView: View {
                         mangaId: stableId,
                         mangaTitle: title,
                         mangaCoverURL: imageURL,
-                        mangaRoute: contentRoute
+                        mangaRoute: contentRoute,
+                        mangaFormat: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                        totalChapters: currentChapterNumbers?.count,
+                        latestChapterNumbers: currentChapterNumbers
                     )
                 }
             }
@@ -513,6 +500,13 @@ struct contentView: View {
                                         .lineLimit(1)
                                 }
 
+                                if !isRead, let progressLabel = progressManager.pageProgressLabel(mangaId: stableId, chapterNumber: chapter.chapterNumber) {
+                                    Text(progressLabel)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+
                                 if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
                                     ProgressView(value: downloadProgress)
                                         .tint(downloadStatus == .paused ? .gray : .accentColor)
@@ -707,19 +701,20 @@ struct contentView: View {
     private func readButton(chapters: [Chapter]) -> some View {
         let lastRead = progressManager.lastReadChapter(for: stableId)
         let readChapters = progressManager.readChapters(for: stableId)
+        let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
         let hasProgress = lastRead != nil || !readChapters.isEmpty
 
         let targetChapter: Chapter? = {
             if let lastRead = lastRead {
                 let lastReadKey = ChapterIdentityNormalizer.key(for: lastRead)
-                if let ch = chapters.first(where: {
+                if !readKeys.contains(lastReadKey),
+                   let ch = chapters.first(where: {
                     $0.chapterNumber == lastRead ||
                     ChapterIdentityNormalizer.key(for: $0.chapterNumber) == lastReadKey
                 }) {
                     return ch
                 }
             }
-            let readKeys = Set(readChapters.map { ChapterIdentityNormalizer.key(for: $0) })
             if let unread = chronologicalChapters(chapters).first(where: {
                 !readKeys.contains(ChapterIdentityNormalizer.key(for: $0.chapterNumber))
             }) {

@@ -21,6 +21,7 @@ class readerManager: ObservableObject {
     @Published var currentErrorMessage: String?
     @AppStorage("readingMode") var readingModeRaw: Int = ReadingMode.WEBTOON.rawValue
     var pagePrefetcher: ImagePrefetcher?
+    var backgroundPagePrefetcher: ImagePrefetcher?
     var readingMode: ReadingMode {
         let mode = ReadingMode(rawValue: readingModeRaw) ?? .WEBTOON
         return mode == .VERTICAL ? .WEBTOON : mode
@@ -32,6 +33,11 @@ class readerManager: ObservableObject {
     var mangaTitle: String = ""
     var mangaCoverURL: String = ""
     var mangaRoute: MangaContentRoute?
+    var mangaFormat: String?
+    var totalChapters: Int?
+    var latestChapterNumbers: [String]?
+    var trackerAniListId: Int?
+    var trackerMALId: Int?
     // Cached controllers - only recreated when data changes
  var currControllers: [UIViewController]?
   var prevControllers: [UIViewController]?
@@ -53,7 +59,7 @@ var nextControllers: [UIViewController]?
         }
     }
     
-    init(index: Int = 0, currChapter: [PageData] = [], prevChapter: [PageData] = [], nextChapter: [PageData] = [], shiftChapterLeft: @escaping () -> Void = {}, shiftChapterRight: @escaping () -> Void = {}, fetchPrev: @escaping () -> Void = {}, fetchNext: @escaping () -> Void = {}, kanzen: KanzenEngine,chapters: [Chapter]?, selectedChapter: Chapter?, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil) {
+    init(index: Int = 0, currChapter: [PageData] = [], prevChapter: [PageData] = [], nextChapter: [PageData] = [], shiftChapterLeft: @escaping () -> Void = {}, shiftChapterRight: @escaping () -> Void = {}, fetchPrev: @escaping () -> Void = {}, fetchNext: @escaping () -> Void = {}, kanzen: KanzenEngine,chapters: [Chapter]?, selectedChapter: Chapter?, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil, mangaFormat: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil) {
         self.index = index
         self.currChapter = currChapter
         self.prevChapter = prevChapter
@@ -65,6 +71,11 @@ var nextControllers: [UIViewController]?
         self.mangaTitle = mangaTitle
         self.mangaCoverURL = mangaCoverURL
         self.mangaRoute = mangaRoute
+        self.mangaFormat = mangaFormat
+        self.totalChapters = totalChapters
+        self.latestChapterNumbers = latestChapterNumbers
+        self.trackerAniListId = trackerAniListId
+        self.trackerMALId = trackerMALId
     }
     func initChapters(){
         // resetState
@@ -135,6 +146,8 @@ var nextControllers: [UIViewController]?
             task.cancel()
         }
         loadPagesTasks.removeAll()
+        pagePrefetcher?.stop()
+        backgroundPagePrefetcher?.stop()
     }
     
     // Cancel specific loadPages task
@@ -147,17 +160,7 @@ var nextControllers: [UIViewController]?
     // Setter Functions
     func setIndex(_ index: Int) {
         self.index = index
-        // Persist page position for current chapter
-        if mangaId != 0, let chapter = selectedChapter {
-            MangaReadingProgressManager.shared.savePagePosition(
-                mangaId: mangaId,
-                chapterNumber: chapter.chapterNumber,
-                page: index,
-                mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL,
-                route: mangaRoute
-            )
-        }
+        persistCurrentPagePosition(page: index)
     }
 
     func setCurrChapter(_ currChapter: [PageData]) {
@@ -175,6 +178,8 @@ var nextControllers: [UIViewController]?
                 self.index = saved
                 self.changeIndex = true
             }
+            persistCurrentPagePosition(page: self.index)
+            preloadRemainingCurrentChapterPages()
         }
     }
     
@@ -240,13 +245,7 @@ var nextControllers: [UIViewController]?
         
         // Mark the chapter we're leaving as read
         if let chapter = selectedChapter, mangaId != 0 {
-            MangaReadingProgressManager.shared.markChapterRead(
-                mangaId: mangaId,
-                chapterNumber: chapter.chapterNumber,
-                mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL,
-                route: mangaRoute
-            )
+            markChapterRead(chapter)
         }
         
         //shift Controllers
@@ -281,13 +280,7 @@ var nextControllers: [UIViewController]?
         
         // Mark the chapter we're leaving as read
         if let chapter = selectedChapter, mangaId != 0 {
-            MangaReadingProgressManager.shared.markChapterRead(
-                mangaId: mangaId,
-                chapterNumber: chapter.chapterNumber,
-                mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL,
-                route: mangaRoute
-            )
+            markChapterRead(chapter)
         }
         
         prevControllers = currControllers
@@ -307,6 +300,45 @@ var nextControllers: [UIViewController]?
         shiftChapterRight()
 
         ReaderLogger.shared.log("Shifted right; controllers moved", type: "ReaderProgress")
+    }
+
+    private func persistCurrentPagePosition(page: Int) {
+        guard mangaId != 0, let chapter = selectedChapter else { return }
+        MangaReadingProgressManager.shared.savePagePosition(
+            mangaId: mangaId,
+            chapterNumber: chapter.chapterNumber,
+            page: page,
+            pageCount: currChapter.count,
+            mangaTitle: mangaTitle,
+            coverURL: mangaCoverURL,
+            format: mangaFormat,
+            totalChapters: totalChapters,
+            latestChapterNumbers: latestChapterNumbers,
+            route: mangaRoute,
+            trackerAniListId: trackerAniListId,
+            trackerMALId: trackerMALId,
+            readThreshold: readerReadThreshold
+        )
+    }
+
+    private var readerReadThreshold: Double {
+        let raw = UserDefaults.standard.object(forKey: "readerReadThresholdPercent") as? Double ?? 80
+        return max(50, min(raw, 100)) / 100
+    }
+
+    private func markChapterRead(_ chapter: Chapter) {
+        MangaReadingProgressManager.shared.markChapterRead(
+            mangaId: mangaId,
+            chapterNumber: chapter.chapterNumber,
+            mangaTitle: mangaTitle,
+            coverURL: mangaCoverURL,
+            format: mangaFormat,
+            totalChapters: totalChapters,
+            latestChapterNumbers: latestChapterNumbers,
+            route: mangaRoute,
+            trackerAniListId: trackerAniListId,
+            trackerMALId: trackerMALId
+        )
     }
     
     func getIndex() -> Int {
@@ -472,13 +504,7 @@ var nextControllers: [UIViewController]?
     func goToPreviousChapter() {
         guard let chapter = selectedChapter, chapter.idx > 0 else { return }
         if mangaId != 0 {
-            MangaReadingProgressManager.shared.markChapterRead(
-                mangaId: mangaId,
-                chapterNumber: chapter.chapterNumber,
-                mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL,
-                route: mangaRoute
-            )
+            markChapterRead(chapter)
         }
         selectedChapter = chapters?[chapter.idx - 1]
         resetState()
@@ -487,13 +513,7 @@ var nextControllers: [UIViewController]?
     func goToNextChapter() {
         guard let chapter = selectedChapter, let chapters = chapters, chapter.idx < chapters.count - 1 else { return }
         if mangaId != 0 {
-            MangaReadingProgressManager.shared.markChapterRead(
-                mangaId: mangaId,
-                chapterNumber: chapter.chapterNumber,
-                mangaTitle: mangaTitle,
-                coverURL: mangaCoverURL,
-                route: mangaRoute
-            )
+            markChapterRead(chapter)
         }
         selectedChapter = chapters[chapter.idx + 1]
         resetState()
@@ -536,42 +556,60 @@ var nextControllers: [UIViewController]?
     {
         pagePrefetcher?.stop()
         var pagesURLs: [URL] = []
-        
-        if index < currChapter.count - 1 {
-            let pageUrl = currChapter[index + 1].urlString.flatMap(URL.init(string:))
-            if let pageUrl = pageUrl {
-                pagesURLs.append(pageUrl)
+        var seen = Set<String>()
+
+        func appendURL(from page: PageData?) {
+            guard let value = page?.urlString,
+                  !seen.contains(value),
+                  let url = URL(string: value) else { return }
+            seen.insert(value)
+            pagesURLs.append(url)
+        }
+
+        guard !currChapter.isEmpty else { return }
+
+        let lowerBound = max(index - 4, 0)
+        let upperBound = min(index + 8, currChapter.count - 1)
+        for pageIndex in lowerBound...upperBound where pageIndex != index {
+            appendURL(from: currChapter[pageIndex])
+        }
+
+        if index >= currChapter.count - 3 {
+            for page in nextChapter.prefix(4) {
+                appendURL(from: page)
             }
         }
-        if index < currChapter.count - 2 {
-            let pageUrl = currChapter[index + 2].urlString.flatMap(URL.init(string:))
-            if let pageUrl = pageUrl {
-                pagesURLs.append(pageUrl)
+
+        if index <= 2 {
+            for page in prevChapter.suffix(4) {
+                appendURL(from: page)
             }
         }
-        else if nextChapter.count > 0 {
-            let pageUrl = nextChapter.first?.urlString.flatMap(URL.init(string:))
-            if let pageUrl = pageUrl {
-                pagesURLs.append(pageUrl)
-            }
-        }
-        
-        if index > 0 {
-            let pageUrl = currChapter[index - 1].urlString.flatMap(URL.init(string:))
-            if let pageUrl = pageUrl {
-                pagesURLs.append(pageUrl)
-            }
-        }
-        else if prevChapter.count > 0 {
-            let pageUrl = prevChapter.last?.urlString.flatMap(URL.init(string:))
-            if let pageUrl = pageUrl {
-                pagesURLs.append(pageUrl)
-            }
-        }
-        
+
+        guard !pagesURLs.isEmpty else { return }
         pagePrefetcher = ImagePrefetcher(urls: pagesURLs)
         pagePrefetcher?.start()
         
+    }
+
+    func preloadRemainingCurrentChapterPages() {
+        backgroundPagePrefetcher?.stop()
+        var urls: [URL] = []
+        var seen = Set<String>()
+
+        for page in currChapter {
+            guard let value = page.urlString,
+                  !seen.contains(value),
+                  let url = URL(string: value) else { continue }
+            seen.insert(value)
+            urls.append(url)
+        }
+
+        guard !urls.isEmpty else { return }
+        let prefetcher = ImagePrefetcher(urls: urls)
+        backgroundPagePrefetcher = prefetcher
+        prefetcher.start()
+        ReaderLogger.shared.log("Background prefetching \(urls.count) reader pages", type: "ReaderProgress")
     }
     func getNextChapterIdx() -> String{
         if let idx = selectedChapter?.idx, let currChapters = chapters, idx + 1 < currChapters.count  {
