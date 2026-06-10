@@ -2047,7 +2047,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let windowBounds = view.window?.bounds ?? .zero
         let displayFrame = displayLayer.frame
         let displayBackground = displayLayer.backgroundColor.map { UIColor(cgColor: $0).description } ?? "nil"
-        let vlcView = vlcRenderingView
+        let vlcView: UIView? = nil
         let vlcIndex = vlcView.flatMap { target in videoContainer.subviews.firstIndex { $0 === target } } ?? -1
         let subviewStack = videoContainer.subviews.enumerated().map { index, subview -> String in
             if let vlcView = vlcView, subview === vlcView { return "\(index):vlc" }
@@ -2080,7 +2080,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let viewBounds = view.bounds
         let videoBounds = videoContainer.bounds
         let windowBounds = view.window?.bounds ?? .zero
-        let vlcView = vlcRenderingView
+        let vlcView: UIView? = nil
         let vlcIndex = vlcView.flatMap { target in videoContainer.subviews.firstIndex { $0 === target } } ?? -1
         let displayFrame = displayLayer.frame
         let processInfo = ProcessInfo.processInfo
@@ -2139,7 +2139,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let thermal = metalThermalStateName(processInfo.thermalState)
         let viewBounds = view.bounds
         let videoBounds = videoContainer.bounds
-        let vlcView = vlcRenderingView
+        let vlcView: UIView? = nil
         let route = vlcAudioRouteSummary()
         let proxy = vlcProxyDiagnosticsSummary()
         return "app=\(appState) media={\(vlcMediaInfoLogLabel())} position=\(secondsText(safePosition))/\(secondsText(effectiveDuration)) reliable=\(durationIsReliable) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) running=\(isRunning) closing=\(isClosing) loading=\(isRendererLoading) playbackStarted=\(playbackDidStart) controls=\(controlsVisible) paused=\(rendererIsPausedState()) speed=\(String(format: "%.2f", rendererGetSpeed())) thermal=\(thermal) lowPower=\(processInfo.isLowPowerModeEnabled) route={\(route)} view=\(String(format: "%.0fx%.0f", viewBounds.width, viewBounds.height)) video=\(String(format: "%.0fx%.0f", videoBounds.width, videoBounds.height)) window=\(view.window != nil) vlcHidden=\(vlcView?.isHidden ?? true) vlcAlpha=\(String(format: "%.2f", vlcView?.alpha ?? 0)) spinnerAnimating=\(loadingIndicator.isAnimating) spinnerAlpha=\(String(format: "%.2f", loadingIndicator.alpha)) browser={\(episodeBrowserStateSummary())} proxy={\(proxy)}"
@@ -2938,7 +2938,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // Add VLC rendering view FIRST (before all UI elements) so it renders behind controls
         if let vlc = vlcRenderer {
             let vlcView = vlc.getRenderingView()
-            vlcRenderingView = vlcView
             videoContainer.addSubview(vlcView)
             vlcView.translatesAutoresizingMaskIntoConstraints = false
             vlcView.layer.zPosition = 0
