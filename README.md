@@ -87,8 +87,8 @@ SideStore is not required. Other sideloading options work too, and `r/sideloaded
 
 ## Notes
 
-- MPV is the advanced in-app player; Normal AVPlayer remains available for basic playback.
-- External players are still supported, including launching the separate VLC app through `vlc://` when installed.
+- MPV is the advanced in-app player and is default
+- VLC is not supported anymore, but may come back if v4 is good.
 - Use GitHub Issues for feature requests and bug reports.
 - The app does use AI for development. As I don't know swift well (learning other languages like Java and soon C, not swift). Just for transparency. The app gets tested a ton, and I do try to make sure the code looks okay
 
