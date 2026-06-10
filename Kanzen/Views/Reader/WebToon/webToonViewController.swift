@@ -529,7 +529,12 @@ final class WebtoonScrollContainerView: UIView {
         onLayout?()
     }
 
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
+
     func addPageView(_ view: WebtoonPageView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
         stackView.addArrangedSubview(view)
         view.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor).isActive = true
     }

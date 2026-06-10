@@ -97,13 +97,17 @@ struct readerManagerView:View {
         }
         case .WEBTOON: WebtoonView(reader_manager: reader_manager) {
             showFullScreen.toggle()
-        }.id("WEBTOON")
+        }
+        .id("WEBTOON")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .RTL: pageReader(reader_manager: reader_manager,pageViewConfig: .RTL).id("RTL").onTapGesture {
             showFullScreen.toggle()
         }
         case .VERTICAL: WebtoonView(reader_manager: reader_manager) {
             showFullScreen.toggle()
-        }.id("VERTICAL")
+        }
+        .id("VERTICAL")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
             
         }
         
