@@ -1115,6 +1115,10 @@ private enum ReaderWebtoonImagePipeline {
             throw ReaderWebtoonImageError.invalidPage
         }
 
+        if url.isFileURL {
+            return try await decodeFileImage(at: url, targetWidth: targetSize.width, scale: scale)
+        }
+
         var urlRequest = URLRequest(url: url)
         for (field, value) in page.headers {
             urlRequest.setValue(value, forHTTPHeaderField: field)
@@ -1141,14 +1145,51 @@ private enum ReaderWebtoonImagePipeline {
 
     private static func decodeImageData(_ data: Data, targetWidth: CGFloat, scale: CGFloat) async throws -> UIImage {
         try await Task.detached(priority: .userInitiated) {
-            guard let image = UIImage(data: data) else {
+            let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithData(data as CFData, imageSourceOptions) else {
                 throw ReaderWebtoonImageError.decodeFailed
             }
-            if Task.isCancelled {
-                throw CancellationError()
-            }
-            return ReaderWebtoonDownsampleProcessor(width: max(targetWidth, 1), scaleFactor: scale).process(image) ?? image
+            return try decodeImageSource(source, targetWidth: targetWidth, scale: scale)
         }.value
+    }
+
+    private static func decodeFileImage(at url: URL, targetWidth: CGFloat, scale: CGFloat) async throws -> UIImage {
+        try await Task.detached(priority: .userInitiated) {
+            let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, imageSourceOptions) else {
+                throw ReaderWebtoonImageError.decodeFailed
+            }
+            return try decodeImageSource(source, targetWidth: targetWidth, scale: scale)
+        }.value
+    }
+
+    private static func decodeImageSource(_ source: CGImageSource, targetWidth: CGFloat, scale: CGFloat) throws -> UIImage {
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let pixelWidth = CGFloat((properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 0)
+        let pixelHeight = CGFloat((properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 0)
+
+        let targetPixelWidth = max(1, targetWidth * scale)
+        let maxPixelSize: CGFloat
+        if pixelWidth > 0, pixelHeight > 0, pixelWidth > targetPixelWidth {
+            maxPixelSize = max(targetPixelWidth, pixelHeight * (targetPixelWidth / pixelWidth))
+        } else {
+            maxPixelSize = max(pixelWidth, pixelHeight, targetPixelWidth)
+        }
+
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, Int(maxPixelSize))
+        ] as [CFString: Any] as CFDictionary
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+            throw ReaderWebtoonImageError.decodeFailed
+        }
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        return UIImage(cgImage: cgImage, scale: scale, orientation: .up)
     }
 }
 
