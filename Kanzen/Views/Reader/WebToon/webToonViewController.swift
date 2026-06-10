@@ -90,6 +90,7 @@ struct WebtoonView: UIViewRepresentable {
         weak var collectionNode: ASCollectionNode?
 
         private var pages: [PageData] = []
+        private var pagesSignature = ""
         private var recentImageRatios: [CGFloat] = []
         private var chapterIdentity = ""
         private var lastKnownWidth: CGFloat = 0
@@ -155,9 +156,10 @@ struct WebtoonView: UIViewRepresentable {
                 self?.estimatedHeight(for: indexPath.item, width: width) ?? max(320, width * Self.defaultImageAspectRatio)
             }
             let identity = Self.identity(for: manager)
+            let signature = Self.pagesSignature(for: manager.currChapter)
             let needsInitialBuild = pages.isEmpty && !manager.currChapter.isEmpty
-            if needsInitialBuild || identity != chapterIdentity || pages.map(\.id) != manager.currChapter.map(\.id) {
-                reset(collectionNode, manager: manager)
+            if needsInitialBuild || identity != chapterIdentity || signature != pagesSignature {
+                reset(collectionNode, manager: manager, signature: signature)
             }
 
             if manager.changeIndex,
@@ -182,10 +184,11 @@ struct WebtoonView: UIViewRepresentable {
             scrollToPendingPage(in: collectionNode)
         }
 
-        private func reset(_ collectionNode: ASCollectionNode, manager: readerManager) {
+        private func reset(_ collectionNode: ASCollectionNode, manager: readerManager, signature: String) {
             let collectionView = collectionNode.view
             cancelWork()
             pages = manager.currChapter
+            pagesSignature = signature
             chapterIdentity = Self.identity(for: manager)
             recentImageRatios.removeAll()
             lastReportedPage = -1
@@ -221,6 +224,7 @@ struct WebtoonView: UIViewRepresentable {
             pendingLayoutWorkItem?.cancel()
             pendingLayoutWorkItem = nil
             needsDeferredLayoutUpdate = false
+            reader_manager.flushPendingPagePosition()
             collectionNode?.visibleNodes.compactMap { $0 as? WebtoonTexturePageNode }.forEach { $0.cancelLoad() }
         }
 
@@ -304,16 +308,19 @@ struct WebtoonView: UIViewRepresentable {
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             guard !decelerate, let collectionView = scrollView as? UICollectionView else { return }
             flushDeferredLayoutUpdate(in: collectionView)
+            reader_manager.flushPendingPagePosition()
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
             guard let collectionView = scrollView as? UICollectionView else { return }
             flushDeferredLayoutUpdate(in: collectionView)
+            reader_manager.flushPendingPagePosition()
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             guard let collectionView = scrollView as? UICollectionView else { return }
             flushDeferredLayoutUpdate(in: collectionView)
+            reader_manager.flushPendingPagePosition()
         }
 
         private func scrollToPendingPage(in collectionNode: ASCollectionNode) {
@@ -483,14 +490,22 @@ struct WebtoonView: UIViewRepresentable {
 
         private func updateCurrentPage(in collectionView: UICollectionView, force: Bool = false) {
             guard !pages.isEmpty else { return }
-            let midpoint = collectionView.contentOffset.y + collectionView.bounds.height * 0.5
-            let visibleIndex = (collectionView.collectionViewLayout as? WebtoonOffsetPreservingLayout)?.indexForY(midpoint)
+            let midpoint = CGPoint(
+                x: collectionView.contentOffset.x + collectionView.bounds.width * 0.5,
+                y: collectionView.contentOffset.y + collectionView.bounds.height * 0.5
+            )
+            let visibleIndex = collectionView.indexPathForItem(at: midpoint)?.item
+                ?? (collectionView.collectionViewLayout as? WebtoonOffsetPreservingLayout)?.indexForY(midpoint.y)
                 ?? collectionView.indexPathsForVisibleItems.sorted().first?.item
 
             guard let visibleIndex, visibleIndex >= 0, visibleIndex < pages.count else { return }
             if force || lastReportedPage != visibleIndex {
                 lastReportedPage = visibleIndex
-                reader_manager.setIndex(visibleIndex)
+                if force {
+                    reader_manager.setIndex(visibleIndex)
+                } else {
+                    reader_manager.setTransientIndex(visibleIndex)
+                }
 
                 let now = Date()
                 if force || now.timeIntervalSince(lastScrollLogTime) > 2 {
@@ -578,6 +593,12 @@ struct WebtoonView: UIViewRepresentable {
 
         private static func identity(for manager: readerManager) -> String {
             "\(manager.selectedChapter?.idx ?? -1):\(manager.selectedChapter?.chapterNumber ?? "")"
+        }
+
+        private static func pagesSignature(for pages: [PageData]) -> String {
+            let first = pages.first?.cacheKey ?? ""
+            let last = pages.last?.cacheKey ?? ""
+            return "\(pages.count)|\(first)|\(last)"
         }
     }
 }

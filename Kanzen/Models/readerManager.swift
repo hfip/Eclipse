@@ -47,6 +47,9 @@ var nextControllers: [UIViewController]?
     
     // task
     private var currTask: Task<Void, Never>?
+    private var pendingPagePersistTask: Task<Void, Never>?
+    private var pendingPagePersist: Int?
+    private var pendingPagePersistChapterNumber: String?
     
     // Task storage for loadPages operations
     private var loadPagesTasks: [ChapterPosition: Task<Void, Never>] = [:]
@@ -86,6 +89,7 @@ var nextControllers: [UIViewController]?
     }
     func resetState()
     {
+        flushPendingPagePosition()
         cancelAllLoadPagesTasks()
         index = 0
         isLoadingCurrentChapter = true
@@ -106,27 +110,25 @@ var nextControllers: [UIViewController]?
                 loadPages(chapter: selectedChapter, params: currParams, position: .curr)
             }
             let idx = selectedChapter.idx
-            // fetch Prev Images
-            
-            if idx > 0
-            {
-                let prevChapter = chapters[idx - 1]
-                if let prevSources = prevChapter.chapterData, prevSources.count > 0,
-                    let prevParams = prevSources[0].params
+            if readingMode != .WEBTOON {
+                // fetch adjacent pages only for paged readers; webtoon loads adjacent chapters at boundaries.
+                if idx > 0
                 {
-                    loadPages(chapter: prevChapter, params: prevParams, position: .prev)
-                    
+                    let prevChapter = chapters[idx - 1]
+                    if let prevSources = prevChapter.chapterData, prevSources.count > 0,
+                        let prevParams = prevSources[0].params
+                    {
+                        loadPages(chapter: prevChapter, params: prevParams, position: .prev)
+                    }
                 }
-                
-            }
-            if idx < chapters.count - 1
-            {
-                let nextChapters = chapters[idx + 1]
-                if let nextSources = nextChapters.chapterData, nextSources.count > 0,
-                    let nextParams = nextSources[0].params
+                if idx < chapters.count - 1
                 {
-
-                    loadPages(chapter: nextChapters, params: nextParams, position: .next)
+                    let nextChapters = chapters[idx + 1]
+                    if let nextSources = nextChapters.chapterData, nextSources.count > 0,
+                        let nextParams = nextSources[0].params
+                    {
+                        loadPages(chapter: nextChapters, params: nextParams, position: .next)
+                    }
                 }
             }
 
@@ -163,15 +165,38 @@ var nextControllers: [UIViewController]?
     
     // Setter Functions
     func setIndex(_ index: Int) {
-        self.index = index
+        if self.index != index {
+            self.index = index
+        }
         persistCurrentPagePosition(page: index)
+    }
+
+    func setTransientIndex(_ index: Int) {
+        if self.index != index {
+            self.index = index
+        }
+        schedulePagePositionPersist(page: index)
+    }
+
+    func flushPendingPagePosition() {
+        guard let page = pendingPagePersist,
+              let chapterNumber = pendingPagePersistChapterNumber else { return }
+        pendingPagePersistTask?.cancel()
+        pendingPagePersistTask = nil
+        pendingPagePersist = nil
+        pendingPagePersistChapterNumber = nil
+        persistCurrentPagePosition(page: page, chapterNumber: chapterNumber)
     }
 
     func setCurrChapter(_ currChapter: [PageData]) {
         isLoadingCurrentChapter = false
         currentErrorMessage = nil
         self.currChapter = currChapter
-        generateCurrControllers()
+        if readingMode == .WEBTOON {
+            currControllers = nil
+        } else {
+            generateCurrControllers()
+        }
         // Restore saved page position
         if mangaId != 0, let chapter = selectedChapter {
             let saved = MangaReadingProgressManager.shared.pagePosition(
@@ -201,12 +226,20 @@ var nextControllers: [UIViewController]?
     
     func setPrevChapter(_ prevChapter: [PageData]) {
         self.prevChapter = prevChapter
-        generatePrevControllers()
+        if readingMode == .WEBTOON {
+            prevControllers = nil
+        } else {
+            generatePrevControllers()
+        }
     }
     
     func setNextChapter(_ nextChapter: [PageData]) {
         self.nextChapter = nextChapter
-        generateNextControllers()
+        if readingMode == .WEBTOON {
+            nextControllers = nil
+        } else {
+            generateNextControllers()
+        }
     }
     func generateCurrControllers()
     {
@@ -251,6 +284,7 @@ var nextControllers: [UIViewController]?
         }
     }
     func shiftLeft() {
+        flushPendingPagePosition()
         // Cancel next chapter loading since it's no longer needed
         cancelLoadPagesTask(for: .next)
         if let currChapter = selectedChapter, currChapter.idx == 0
@@ -284,6 +318,7 @@ var nextControllers: [UIViewController]?
     }
     
     func shiftRight() {
+        flushPendingPagePosition()
         // Cancel prev chapter loading since it's no longer needed
         cancelLoadPagesTask(for: .prev)
         if let currChapter = selectedChapter,
@@ -318,11 +353,12 @@ var nextControllers: [UIViewController]?
         ReaderLogger.shared.log("Shifted right; controllers moved", type: "ReaderProgress")
     }
 
-    private func persistCurrentPagePosition(page: Int) {
+    private func persistCurrentPagePosition(page: Int, chapterNumber explicitChapterNumber: String? = nil) {
         guard mangaId != 0, let chapter = selectedChapter else { return }
+        let chapterNumber = explicitChapterNumber ?? chapter.chapterNumber
         MangaReadingProgressManager.shared.savePagePosition(
             mangaId: mangaId,
-            chapterNumber: chapter.chapterNumber,
+            chapterNumber: chapterNumber,
             page: page,
             pageCount: currChapter.count,
             mangaTitle: mangaTitle,
@@ -335,6 +371,19 @@ var nextControllers: [UIViewController]?
             trackerMALId: trackerMALId,
             readThreshold: readerReadThreshold
         )
+    }
+
+    private func schedulePagePositionPersist(page: Int) {
+        guard let chapter = selectedChapter else { return }
+        pendingPagePersist = page
+        pendingPagePersistChapterNumber = chapter.chapterNumber
+        pendingPagePersistTask?.cancel()
+        pendingPagePersistTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            await MainActor.run {
+                self?.flushPendingPagePosition()
+            }
+        }
     }
 
     private var readerReadThreshold: Double {
@@ -534,6 +583,7 @@ var nextControllers: [UIViewController]?
     }
 
     func goToPreviousChapter() {
+        flushPendingPagePosition()
         guard let chapter = selectedChapter, chapter.idx > 0 else { return }
         if mangaId != 0 {
             markChapterRead(chapter)
@@ -543,6 +593,7 @@ var nextControllers: [UIViewController]?
     }
 
     func goToNextChapter() {
+        flushPendingPagePosition()
         guard let chapter = selectedChapter, let chapters = chapters, chapter.idx < chapters.count - 1 else { return }
         if mangaId != 0 {
             markChapterRead(chapter)
