@@ -276,7 +276,11 @@ struct readerManagerView:View {
         if #available(iOS 16.0, *), requestGeometryUpdate, let windowScene = activeWindowScene {
             windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
         }
-        activeWindowScene?.windows.first { $0.isKeyWindow }?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        if #available(iOS 16.0, *) {
+            activeWindowScene?.windows.first { $0.isKeyWindow }?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
     }
 
     private var activeWindowScene: UIWindowScene? {
