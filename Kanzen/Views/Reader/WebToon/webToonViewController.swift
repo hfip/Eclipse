@@ -91,6 +91,7 @@ struct WebtoonView: UIViewRepresentable {
         private var lastHitchLogTime = Date.distantPast
         private var lastScrollLogTime = Date.distantPast
         private var chapterWarmTask: Task<Void, Never>?
+        private var pendingScrollRetryScheduled = false
 
         private static let defaultImageAspectRatio: CGFloat = 2.25
 
@@ -156,6 +157,7 @@ struct WebtoonView: UIViewRepresentable {
             loadingPrevious = false
             loadingNext = false
             didInitialPosition = false
+            pendingScrollRetryScheduled = false
             lastDisplayTimestamp = nil
             pendingScrollToPage = min(max(manager.index, 0), max(pages.count - 1, 0))
 
@@ -274,12 +276,33 @@ struct WebtoonView: UIViewRepresentable {
             let collectionView = collectionNode.view
             collectionView.layoutIfNeeded()
             let indexPath = IndexPath(item: index, section: 0)
-            guard collectionView.numberOfItems(inSection: 0) > index else { return }
+
+            guard collectionView.numberOfSections > 0 else {
+                retryScrollToPendingPage(in: collectionNode)
+                return
+            }
+
+            guard collectionView.numberOfItems(inSection: 0) > index else {
+                retryScrollToPendingPage(in: collectionNode)
+                return
+            }
+
             collectionNode.scrollToItem(at: indexPath, at: .top, animated: false)
+            pendingScrollRetryScheduled = false
             pendingScrollToPage = nil
             didInitialPosition = true
             updateCurrentPage(in: collectionView, force: true)
             prefetchWindow(around: index, in: collectionNode, force: true)
+        }
+
+        private func retryScrollToPendingPage(in collectionNode: ASCollectionNode) {
+            guard !pendingScrollRetryScheduled else { return }
+            pendingScrollRetryScheduled = true
+            DispatchQueue.main.async { [weak self, weak collectionNode] in
+                guard let self, let collectionNode else { return }
+                self.pendingScrollRetryScheduled = false
+                self.scrollToPendingPage(in: collectionNode)
+            }
         }
 
         private func updateAllPageHeights(in collectionNode: ASCollectionNode, preserveCurrentPage: Bool) {
