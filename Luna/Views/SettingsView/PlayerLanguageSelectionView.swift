@@ -1,13 +1,13 @@
 //
-//  VLCLanguageSelectionView.swift
+//  PlayerLanguageSelectionView.swift
 //  Luna
 //
-//  Language selection for VLC subtitle and audio preferences
+//  Language selection for in-app subtitle and audio preferences
 //
 
 import SwiftUI
 
-struct VLCLanguageSelectionView: View {
+struct PlayerLanguageSelectionView: View {
     let title: String
     @Binding var selectedLanguage: String
     @Environment(\.dismiss) private var dismiss
@@ -67,7 +67,7 @@ struct VLCLanguageSelectionView: View {
 
 #Preview {
     NavigationView {
-        VLCLanguageSelectionView(
+        PlayerLanguageSelectionView(
             title: "Default Subtitle Language",
             selectedLanguage: .constant("eng")
         )

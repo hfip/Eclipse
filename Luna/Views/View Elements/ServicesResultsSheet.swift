@@ -2810,8 +2810,7 @@ struct ModulesSearchResultsSheet: View {
 
             Logger.shared.log("Stremio: Final headers: \(finalHeaders)", type: "Stream")
 
-            let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "mpv"
-            let inAppPlayer = inAppRaw
+            let inAppPlayer = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
             Logger.shared.log("Playback resolve diagnostics source=\(addon.manifest.name) kind=stremio player=\(inAppPlayer) host=\(streamURL.host ?? "nil") ext=\(streamURL.pathExtension.isEmpty ? "none" : streamURL.pathExtension) tail=\(streamURL.lastPathComponent.isEmpty ? "/" : streamURL.lastPathComponent) streamName=\(streamName ?? "nil") headerKeys=[\(finalHeaders.keys.sorted().joined(separator: ","))] subtitles=\(subtitles.count) autoMode=\(autoModeLaunch)", type: "StreamDiagnostics")
 
             var playerMediaInfo: MediaInfo? = nil
@@ -2857,7 +2856,7 @@ struct ModulesSearchResultsSheet: View {
                 return
             }
 
-            if inAppPlayer == "mpv" || inAppPlayer == "VLC" {
+            if inAppPlayer == "mpv" {
                 let preset = PlayerPreset.presets.first
                 let subtitleArray: [String]? = subtitles.isEmpty ? nil : subtitles
 
@@ -3628,8 +3627,7 @@ struct ModulesSearchResultsSheet: View {
             
             Logger.shared.log("Final headers: \(finalHeaders)", type: "Stream")
             
-            let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "mpv"
-            let inAppPlayer = inAppRaw
+            let inAppPlayer = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
             Logger.shared.log("Playback resolve diagnostics source=\(service.metadata.sourceName) kind=service player=\(inAppPlayer) host=\(streamURL.host ?? "nil") ext=\(streamURL.pathExtension.isEmpty ? "none" : streamURL.pathExtension) tail=\(streamURL.lastPathComponent.isEmpty ? "/" : streamURL.lastPathComponent) streamName=\(streamName ?? "nil") headerKeys=[\(finalHeaders.keys.sorted().joined(separator: ","))] subtitles=\(subtitle == nil ? 0 : 1) autoMode=\(autoModeLaunch) retry=\(retryCount)", type: "StreamDiagnostics")
             
             // Record service usage (async to avoid blocking player launch)
@@ -3756,77 +3754,6 @@ struct ModulesSearchResultsSheet: View {
                         topmostVC.present(pvc, animated: true, completion: nil)
                     } else {
                         Logger.shared.log("Failed to find root view controller to present MPV player", type: "Error")
-                    }
-                }
-                return
-            } else if inAppPlayer == "VLC" {
-                // VLC uses same PlayerViewController as MPV
-                let preset = PlayerPreset.presets.first
-                let subtitleArray: [String]? = subtitle.map { [$0] }
-                
-                // Prepare mediaInfo before creating player
-                var playerMediaInfo: MediaInfo? = nil
-                let posterURL = resolvedPosterURL
-                if isMovie {
-                    playerMediaInfo = .movie(id: tmdbId, title: playerMediaTitle, posterURL: posterURL, isAnime: isAnimeContent)
-                } else if let episode = selectedEpisode {
-                    playerMediaInfo = .episode(showId: tmdbId, seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber, showTitle: playerMediaTitle, showPosterURL: posterURL, isAnime: isAnimeContent)
-                }
-                
-                let pvc = PlayerViewController(
-                    url: streamURL,
-                    preset: preset ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: []),
-                    headers: finalHeaders,
-                    subtitles: subtitleArray,
-                    mediaInfo: playerMediaInfo,
-                    imdbId: imdbId
-                )
-                let launchContext = PlaybackLaunchContext(
-                    sourceId: SourceHealth.serviceId(service),
-                    sourceName: service.metadata.sourceName,
-                    sourceKind: .service,
-                    autoMode: autoModeLaunch,
-                    streamURL: url,
-                    streamName: streamName,
-                    headers: finalHeaders,
-                    subtitles: subtitleArray ?? [],
-                    subtitleNames: nil,
-                    retryCount: retryCount
-                )
-                configurePlaybackRecovery(pvc, context: launchContext)
-                let isAnimeHint = hasAnimeLookupContext
-                pvc.isAnimeHint = isAnimeHint
-                pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
-                pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber
-                pvc.episodePlaybackContext = effectivePlaybackContext
-                pvc.onRequestNextEpisode = { seasonNumber, nextEpisodeNumber in
-                    NotificationCenter.default.post(
-                        name: .requestNextEpisode,
-                        object: nil,
-                        userInfo: [
-                            "tmdbId": tmdbId,
-                            "seasonNumber": seasonNumber,
-                            "episodeNumber": nextEpisodeNumber
-                        ]
-                    )
-                }
-                let mediaInfoLabel: String = {
-                    guard let info = playerMediaInfo else { return "nil" }
-                    switch info {
-                    case .movie(let id, let title, _, let isAnime):
-                        return "movie id=\(id) title=\(title) isAnime=\(isAnime)"
-                    case .episode(let showId, let seasonNumber, let episodeNumber, let showTitle, _, let isAnime):
-                        return "episode showId=\(showId) s=\(seasonNumber) e=\(episodeNumber) title=\(showTitle) isAnime=\(isAnime)"
-                    }
-                }()
-                Logger.shared.log("ServicesResultsSheet: presenting VLC isAnimeHint=\(isAnimeHint) isAnimeContent=\(isAnimeContent) mediaInfo=\(mediaInfoLabel)", type: "Stream")
-                pvc.modalPresentationStyle = .fullScreen
-                
-                dismissAutoModeSheetBeforePlaybackIfNeeded { topmostVC in
-                    if let topmostVC {
-                        topmostVC.present(pvc, animated: true, completion: nil)
-                    } else {
-                        Logger.shared.log("Failed to find root view controller to present VLC player", type: "Error")
                     }
                 }
                 return

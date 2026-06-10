@@ -20,7 +20,7 @@ struct BackupData: Codable {
     var selectedAppearance: String
     var enableSubtitlesByDefault: Bool
     var defaultSubtitleLanguage: String
-    var enableVLCSubtitleEditMenu: Bool
+    var playerSubtitleAppearanceEnabled: Bool
 
     var preferredAnimeAudioLanguage: String
     var inAppPlayer: String
@@ -36,17 +36,16 @@ struct BackupData: Codable {
     var aniSkipAutoSkip: Bool = false
     var skip85sEnabled: Bool = false
     var showNextEpisodeButton: Bool = true
-    var showVLCEpisodeBrowserButton: Bool = true
+    var showEpisodeBrowserButton: Bool = true
     var showNextEpisodePosterButton: Bool = false
     var nextEpisodeThreshold: Double = 0.90
-    var vlcHeaderProxyEnabled: Bool = true
-    var vlcBrightnessGestureEnabled: Bool = false
-    var vlcVolumeGestureEnabled: Bool = false
+    var playerBrightnessGestureEnabled: Bool = false
+    var playerVolumeGestureEnabled: Bool = false
     var playerTwoFingerTapPlayPauseEnabled: Bool = true
-    var vlcDoubleTapSeekEnabled: Bool = true
-    var vlcDoubleTapSeekSeconds: Double = 10.0
-    var vlcOpenSubtitlesEnabled: Bool = false
-    var vlcOpenSubtitlesAutoFallbackEnabled: Bool = true
+    var playerDoubleTapSeekEnabled: Bool = true
+    var playerDoubleTapSeekSeconds: Double = 10.0
+    var playerOpenSubtitlesEnabled: Bool = false
+    var playerOpenSubtitlesAutoFallbackEnabled: Bool = true
     var playerPerformanceOverlayEnabled: Bool = false
     var mpvForegroundFPS: Int = 30
     var mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue
@@ -127,9 +126,9 @@ struct BackupData: Codable {
 
     enum CodingKeys: String, CodingKey {
         case version, createdDate
-        case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime, defaultScheduleMode
-        case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
-        case vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, vlcDoubleTapSeekEnabled, vlcDoubleTapSeekSeconds, vlcOpenSubtitlesEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
+        case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, playerSubtitleAppearanceEnabled, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime, defaultScheduleMode
+        case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showEpisodeBrowserButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
+        case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
         case showKanzen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode, readerReadThresholdPercent
@@ -151,13 +150,16 @@ struct BackupData: Codable {
         selectedAppearance = try container.decodeIfPresent(String.self, forKey: .selectedAppearance) ?? "system"
         enableSubtitlesByDefault = try container.decodeIfPresent(Bool.self, forKey: .enableSubtitlesByDefault) ?? false
         defaultSubtitleLanguage = try container.decodeIfPresent(String.self, forKey: .defaultSubtitleLanguage) ?? "eng"
-        enableVLCSubtitleEditMenu = try container.decodeIfPresent(Bool.self, forKey: .enableVLCSubtitleEditMenu) ?? false
+        playerSubtitleAppearanceEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerSubtitleAppearanceEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .enableVLCSubtitleEditMenu)
+            ?? true
 
         preferredAnimeAudioLanguage = try container.decodeIfPresent(String.self, forKey: .preferredAnimeAudioLanguage) ?? "jpn"
         // Support both new "inAppPlayer" key and legacy "playerChoice" key
-        inAppPlayer = try container.decodeIfPresent(String.self, forKey: .inAppPlayer)
-            ?? container.decodeIfPresent(String.self, forKey: .playerChoice)
-            ?? "mpv"
+        inAppPlayer = Settings.normalizedInAppPlayer(
+            try container.decodeIfPresent(String.self, forKey: .inAppPlayer)
+                ?? container.decodeIfPresent(String.self, forKey: .playerChoice)
+        )
         showScheduleTab = try container.decodeIfPresent(Bool.self, forKey: .showScheduleTab) ?? true
         showLocalScheduleTime = try container.decodeIfPresent(Bool.self, forKey: .showLocalScheduleTime) ?? true
         defaultScheduleMode = ScheduleMode.sanitizedRawValue(try container.decodeIfPresent(String.self, forKey: .defaultScheduleMode))
@@ -170,17 +172,30 @@ struct BackupData: Codable {
         aniSkipAutoSkip = try container.decodeIfPresent(Bool.self, forKey: .aniSkipAutoSkip) ?? false
         skip85sEnabled = try container.decodeIfPresent(Bool.self, forKey: .skip85sEnabled) ?? false
         showNextEpisodeButton = try container.decodeIfPresent(Bool.self, forKey: .showNextEpisodeButton) ?? true
-        showVLCEpisodeBrowserButton = try container.decodeIfPresent(Bool.self, forKey: .showVLCEpisodeBrowserButton) ?? true
+        showEpisodeBrowserButton = try container.decodeIfPresent(Bool.self, forKey: .showEpisodeBrowserButton)
+            ?? container.decodeIfPresent(Bool.self, forKey: .showVLCEpisodeBrowserButton)
+            ?? true
         showNextEpisodePosterButton = try container.decodeIfPresent(Bool.self, forKey: .showNextEpisodePosterButton) ?? false
         nextEpisodeThreshold = try container.decodeIfPresent(Double.self, forKey: .nextEpisodeThreshold) ?? 0.90
-        vlcHeaderProxyEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcHeaderProxyEnabled) ?? true
-        vlcBrightnessGestureEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcBrightnessGestureEnabled) ?? false
-        vlcVolumeGestureEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcVolumeGestureEnabled) ?? false
+        playerBrightnessGestureEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerBrightnessGestureEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .vlcBrightnessGestureEnabled)
+            ?? false
+        playerVolumeGestureEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerVolumeGestureEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .vlcVolumeGestureEnabled)
+            ?? false
         playerTwoFingerTapPlayPauseEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerTwoFingerTapPlayPauseEnabled) ?? true
-        vlcDoubleTapSeekEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcDoubleTapSeekEnabled) ?? true
-        vlcDoubleTapSeekSeconds = try container.decodeIfPresent(Double.self, forKey: .vlcDoubleTapSeekSeconds) ?? 10.0
-        vlcOpenSubtitlesEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesEnabled) ?? false
-        vlcOpenSubtitlesAutoFallbackEnabled = try container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesAutoFallbackEnabled) ?? true
+        playerDoubleTapSeekEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerDoubleTapSeekEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .vlcDoubleTapSeekEnabled)
+            ?? true
+        playerDoubleTapSeekSeconds = try container.decodeIfPresent(Double.self, forKey: .playerDoubleTapSeekSeconds)
+            ?? container.decodeIfPresent(Double.self, forKey: .vlcDoubleTapSeekSeconds)
+            ?? 10.0
+        playerOpenSubtitlesEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerOpenSubtitlesEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesEnabled)
+            ?? false
+        playerOpenSubtitlesAutoFallbackEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerOpenSubtitlesAutoFallbackEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .vlcOpenSubtitlesAutoFallbackEnabled)
+            ?? true
         playerPerformanceOverlayEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerPerformanceOverlayEnabled) ?? false
         mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(try container.decodeIfPresent(Int.self, forKey: .mpvForegroundFPS) ?? 30)
         mpvRenderBackend = Self.sanitizedMPVRenderBackend(try container.decodeIfPresent(String.self, forKey: .mpvRenderBackend))
@@ -307,7 +322,7 @@ struct BackupData: Codable {
         try container.encode(selectedAppearance, forKey: .selectedAppearance)
         try container.encode(enableSubtitlesByDefault, forKey: .enableSubtitlesByDefault)
         try container.encode(defaultSubtitleLanguage, forKey: .defaultSubtitleLanguage)
-        try container.encode(enableVLCSubtitleEditMenu, forKey: .enableVLCSubtitleEditMenu)
+        try container.encode(playerSubtitleAppearanceEnabled, forKey: .playerSubtitleAppearanceEnabled)
 
         try container.encode(preferredAnimeAudioLanguage, forKey: .preferredAnimeAudioLanguage)
         try container.encode(inAppPlayer, forKey: .inAppPlayer)
@@ -323,17 +338,16 @@ struct BackupData: Codable {
         try container.encode(aniSkipAutoSkip, forKey: .aniSkipAutoSkip)
         try container.encode(skip85sEnabled, forKey: .skip85sEnabled)
         try container.encode(showNextEpisodeButton, forKey: .showNextEpisodeButton)
-        try container.encode(showVLCEpisodeBrowserButton, forKey: .showVLCEpisodeBrowserButton)
+        try container.encode(showEpisodeBrowserButton, forKey: .showEpisodeBrowserButton)
         try container.encode(showNextEpisodePosterButton, forKey: .showNextEpisodePosterButton)
         try container.encode(nextEpisodeThreshold, forKey: .nextEpisodeThreshold)
-        try container.encode(vlcHeaderProxyEnabled, forKey: .vlcHeaderProxyEnabled)
-        try container.encode(vlcBrightnessGestureEnabled, forKey: .vlcBrightnessGestureEnabled)
-        try container.encode(vlcVolumeGestureEnabled, forKey: .vlcVolumeGestureEnabled)
+        try container.encode(playerBrightnessGestureEnabled, forKey: .playerBrightnessGestureEnabled)
+        try container.encode(playerVolumeGestureEnabled, forKey: .playerVolumeGestureEnabled)
         try container.encode(playerTwoFingerTapPlayPauseEnabled, forKey: .playerTwoFingerTapPlayPauseEnabled)
-        try container.encode(vlcDoubleTapSeekEnabled, forKey: .vlcDoubleTapSeekEnabled)
-        try container.encode(vlcDoubleTapSeekSeconds, forKey: .vlcDoubleTapSeekSeconds)
-        try container.encode(vlcOpenSubtitlesEnabled, forKey: .vlcOpenSubtitlesEnabled)
-        try container.encode(vlcOpenSubtitlesAutoFallbackEnabled, forKey: .vlcOpenSubtitlesAutoFallbackEnabled)
+        try container.encode(playerDoubleTapSeekEnabled, forKey: .playerDoubleTapSeekEnabled)
+        try container.encode(playerDoubleTapSeekSeconds, forKey: .playerDoubleTapSeekSeconds)
+        try container.encode(playerOpenSubtitlesEnabled, forKey: .playerOpenSubtitlesEnabled)
+        try container.encode(playerOpenSubtitlesAutoFallbackEnabled, forKey: .playerOpenSubtitlesAutoFallbackEnabled)
         try container.encode(playerPerformanceOverlayEnabled, forKey: .playerPerformanceOverlayEnabled)
         try container.encode(mpvForegroundFPS, forKey: .mpvForegroundFPS)
         try container.encode(mpvRenderBackend, forKey: .mpvRenderBackend)
@@ -404,7 +418,7 @@ struct BackupData: Codable {
         selectedAppearance: String,
         enableSubtitlesByDefault: Bool,
         defaultSubtitleLanguage: String,
-        enableVLCSubtitleEditMenu: Bool,
+        playerSubtitleAppearanceEnabled: Bool,
 
         preferredAnimeAudioLanguage: String,
         inAppPlayer: String,
@@ -420,17 +434,16 @@ struct BackupData: Codable {
         aniSkipAutoSkip: Bool = false,
         skip85sEnabled: Bool = false,
         showNextEpisodeButton: Bool = true,
-        showVLCEpisodeBrowserButton: Bool = true,
+        showEpisodeBrowserButton: Bool = true,
         showNextEpisodePosterButton: Bool = false,
         nextEpisodeThreshold: Double = 0.90,
-        vlcHeaderProxyEnabled: Bool = true,
-        vlcBrightnessGestureEnabled: Bool = false,
-        vlcVolumeGestureEnabled: Bool = false,
+        playerBrightnessGestureEnabled: Bool = false,
+        playerVolumeGestureEnabled: Bool = false,
         playerTwoFingerTapPlayPauseEnabled: Bool = true,
-        vlcDoubleTapSeekEnabled: Bool = true,
-        vlcDoubleTapSeekSeconds: Double = 10.0,
-        vlcOpenSubtitlesEnabled: Bool = false,
-        vlcOpenSubtitlesAutoFallbackEnabled: Bool = true,
+        playerDoubleTapSeekEnabled: Bool = true,
+        playerDoubleTapSeekSeconds: Double = 10.0,
+        playerOpenSubtitlesEnabled: Bool = false,
+        playerOpenSubtitlesAutoFallbackEnabled: Bool = true,
         playerPerformanceOverlayEnabled: Bool = false,
         mpvForegroundFPS: Int = 30,
         mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue,
@@ -499,10 +512,10 @@ struct BackupData: Codable {
         self.selectedAppearance = selectedAppearance
         self.enableSubtitlesByDefault = enableSubtitlesByDefault
         self.defaultSubtitleLanguage = defaultSubtitleLanguage
-        self.enableVLCSubtitleEditMenu = enableVLCSubtitleEditMenu
+        self.playerSubtitleAppearanceEnabled = playerSubtitleAppearanceEnabled
 
         self.preferredAnimeAudioLanguage = preferredAnimeAudioLanguage
-        self.inAppPlayer = inAppPlayer
+        self.inAppPlayer = Settings.normalizedInAppPlayer(inAppPlayer)
         self.showScheduleTab = showScheduleTab
         self.showLocalScheduleTime = showLocalScheduleTime
         self.defaultScheduleMode = ScheduleMode.sanitizedRawValue(defaultScheduleMode)
@@ -514,17 +527,16 @@ struct BackupData: Codable {
         self.aniSkipAutoSkip = aniSkipAutoSkip
         self.skip85sEnabled = skip85sEnabled
         self.showNextEpisodeButton = showNextEpisodeButton
-        self.showVLCEpisodeBrowserButton = showVLCEpisodeBrowserButton
+        self.showEpisodeBrowserButton = showEpisodeBrowserButton
         self.showNextEpisodePosterButton = showNextEpisodePosterButton
         self.nextEpisodeThreshold = nextEpisodeThreshold
-        self.vlcHeaderProxyEnabled = vlcHeaderProxyEnabled
-        self.vlcBrightnessGestureEnabled = vlcBrightnessGestureEnabled
-        self.vlcVolumeGestureEnabled = vlcVolumeGestureEnabled
+        self.playerBrightnessGestureEnabled = playerBrightnessGestureEnabled
+        self.playerVolumeGestureEnabled = playerVolumeGestureEnabled
         self.playerTwoFingerTapPlayPauseEnabled = playerTwoFingerTapPlayPauseEnabled
-        self.vlcDoubleTapSeekEnabled = vlcDoubleTapSeekEnabled
-        self.vlcDoubleTapSeekSeconds = vlcDoubleTapSeekSeconds
-        self.vlcOpenSubtitlesEnabled = vlcOpenSubtitlesEnabled
-        self.vlcOpenSubtitlesAutoFallbackEnabled = vlcOpenSubtitlesAutoFallbackEnabled
+        self.playerDoubleTapSeekEnabled = playerDoubleTapSeekEnabled
+        self.playerDoubleTapSeekSeconds = playerDoubleTapSeekSeconds
+        self.playerOpenSubtitlesEnabled = playerOpenSubtitlesEnabled
+        self.playerOpenSubtitlesAutoFallbackEnabled = playerOpenSubtitlesAutoFallbackEnabled
         self.playerPerformanceOverlayEnabled = playerPerformanceOverlayEnabled
         self.mpvForegroundFPS = Self.sanitizedMPVForegroundFPS(mpvForegroundFPS)
         self.mpvRenderBackend = Self.sanitizedMPVRenderBackend(mpvRenderBackend)
@@ -824,10 +836,15 @@ class BackupManager {
         let selectedAppearance = userDefaults.string(forKey: "selectedAppearance") ?? "system"
         let enableSubtitlesByDefault = userDefaults.bool(forKey: "enableSubtitlesByDefault")
         let defaultSubtitleLanguage = userDefaults.string(forKey: "defaultSubtitleLanguage") ?? "eng"
-        let enableVLCSubtitleEditMenu = userDefaults.bool(forKey: "enableVLCSubtitleEditMenu")
+        let playerSubtitleAppearanceEnabled: Bool
+        if userDefaults.object(forKey: "playerSubtitleAppearanceEnabled") == nil {
+            playerSubtitleAppearanceEnabled = userDefaults.object(forKey: "enableVLCSubtitleEditMenu") as? Bool ?? true
+        } else {
+            playerSubtitleAppearanceEnabled = userDefaults.bool(forKey: "playerSubtitleAppearanceEnabled")
+        }
 
         let preferredAnimeAudioLanguage = userDefaults.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn"
-        let inAppPlayer = userDefaults.string(forKey: "inAppPlayer") ?? "mpv"
+        let inAppPlayer = Settings.normalizedInAppPlayer(userDefaults.string(forKey: "inAppPlayer"))
         let tmdbLanguage = userDefaults.string(forKey: "tmdbLanguage") ?? "en-US"
         let showScheduleTab = userDefaults.bool(forKey: "showScheduleTab")
         let showLocalScheduleTime = userDefaults.bool(forKey: "showLocalScheduleTime")
@@ -843,24 +860,37 @@ class BackupManager {
         let aniSkipAutoSkip = userDefaults.bool(forKey: "aniSkipAutoSkip")
         let skip85sEnabled = userDefaults.bool(forKey: "skip85sEnabled")
         let showNextEpisodeButton = userDefaults.object(forKey: "showNextEpisodeButton") == nil ? true : userDefaults.bool(forKey: "showNextEpisodeButton")
-        let showVLCEpisodeBrowserButton = userDefaults.object(forKey: "showVLCEpisodeBrowserButton") == nil ? true : userDefaults.bool(forKey: "showVLCEpisodeBrowserButton")
+        let showEpisodeBrowserButton = userDefaults.object(forKey: "showEpisodeBrowserButton") == nil
+            ? (userDefaults.object(forKey: "showVLCEpisodeBrowserButton") as? Bool ?? true)
+            : userDefaults.bool(forKey: "showEpisodeBrowserButton")
         let showNextEpisodePosterButton = userDefaults.bool(forKey: "showNextEpisodePosterButton")
         let savedNextThreshold = userDefaults.double(forKey: "nextEpisodeThreshold")
         let nextEpisodeThreshold = savedNextThreshold > 0 ? savedNextThreshold : 0.90
-        let vlcHeaderProxyEnabled = userDefaults.object(forKey: "vlcHeaderProxyEnabled") as? Bool ?? true
-        let vlcBrightnessGestureEnabled = userDefaults.bool(forKey: "vlcBrightnessGestureEnabled")
-        let vlcVolumeGestureEnabled = userDefaults.bool(forKey: "vlcVolumeGestureEnabled")
+        let playerBrightnessGestureEnabled = userDefaults.object(forKey: "playerBrightnessGestureEnabled") == nil
+            ? (userDefaults.object(forKey: "vlcBrightnessGestureEnabled") as? Bool ?? false)
+            : userDefaults.bool(forKey: "playerBrightnessGestureEnabled")
+        let playerVolumeGestureEnabled = userDefaults.object(forKey: "playerVolumeGestureEnabled") == nil
+            ? (userDefaults.object(forKey: "vlcVolumeGestureEnabled") as? Bool ?? false)
+            : userDefaults.bool(forKey: "playerVolumeGestureEnabled")
         let playerTwoFingerTapPlayPauseEnabled: Bool
         if userDefaults.object(forKey: "playerTwoFingerTapPlayPauseEnabled") == nil {
             playerTwoFingerTapPlayPauseEnabled = userDefaults.object(forKey: "mpvTwoFingerTapEnabled") as? Bool ?? true
         } else {
             playerTwoFingerTapPlayPauseEnabled = userDefaults.bool(forKey: "playerTwoFingerTapPlayPauseEnabled")
         }
-        let vlcDoubleTapSeekEnabled = userDefaults.object(forKey: "vlcDoubleTapSeekEnabled") == nil ? true : userDefaults.bool(forKey: "vlcDoubleTapSeekEnabled")
-        let savedDoubleTapSeekSeconds = userDefaults.double(forKey: "vlcDoubleTapSeekSeconds")
-        let vlcDoubleTapSeekSeconds = savedDoubleTapSeekSeconds > 0 ? savedDoubleTapSeekSeconds : 10.0
-        let vlcOpenSubtitlesEnabled = userDefaults.bool(forKey: "vlcOpenSubtitlesEnabled")
-        let vlcOpenSubtitlesAutoFallbackEnabled = userDefaults.object(forKey: "vlcOpenSubtitlesAutoFallbackEnabled") == nil ? true : userDefaults.bool(forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
+        let playerDoubleTapSeekEnabled = userDefaults.object(forKey: "playerDoubleTapSeekEnabled") == nil
+            ? (userDefaults.object(forKey: "vlcDoubleTapSeekEnabled") as? Bool ?? true)
+            : userDefaults.bool(forKey: "playerDoubleTapSeekEnabled")
+        let savedDoubleTapSeekSeconds = userDefaults.object(forKey: "playerDoubleTapSeekSeconds") == nil
+            ? userDefaults.double(forKey: "vlcDoubleTapSeekSeconds")
+            : userDefaults.double(forKey: "playerDoubleTapSeekSeconds")
+        let playerDoubleTapSeekSeconds = savedDoubleTapSeekSeconds > 0 ? savedDoubleTapSeekSeconds : 10.0
+        let playerOpenSubtitlesEnabled = userDefaults.object(forKey: "playerOpenSubtitlesEnabled") == nil
+            ? (userDefaults.object(forKey: "vlcOpenSubtitlesEnabled") as? Bool ?? false)
+            : userDefaults.bool(forKey: "playerOpenSubtitlesEnabled")
+        let playerOpenSubtitlesAutoFallbackEnabled = userDefaults.object(forKey: "playerOpenSubtitlesAutoFallbackEnabled") == nil
+            ? (userDefaults.object(forKey: "vlcOpenSubtitlesAutoFallbackEnabled") as? Bool ?? true)
+            : userDefaults.bool(forKey: "playerOpenSubtitlesAutoFallbackEnabled")
         let playerPerformanceOverlayEnabled = false
         let mpvForegroundFPS = userDefaults.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(userDefaults.string(forKey: "mpvRenderBackend"))
@@ -875,8 +905,14 @@ class BackupManager {
         let subtitleStrokeWidth = savedStrokeWidth >= 0 ? savedStrokeWidth : 1.0
         let savedFontSize = userDefaults.double(forKey: "subtitles_fontSize")
         let subtitleFontSize = savedFontSize > 0 ? savedFontSize : 30.0
-        let subtitleVerticalOffset = userDefaults.object(forKey: "vlcSubtitleOverlayBottomConstant") != nil
-            ? userDefaults.double(forKey: "vlcSubtitleOverlayBottomConstant") : -6.0
+        let subtitleVerticalOffset: Double
+        if userDefaults.object(forKey: "playerSubtitleOverlayBottomConstant") != nil {
+            subtitleVerticalOffset = userDefaults.double(forKey: "playerSubtitleOverlayBottomConstant")
+        } else if userDefaults.object(forKey: "vlcSubtitleOverlayBottomConstant") != nil {
+            subtitleVerticalOffset = userDefaults.double(forKey: "vlcSubtitleOverlayBottomConstant")
+        } else {
+            subtitleVerticalOffset = -6.0
+        }
 
         // UI preferences
         let showKanzen = userDefaults.bool(forKey: "showKanzen")
@@ -1009,7 +1045,7 @@ class BackupManager {
             selectedAppearance: selectedAppearance,
             enableSubtitlesByDefault: enableSubtitlesByDefault,
             defaultSubtitleLanguage: defaultSubtitleLanguage,
-            enableVLCSubtitleEditMenu: enableVLCSubtitleEditMenu,
+            playerSubtitleAppearanceEnabled: playerSubtitleAppearanceEnabled,
 
             preferredAnimeAudioLanguage: preferredAnimeAudioLanguage,
             inAppPlayer: inAppPlayer,
@@ -1024,17 +1060,16 @@ class BackupManager {
             aniSkipAutoSkip: aniSkipAutoSkip,
             skip85sEnabled: skip85sEnabled,
             showNextEpisodeButton: showNextEpisodeButton,
-            showVLCEpisodeBrowserButton: showVLCEpisodeBrowserButton,
+            showEpisodeBrowserButton: showEpisodeBrowserButton,
             showNextEpisodePosterButton: showNextEpisodePosterButton,
             nextEpisodeThreshold: nextEpisodeThreshold,
-            vlcHeaderProxyEnabled: vlcHeaderProxyEnabled,
-            vlcBrightnessGestureEnabled: vlcBrightnessGestureEnabled,
-            vlcVolumeGestureEnabled: vlcVolumeGestureEnabled,
+            playerBrightnessGestureEnabled: playerBrightnessGestureEnabled,
+            playerVolumeGestureEnabled: playerVolumeGestureEnabled,
             playerTwoFingerTapPlayPauseEnabled: playerTwoFingerTapPlayPauseEnabled,
-            vlcDoubleTapSeekEnabled: vlcDoubleTapSeekEnabled,
-            vlcDoubleTapSeekSeconds: vlcDoubleTapSeekSeconds,
-            vlcOpenSubtitlesEnabled: vlcOpenSubtitlesEnabled,
-            vlcOpenSubtitlesAutoFallbackEnabled: vlcOpenSubtitlesAutoFallbackEnabled,
+            playerDoubleTapSeekEnabled: playerDoubleTapSeekEnabled,
+            playerDoubleTapSeekSeconds: playerDoubleTapSeekSeconds,
+            playerOpenSubtitlesEnabled: playerOpenSubtitlesEnabled,
+            playerOpenSubtitlesAutoFallbackEnabled: playerOpenSubtitlesAutoFallbackEnabled,
             playerPerformanceOverlayEnabled: playerPerformanceOverlayEnabled,
             mpvForegroundFPS: mpvForegroundFPS,
             mpvRenderBackend: mpvRenderBackend,
@@ -1153,9 +1188,11 @@ class BackupManager {
         let selectedAppearance = json["selectedAppearance"] as? String ?? "system"
         let enableSubtitlesByDefault = json["enableSubtitlesByDefault"] as? Bool ?? false
         let defaultSubtitleLanguage = json["defaultSubtitleLanguage"] as? String ?? "eng"
-        let enableVLCSubtitleEditMenu = json["enableVLCSubtitleEditMenu"] as? Bool ?? false
+        let playerSubtitleAppearanceEnabled = json["playerSubtitleAppearanceEnabled"] as? Bool
+            ?? json["enableVLCSubtitleEditMenu"] as? Bool
+            ?? true
         let preferredAnimeAudioLanguage = json["preferredAnimeAudioLanguage"] as? String ?? "jpn"
-        let inAppPlayer = json["inAppPlayer"] as? String ?? json["playerChoice"] as? String ?? "mpv"
+        let inAppPlayer = Settings.normalizedInAppPlayer(json["inAppPlayer"] as? String ?? json["playerChoice"] as? String)
         let showScheduleTab = json["showScheduleTab"] as? Bool ?? true
         let showLocalScheduleTime = json["showLocalScheduleTime"] as? Bool ?? true
         let defaultScheduleMode = ScheduleMode.sanitizedRawValue(json["defaultScheduleMode"] as? String)
@@ -1168,17 +1205,16 @@ class BackupManager {
         let aniSkipAutoSkip = json["aniSkipAutoSkip"] as? Bool ?? false
         let skip85sEnabled = json["skip85sEnabled"] as? Bool ?? false
         let showNextEpisodeButton = json["showNextEpisodeButton"] as? Bool ?? true
-        let showVLCEpisodeBrowserButton = json["showVLCEpisodeBrowserButton"] as? Bool ?? true
+        let showEpisodeBrowserButton = json["showEpisodeBrowserButton"] as? Bool ?? json["showVLCEpisodeBrowserButton"] as? Bool ?? true
         let showNextEpisodePosterButton = json["showNextEpisodePosterButton"] as? Bool ?? false
         let nextEpisodeThreshold = json["nextEpisodeThreshold"] as? Double ?? 0.90
-        let vlcHeaderProxyEnabled = json["vlcHeaderProxyEnabled"] as? Bool ?? true
-        let vlcBrightnessGestureEnabled = json["vlcBrightnessGestureEnabled"] as? Bool ?? false
-        let vlcVolumeGestureEnabled = json["vlcVolumeGestureEnabled"] as? Bool ?? false
+        let playerBrightnessGestureEnabled = json["playerBrightnessGestureEnabled"] as? Bool ?? json["vlcBrightnessGestureEnabled"] as? Bool ?? false
+        let playerVolumeGestureEnabled = json["playerVolumeGestureEnabled"] as? Bool ?? json["vlcVolumeGestureEnabled"] as? Bool ?? false
         let playerTwoFingerTapPlayPauseEnabled = json["playerTwoFingerTapPlayPauseEnabled"] as? Bool ?? true
-        let vlcDoubleTapSeekEnabled = json["vlcDoubleTapSeekEnabled"] as? Bool ?? true
-        let vlcDoubleTapSeekSeconds = json["vlcDoubleTapSeekSeconds"] as? Double ?? 10.0
-        let vlcOpenSubtitlesEnabled = json["vlcOpenSubtitlesEnabled"] as? Bool ?? false
-        let vlcOpenSubtitlesAutoFallbackEnabled = json["vlcOpenSubtitlesAutoFallbackEnabled"] as? Bool ?? true
+        let playerDoubleTapSeekEnabled = json["playerDoubleTapSeekEnabled"] as? Bool ?? json["vlcDoubleTapSeekEnabled"] as? Bool ?? true
+        let playerDoubleTapSeekSeconds = json["playerDoubleTapSeekSeconds"] as? Double ?? json["vlcDoubleTapSeekSeconds"] as? Double ?? 10.0
+        let playerOpenSubtitlesEnabled = json["playerOpenSubtitlesEnabled"] as? Bool ?? json["vlcOpenSubtitlesEnabled"] as? Bool ?? false
+        let playerOpenSubtitlesAutoFallbackEnabled = json["playerOpenSubtitlesAutoFallbackEnabled"] as? Bool ?? json["vlcOpenSubtitlesAutoFallbackEnabled"] as? Bool ?? true
         let playerPerformanceOverlayEnabled = json["playerPerformanceOverlayEnabled"] as? Bool ?? false
         let mpvForegroundFPSRaw = json["mpvForegroundFPS"] as? Int ?? (json["mpvForegroundFPS"] as? Double).map(Int.init) ?? 30
         let mpvForegroundFPS = mpvForegroundFPSRaw == 60 ? 60 : 30
@@ -1373,7 +1409,7 @@ class BackupManager {
             selectedAppearance: selectedAppearance,
             enableSubtitlesByDefault: enableSubtitlesByDefault,
             defaultSubtitleLanguage: defaultSubtitleLanguage,
-            enableVLCSubtitleEditMenu: enableVLCSubtitleEditMenu,
+            playerSubtitleAppearanceEnabled: playerSubtitleAppearanceEnabled,
             preferredAnimeAudioLanguage: preferredAnimeAudioLanguage,
             inAppPlayer: inAppPlayer,
             showScheduleTab: showScheduleTab,
@@ -1386,17 +1422,16 @@ class BackupManager {
             aniSkipAutoSkip: aniSkipAutoSkip,
             skip85sEnabled: skip85sEnabled,
             showNextEpisodeButton: showNextEpisodeButton,
-            showVLCEpisodeBrowserButton: showVLCEpisodeBrowserButton,
+            showEpisodeBrowserButton: showEpisodeBrowserButton,
             showNextEpisodePosterButton: showNextEpisodePosterButton,
             nextEpisodeThreshold: nextEpisodeThreshold,
-            vlcHeaderProxyEnabled: vlcHeaderProxyEnabled,
-            vlcBrightnessGestureEnabled: vlcBrightnessGestureEnabled,
-            vlcVolumeGestureEnabled: vlcVolumeGestureEnabled,
+            playerBrightnessGestureEnabled: playerBrightnessGestureEnabled,
+            playerVolumeGestureEnabled: playerVolumeGestureEnabled,
             playerTwoFingerTapPlayPauseEnabled: playerTwoFingerTapPlayPauseEnabled,
-            vlcDoubleTapSeekEnabled: vlcDoubleTapSeekEnabled,
-            vlcDoubleTapSeekSeconds: vlcDoubleTapSeekSeconds,
-            vlcOpenSubtitlesEnabled: vlcOpenSubtitlesEnabled,
-            vlcOpenSubtitlesAutoFallbackEnabled: vlcOpenSubtitlesAutoFallbackEnabled,
+            playerDoubleTapSeekEnabled: playerDoubleTapSeekEnabled,
+            playerDoubleTapSeekSeconds: playerDoubleTapSeekSeconds,
+            playerOpenSubtitlesEnabled: playerOpenSubtitlesEnabled,
+            playerOpenSubtitlesAutoFallbackEnabled: playerOpenSubtitlesAutoFallbackEnabled,
             playerPerformanceOverlayEnabled: playerPerformanceOverlayEnabled,
             mpvForegroundFPS: mpvForegroundFPS,
             mpvRenderBackend: mpvRenderBackend,
@@ -1467,11 +1502,10 @@ class BackupManager {
         userDefaults.set(backup.selectedAppearance, forKey: "selectedAppearance")
         userDefaults.set(backup.enableSubtitlesByDefault, forKey: "enableSubtitlesByDefault")
         userDefaults.set(backup.defaultSubtitleLanguage, forKey: "defaultSubtitleLanguage")
-        // Forced on by app policy: backup value is intentionally ignored here and this flag remains enabled.
-        userDefaults.set(true, forKey: "enableVLCSubtitleEditMenu")
+        userDefaults.set(backup.playerSubtitleAppearanceEnabled, forKey: "playerSubtitleAppearanceEnabled")
 
         userDefaults.set(backup.preferredAnimeAudioLanguage, forKey: "preferredAnimeAudioLanguage")
-        userDefaults.set(backup.inAppPlayer, forKey: "inAppPlayer")
+        userDefaults.set(Settings.normalizedInAppPlayer(backup.inAppPlayer), forKey: "inAppPlayer")
         userDefaults.set(backup.showScheduleTab, forKey: "showScheduleTab")
         userDefaults.set(backup.showLocalScheduleTime, forKey: "showLocalScheduleTime")
         userDefaults.set(ScheduleMode.sanitizedRawValue(backup.defaultScheduleMode), forKey: "defaultScheduleMode")
@@ -1484,18 +1518,16 @@ class BackupManager {
         userDefaults.set(backup.aniSkipAutoSkip, forKey: "aniSkipAutoSkip")
         userDefaults.set(backup.skip85sEnabled, forKey: "skip85sEnabled")
         userDefaults.set(backup.showNextEpisodeButton, forKey: "showNextEpisodeButton")
-        userDefaults.set(backup.showVLCEpisodeBrowserButton, forKey: "showVLCEpisodeBrowserButton")
+        userDefaults.set(backup.showEpisodeBrowserButton, forKey: "showEpisodeBrowserButton")
         userDefaults.set(backup.showNextEpisodePosterButton, forKey: "showNextEpisodePosterButton")
         userDefaults.set(backup.nextEpisodeThreshold, forKey: "nextEpisodeThreshold")
-        // Forced on by app policy: backup value is intentionally ignored here and this flag remains enabled.
-        userDefaults.set(true, forKey: "vlcHeaderProxyEnabled")
-        userDefaults.set(backup.vlcBrightnessGestureEnabled, forKey: "vlcBrightnessGestureEnabled")
-        userDefaults.set(backup.vlcVolumeGestureEnabled, forKey: "vlcVolumeGestureEnabled")
+        userDefaults.set(backup.playerBrightnessGestureEnabled, forKey: "playerBrightnessGestureEnabled")
+        userDefaults.set(backup.playerVolumeGestureEnabled, forKey: "playerVolumeGestureEnabled")
         userDefaults.set(backup.playerTwoFingerTapPlayPauseEnabled, forKey: "playerTwoFingerTapPlayPauseEnabled")
-        userDefaults.set(backup.vlcDoubleTapSeekEnabled, forKey: "vlcDoubleTapSeekEnabled")
-        userDefaults.set(backup.vlcDoubleTapSeekSeconds, forKey: "vlcDoubleTapSeekSeconds")
-        userDefaults.set(backup.vlcOpenSubtitlesEnabled, forKey: "vlcOpenSubtitlesEnabled")
-        userDefaults.set(backup.vlcOpenSubtitlesAutoFallbackEnabled, forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
+        userDefaults.set(backup.playerDoubleTapSeekEnabled, forKey: "playerDoubleTapSeekEnabled")
+        userDefaults.set(backup.playerDoubleTapSeekSeconds, forKey: "playerDoubleTapSeekSeconds")
+        userDefaults.set(backup.playerOpenSubtitlesEnabled, forKey: "playerOpenSubtitlesEnabled")
+        userDefaults.set(backup.playerOpenSubtitlesAutoFallbackEnabled, forKey: "playerOpenSubtitlesAutoFallbackEnabled")
         userDefaults.set(false, forKey: "playerPerformanceOverlayEnabled")
         userDefaults.set(backup.mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS")
         userDefaults.set(BackupData.sanitizedMPVRenderBackend(backup.mpvRenderBackend), forKey: "mpvRenderBackend")
@@ -1512,7 +1544,7 @@ class BackupManager {
         }
         userDefaults.set(backup.subtitleStrokeWidth, forKey: "subtitles_strokeWidth")
         userDefaults.set(backup.subtitleFontSize, forKey: "subtitles_fontSize")
-        userDefaults.set(backup.subtitleVerticalOffset, forKey: "vlcSubtitleOverlayBottomConstant")
+        userDefaults.set(backup.subtitleVerticalOffset, forKey: "playerSubtitleOverlayBottomConstant")
 
         // UI preferences
         userDefaults.set(backup.showKanzen, forKey: "showKanzen")

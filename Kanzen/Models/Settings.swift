@@ -445,7 +445,31 @@ class Settings: ObservableObject {
         UserDefaults.standard.bool(forKey: "showKanzen") && !LunaTheme.shared.globalAppearanceEnabled ? readerSelectedAppearance : selectedAppearance
     }
     
-    // VLC Player Settings
+    // In-App Player Settings
+    private func migratedBool(genericKey: String, legacyKey: String, defaultValue: Bool) -> Bool {
+        if UserDefaults.standard.object(forKey: genericKey) == nil {
+            let value = UserDefaults.standard.object(forKey: legacyKey) as? Bool ?? defaultValue
+            UserDefaults.standard.set(value, forKey: genericKey)
+            return value
+        }
+        return UserDefaults.standard.bool(forKey: genericKey)
+    }
+
+    private func migratedDouble(genericKey: String, legacyKey: String, defaultValue: Double) -> Double {
+        if UserDefaults.standard.object(forKey: genericKey) == nil {
+            let value = UserDefaults.standard.double(forKey: legacyKey)
+            let resolved = value > 0 ? value : defaultValue
+            UserDefaults.standard.set(resolved, forKey: genericKey)
+            return resolved
+        }
+        let value = UserDefaults.standard.double(forKey: genericKey)
+        return value > 0 ? value : defaultValue
+    }
+
+    static func normalizedInAppPlayer(_ rawValue: String?) -> String {
+        rawValue == "VLC" ? "mpv" : (rawValue ?? "mpv")
+    }
+
     var enableSubtitlesByDefault: Bool {
         get { UserDefaults.standard.bool(forKey: "enableSubtitlesByDefault") }
         set { UserDefaults.standard.set(newValue, forKey: "enableSubtitlesByDefault") }
@@ -461,14 +485,14 @@ class Settings: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "preferredAnimeAudioLanguage") }
     }
 
-    var vlcBrightnessGestureEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "vlcBrightnessGestureEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "vlcBrightnessGestureEnabled") }
+    var playerBrightnessGestureEnabled: Bool {
+        get { migratedBool(genericKey: "playerBrightnessGestureEnabled", legacyKey: "vlcBrightnessGestureEnabled", defaultValue: false) }
+        set { UserDefaults.standard.set(newValue, forKey: "playerBrightnessGestureEnabled") }
     }
 
-    var vlcVolumeGestureEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "vlcVolumeGestureEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "vlcVolumeGestureEnabled") }
+    var playerVolumeGestureEnabled: Bool {
+        get { migratedBool(genericKey: "playerVolumeGestureEnabled", legacyKey: "vlcVolumeGestureEnabled", defaultValue: false) }
+        set { UserDefaults.standard.set(newValue, forKey: "playerVolumeGestureEnabled") }
     }
 
     var playerTwoFingerTapPlayPauseEnabled: Bool {
@@ -493,37 +517,24 @@ class Settings: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "defaultPlaybackSpeed") }
     }
 
-    var vlcDoubleTapSeekEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: "vlcDoubleTapSeekEnabled") == nil {
-                UserDefaults.standard.set(true, forKey: "vlcDoubleTapSeekEnabled")
-            }
-            return UserDefaults.standard.bool(forKey: "vlcDoubleTapSeekEnabled")
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "vlcDoubleTapSeekEnabled") }
+    var playerDoubleTapSeekEnabled: Bool {
+        get { migratedBool(genericKey: "playerDoubleTapSeekEnabled", legacyKey: "vlcDoubleTapSeekEnabled", defaultValue: true) }
+        set { UserDefaults.standard.set(newValue, forKey: "playerDoubleTapSeekEnabled") }
     }
 
-    var vlcDoubleTapSeekSeconds: Double {
-        get {
-            let savedSeconds = UserDefaults.standard.double(forKey: "vlcDoubleTapSeekSeconds")
-            return savedSeconds > 0 ? savedSeconds : 10.0
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "vlcDoubleTapSeekSeconds") }
+    var playerDoubleTapSeekSeconds: Double {
+        get { migratedDouble(genericKey: "playerDoubleTapSeekSeconds", legacyKey: "vlcDoubleTapSeekSeconds", defaultValue: 10.0) }
+        set { UserDefaults.standard.set(newValue, forKey: "playerDoubleTapSeekSeconds") }
     }
 
-    var vlcOpenSubtitlesEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "vlcOpenSubtitlesEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "vlcOpenSubtitlesEnabled") }
+    var playerOpenSubtitlesEnabled: Bool {
+        get { migratedBool(genericKey: "playerOpenSubtitlesEnabled", legacyKey: "vlcOpenSubtitlesEnabled", defaultValue: false) }
+        set { UserDefaults.standard.set(newValue, forKey: "playerOpenSubtitlesEnabled") }
     }
 
-    var vlcOpenSubtitlesAutoFallbackEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: "vlcOpenSubtitlesAutoFallbackEnabled") == nil {
-                UserDefaults.standard.set(true, forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
-            }
-            return UserDefaults.standard.bool(forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "vlcOpenSubtitlesAutoFallbackEnabled") }
+    var playerOpenSubtitlesAutoFallbackEnabled: Bool {
+        get { migratedBool(genericKey: "playerOpenSubtitlesAutoFallbackEnabled", legacyKey: "vlcOpenSubtitlesAutoFallbackEnabled", defaultValue: true) }
+        set { UserDefaults.standard.set(newValue, forKey: "playerOpenSubtitlesAutoFallbackEnabled") }
     }
 
     var playerPerformanceOverlayEnabled: Bool {
@@ -573,42 +584,32 @@ class Settings: ObservableObject {
         set { UserDefaults.standard.set(false, forKey: "smartInAppPlayerChoosingEnabled") }
     }
 
-    var enableVLCSubtitleEditMenu: Bool {
+    var playerSubtitleAppearanceEnabled: Bool {
         get {
-            UserDefaults.standard.object(forKey: "enableVLCSubtitleEditMenu") as? Bool ?? true
+            if UserDefaults.standard.object(forKey: "playerSubtitleAppearanceEnabled") == nil {
+                let legacy = UserDefaults.standard.object(forKey: "enableVLCSubtitleEditMenu") as? Bool ?? true
+                UserDefaults.standard.set(legacy, forKey: "playerSubtitleAppearanceEnabled")
+                return legacy
+            }
+            return UserDefaults.standard.bool(forKey: "playerSubtitleAppearanceEnabled")
         }
-        set { UserDefaults.standard.set(newValue, forKey: "enableVLCSubtitleEditMenu") }
+        set { UserDefaults.standard.set(newValue, forKey: "playerSubtitleAppearanceEnabled") }
     }
     
     enum PlayerChoice: String {
-        case mpv, vlc
+        case mpv
     }
     
     var playerChoice: PlayerChoice {
         get {
-            // Read from inAppPlayer setting used in PlayerSettingsView
-            let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "mpv"
-            switch inAppRaw {
-            case "VLC":
-                return .vlc
-            case "mpv":
-                return .mpv
-            default:
-                // "Normal" uses native iOS player, not PlayerViewController
-                // This should not be called when Normal is selected
-                return .mpv  // Fallback
+            let normalized = Self.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
+            if normalized != UserDefaults.standard.string(forKey: "inAppPlayer") {
+                UserDefaults.standard.set(normalized, forKey: "inAppPlayer")
             }
+            return .mpv
         }
         set {
-            // Sync back to inAppPlayer setting
-            let inAppValue: String
-            switch newValue {
-            case .vlc:
-                inAppValue = "VLC"
-            case .mpv:
-                inAppValue = "mpv"
-            }
-            UserDefaults.standard.set(inAppValue, forKey: "inAppPlayer")
+            UserDefaults.standard.set("mpv", forKey: "inAppPlayer")
         }
     }
     

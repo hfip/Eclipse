@@ -45,14 +45,11 @@ enum ExternalPlayer: String, CaseIterable, Identifiable {
 enum InAppPlayer: String, CaseIterable, Identifiable {
     case normal = "Normal"
     case mpv = "mpv"
-    case vlc = "VLC"
     
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .vlc:
-            return rawValue
         case .mpv:
             return "MPV"
         case .normal:
@@ -114,8 +111,8 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(showNextEpisodeButton, forKey: "showNextEpisodeButton") }
     }
 
-    @Published var showVLCEpisodeBrowserButton: Bool {
-        didSet { UserDefaults.standard.set(showVLCEpisodeBrowserButton, forKey: "showVLCEpisodeBrowserButton") }
+    @Published var showEpisodeBrowserButton: Bool {
+        didSet { UserDefaults.standard.set(showEpisodeBrowserButton, forKey: "showEpisodeBrowserButton") }
     }
 
     @Published var showNextEpisodePosterButton: Bool {
@@ -126,12 +123,12 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(nextEpisodeThreshold, forKey: "nextEpisodeThreshold") }
     }
 
-    @Published var vlcBrightnessGestureEnabled: Bool {
-        didSet { UserDefaults.standard.set(vlcBrightnessGestureEnabled, forKey: "vlcBrightnessGestureEnabled") }
+    @Published var playerBrightnessGestureEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerBrightnessGestureEnabled, forKey: "playerBrightnessGestureEnabled") }
     }
 
-    @Published var vlcVolumeGestureEnabled: Bool {
-        didSet { UserDefaults.standard.set(vlcVolumeGestureEnabled, forKey: "vlcVolumeGestureEnabled") }
+    @Published var playerVolumeGestureEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerVolumeGestureEnabled, forKey: "playerVolumeGestureEnabled") }
     }
 
     @Published var playerTwoFingerTapPlayPauseEnabled: Bool {
@@ -142,20 +139,20 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(playerCenterTapPlayPauseEnabled, forKey: "playerCenterTapPlayPauseEnabled") }
     }
 
-    @Published var vlcDoubleTapSeekEnabled: Bool {
-        didSet { UserDefaults.standard.set(vlcDoubleTapSeekEnabled, forKey: "vlcDoubleTapSeekEnabled") }
+    @Published var playerDoubleTapSeekEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerDoubleTapSeekEnabled, forKey: "playerDoubleTapSeekEnabled") }
     }
 
-    @Published var vlcDoubleTapSeekSeconds: Double {
-        didSet { UserDefaults.standard.set(vlcDoubleTapSeekSeconds, forKey: "vlcDoubleTapSeekSeconds") }
+    @Published var playerDoubleTapSeekSeconds: Double {
+        didSet { UserDefaults.standard.set(playerDoubleTapSeekSeconds, forKey: "playerDoubleTapSeekSeconds") }
     }
 
-    @Published var vlcOpenSubtitlesEnabled: Bool {
-        didSet { UserDefaults.standard.set(vlcOpenSubtitlesEnabled, forKey: "vlcOpenSubtitlesEnabled") }
+    @Published var playerOpenSubtitlesEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerOpenSubtitlesEnabled, forKey: "playerOpenSubtitlesEnabled") }
     }
 
-    @Published var vlcOpenSubtitlesAutoFallbackEnabled: Bool {
-        didSet { UserDefaults.standard.set(vlcOpenSubtitlesAutoFallbackEnabled, forKey: "vlcOpenSubtitlesAutoFallbackEnabled") }
+    @Published var playerOpenSubtitlesAutoFallbackEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerOpenSubtitlesAutoFallbackEnabled, forKey: "playerOpenSubtitlesAutoFallbackEnabled") }
     }
 
     @Published var mpvForegroundFPS: Int {
@@ -174,6 +171,26 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
     }
 
+    private static func migratedBool(genericKey: String, legacyKey: String, defaultValue: Bool) -> Bool {
+        if UserDefaults.standard.object(forKey: genericKey) == nil {
+            let value = UserDefaults.standard.object(forKey: legacyKey) as? Bool ?? defaultValue
+            UserDefaults.standard.set(value, forKey: genericKey)
+            return value
+        }
+        return UserDefaults.standard.bool(forKey: genericKey)
+    }
+
+    private static func migratedDouble(genericKey: String, legacyKey: String, defaultValue: Double) -> Double {
+        if UserDefaults.standard.object(forKey: genericKey) == nil {
+            let value = UserDefaults.standard.double(forKey: legacyKey)
+            let resolved = value > 0 ? value : defaultValue
+            UserDefaults.standard.set(resolved, forKey: genericKey)
+            return resolved
+        }
+        let value = UserDefaults.standard.double(forKey: genericKey)
+        return value > 0 ? value : defaultValue
+    }
+
     init() {
         let savedDefaultSpeed = UserDefaults.standard.double(forKey: "defaultPlaybackSpeed")
         self.defaultPlaybackSpeed = savedDefaultSpeed > 0 ? savedDefaultSpeed : 1.0
@@ -187,7 +204,11 @@ final class PlayerSettingsStore: ObservableObject {
         self.landscapeOnly = UserDefaults.standard.bool(forKey: "alwaysLandscape")
         
         let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.mpv.rawValue
-        self.inAppPlayer = InAppPlayer(rawValue: inAppRaw) ?? .mpv
+        let normalizedInAppRaw = Settings.normalizedInAppPlayer(inAppRaw)
+        if normalizedInAppRaw != inAppRaw {
+            UserDefaults.standard.set(normalizedInAppRaw, forKey: "inAppPlayer")
+        }
+        self.inAppPlayer = InAppPlayer(rawValue: normalizedInAppRaw) ?? .mpv
 
         self.preferDownloadedMedia = UserDefaults.standard.bool(forKey: "preferDownloadedMedia")
 
@@ -221,10 +242,12 @@ final class PlayerSettingsStore: ObservableObject {
             self.showNextEpisodeButton = UserDefaults.standard.bool(forKey: "showNextEpisodeButton")
         }
 
-        if UserDefaults.standard.object(forKey: "showVLCEpisodeBrowserButton") == nil {
-            self.showVLCEpisodeBrowserButton = true
+        if UserDefaults.standard.object(forKey: "showEpisodeBrowserButton") == nil {
+            let legacy = UserDefaults.standard.object(forKey: "showVLCEpisodeBrowserButton") as? Bool ?? true
+            UserDefaults.standard.set(legacy, forKey: "showEpisodeBrowserButton")
+            self.showEpisodeBrowserButton = legacy
         } else {
-            self.showVLCEpisodeBrowserButton = UserDefaults.standard.bool(forKey: "showVLCEpisodeBrowserButton")
+            self.showEpisodeBrowserButton = UserDefaults.standard.bool(forKey: "showEpisodeBrowserButton")
         }
 
         self.showNextEpisodePosterButton = UserDefaults.standard.bool(forKey: "showNextEpisodePosterButton")
@@ -232,8 +255,8 @@ final class PlayerSettingsStore: ObservableObject {
         let savedThreshold = UserDefaults.standard.double(forKey: "nextEpisodeThreshold")
         self.nextEpisodeThreshold = savedThreshold > 0 ? savedThreshold : 0.90
 
-        self.vlcBrightnessGestureEnabled = UserDefaults.standard.bool(forKey: "vlcBrightnessGestureEnabled")
-        self.vlcVolumeGestureEnabled = UserDefaults.standard.bool(forKey: "vlcVolumeGestureEnabled")
+        self.playerBrightnessGestureEnabled = Self.migratedBool(genericKey: "playerBrightnessGestureEnabled", legacyKey: "vlcBrightnessGestureEnabled", defaultValue: false)
+        self.playerVolumeGestureEnabled = Self.migratedBool(genericKey: "playerVolumeGestureEnabled", legacyKey: "vlcVolumeGestureEnabled", defaultValue: false)
 
         if UserDefaults.standard.object(forKey: "playerTwoFingerTapPlayPauseEnabled") == nil {
             if let legacy = UserDefaults.standard.object(forKey: "mpvTwoFingerTapEnabled") as? Bool {
@@ -254,24 +277,10 @@ final class PlayerSettingsStore: ObservableObject {
             self.playerCenterTapPlayPauseEnabled = UserDefaults.standard.bool(forKey: "playerCenterTapPlayPauseEnabled")
         }
 
-        if UserDefaults.standard.object(forKey: "vlcDoubleTapSeekEnabled") == nil {
-            UserDefaults.standard.set(true, forKey: "vlcDoubleTapSeekEnabled")
-            self.vlcDoubleTapSeekEnabled = true
-        } else {
-            self.vlcDoubleTapSeekEnabled = UserDefaults.standard.bool(forKey: "vlcDoubleTapSeekEnabled")
-        }
-
-        let savedDoubleTapSeconds = UserDefaults.standard.double(forKey: "vlcDoubleTapSeekSeconds")
-        self.vlcDoubleTapSeekSeconds = savedDoubleTapSeconds > 0 ? savedDoubleTapSeconds : 10.0
-
-        self.vlcOpenSubtitlesEnabled = UserDefaults.standard.bool(forKey: "vlcOpenSubtitlesEnabled")
-
-        if UserDefaults.standard.object(forKey: "vlcOpenSubtitlesAutoFallbackEnabled") == nil {
-            UserDefaults.standard.set(true, forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
-            self.vlcOpenSubtitlesAutoFallbackEnabled = true
-        } else {
-            self.vlcOpenSubtitlesAutoFallbackEnabled = UserDefaults.standard.bool(forKey: "vlcOpenSubtitlesAutoFallbackEnabled")
-        }
+        self.playerDoubleTapSeekEnabled = Self.migratedBool(genericKey: "playerDoubleTapSeekEnabled", legacyKey: "vlcDoubleTapSeekEnabled", defaultValue: true)
+        self.playerDoubleTapSeekSeconds = Self.migratedDouble(genericKey: "playerDoubleTapSeekSeconds", legacyKey: "vlcDoubleTapSeekSeconds", defaultValue: 10.0)
+        self.playerOpenSubtitlesEnabled = Self.migratedBool(genericKey: "playerOpenSubtitlesEnabled", legacyKey: "vlcOpenSubtitlesEnabled", defaultValue: false)
+        self.playerOpenSubtitlesAutoFallbackEnabled = Self.migratedBool(genericKey: "playerOpenSubtitlesAutoFallbackEnabled", legacyKey: "vlcOpenSubtitlesAutoFallbackEnabled", defaultValue: true)
 
         self.mpvForegroundFPS = UserDefaults.standard.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let backendRaw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
@@ -420,8 +429,8 @@ struct PlayerSettingsView: View {
                 }
             }
             
-            if store.inAppPlayer == .vlc || store.inAppPlayer == .mpv {
-                Section(header: Text(store.inAppPlayer == .mpv ? "MPV Player" : "VLC Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
+            if store.inAppPlayer == .mpv {
+                Section(header: Text("MPV Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
                     DisclosureGroup {
                         settingsToggleRow(
                             title: "Enable Subtitles by Default",
@@ -432,7 +441,7 @@ struct PlayerSettingsView: View {
                             )
                         )
 
-                        NavigationLink(destination: VLCLanguageSelectionView(
+                        NavigationLink(destination: PlayerLanguageSelectionView(
                             title: "Default Subtitle Language",
                             selectedLanguage: Binding(
                                 get: { UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng" },
@@ -458,7 +467,7 @@ struct PlayerSettingsView: View {
                             }
                         }
 
-                        NavigationLink(destination: VLCLanguageSelectionView(
+                        NavigationLink(destination: PlayerLanguageSelectionView(
                             title: "Preferred Anime Audio",
                             selectedLanguage: Binding(
                                 get: { UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn" },
@@ -487,8 +496,7 @@ struct PlayerSettingsView: View {
                         Label("Subtitle Defaults", systemImage: "captions.bubble")
                     }
 
-                    if store.inAppPlayer != .vlc {
-                        DisclosureGroup {
+                    DisclosureGroup {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Subtitle Text Color")
@@ -604,7 +612,7 @@ struct PlayerSettingsView: View {
 #endif
                             }
 
-                            Button(action: resetVLCSubtitleStyleDefaults) {
+                            Button(action: resetPlayerSubtitleStyleDefaults) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Reset Subtitle Style")
@@ -623,13 +631,11 @@ struct PlayerSettingsView: View {
                                         .foregroundColor(accentColorManager.currentAccentColor)
                                 }
                             }
-                        } label: {
-                            Label("Subtitle Appearance", systemImage: "textformat.size")
-                        }
+                    } label: {
+                        Label("Subtitle Appearance", systemImage: "textformat.size")
                     }
 
-                    if store.inAppPlayer == .mpv {
-                        DisclosureGroup {
+                    DisclosureGroup {
                             if MPVRenderBackendSupport.metalIsFullySupported {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -709,22 +715,21 @@ struct PlayerSettingsView: View {
                                 binding: $store.mpvAppExitPictureInPictureEnabled
                             )
 
-                        } label: {
-                            Label("MPV Rendering", systemImage: "display")
-                        }
+                    } label: {
+                        Label("MPV Rendering", systemImage: "display")
                     }
 
                     DisclosureGroup {
                         settingsToggleRow(
                             title: "Brightness Gesture",
                             detail: "Use a left-side vertical drag for screen brightness.",
-                            binding: $store.vlcBrightnessGestureEnabled
+                            binding: $store.playerBrightnessGestureEnabled
                         )
 
                         settingsToggleRow(
                             title: "Volume Gesture",
                             detail: "Use a right-side vertical drag for system volume.",
-                            binding: $store.vlcVolumeGestureEnabled
+                            binding: $store.playerVolumeGestureEnabled
                         )
 
                         settingsToggleRow(
@@ -742,7 +747,7 @@ struct PlayerSettingsView: View {
                         settingsToggleRow(
                             title: "Double-Tap Seek",
                             detail: "Double-tap the left or right side of the video to seek.",
-                            binding: $store.vlcDoubleTapSeekEnabled
+                            binding: $store.playerDoubleTapSeekEnabled
                         )
 
                         HStack {
@@ -751,7 +756,7 @@ struct PlayerSettingsView: View {
                                     .font(.subheadline)
                                     .fontWeight(.medium)
 
-                                Text("Seek \(Int(store.vlcDoubleTapSeekSeconds)) seconds with skip buttons, PiP, and double-tap when enabled.")
+                                Text("Seek \(Int(store.playerDoubleTapSeekSeconds)) seconds with skip buttons, PiP, and double-tap when enabled.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                     .multilineTextAlignment(.leading)
@@ -760,14 +765,14 @@ struct PlayerSettingsView: View {
                             Spacer()
 
 #if os(tvOS)
-                            Picker("", selection: $store.vlcDoubleTapSeekSeconds) {
+                            Picker("", selection: $store.playerDoubleTapSeekSeconds) {
                                 ForEach(doubleTapSeekOptions, id: \.self) { seconds in
                                     Text("\(Int(seconds))s").tag(seconds)
                                 }
                             }
                             .pickerStyle(.menu)
 #else
-                            Stepper("", value: $store.vlcDoubleTapSeekSeconds, in: 5...60, step: 5)
+                            Stepper("", value: $store.playerDoubleTapSeekSeconds, in: 5...60, step: 5)
                                 .frame(width: 100)
 #endif
                         }
@@ -779,14 +784,14 @@ struct PlayerSettingsView: View {
                         settingsToggleRow(
                             title: "OpenSubtitles",
                             detail: "Enable subtitle search through the Stremio OpenSubtitles v3 add-on.",
-                            binding: $store.vlcOpenSubtitlesEnabled
+                            binding: $store.playerOpenSubtitlesEnabled
                         )
 
-                        if store.vlcOpenSubtitlesEnabled {
+                        if store.playerOpenSubtitlesEnabled {
                             settingsToggleRow(
                                 title: "Use as Auto Fallback",
                                 detail: "When auto subtitles are on, search OpenSubtitles if the selected language is missing locally.",
-                                binding: $store.vlcOpenSubtitlesAutoFallbackEnabled
+                                binding: $store.playerOpenSubtitlesAutoFallbackEnabled
                             )
                         }
                     } label: {
@@ -837,7 +842,7 @@ struct PlayerSettingsView: View {
                         settingsToggleRow(
                             title: "Episode Browser Button",
                             detail: "Show the episode drawer button over the player.",
-                            binding: $store.showVLCEpisodeBrowserButton
+                            binding: $store.showEpisodeBrowserButton
                         )
 
                         settingsToggleRow(
@@ -893,16 +898,7 @@ struct PlayerSettingsView: View {
         .navigationTitle("Media Player")
         .lunaSettingsStyle()
         .onAppear {
-            let subtitleEditMenuKey = "enableVLCSubtitleEditMenu"
-            let headerProxyKey = "vlcHeaderProxyEnabled"
-            // Enforce these in-app player flags on launch, including for previously disabled states.
-            if UserDefaults.standard.object(forKey: subtitleEditMenuKey) as? Bool != true {
-                UserDefaults.standard.set(true, forKey: subtitleEditMenuKey)
-            }
-            if UserDefaults.standard.object(forKey: headerProxyKey) as? Bool != true {
-                UserDefaults.standard.set(true, forKey: headerProxyKey)
-            }
-            refreshVLCSubtitleStyleStateFromDefaults()
+            refreshPlayerSubtitleStyleStateFromDefaults()
         }
     }
     
@@ -1021,7 +1017,7 @@ struct PlayerSettingsView: View {
             get: { subtitleVerticalOffset },
             set: { selectedValue in
                 subtitleVerticalOffset = selectedValue
-                UserDefaults.standard.set(selectedValue, forKey: "vlcSubtitleOverlayBottomConstant")
+                UserDefaults.standard.set(selectedValue, forKey: "playerSubtitleOverlayBottomConstant")
             }
         )
     }
@@ -1040,16 +1036,16 @@ struct PlayerSettingsView: View {
         }
     }
 
-    private func resetVLCSubtitleStyleDefaults() {
+    private func resetPlayerSubtitleStyleDefaults() {
         saveSubtitleColor(.white, forKey: "subtitles_foregroundColor")
         saveSubtitleColor(.black, forKey: "subtitles_strokeColor")
         UserDefaults.standard.set(1.0, forKey: "subtitles_strokeWidth")
         UserDefaults.standard.set(30.0, forKey: "subtitles_fontSize")
-        UserDefaults.standard.set(-6.0, forKey: "vlcSubtitleOverlayBottomConstant")
-        refreshVLCSubtitleStyleStateFromDefaults()
+        UserDefaults.standard.set(-6.0, forKey: "playerSubtitleOverlayBottomConstant")
+        refreshPlayerSubtitleStyleStateFromDefaults()
     }
 
-    private func refreshVLCSubtitleStyleStateFromDefaults() {
+    private func refreshPlayerSubtitleStyleStateFromDefaults() {
         let textColor = loadSubtitleColor(forKey: "subtitles_foregroundColor", defaultColor: .white)
         subtitleTextColorName = subtitleTextColorOptions.first(where: { $0.color.isEqual(textColor) })?.name ?? "White"
 
@@ -1068,9 +1064,11 @@ struct PlayerSettingsView: View {
             subtitleFontSizePresetName = nearest?.name ?? "Medium"
         }
 
-        let savedBottomConstant = UserDefaults.standard.double(forKey: "vlcSubtitleOverlayBottomConstant")
-        subtitleVerticalOffset = UserDefaults.standard.object(forKey: "vlcSubtitleOverlayBottomConstant") != nil
-            ? savedBottomConstant
-            : -6.0
+        if UserDefaults.standard.object(forKey: "playerSubtitleOverlayBottomConstant") == nil,
+           UserDefaults.standard.object(forKey: "vlcSubtitleOverlayBottomConstant") != nil {
+            UserDefaults.standard.set(UserDefaults.standard.double(forKey: "vlcSubtitleOverlayBottomConstant"), forKey: "playerSubtitleOverlayBottomConstant")
+        }
+        let savedBottomConstant = UserDefaults.standard.double(forKey: "playerSubtitleOverlayBottomConstant")
+        subtitleVerticalOffset = UserDefaults.standard.object(forKey: "playerSubtitleOverlayBottomConstant") != nil ? savedBottomConstant : -6.0
     }
 }

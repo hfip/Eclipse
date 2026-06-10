@@ -42,10 +42,8 @@
 		13830AF22E55F51300B3CDE4 /* AlternativeUIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13830AF12E55F51300B3CDE4 /* AlternativeUIView.swift */; };
 		13830AF42E55F5FF00B3CDE4 /* AccentColorManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13830AF32E55F5FF00B3CDE4 /* AccentColorManager.swift */; };
 		139509A22E7DDAE100CB60D4 /* PlayerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139509A12E7DDAE100CB60D4 /* PlayerSettingsView.swift */; };
-		BB7777912F20000000BB7791 /* VLCLanguageSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7777902F20000000BB7790 /* VLCLanguageSelectionView.swift */; };
+		BB7777912F20000000BB7791 /* PlayerLanguageSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7777902F20000000BB7790 /* PlayerLanguageSelectionView.swift */; };
 		F9A1B2D22F90000100A1B2D2 /* MPVHeaderProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A1B2D12F90000100A1B2D1 /* MPVHeaderProxy.swift */; };
-		F9A1B2C32F90000100A1B2C3 /* VLCHeaderProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A1B2C22F90000100A1B2C3 /* VLCHeaderProxy.swift */; };
-		BB7777972F20000001BB7797 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = BB7777982F20000001BB7798 /* VLCKitSPM */; };
 		C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */ = {isa = PBXBuildFile; productRef = C0A5A0042FD1000000C0A504 /* CrashReporter */; };
 		AD0000012FD9000000AD0001 /* ReaderLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000102FD9000000AD0010 /* ReaderLogger.swift */; };
 		AD0000022FD9000000AD0002 /* ReaderLoggerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000112FD9000000AD0011 /* ReaderLoggerView.swift */; };
@@ -145,7 +143,6 @@
 		13F5B5972E730CDB00565E75 /* TMDBFiltersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F5B5962E730CDB00565E75 /* TMDBFiltersView.swift */; };
 		14BBB0033FFF111100AAAAAA /* BackupManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14BBB0043FFF111100AAAAAA /* BackupManagementView.swift */; };
 		14BBB0053FFF111100AAAAAA /* BackupManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14BBB0063FFF111100AAAAAA /* BackupManager.swift */; };
-		BB7777712F20000000BB7771 /* VLCRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7777702F20000000BB7770 /* VLCRenderer.swift */; };
 		CC8888812FA0000000CC8881 /* AniSkipService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC8888802FA0000000CC8880 /* AniSkipService.swift */; };
 		EE1111112FC0000000EE1111 /* IntroDBService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE1111102FC0000000EE1110 /* IntroDBService.swift */; };
 		DD1111112FB0000000DD1111 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1111102FB0000000DD1110 /* DownloadManager.swift */; };
@@ -232,9 +229,8 @@
 		13830AF12E55F51300B3CDE4 /* AlternativeUIView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AlternativeUIView.swift; sourceTree = "<group>"; };
 		13830AF32E55F5FF00B3CDE4 /* AccentColorManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AccentColorManager.swift; sourceTree = "<group>"; };
 		139509A12E7DDAE100CB60D4 /* PlayerSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlayerSettingsView.swift; sourceTree = "<group>"; };
-		BB7777902F20000000BB7790 /* VLCLanguageSelectionView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VLCLanguageSelectionView.swift; sourceTree = "<group>"; };
+		BB7777902F20000000BB7790 /* PlayerLanguageSelectionView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlayerLanguageSelectionView.swift; sourceTree = "<group>"; };
 		F9A1B2D12F90000100A1B2D1 /* MPVHeaderProxy.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MPVHeaderProxy.swift; sourceTree = "<group>"; };
-		F9A1B2C22F90000100A1B2C3 /* VLCHeaderProxy.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VLCHeaderProxy.swift; sourceTree = "<group>"; };
 		13B2E5732E7597B9009F3271 /* JSController-NetworkFetch.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "JSController-NetworkFetch.swift"; sourceTree = "<group>"; };
 		13B6F3442EA4C6BC00DECD2B /* ProgressManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ProgressManager.swift; sourceTree = "<group>"; };
 		13C6F3452EA4C6BC00DECD2B /* CacheManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CacheManager.swift; sourceTree = "<group>"; };
@@ -335,7 +331,6 @@
 		BB9999902F50000000BB9990 /* RecommendationEngine.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RecommendationEngine.swift; sourceTree = "<group>"; };
 		DD2222002FD0000000DD2200 /* UserRatingManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UserRatingManager.swift; sourceTree = "<group>"; };
 		AA6666602F10000000AA6660 /* CatalogsSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CatalogsSettingsView.swift; sourceTree = "<group>"; };
-		BB7777702F20000000BB7770 /* VLCRenderer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VLCRenderer.swift; sourceTree = "<group>"; };
 		CC8888802FA0000000CC8880 /* AniSkipService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AniSkipService.swift; sourceTree = "<group>"; };
 		EE1111102FC0000000EE1110 /* IntroDBService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IntroDBService.swift; sourceTree = "<group>"; };
 		DD1111102FB0000000DD1110 /* DownloadManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
@@ -379,7 +374,6 @@
 				13A46D032EF5945700423BC6 /* SoraCore in Frameworks */,
 				13A46CFD2EF5943400423BC6 /* FakeWebKit in Frameworks */,
 				136C25C62EFE950300E37A6E /* MPVKit-GPL in Frameworks */,
-				BB7777972F20000001BB7797 /* VLCKitSPM in Frameworks */,
 				C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */,
 				AD0000062FD9000000AD0006 /* AidokuRunner in Frameworks */,
 				AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */,
@@ -400,10 +394,8 @@
 				1324E7B42E940BD70036B5F5 /* MPVNativeRenderer.swift */,
 				F9A1B2D12F90000100A1B2D1 /* MPVHeaderProxy.swift */,
 				1324E7B62E940BD70036B5F5 /* SampleBufferDisplayView.swift */,
-				BB7777702F20000000BB7770 /* VLCRenderer.swift */,
 				CC8888802FA0000000CC8880 /* AniSkipService.swift */,
 				EE1111102FC0000000EE1110 /* IntroDBService.swift */,
-				F9A1B2C22F90000100A1B2C3 /* VLCHeaderProxy.swift */,
 			);
 			path = Player;
 			sourceTree = "<group>";
@@ -904,7 +896,7 @@
 				13830AEF2E55C04F00B3CDE4 /* AlgorithmSelectionView.swift */,
 				13631B312E4F1A200035C39F /* ServiceSettingsView.swift */,
 				139509A12E7DDAE100CB60D4 /* PlayerSettingsView.swift */,
-				BB7777902F20000000BB7790 /* VLCLanguageSelectionView.swift */,
+				BB7777902F20000000BB7790 /* PlayerLanguageSelectionView.swift */,
 				13830AF12E55F51300B3CDE4 /* AlternativeUIView.swift */,
 				13F5B5962E730CDB00565E75 /* TMDBFiltersView.swift */,
 				13F072792E4B2D9000EF90EB /* ServicesView.swift */,
@@ -989,7 +981,6 @@
 				13A46CFF2EF5944C00423BC6 /* Kingfisher */,
 				13A46D022EF5945700423BC6 /* SoraCore */,
 				136C25C52EFE950300E37A6E /* MPVKit-GPL */,
-				BB7777982F20000001BB7798 /* VLCKitSPM */,
 				C0A5A0042FD1000000C0A504 /* CrashReporter */,
 				AD0000222FD9000000AD0022 /* AidokuRunner */,
 				AD0000232FD9000000AD0023 /* ZIPFoundation */,
@@ -1027,7 +1018,6 @@
 				13A46CFE2EF5944C00423BC6 /* XCRemoteSwiftPackageReference "Kingfisher" */,
 				13A46D012EF5945700423BC6 /* XCRemoteSwiftPackageReference "SoraCore" */,
 				136C25C42EFE950300E37A6E /* XCRemoteSwiftPackageReference "MPVKit" */,
-				BB7777992F20000001BB7799 /* XCRemoteSwiftPackageReference "vlckit-spm" */,
 				C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */,
 				AD0000202FD9000000AD0020 /* XCRemoteSwiftPackageReference "AidokuRunner" */,
 				AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
@@ -1090,7 +1080,7 @@
 				13830AEC2E55BD9200B3CDE4 /* AlgorithmManager.swift in Sources */,
 				13F072AD2E4B2D9200EF90EB /* DetailRow.swift in Sources */,
 				139509A22E7DDAE100CB60D4 /* PlayerSettingsView.swift in Sources */,
-				BB7777912F20000000BB7791 /* VLCLanguageSelectionView.swift in Sources */,
+				BB7777912F20000000BB7791 /* PlayerLanguageSelectionView.swift in Sources */,
 				13E1EDDB2ED9E65F00087629 /* ErrorDefinitions.swift in Sources */,
 				13F072B02E4B2D9200EF90EB /* SearchResultCard.swift in Sources */,
 				136D3E5C2EB75D7E0094210C /* LiquidGlassBackground.swift in Sources */,
@@ -1101,7 +1091,6 @@
 				13E1EDDF2ED9E66000087629 /* KanzenEngine.swift in Sources */,
 				13F5B5952E730CB200565E75 /* TMDBContentFilter.swift in Sources */,
 				13F072B12E4B2D9200EF90EB /* NormalPlayer.swift in Sources */,
-				BB7777712F20000000BB7771 /* VLCRenderer.swift in Sources */,
 				CC8888812FA0000000CC8881 /* AniSkipService.swift in Sources */,
 				EE1111112FC0000000EE1111 /* IntroDBService.swift in Sources */,
 				DD1111112FB0000000DD1111 /* DownloadManager.swift in Sources */,
@@ -1110,7 +1099,6 @@
 				DD4444442FB0000000DD4444 /* DownloadedShowDetailView.swift in Sources */,
 				DD3333332FB0000000DD3333 /* FloatingSearchButton.swift in Sources */,
 				F9A1B2D22F90000100A1B2D2 /* MPVHeaderProxy.swift in Sources */,
-				F9A1B2C32F90000100A1B2C3 /* VLCHeaderProxy.swift in Sources */,
 				13F072AF2E4B2D9200EF90EB /* StretchyHeader.swift in Sources */,
 				13F0729D2E4B2D9200EF90EB /* JSController-Search.swift in Sources */,
 				13E1EDE72ED9E66000087629 /* kanzenGeneralSettings.swift in Sources */,
@@ -1539,14 +1527,6 @@
 				kind = branch;
 			};
 		};
-		BB7777992F20000001BB7799 /* XCRemoteSwiftPackageReference "vlckit-spm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/tylerjonesio/vlckit-spm";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.6.0;
-			};
-		};
 		C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/microsoft/plcrashreporter.git";
@@ -1597,11 +1577,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 13A46D012EF5945700423BC6 /* XCRemoteSwiftPackageReference "SoraCore" */;
 			productName = SoraCore;
-		};
-		BB7777982F20000001BB7798 /* VLCKitSPM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = BB7777992F20000001BB7799 /* XCRemoteSwiftPackageReference "vlckit-spm" */;
-			productName = VLCKitSPM;
 		};
 		C0A5A0042FD1000000C0A504 /* CrashReporter */ = {
 			isa = XCSwiftPackageProductDependency;

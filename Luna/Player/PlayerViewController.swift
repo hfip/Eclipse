@@ -217,8 +217,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var overlayMenuKind: String?
     private lazy var usesOverlayPlayerMenusForSession: Bool = {
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        let requestedChoice = Settings.shared.playerChoice
-        guard requestedChoice == .mpv else { return false }
         let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(
             requested: Settings.shared.mpvRenderBackend,
             hasMetalDevice: MPVKitMetalRenderer.isAvailable
@@ -246,7 +244,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }()
     
     private let displayLayer = AVSampleBufferDisplayLayer()
-    private weak var vlcRenderingView: UIView?
     private weak var mpvRenderingView: UIView?
     
     private func createSymbolButton(symbolName: String, pointSize: CGFloat = 18, weight: UIImage.SymbolWeight = .semibold, backgroundColor: UIColor? = nil) -> UIButton {
@@ -704,39 +701,33 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private let twoFingerSettingKey = "playerTwoFingerTapPlayPauseEnabled"
     private let legacyTwoFingerSettingKey = "mpvTwoFingerTapEnabled"
     private let centerTapPlayPauseSettingKey = "playerCenterTapPlayPauseEnabled"
-    private let doubleTapSeekEnabledKey = "vlcDoubleTapSeekEnabled"
-    private let playerSeekSecondsKey = "vlcDoubleTapSeekSeconds"
+    private let doubleTapSeekEnabledKey = "playerDoubleTapSeekEnabled"
+    private let legacyDoubleTapSeekEnabledKey = "vlcDoubleTapSeekEnabled"
+    private let playerSeekSecondsKey = "playerDoubleTapSeekSeconds"
+    private let legacyPlayerSeekSecondsKey = "vlcDoubleTapSeekSeconds"
     
     private lazy var renderer: PlayerRenderer = {
-        let playerChoice = Settings.shared.playerChoice
-        
-        if playerChoice == .vlc {
-            let r = VLCRenderer(displayLayer: displayLayer)
-            r.delegate = self
-            return r
-        } else {
-            let requestedBackend = Settings.shared.mpvRenderBackend
+        let requestedBackend = Settings.shared.mpvRenderBackend
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-            let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable)
-            if effectiveBackend == .metal {
-                let qualityProfile = metalSampleBufferQualityProfile()
-                Logger.shared.log("[PlayerVC.MPV] using Metal sample-buffer renderer \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
-                let r = MPVKitMetalRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
-                r.delegate = self
-                return r
-            }
-            if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable) {
-                Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
-            }
-#else
-            if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: false) {
-                Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
-            }
-#endif
-            let r = MPVNativeRenderer(displayLayer: displayLayer)
+        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable)
+        if effectiveBackend == .metal {
+            let qualityProfile = metalSampleBufferQualityProfile()
+            Logger.shared.log("[PlayerVC.MPV] using Metal sample-buffer renderer \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            let r = MPVKitMetalRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
             r.delegate = self
             return r
         }
+        if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable) {
+            Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+        }
+#else
+        if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: false) {
+            Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+        }
+#endif
+        let r = MPVNativeRenderer(displayLayer: displayLayer)
+        r.delegate = self
+        return r
     }()
     
     // Helper properties to access renderer methods regardless of type
@@ -766,8 +757,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return "none"
     }
 
-    private var vlcRenderer: VLCRenderer? {
-        return renderer as? VLCRenderer
+    private var vlcRenderer: MPVNativeRenderer? {
+        return nil
     }
 
 #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
@@ -990,11 +981,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var isVLCPlayer: Bool {
-        return vlcRenderer != nil
+        return false
     }
 
     private var supportsSharedPlayerControls: Bool {
-        isVLCPlayer || isMPVRenderer
+        isMPVRenderer
     }
     
     var mediaInfo: MediaInfo?
@@ -1674,8 +1665,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var vlcSubtitleOverlayBottomConstant: CGFloat {
-        if let value = UserDefaults.standard.object(forKey: "vlcSubtitleOverlayBottomConstant") as? Double {
+        if let value = UserDefaults.standard.object(forKey: "playerSubtitleOverlayBottomConstant") as? Double {
             return CGFloat(value)
+        }
+        if let legacy = UserDefaults.standard.object(forKey: "vlcSubtitleOverlayBottomConstant") as? Double {
+            UserDefaults.standard.set(legacy, forKey: "playerSubtitleOverlayBottomConstant")
+            return CGFloat(legacy)
         }
         return -6.0
     }
@@ -1897,11 +1892,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var onlineSubtitleLoadedRendererTrackIds: Set<Int> = []
 
     private var isVLCCustomSubtitleOverlayEnabled: Bool {
-        return isVLCPlayer && Settings.shared.enableVLCSubtitleEditMenu
+        return false
     }
 
     private var isVLCOpenSubtitlesEnabled: Bool {
-        return (isVLCPlayer || isMPVRenderer) && Settings.shared.vlcOpenSubtitlesEnabled
+        return isMPVRenderer && Settings.shared.playerOpenSubtitlesEnabled
     }
 
     private var hasStremioSubtitleAddons: Bool {
@@ -2129,11 +2124,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func vlcProxyDiagnosticsSummary() -> String {
-#if !os(tvOS)
-        return VLCHeaderProxy.shared.diagnosticsSnapshot()
-#else
         return "unavailable"
-#endif
     }
 
     private func vlcSteadyEnvironmentSnapshot(safePosition: Double, effectiveDuration: Double, durationIsReliable: Bool) -> String {
@@ -2286,7 +2277,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     private var isDoubleTapSeekEnabled: Bool {
         if UserDefaults.standard.object(forKey: doubleTapSeekEnabledKey) == nil {
-            return true
+            let legacy = UserDefaults.standard.object(forKey: legacyDoubleTapSeekEnabledKey) as? Bool ?? true
+            UserDefaults.standard.set(legacy, forKey: doubleTapSeekEnabledKey)
+            return legacy
         }
         return UserDefaults.standard.bool(forKey: doubleTapSeekEnabledKey)
     }
@@ -2298,6 +2291,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return UserDefaults.standard.bool(forKey: centerTapPlayPauseSettingKey)
     }
     private var playerSeekSeconds: Double {
+        if UserDefaults.standard.object(forKey: playerSeekSecondsKey) == nil,
+           UserDefaults.standard.object(forKey: legacyPlayerSeekSecondsKey) != nil {
+            UserDefaults.standard.set(UserDefaults.standard.double(forKey: legacyPlayerSeekSecondsKey), forKey: playerSeekSecondsKey)
+        }
         let savedSeconds = UserDefaults.standard.double(forKey: playerSeekSecondsKey)
         let seconds = savedSeconds > 0 ? savedSeconds : 10.0
         return min(max(seconds, 5.0), 60.0)
@@ -2308,10 +2305,20 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return min(max(speed, 0.25), 3.0)
     }
     private var isBrightnessControlEnabled: Bool {
-        return UserDefaults.standard.bool(forKey: "vlcBrightnessGestureEnabled")
+        if UserDefaults.standard.object(forKey: "playerBrightnessGestureEnabled") == nil,
+           let legacy = UserDefaults.standard.object(forKey: "vlcBrightnessGestureEnabled") as? Bool {
+            UserDefaults.standard.set(legacy, forKey: "playerBrightnessGestureEnabled")
+            return legacy
+        }
+        return UserDefaults.standard.bool(forKey: "playerBrightnessGestureEnabled")
     }
     private var isVolumeControlEnabled: Bool {
-        return UserDefaults.standard.bool(forKey: "vlcVolumeGestureEnabled")
+        if UserDefaults.standard.object(forKey: "playerVolumeGestureEnabled") == nil,
+           let legacy = UserDefaults.standard.object(forKey: "vlcVolumeGestureEnabled") as? Bool {
+            UserDefaults.standard.set(legacy, forKey: "playerVolumeGestureEnabled")
+            return legacy
+        }
+        return UserDefaults.standard.bool(forKey: "playerVolumeGestureEnabled")
     }
     private var isPerformanceOverlayEnabled: Bool {
         return false
@@ -2605,7 +2612,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
         }()
         Logger.shared.log("PlayerViewController.load: isAnimeHint=\(isAnimeHint ?? false) mediaInfo=\(mediaInfoLabel)", type: "Stream")
-        logVLCUI("load prepared mediaInfo=\(mediaInfoLabel) pendingSeek=\(secondsText(pendingSeekTime)) subtitles=\(subtitleURLs.count) openSubsEnabled=\(Settings.shared.vlcOpenSubtitlesEnabled) fallback=\(Settings.shared.vlcOpenSubtitlesAutoFallbackEnabled)", type: "Stream")
+        logVLCUI("load prepared mediaInfo=\(mediaInfoLabel) pendingSeek=\(secondsText(pendingSeekTime)) subtitles=\(subtitleURLs.count) openSubsEnabled=\(Settings.shared.playerOpenSubtitlesEnabled) fallback=\(Settings.shared.playerOpenSubtitlesAutoFallbackEnabled)", type: "Stream")
         
         // Ensure renderer is started before loading media
         if !isRunning {
@@ -3961,10 +3968,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var isVLCEpisodeBrowserButtonSettingEnabled: Bool {
-        if UserDefaults.standard.object(forKey: "showVLCEpisodeBrowserButton") == nil {
-            return true
+        if UserDefaults.standard.object(forKey: "showEpisodeBrowserButton") == nil {
+            let legacy = UserDefaults.standard.object(forKey: "showVLCEpisodeBrowserButton") as? Bool ?? true
+            UserDefaults.standard.set(legacy, forKey: "showEpisodeBrowserButton")
+            return legacy
         }
-        return UserDefaults.standard.bool(forKey: "showVLCEpisodeBrowserButton")
+        return UserDefaults.standard.bool(forKey: "showEpisodeBrowserButton")
     }
 
     private func updateEpisodeBrowserButtonVisibility() {
@@ -5481,9 +5490,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     #if !os(tvOS)
     private func preparePlayerHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
-        if isVLCPlayer {
-            return prepareVLCHeaderProxyIfNeeded(originalURL: originalURL, headers: headers)
-        }
         if isMPVRenderer {
             return prepareMPVHeaderProxyIfNeeded(originalURL: originalURL, headers: headers)
         }
@@ -5497,62 +5503,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return baseHeaders
     }
 
-    private var isVLCHeaderProxyEnabled: Bool {
-        UserDefaults.standard.object(forKey: "vlcHeaderProxyEnabled") as? Bool ?? true
-    }
-
     private func isRemoteHTTPURL(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
-    }
-
-    private func prepareVLCHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
-        guard isVLCPlayer else { return (originalURL, headers) }
-        guard isVLCHeaderProxyEnabled else { return (originalURL, headers) }
-        guard isRemoteHTTPURL(originalURL), !isLocalProxyURL(originalURL) else { return (originalURL, headers) }
-        guard let headers, !headers.isEmpty else { return (originalURL, headers) }
-
-        if canVLCUseNativeHeaders(headers) {
-            Logger.shared.log("PlayerViewController: using direct VLC native headers headerKeys=[\(headers.keys.sorted().joined(separator: ","))]", type: "Stream")
-            return (originalURL, headers)
-        }
-
-        let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
-        let proxyReason = isReplacingVLCPlaybackInPlace ? "vlc-in-place-media-switch" : "fresh-vlc-main-media"
-        let shouldRestartListener = !isReplacingVLCPlaybackInPlace
-        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(
-            for: originalURL,
-            headers: proxyHeaders,
-            restartListener: shouldRestartListener,
-            reason: proxyReason
-        ) else {
-            Logger.shared.log("PlayerViewController: proactive VLC proxy URL creation failed; using direct VLC headers", type: "Stream")
-            return (originalURL, headers)
-        }
-
-        vlcProxyFallbackTried = true
-
-        if let subs = initialSubtitles, !subs.isEmpty {
-            Logger.shared.log("PlayerViewController: proactive VLC proxy subtitle count=\(subs.count)", type: "Stream")
-            let proxiedSubs = proxySubtitleURLs(subs, headers: headers)
-            if proxiedSubs.count == subs.count {
-                initialSubtitles = proxiedSubs
-                Logger.shared.log("PlayerViewController: proactive VLC proxy subtitles ready", type: "Stream")
-            } else {
-                Logger.shared.log("PlayerViewController: proactive VLC proxy subtitles incomplete; using direct URLs", type: "Stream")
-            }
-        }
-
-        Logger.shared.log("PlayerViewController: proactive VLC proxy activated reason=\(proxyReason) restartListener=\(shouldRestartListener) headerKeys=[\(headers.keys.sorted().joined(separator: ","))]", type: "Stream")
-        return (proxyURL, nil)
-    }
-
-    private func canVLCUseNativeHeaders(_ headers: [String: String]) -> Bool {
-        let nativeHeaderKeys: Set<String> = ["user-agent", "referer", "cookie"]
-        let nonEmptyKeys = headers
-            .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map { $0.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        return !nonEmptyKeys.isEmpty && nonEmptyKeys.allSatisfy { nativeHeaderKeys.contains($0) }
     }
 
     private func prepareMPVHeaderProxyIfNeeded(originalURL: URL, headers: [String: String]?) -> (url: URL, headers: [String: String]?) {
@@ -5561,67 +5514,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers ?? [:])
         Logger.shared.log("[PlayerVC.PlaybackStart] MPV direct HTTP playback target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
         return (originalURL, proxyHeaders.isEmpty ? headers : proxyHeaders)
-    }
-
-    private func proxySubtitleURLs(_ urls: [String], headers: [String: String]) -> [String] {
-        let proxied = urls.compactMap { urlString -> String? in
-            guard let url = URL(string: urlString),
-                  let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https" else {
-                Logger.shared.log("PlayerViewController: subtitle proxy skipped (invalid URL or scheme)", type: "Stream")
-                return nil
-            }
-
-            let proxyHeaders = buildProxyHeaders(for: url, baseHeaders: headers)
-            guard let proxiedURL = VLCHeaderProxy.shared.makeProxyURL(for: url, headers: proxyHeaders) else {
-                Logger.shared.log("PlayerViewController: subtitle proxy URL creation failed", type: "Stream")
-                return nil
-            }
-            return proxiedURL.absoluteString
-        }
-        Logger.shared.log("PlayerViewController: subtitle proxy result count=\(proxied.count) of \(urls.count)", type: "Stream")
-        return proxied
-    }
-
-    private func attemptVlcProxyFallbackIfNeeded() -> Bool {
-        guard vlcRenderer != nil else { return false }
-        guard !vlcProxyFallbackTried else { return false }
-        guard let originalURL = initialURL, !isLocalProxyURL(originalURL) else { return false }
-        guard let headers = initialHeaders, !headers.isEmpty else { return false }
-
-        guard let preset = initialPreset else { return false }
-
-        let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers)
-        guard let proxyURL = VLCHeaderProxy.shared.makeProxyURL(
-            for: originalURL,
-            headers: proxyHeaders,
-            restartListener: true,
-            reason: "vlc-proxy-fallback"
-        ) else {
-            return false
-        }
-
-        let fallbackSubtitles: [String]?
-        if let subs = initialSubtitles, !subs.isEmpty {
-            Logger.shared.log("PlayerViewController: proxy fallback subtitle count=\(subs.count)", type: "Stream")
-            let proxiedSubs = proxySubtitleURLs(subs, headers: headers)
-            if proxiedSubs.count == subs.count {
-                Logger.shared.log("PlayerViewController: proxy fallback subtitles ready", type: "Stream")
-                fallbackSubtitles = proxiedSubs
-            } else {
-                Logger.shared.log("PlayerViewController: proxy fallback subtitles incomplete; using direct URLs", type: "Stream")
-                fallbackSubtitles = subs
-            }
-        } else {
-            fallbackSubtitles = nil
-        }
-
-        vlcProxyFallbackTried = true
-        initialSubtitles = fallbackSubtitles
-
-        Logger.shared.log("PlayerViewController: VLC proxy fallback activated", type: "Stream")
-        load(url: proxyURL, preset: preset, headers: nil)
-        return true
     }
 
     private func isMPVTransportBridgeCandidate(_ message: String) -> Bool {
@@ -5833,7 +5725,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             sections.append(PlayerOverlayMenuSection(title: "OpenSubtitles", actions: openSubtitlesOverlayActions()))
         }
 
-        if !isVLCPlayer && Settings.shared.enableVLCSubtitleEditMenu {
+        if !isVLCPlayer && Settings.shared.playerSubtitleAppearanceEnabled {
             sections.append(contentsOf: subtitleAppearanceOverlaySections())
         }
 
@@ -6171,7 +6063,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if let openSubtitlesMenu = openSubtitlesMenu() {
             menuChildren.append(openSubtitlesMenu)
         }
-        if !isVLCPlayer && Settings.shared.enableVLCSubtitleEditMenu {
+        if !isVLCPlayer && Settings.shared.playerSubtitleAppearanceEnabled {
             let appearanceMenu = createAppearanceMenu()
             menuChildren.append(appearanceMenu)
         }
@@ -6454,7 +6346,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return false
         }
         return isVLCOpenSubtitlesEnabled
-            && Settings.shared.vlcOpenSubtitlesAutoFallbackEnabled
+            && Settings.shared.playerOpenSubtitlesAutoFallbackEnabled
             && Settings.shared.enableSubtitlesByDefault
             && !userSelectedSubtitleTrack
     }
@@ -6464,7 +6356,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return false
         }
         return hasStremioSubtitleAddons
-            && Settings.shared.vlcOpenSubtitlesAutoFallbackEnabled
+            && Settings.shared.playerOpenSubtitlesAutoFallbackEnabled
             && Settings.shared.enableSubtitlesByDefault
             && !userSelectedSubtitleTrack
     }
@@ -7888,9 +7780,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             safePosition = max(0, cachedPosition)
         }
 
-        // Newer VLCKit builds can temporarily report a tiny/unknown duration while
-        // valid playback time is already advancing. Treat that as unknown instead
-        // of letting the slider collapse to the end of a 1-second range.
+        // Some transport bridge paths can temporarily report a tiny/unknown duration
+        // while valid playback time is already advancing. Treat that as unknown
+        // instead of letting the slider collapse to the end of a 1-second range.
         let minimumReliableDuration = 5.0
         let mpvBridgeDurationLooksLikeWindow = isMPVTransportBridgePlaybackActive
             && !isVLCPlayer
@@ -9157,170 +9049,6 @@ extension PlayerViewController: MPVNativeRendererDelegate {
                 self.vlcSubtitleSelection = .none
             }
             self.updateSubtitleButtonAppearance()
-        }
-    }
-
-}
-
-// MARK: - VLCRendererDelegate
-extension PlayerViewController: VLCRendererDelegate {
-    func renderer(_ renderer: VLCRenderer, didUpdatePosition position: Double, duration: Double) {
-        if isClosing { return }
-        updatePosition(position, duration: duration)
-    }
-    
-    func renderer(_ renderer: VLCRenderer, didChangePause isPaused: Bool) {
-        if isClosing { return }
-        let pauseLogSignature = "paused=\(isPaused)|loading=\(isRendererLoading)"
-        let now = CACurrentMediaTime()
-        if pauseLogSignature != lastVLCPauseLogSignature || now - lastVLCPauseLogTime > 5 {
-            lastVLCPauseLogSignature = pauseLogSignature
-            lastVLCPauseLogTime = now
-            logVLCUI("delegate didChangePause isPaused=\(isPaused) loading=\(isRendererLoading) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "Player")
-        }
-
-        if !isPaused {
-            markPlaybackStarted(reason: "playing")
-            sendTraktScrobble(.start, reason: "vlc-unpause")
-        } else {
-            sendTraktScrobble(.pause, reason: "vlc-pause")
-        }
-        refreshIdleTimerForPlayback(reason: "vlc-pause-changed")
-        if isRendererLoading && !isPaused {
-            isRendererLoading = false
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.loadingIndicator.stopAnimating()
-                self.loadingIndicator.alpha = 0.0
-                self.centerPlayPauseButton.isHidden = false
-            }
-        }
-        if isRendererLoading {
-            return
-        }
-        updatePlayPauseButton(isPaused: isPaused)
-    }
-    
-    func renderer(_ renderer: VLCRenderer, didChangeLoading isLoading: Bool) {
-        if isClosing { return }
-        logVLCUI("delegate didChangeLoading isLoading=\(isLoading) currentLoading=\(isRendererLoading) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "Stream")
-
-        isRendererLoading = isLoading
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if isLoading {
-                self.centerPlayPauseButton.isHidden = true
-                self.loadingIndicator.alpha = 1.0
-                self.loadingIndicator.startAnimating()
-            } else {
-                self.loadingIndicator.stopAnimating()
-                self.loadingIndicator.alpha = 0.0
-                self.centerPlayPauseButton.isHidden = false
-                self.updatePlayPauseButton(isPaused: self.rendererIsPausedState(), shouldShowControls: false)
-            }
-        }
-    }
-    
-    func renderer(_ renderer: VLCRenderer, didBecomeReadyToSeek: Bool) {
-        if isClosing { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard !self.isClosing else { return }
-            if self.didHandleVLCReadyToSeekForCurrentLoad {
-                if !self.didLogDuplicateVLCReadyToSeekForCurrentLoad {
-                    self.didLogDuplicateVLCReadyToSeekForCurrentLoad = true
-                    self.logVLCUI("delegate didBecomeReadyToSeek ignored duplicate cached=\(self.secondsText(self.cachedPosition))/\(self.secondsText(self.cachedDuration)) loading=\(self.isRendererLoading) pendingSeek=\(self.secondsText(self.pendingSeekTime))", type: "VLCPlayback")
-                }
-                return
-            }
-            self.didHandleVLCReadyToSeekForCurrentLoad = true
-            self.logVLCUI("delegate didBecomeReadyToSeek cached=\(self.secondsText(self.cachedPosition))/\(self.secondsText(self.cachedDuration)) loading=\(self.isRendererLoading) pendingSeek=\(self.secondsText(self.pendingSeekTime))", type: "VLCPlayback")
-            self.isVLCPlaybackStartupInProgress = false
-            self.canMutateVLCSubtitleTracks = true
-            self.markPlaybackStarted(reason: "ready")
-            
-            // Update audio and subtitle tracks now that the video is ready
-            self.updateAudioTracksMenuWhenReady()
-            self.updateSubtitleTracksMenuWhenReady()
-            self.prefetchOpenSubtitlesIfEnabled(reason: "ready")
-            self.prefetchStremioSubtitlesIfAvailable(reason: "ready")
-            self.updatePiPButtonVisibility()
-            
-            if let seekTime = self.pendingSeekTime {
-                self.pendingInitialResumeTarget = seekTime
-                self.pendingInitialResumeDeadline = Date().addingTimeInterval(20)
-                Logger.shared.log("Queued VLC resume seek at \(Int(seekTime))s; renderer will apply when playback clock is stable", type: "Progress")
-                self.pendingSeekTime = nil
-            }
-            self.applyDefaultPlaybackSpeed()
-
-            // Fetch skip data once VLC is ready
-            self.fetchSkipData()
-        }
-    }
-
-    func renderer(_ renderer: VLCRenderer, didFailWithError message: String) {
-        if isClosing { return }
-        setIdleTimerDisabledForPlayback(false, reason: "vlc-failure")
-        isVLCPlaybackStartupInProgress = false
-        Logger.shared.log("[PlayerVC.VLCDelegate] didFailWithError message=\(message)", type: "Error")
-        if attemptVlcProxyFallbackIfNeeded() {
-            return
-        }
-        Logger.shared.log("PlayerViewController: VLC error: \(message)", type: "Error")
-    }
-
-    func rendererDidChangeTracks(_ renderer: VLCRenderer) {
-        if isClosing { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.updateAudioTracksMenu()
-            self.updateSubtitleTracksMenu()
-        }
-    }
-    
-    func renderer(_ renderer: VLCRenderer, getSubtitleForTime time: Double) -> NSAttributedString? {
-        guard subtitleModel.isVisible, !subtitleEntries.isEmpty else {
-            return nil
-        }
-        
-        if let entry = subtitleEntries.first(where: { $0.startTime <= time && time <= $0.endTime }) {
-            return entry.attributedText
-        }
-        return nil
-    }
-    
-    func renderer(_ renderer: VLCRenderer, getSubtitleStyle: Void) -> SubtitleStyle {
-        return SubtitleStyle(
-            foregroundColor: subtitleModel.foregroundColor,
-            strokeColor: subtitleModel.strokeColor,
-            strokeWidth: subtitleModel.strokeWidth,
-            fontSize: subtitleModel.fontSize,
-            isVisible: subtitleModel.isVisible
-        )
-    }
-    
-    func renderer(_ renderer: VLCRenderer, subtitleTrackDidChange trackId: Int) {
-        if isClosing { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.subtitleModel.isVisible = true
-            if trackId >= 0 {
-                self.vlcSubtitleSelection = .embedded(trackId: trackId)
-                self.rendererApplySubtitleStyle(self.currentSubtitleStyle())
-            }
-            self.subtitleEntries.removeAll()
-            self.updateVLCSubtitleOverlay(for: self.cachedPosition)
-            self.updateSubtitleButtonAppearance()
-            // VLC natively renders ASS subtitles
-        }
-    }
-
-    func renderer(_ renderer: VLCRenderer, didChangeInternalReload active: Bool, reason: String) {
-        if isClosing { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, !self.isClosing else { return }
-            self.setVLCSubtitleStyleReloadProgressGate(active: active, reason: reason)
         }
     }
 

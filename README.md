@@ -58,7 +58,7 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 - User ratings and private notes
 - Anime schedule integration through AniList
 - Western schedule by trakt
-- VLC/MPV playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
+- MPV and Normal in-app playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
 - A redesigned interface built around browsing, watching, reading, and managing progress
 - Customizable UI
 - And more!
@@ -82,9 +82,8 @@ SideStore is not required. Other sideloading options work too, and `r/sideloaded
 
 ## Notes
 
-- VLC and MPV are the main Players, use the one you prefer
-- VLC uses the Swift Package Manager `VLCKitSPM` build.
-- Picture in Picture is not enabled for VLC because of current VLCKit stability limits.
+- MPV is the advanced in-app player; Normal AVPlayer remains available for basic playback.
+- External players are still supported, including launching the separate VLC app through `vlc://` when installed.
 - Use GitHub Issues for feature requests and bug reports.
 - The app does use AI for development. As I don't know swift well (learning other languages like Java and soon C, not swift). Just for transparency. The app gets tested a ton, and I do try to make sure the code looks okay
 

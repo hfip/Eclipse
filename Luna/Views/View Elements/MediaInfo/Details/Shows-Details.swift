@@ -754,10 +754,10 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
             return
         }
 
-        let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? "mpv"
+        let inAppRaw = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
         let subtitleArray: [String]? = downloadManager.localSubtitleURL(for: item).map { [$0.absoluteString] }
 
-        if inAppRaw == "mpv" || inAppRaw == "VLC" {
+        if inAppRaw == "mpv" {
             let preset = PlayerPreset.presets.first
             let pvc = PlayerViewController(
                 url: fileURL,
