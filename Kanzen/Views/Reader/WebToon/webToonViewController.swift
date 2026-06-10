@@ -85,6 +85,10 @@ struct WebtoonView: UIViewRepresentable {
         private var activeWarmKeys = Set<String>()
         private var warmedKeys = Set<String>()
         private var lastWarmAnchor = -1
+        private var lastBackgroundWarmAnchor = -1
+        private var backgroundWarmWorkItem: DispatchWorkItem?
+        private var pendingOffsetAdjustment: CGFloat = 0
+        private var pendingLayoutWorkItem: DispatchWorkItem?
 
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
@@ -120,6 +124,12 @@ struct WebtoonView: UIViewRepresentable {
             activeWarmKeys.removeAll()
             warmedKeys.removeAll()
             lastWarmAnchor = -1
+            lastBackgroundWarmAnchor = -1
+            backgroundWarmWorkItem?.cancel()
+            backgroundWarmWorkItem = nil
+            pendingOffsetAdjustment = 0
+            pendingLayoutWorkItem?.cancel()
+            pendingLayoutWorkItem = nil
             ReaderLogger.shared.log(
                 "Webtoon reset chapter=\(manager.selectedChapter?.chapterNumber ?? "<none>") pages=\(pages.count)",
                 type: "ReaderWebtoon"
@@ -180,34 +190,66 @@ struct WebtoonView: UIViewRepresentable {
         func updateImageSize(for page: PageData, size: CGSize, indexPath: IndexPath, collectionView: UICollectionView) {
             guard size.width > 0, size.height > 0 else { return }
 
+            DispatchQueue.main.async { [weak collectionView] in
+                guard let collectionView else { return }
+                guard indexPath.item < self.pages.count, self.pages[indexPath.item].id == page.id else { return }
+                self.applyImageSizeUpdate(for: page, size: size, indexPath: indexPath, collectionView: collectionView)
+            }
+        }
+
+        private func applyImageSizeUpdate(
+            for page: PageData,
+            size: CGSize,
+            indexPath: IndexPath,
+            collectionView: UICollectionView
+        ) {
+            if let existing = imageSizes[page.cacheKey],
+               abs(existing.width - size.width) < 0.5,
+               abs(existing.height - size.height) < 0.5 {
+                return
+            }
+
             let oldHeight = height(for: page, width: collectionView.bounds.width)
             imageSizes[page.cacheKey] = size
             let newHeight = height(for: page, width: collectionView.bounds.width)
             let delta = newHeight - oldHeight
             guard abs(delta) >= 1 else { return }
 
-            DispatchQueue.main.async { [weak collectionView] in
-                guard let collectionView else { return }
-                guard indexPath.item < self.pages.count, self.pages[indexPath.item].id == page.id else { return }
-                let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame ?? .zero
+            let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame ?? .zero
+            if frame.maxY <= collectionView.contentOffset.y + 1 {
+                pendingOffsetAdjustment += delta
+            }
+            scheduleLayoutInvalidation(collectionView)
+        }
+
+        private func scheduleLayoutInvalidation(_ collectionView: UICollectionView) {
+            guard pendingLayoutWorkItem == nil else { return }
+
+            let workItem = DispatchWorkItem { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                let adjustment = self.pendingOffsetAdjustment
+                self.pendingOffsetAdjustment = 0
+                self.pendingLayoutWorkItem = nil
+
                 UIView.performWithoutAnimation {
                     collectionView.collectionViewLayout.invalidateLayout()
-                    collectionView.layoutIfNeeded()
 
-                    if delta != 0, frame.maxY <= collectionView.contentOffset.y + 1 {
+                    if abs(adjustment) >= 1 {
                         let adjusted = CGPoint(
                             x: collectionView.contentOffset.x,
-                            y: max(0, collectionView.contentOffset.y + delta)
+                            y: max(0, collectionView.contentOffset.y + adjustment)
                         )
                         collectionView.setContentOffset(adjusted, animated: false)
                     }
                 }
-                ReaderLogger.shared.log("Webtoon image size updated page=\(indexPath.item) h=\(Int(newHeight))", type: "ReaderWebtoon")
             }
+            pendingLayoutWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: workItem)
         }
 
         func prefetchInitialPages(in collectionView: UICollectionView) {
             warmWindow(around: max(0, reader_manager.index), collectionView: collectionView, force: true)
+            scheduleBackgroundWarm(around: max(0, reader_manager.index), collectionView: collectionView, force: true)
         }
 
         private func height(for page: PageData, width: CGFloat) -> CGFloat {
@@ -224,7 +266,19 @@ struct WebtoonView: UIViewRepresentable {
                 )
                 return max(320, ceil(rect.height) + 64)
             }
-            return max(480, width * 2.15)
+            return max(560, width * estimatedImageAspectRatio())
+        }
+
+        private func estimatedImageAspectRatio() -> CGFloat {
+            let ratios = imageSizes.values.compactMap { size -> CGFloat? in
+                guard size.width > 0, size.height > 0 else { return nil }
+                return size.height / size.width
+            }
+            guard !ratios.isEmpty else { return 3.2 }
+
+            let sorted = ratios.sorted()
+            let median = sorted[sorted.count / 2]
+            return min(max(median, 1.35), 6.0)
         }
 
         private func updateCurrentPage(_ collectionView: UICollectionView) {
@@ -238,8 +292,8 @@ struct WebtoonView: UIViewRepresentable {
             if lastReportedPage != indexPath.item {
                 lastReportedPage = indexPath.item
                 reader_manager.setIndex(indexPath.item)
-                reader_manager.preloadAdjacentPages()
                 warmWindow(around: indexPath.item, collectionView: collectionView)
+                scheduleBackgroundWarm(around: indexPath.item, collectionView: collectionView)
                 let now = Date()
                 if now.timeIntervalSince(lastScrollLogTime) > 2 {
                     lastScrollLogTime = now
@@ -260,6 +314,40 @@ struct WebtoonView: UIViewRepresentable {
 
             let indexPaths = (lowerBound...upperBound).map { IndexPath(item: $0, section: 0) }
             warmPages(at: indexPaths, collectionView: collectionView)
+        }
+
+        private func scheduleBackgroundWarm(around index: Int, collectionView: UICollectionView, force: Bool = false) {
+            guard !pages.isEmpty else { return }
+            let anchor = max(0, (index / 8) * 8)
+            guard force || anchor != lastBackgroundWarmAnchor else { return }
+            lastBackgroundWarmAnchor = anchor
+            backgroundWarmWorkItem?.cancel()
+
+            let start = min(max(index + 19, 0), pages.count)
+            guard start < pages.count else { return }
+            let indexPaths = (start..<pages.count).map { IndexPath(item: $0, section: 0) }
+            warmBackgroundChunks(indexPaths, collectionView: collectionView, offset: 0)
+        }
+
+        private func warmBackgroundChunks(
+            _ indexPaths: [IndexPath],
+            collectionView: UICollectionView,
+            offset: Int
+        ) {
+            guard offset < indexPaths.count else {
+                backgroundWarmWorkItem = nil
+                return
+            }
+
+            let delay: TimeInterval = (collectionView.isDragging || collectionView.isDecelerating) ? 0.7 : 0.35
+            let workItem = DispatchWorkItem { [weak self, weak collectionView] in
+                guard let self, let collectionView else { return }
+                let end = min(offset + 4, indexPaths.count)
+                self.warmPages(at: Array(indexPaths[offset..<end]), collectionView: collectionView)
+                self.warmBackgroundChunks(indexPaths, collectionView: collectionView, offset: end)
+            }
+            backgroundWarmWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
         }
 
         private func warmPages(at indexPaths: [IndexPath], collectionView: UICollectionView) {

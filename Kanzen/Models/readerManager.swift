@@ -184,8 +184,15 @@ var nextControllers: [UIViewController]?
             }
             persistCurrentPagePosition(page: self.index)
         }
-        preloadAdjacentPages()
-        preloadRemainingCurrentChapterPages()
+        if readingMode == .WEBTOON {
+            ReaderPageImageOptions.stop(&pagePrefetchers)
+            ReaderPageImageOptions.stop(&backgroundPagePrefetchers)
+            lastAdjacentPrefetchSignature = nil
+            lastBackgroundPrefetchSignature = nil
+        } else {
+            preloadAdjacentPages()
+            preloadRemainingCurrentChapterPages()
+        }
     }
     
     func setPrevChapter(_ prevChapter: [PageData]) {

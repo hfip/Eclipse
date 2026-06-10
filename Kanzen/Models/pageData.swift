@@ -356,14 +356,15 @@ enum ReaderPageImageOptions {
         targetSize: CGSize?,
         scaleFactor: CGFloat?
     ) -> KingfisherOptionsInfo {
+        let resolvedTargetSize = targetSize ?? defaultReaderTargetSize(scaleFactor: scaleFactor)
         var values: KingfisherOptionsInfo = [
             .cacheOriginalImage,
             .transition(.none),
             .backgroundDecode
         ]
 
-        if let targetSize {
-            values.append(.processor(DownsamplingImageProcessor(size: targetSize)))
+        if let resolvedTargetSize {
+            values.append(.processor(DownsamplingImageProcessor(size: resolvedTargetSize)))
         }
 
         if let scaleFactor {
@@ -381,6 +382,16 @@ enum ReaderPageImageOptions {
         }
 
         return values
+    }
+
+    private static func defaultReaderTargetSize(scaleFactor: CGFloat?) -> CGSize? {
+        let screen = UIScreen.main
+        let scale = scaleFactor ?? screen.scale
+        let viewportWidth = max(screen.bounds.width, 1)
+        let viewportHeight = max(screen.bounds.height, viewportWidth * 1.45)
+        let targetWidth = max(viewportWidth * scale, 900)
+        let targetHeight = max(viewportHeight * scale * 3, targetWidth * 6)
+        return CGSize(width: targetWidth, height: targetHeight)
     }
 
     private static func headerKey(_ headers: [String: String]) -> String {
