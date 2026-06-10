@@ -7,8 +7,9 @@
 
 import SwiftUI
 import UIKit
-import Kingfisher
 import QuartzCore
+import ImageIO
+import Nuke
 
 struct WebtoonView: UIViewRepresentable {
     @ObservedObject var reader_manager: readerManager
@@ -87,8 +88,9 @@ struct WebtoonView: UIViewRepresentable {
         private var lastDisplayTimestamp: CFTimeInterval?
         private var lastHitchLogTime = Date.distantPast
         private var lastScrollLogTime = Date.distantPast
+        private var chapterWarmTask: Task<Void, Never>?
 
-        private static let defaultImageAspectRatio: CGFloat = 1.435
+        private static let defaultImageAspectRatio: CGFloat = 2.25
 
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
@@ -173,12 +175,15 @@ struct WebtoonView: UIViewRepresentable {
                 collectionView.layoutIfNeeded()
                 self.scrollToPendingPage(in: collectionView)
                 self.prefetchWindow(around: max(0, self.reader_manager.index), in: collectionView, force: true)
+                self.startChapterWarmup(in: collectionView, around: max(0, self.reader_manager.index))
             }
         }
 
         func cancelWork() {
             pendingLayoutWorkItem?.cancel()
             pendingLayoutWorkItem = nil
+            chapterWarmTask?.cancel()
+            chapterWarmTask = nil
             collectionView?.visibleCells.forEach { ($0 as? WebtoonImageCell)?.cancelLoad() }
         }
 
@@ -388,7 +393,7 @@ struct WebtoonView: UIViewRepresentable {
 
             let sorted = ratios.sorted()
             let median = sorted[sorted.count / 2]
-            return min(max(median, 1.35), 6.0)
+            return min(max(median, 1.6), 6.0)
         }
 
         private func updateCurrentPage(in collectionView: WebtoonCollectionView, force: Bool = false) {
@@ -431,13 +436,13 @@ struct WebtoonView: UIViewRepresentable {
                 guard index >= 0, index < pages.count else { continue }
                 let page = pages[index]
                 if page.textContent != nil { continue }
-                if let data = page.imageData {
+                if page.imageData != nil {
                     let warmKey = "data|\(page.cacheKey)"
                     guard !activeWarmKeys.contains(warmKey), !warmedKeys.contains(warmKey) else { continue }
                     activeWarmKeys.insert(warmKey)
-                    DispatchQueue.global(qos: .utility).async { [weak self, weak collectionView] in
-                        let image = UIImage(data: data)
-                        DispatchQueue.main.async {
+                    Task.detached(priority: .utility) { [weak self, weak collectionView] in
+                        let image = try? await ReaderWebtoonImagePipeline.loadImage(for: page, targetSize: targetSize, scale: scale)
+                        await MainActor.run {
                             guard let self else { return }
                             self.activeWarmKeys.remove(warmKey)
                             guard let image, let collectionView else { return }
@@ -447,24 +452,22 @@ struct WebtoonView: UIViewRepresentable {
                     }
                     continue
                 }
-                guard let urlString = page.urlString, let url = URL(string: urlString) else { continue }
+                guard page.urlString != nil else { continue }
 
-                let warmKey = "\(page.cacheKey)|\(Int(targetSize.width))x\(Int(targetSize.height))"
+                let warmKey = "\(page.cacheKey)|w\(Int(targetSize.width * scale))"
                 guard !activeWarmKeys.contains(warmKey), !warmedKeys.contains(warmKey) else { continue }
                 activeWarmKeys.insert(warmKey)
 
-                KingfisherManager.shared.retrieveImage(
-                    with: url,
-                    options: ReaderPageImageOptions.options(for: page, targetSize: targetSize, scaleFactor: scale)
-                ) { [weak self, weak collectionView] result in
-                    DispatchQueue.main.async {
+                Task.detached(priority: .utility) { [weak self, weak collectionView] in
+                    let image = try? await ReaderWebtoonImagePipeline.loadImage(for: page, targetSize: targetSize, scale: scale)
+                    await MainActor.run {
                         guard let self else { return }
                         self.activeWarmKeys.remove(warmKey)
                         guard index < self.pages.count, self.pages[index].id == page.id else { return }
-                        if case .success(let value) = result {
+                        if let image {
                             self.warmedKeys.insert(warmKey)
                             if let collectionView {
-                                self.updateImageSize(page: page, size: value.image.size, index: index, collectionView: collectionView)
+                                self.updateImageSize(page: page, size: image.size, index: index, collectionView: collectionView)
                             }
                         }
                     }
@@ -472,13 +475,96 @@ struct WebtoonView: UIViewRepresentable {
             }
         }
 
-        private func targetImageSize(for collectionView: UICollectionView) -> CGSize {
+        private func startChapterWarmup(in collectionView: UICollectionView, around index: Int) {
+            chapterWarmTask?.cancel()
+
+            let total = pages.count
+            guard total > 1 else { return }
+
+            let orderedIndexes = warmupOrder(total: total, around: index)
+            let targetSize = targetImageSize(for: collectionView)
             let scale = collectionView.window?.screen.scale ?? UIScreen.main.scale
+            let maxWarmPages = min(total, 80)
+
+            chapterWarmTask = Task { @MainActor [weak self, weak collectionView] in
+                guard let self else { return }
+                var warmedCount = 0
+                for chunkStart in stride(from: 0, to: orderedIndexes.count, by: 3) {
+                    if Task.isCancelled { return }
+                    let chunk = Array(orderedIndexes[chunkStart..<min(chunkStart + 3, orderedIndexes.count)])
+                    await withTaskGroup(of: (Int, PageData, UIImage?).self) { group in
+                        for pageIndex in chunk {
+                            guard pageIndex >= 0, pageIndex < self.pages.count else { continue }
+                            let page = self.pages[pageIndex]
+                            guard page.textContent == nil, page.imageData != nil || page.urlString != nil else { continue }
+                            let warmKey = "\(page.cacheKey)|chapter|w\(Int(targetSize.width * scale))"
+                            guard !self.activeWarmKeys.contains(warmKey), !self.warmedKeys.contains(warmKey) else { continue }
+                            self.activeWarmKeys.insert(warmKey)
+                            group.addTask {
+                                let image = try? await ReaderWebtoonImagePipeline.loadImage(
+                                    for: page,
+                                    targetSize: targetSize,
+                                    scale: scale
+                                )
+                                return (pageIndex, page, image)
+                            }
+                        }
+
+                        for await (pageIndex, page, image) in group {
+                            if Task.isCancelled { return }
+                            let warmKey = "\(page.cacheKey)|chapter|w\(Int(targetSize.width * scale))"
+                            self.activeWarmKeys.remove(warmKey)
+                            guard let image,
+                                  let collectionView,
+                                  pageIndex < self.pages.count,
+                                  self.pages[pageIndex].id == page.id else { continue }
+                            self.warmedKeys.insert(warmKey)
+                            self.updateImageSize(page: page, size: image.size, index: pageIndex, collectionView: collectionView)
+                            warmedCount += 1
+                        }
+                    }
+
+                    if warmedCount >= maxWarmPages {
+                        ReaderLogger.shared.log(
+                            "Webtoon chapter warmup paused after \(warmedCount) pages total=\(total)",
+                            type: "ReaderPerf"
+                        )
+                        return
+                    }
+                }
+
+                if warmedCount > 0 {
+                    ReaderLogger.shared.log(
+                        "Webtoon chapter warmup completed warmed=\(warmedCount) total=\(total)",
+                        type: "ReaderPerf"
+                    )
+                }
+            }
+        }
+
+        private func warmupOrder(total: Int, around index: Int) -> [Int] {
+            let clamped = min(max(index, 0), max(total - 1, 0))
+            var ordered: [Int] = []
+            var seen = Set<Int>()
+
+            func append(_ value: Int) {
+                guard value >= 0, value < total, seen.insert(value).inserted else { return }
+                ordered.append(value)
+            }
+
+            for offset in 0..<total {
+                append(clamped + offset)
+                if offset > 0 {
+                    append(clamped - offset)
+                }
+            }
+            return ordered
+        }
+
+        private func targetImageSize(for collectionView: UICollectionView) -> CGSize {
             let viewportWidth = max(collectionView.bounds.width, 1)
             let viewportHeight = max(collectionView.bounds.height, viewportWidth * 1.45)
-            let targetWidth = max(viewportWidth * scale, 900)
-            let targetHeight = max(viewportHeight * scale * 3, targetWidth * 4)
-            return CGSize(width: targetWidth, height: targetHeight)
+            return CGSize(width: viewportWidth, height: viewportHeight)
         }
 
         private func loadAdjacentChaptersIfNeeded(_ collectionView: UICollectionView) {
@@ -690,6 +776,8 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
     private var page: PageData?
     private var pageIndex = 0
     private var currentTaskId: UUID?
+    private var imageLoadTask: Task<Void, Never>?
+    private var imageTask: ImageTask?
     private var didAttemptLoad = false
     private var didLoadSuccessfully = false
     private var zoomScale: CGFloat = 1
@@ -713,7 +801,10 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
         didAttemptLoad = false
         didLoadSuccessfully = false
         currentTaskId = nil
-        imageView.kf.cancelDownloadTask()
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
+        imageLoadTask = nil
+        imageTask = nil
         imageView.image = nil
         textLabel.text = nil
         resetZoom(animated: false)
@@ -721,7 +812,10 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
     }
 
     func prepareForReuse() {
-        imageView.kf.cancelDownloadTask()
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
+        imageLoadTask = nil
+        imageTask = nil
         imageView.image = nil
         textLabel.text = nil
         currentTaskId = nil
@@ -737,18 +831,27 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
         didAttemptLoad = false
         didLoadSuccessfully = false
         currentTaskId = nil
-        imageView.kf.cancelDownloadTask()
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
+        imageLoadTask = nil
+        imageTask = nil
         imageView.image = nil
     }
 
     func cancelLoad() {
-        imageView.kf.cancelDownloadTask()
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
+        imageLoadTask = nil
+        imageTask = nil
         currentTaskId = nil
     }
 
     func releaseDisplayedImage() {
         guard zoomScale <= 1.01 else { return }
-        imageView.kf.cancelDownloadTask()
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
+        imageLoadTask = nil
+        imageTask = nil
         imageView.image = nil
         currentTaskId = nil
         didLoadSuccessfully = false
@@ -835,30 +938,7 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
             return
         }
 
-        if let data = page.imageData {
-            let taskId = UUID()
-            currentTaskId = taskId
-            showLoading()
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let image = UIImage(data: data)
-                DispatchQueue.main.async {
-                    guard let self,
-                          self.currentTaskId == taskId,
-                          let page = self.page else { return }
-                    guard let image else {
-                        self.showFailure()
-                        return
-                    }
-                    self.imageView.image = image
-                    self.didLoadSuccessfully = true
-                    self.showImage()
-                    self.onImageSize?(page, image.size, self.pageIndex)
-                }
-            }
-            return
-        }
-
-        guard let urlString = page.urlString, let url = URL(string: urlString) else {
+        guard page.imageData != nil || page.urlString != nil else {
             showFailure()
             return
         }
@@ -866,22 +946,39 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
         let taskId = UUID()
         currentTaskId = taskId
         showLoading()
+        imageLoadTask?.cancel()
+        imageTask?.cancel()
 
-        imageView.kf.setImage(
-            with: url,
-            options: ReaderPageImageOptions.options(for: page, targetSize: targetSize, scaleFactor: scale)
-        ) { [weak self] result in
-            guard let self,
-                  self.currentTaskId == taskId,
-                  let page = self.page else { return }
-
-            switch result {
-            case .success(let value):
-                self.didLoadSuccessfully = true
-                self.showImage()
-                self.onImageSize?(page, value.image.size, self.pageIndex)
-            case .failure:
-                self.showFailure()
+        imageLoadTask = Task { [weak self] in
+            do {
+                let image = try await ReaderWebtoonImagePipeline.loadImage(
+                    for: page,
+                    targetSize: targetSize,
+                    scale: scale,
+                    taskSink: { [weak self] task in
+                        Task { @MainActor in
+                            self?.imageTask = task
+                        }
+                    }
+                )
+                await MainActor.run {
+                    guard let self,
+                          self.currentTaskId == taskId,
+                          let currentPage = self.page,
+                          currentPage.id == page.id else { return }
+                    self.imageView.image = image
+                    self.didLoadSuccessfully = true
+                    self.showImage()
+                    self.onImageSize?(page, image.size, self.pageIndex)
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self,
+                          self.currentTaskId == taskId,
+                          let currentPage = self.page,
+                          currentPage.id == page.id else { return }
+                    self.showFailure()
+                }
             }
         }
     }
@@ -1000,5 +1097,103 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
         } else {
             changes()
         }
+    }
+}
+
+private enum ReaderWebtoonImagePipeline {
+    static func loadImage(
+        for page: PageData,
+        targetSize: CGSize,
+        scale: CGFloat,
+        taskSink: ((ImageTask) -> Void)? = nil
+    ) async throws -> UIImage {
+        if let data = page.imageData {
+            return try await decodeImageData(data, targetWidth: targetSize.width, scale: scale)
+        }
+
+        guard let urlString = page.urlString, let url = URL(string: urlString) else {
+            throw ReaderWebtoonImageError.invalidPage
+        }
+
+        var urlRequest = URLRequest(url: url)
+        for (field, value) in page.headers {
+            urlRequest.setValue(value, forHTTPHeaderField: field)
+        }
+
+        let imageRequest = ImageRequest(
+            urlRequest: urlRequest,
+            processors: [
+                ReaderWebtoonDownsampleProcessor(width: max(targetSize.width, 1), scaleFactor: scale)
+            ]
+        )
+        let task = ImagePipeline.shared.loadImage(
+            with: imageRequest,
+            progress: { _, _, _ in },
+            completion: { _ in }
+        )
+        taskSink?(task)
+        let response = try await task.response
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        return response.image
+    }
+
+    private static func decodeImageData(_ data: Data, targetWidth: CGFloat, scale: CGFloat) async throws -> UIImage {
+        try await Task.detached(priority: .userInitiated) {
+            guard let image = UIImage(data: data) else {
+                throw ReaderWebtoonImageError.decodeFailed
+            }
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            return ReaderWebtoonDownsampleProcessor(width: max(targetWidth, 1), scaleFactor: scale).process(image) ?? image
+        }.value
+    }
+}
+
+private enum ReaderWebtoonImageError: Error {
+    case invalidPage
+    case decodeFailed
+}
+
+private struct ReaderWebtoonDownsampleProcessor: ImageProcessing {
+    let width: CGFloat
+    let scaleFactor: CGFloat
+
+    var identifier: String {
+        "com.luna.reader.webtoon.downsample?w=\(Int(width * scaleFactor))"
+    }
+
+    func process(_ image: PlatformImage) -> PlatformImage? {
+        guard image.size.width > width, width > 0 else { return image }
+
+        let finalWidth = width
+        let finalHeight = image.size.height * (finalWidth / image.size.width)
+        let finalSize = CGSize(width: finalWidth, height: finalHeight)
+
+        var data = image.pngData()
+        if data == nil {
+            data = image.jpegData(compressionQuality: 1)
+        }
+        guard let data else { return image }
+
+        let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, imageSourceOptions) else {
+            return image
+        }
+
+        let maxDimension = round(max(finalSize.width, finalSize.height) * scaleFactor)
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension
+        ] as [CFString: Any] as CFDictionary
+
+        guard let output = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+            return image
+        }
+        return PlatformImage(cgImage: output, scale: scaleFactor, orientation: image.imageOrientation)
     }
 }

@@ -54,6 +54,7 @@
 		A5D100042FE1000000A5D004 /* ReaderDownloadsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D100032FE1000000A5D003 /* ReaderDownloadsSettingsView.swift */; };
 		AD0000062FD9000000AD0006 /* AidokuRunner in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000222FD9000000AD0022 /* AidokuRunner */; };
 		AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000232FD9000000AD0023 /* ZIPFoundation */; };
+		AD0000332FDA000000AD0033 /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = AD0000322FDA000000AD0032 /* Nuke */; };
 		13A46CFD2EF5943400423BC6 /* FakeWebKit in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFC2EF5943400423BC6 /* FakeWebKit */; };
 		13A46D002EF5944C00423BC6 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46CFF2EF5944C00423BC6 /* Kingfisher */; };
 		13A46D032EF5945700423BC6 /* SoraCore in Frameworks */ = {isa = PBXBuildFile; productRef = 13A46D022EF5945700423BC6 /* SoraCore */; };
@@ -377,6 +378,7 @@
 				C0A5A0052FD1000000C0A505 /* CrashReporter in Frameworks */,
 				AD0000062FD9000000AD0006 /* AidokuRunner in Frameworks */,
 				AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */,
+				AD0000332FDA000000AD0033 /* Nuke in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -984,6 +986,7 @@
 				C0A5A0042FD1000000C0A504 /* CrashReporter */,
 				AD0000222FD9000000AD0022 /* AidokuRunner */,
 				AD0000232FD9000000AD0023 /* ZIPFoundation */,
+				AD0000322FDA000000AD0032 /* Nuke */,
 			);
 			productName = Sora;
 			productReference = 13F0725B2E4B2D3300EF90EB /* Luna.app */;
@@ -1021,6 +1024,7 @@
 				C0A5A0032FD1000000C0A503 /* XCRemoteSwiftPackageReference "plcrashreporter" */,
 				AD0000202FD9000000AD0020 /* XCRemoteSwiftPackageReference "AidokuRunner" */,
 				AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+				AD0000312FDA000000AD0031 /* XCRemoteSwiftPackageReference "Nuke" */,
 			);
 			productRefGroup = 13F0725C2E4B2D3300EF90EB /* Products */;
 			projectDirPath = "";
@@ -1551,6 +1555,14 @@
 				minimumVersion = 0.9.19;
 			};
 		};
+		AD0000312FDA000000AD0031 /* XCRemoteSwiftPackageReference "Nuke" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kean/Nuke";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.8.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1592,6 +1604,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
 			productName = ZIPFoundation;
+		};
+		AD0000322FDA000000AD0032 /* Nuke */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0000312FDA000000AD0031 /* XCRemoteSwiftPackageReference "Nuke" */;
+			productName = Nuke;
 		};
 /* End XCSwiftPackageProductDependency section */
 

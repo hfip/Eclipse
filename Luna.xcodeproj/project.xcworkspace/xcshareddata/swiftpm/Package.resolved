@@ -37,12 +37,30 @@
       }
     },
     {
+      "identity" : "nuke",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kean/Nuke",
+      "state" : {
+        "revision" : "0ead44350d2737db384908569c012fe67c421e4d",
+        "version" : "12.8.0"
+      }
+    },
+    {
       "identity" : "soracore",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/cranci1/SoraCore",
       "state" : {
         "branch" : "main",
         "revision" : "50ddc160fd606e9708adefc1d9fc7003b574446b"
+      }
+    },
+    {
+      "identity" : "swift-atomics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-atomics.git",
+      "state" : {
+        "revision" : "b601256eab081c0f92f059e12818ac1d4f178ff7",
+        "version" : "1.3.0"
       }
     },
     {
