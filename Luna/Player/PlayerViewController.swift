@@ -2329,6 +2329,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     private var controlsHideWorkItem: DispatchWorkItem?
     private var controlsVisible: Bool = true
+    private var suppressNextPlayPauseControlReveal = false
+    private var playPauseRevealSuppressionToken = 0
     private var pendingSeekTime: Double?
     private var defaultPlaybackSpeedApplied = false
     private var performanceOverlayTimer: Timer?
@@ -3427,14 +3429,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     @objc private func twoFingerTapped(_ gesture: UITapGestureRecognizer) {
         // Two-finger tap: toggle play/pause without showing UI
-        logSharedPlayerControl("two-finger tap toggle pause currentPaused=\(rendererIsPausedState())")
-        if rendererIsPausedState() {
-            rendererPlay()
-            updatePlayPauseButton(isPaused: false, shouldShowControls: false)
-        } else {
-            rendererPausePlayback()
-            updatePlayPauseButton(isPaused: true, shouldShowControls: false)
-        }
+        togglePlaybackFromVideoGesture(source: "two-finger-tap")
     }
 
     private func setupBrightnessControls() {
@@ -7376,14 +7371,39 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard gesture.state == .ended else { return false }
         let bounds = videoContainer.bounds
         guard bounds.width > 0, bounds.height > 0 else { return false }
-        let centralRect = bounds.insetBy(dx: bounds.width * 0.30, dy: bounds.height * 0.28)
-        return centralRect.contains(gesture.location(in: videoContainer))
+        let location = gesture.location(in: videoContainer)
+        let buttonFrame = centerPlayPauseButton.convert(centerPlayPauseButton.bounds, to: videoContainer)
+        if !buttonFrame.isEmpty {
+            return buttonFrame.insetBy(dx: -24, dy: -24).contains(location)
+        }
+
+        let side = min(max(min(bounds.width, bounds.height) * 0.22, 88), 132)
+        let centralRect = CGRect(
+            x: bounds.midX - side / 2,
+            y: bounds.midY - side / 2,
+            width: side,
+            height: side
+        )
+        return centralRect.contains(location)
     }
 
     private func togglePlaybackFromVideoTap() {
-        logSharedPlayerControl("central video tap toggled playback paused=\(rendererIsPausedState())")
+        togglePlaybackFromVideoGesture(source: "central-video-tap")
+    }
+
+    private func togglePlaybackFromVideoGesture(source: String) {
+        pendingContainerTapWorkItem?.cancel()
+        suppressNextPlayPauseControlReveal = true
+        playPauseRevealSuppressionToken += 1
+        let suppressionToken = playPauseRevealSuppressionToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self,
+                  self.playPauseRevealSuppressionToken == suppressionToken else { return }
+            self.suppressNextPlayPauseControlReveal = false
+        }
+        logSharedPlayerControl("\(source) toggled playback paused=\(rendererIsPausedState())")
         if rendererIsPausedState() {
-            markBackgroundRecoveryForegrounded(source: "central-video-tap")
+            markBackgroundRecoveryForegrounded(source: source)
             rendererPlay()
             updatePlayPauseButton(isPaused: false, shouldShowControls: false)
         } else {
@@ -8968,7 +8988,10 @@ extension PlayerViewController: MPVNativeRendererDelegate {
             pipController?.updatePlaybackState()
             return
         }
-        updatePlayPauseButton(isPaused: isPaused)
+        let shouldShowControls = !suppressNextPlayPauseControlReveal
+        suppressNextPlayPauseControlReveal = false
+        playPauseRevealSuppressionToken += 1
+        updatePlayPauseButton(isPaused: isPaused, shouldShowControls: shouldShowControls)
         pipController?.updatePlaybackState()
     }
     
@@ -9242,6 +9265,9 @@ extension PlayerViewController: PiPControllerDelegate {
             return
         }
         mpvPendingAppExitPiPWorkItem?.cancel()
+        if UIApplication.shared.applicationState != .background {
+            attemptMPVAppExitPictureInPictureStart(source: "\(source)-pre-background")
+        }
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }

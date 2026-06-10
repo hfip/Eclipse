@@ -102,6 +102,7 @@ struct WebtoonView: UIViewRepresentable {
         private var lastHitchLogTime = Date.distantPast
         private var lastWarmLogTime = Date.distantPast
         private var totalLayoutInvalidations = 0
+        private static let defaultImageAspectRatio: CGFloat = 1.435
 
         init(reader_manager: readerManager, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
@@ -337,7 +338,7 @@ struct WebtoonView: UIViewRepresentable {
                 )
                 return max(320, ceil(rect.height) + 64)
             }
-            return max(560, width * estimatedImageAspectRatio())
+            return max(320, width * estimatedImageAspectRatio())
         }
 
         private func estimatedImageAspectRatio() -> CGFloat {
@@ -345,7 +346,7 @@ struct WebtoonView: UIViewRepresentable {
                 guard size.width > 0, size.height > 0 else { return nil }
                 return size.height / size.width
             }
-            guard !ratios.isEmpty else { return 3.2 }
+            guard !ratios.isEmpty else { return Self.defaultImageAspectRatio }
 
             let sorted = ratios.sorted()
             let median = sorted[sorted.count / 2]

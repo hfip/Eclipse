@@ -81,11 +81,7 @@ struct readerManagerView:View {
             applyPersistedOrientationLockIfNeeded()
         }
         .onDisappear {
-            if orientationLocked {
-                applyOrientationMask(mask(for: orientationLockMaskRaw), requestGeometryUpdate: false)
-            } else {
-                AppDelegate.orientationLock = .all
-            }
+            releaseActiveOrientationLock()
         }
         .navigationBarBackButtonHidden(true)
         .task {
@@ -135,7 +131,7 @@ struct readerManagerView:View {
                         }
                         Spacer()
                         Button {
-                            AppDelegate.orientationLock = .all
+                            releaseActiveOrientationLock()
                             dismiss()
                         } label: {
                             Image(systemName: "xmark")
@@ -251,6 +247,10 @@ struct readerManagerView:View {
     private func applyPersistedOrientationLockIfNeeded() {
         guard orientationLocked else { return }
         applyOrientationMask(mask(for: orientationLockMaskRaw), requestGeometryUpdate: false)
+    }
+
+    private func releaseActiveOrientationLock() {
+        applyOrientationMask(.all, requestGeometryUpdate: false)
     }
 
     private func currentExactOrientationMask() -> UIInterfaceOrientationMask {
