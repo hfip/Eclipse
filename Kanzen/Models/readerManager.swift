@@ -181,6 +181,10 @@ var nextControllers: [UIViewController]?
             if saved > 0, saved < currChapter.count {
                 self.index = saved
                 self.changeIndex = true
+                ReaderLogger.shared.log(
+                    "Restoring reader page=\(saved + 1)/\(currChapter.count) chapter=\(chapter.chapterNumber)",
+                    type: "ReaderProgress"
+                )
             }
             persistCurrentPagePosition(page: self.index)
         }

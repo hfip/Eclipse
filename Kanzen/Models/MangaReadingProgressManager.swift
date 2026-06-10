@@ -126,7 +126,8 @@ final class MangaReadingProgressManager: ObservableObject {
     // MARK: - Queries
 
     func isChapterRead(mangaId: Int, chapterNumber: String) -> Bool {
-        progressMap[mangaId]?.readChapterNumbers.contains(chapterNumber) == true
+        guard let progress = progressMap[mangaId] else { return false }
+        return containsChapter(chapterNumber, in: progress.readChapterNumbers)
     }
 
     func readChapters(for mangaId: Int) -> Set<String> {
@@ -138,14 +139,15 @@ final class MangaReadingProgressManager: ObservableObject {
     }
 
     func pagePosition(mangaId: Int, chapterNumber: String) -> Int {
-        progressMap[mangaId]?.pagePositions[chapterNumber] ?? 0
+        guard let positions = progressMap[mangaId]?.pagePositions else { return 0 }
+        return storedValue(in: positions, for: chapterNumber) ?? 0
     }
 
     func pageProgress(mangaId: Int, chapterNumber: String) -> (page: Int, total: Int)? {
-        guard let progress = progressMap[mangaId],
-              let zeroBasedPage = progress.pagePositions[chapterNumber],
-              let total = progress.pageCounts[chapterNumber],
-              total > 0 else { return nil }
+        guard let progress = progressMap[mangaId] else { return nil }
+        let zeroBasedPage = storedValue(in: progress.pagePositions, for: chapterNumber)
+        let total = storedValue(in: progress.pageCounts, for: chapterNumber)
+        guard let zeroBasedPage, let total, total > 0 else { return nil }
         return (page: min(max(zeroBasedPage + 1, 1), total), total: total)
     }
 
@@ -179,9 +181,14 @@ final class MangaReadingProgressManager: ObservableObject {
         var progress = progressMap[mangaId] ?? MangaProgress()
         let safePageCount = pageCount.map { max($0, 0) }
         let safePage = max(page, 0)
-        progress.pagePositions[chapterNumber] = safePage
+        let chapterKeys = chapterKeyCandidates(for: chapterNumber)
+        for key in chapterKeys {
+            progress.pagePositions[key] = safePage
+        }
         if let safePageCount, safePageCount > 0 {
-            progress.pageCounts[chapterNumber] = safePageCount
+            for key in chapterKeys {
+                progress.pageCounts[key] = safePageCount
+            }
         }
         progress.lastReadChapter = chapterNumber
         progress.lastReadDate = Date()
@@ -202,12 +209,12 @@ final class MangaReadingProgressManager: ObservableObject {
         if let trackerMALId { progress.trackerMALId = trackerMALId }
         applyRoute(route, to: &progress)
 
-        let totalPages = safePageCount ?? progress.pageCounts[chapterNumber] ?? 0
+        let totalPages = safePageCount ?? storedValue(in: progress.pageCounts, for: chapterNumber) ?? 0
         var didMarkRead = false
         if totalPages > 0 {
             let completion = Double(min(safePage + 1, totalPages)) / Double(totalPages)
-            if completion >= readThreshold, !progress.readChapterNumbers.contains(chapterNumber) {
-                progress.readChapterNumbers.insert(chapterNumber)
+            if completion >= readThreshold, !containsChapter(chapterNumber, in: progress.readChapterNumbers) {
+                insertChapter(chapterNumber, into: &progress.readChapterNumbers)
                 didMarkRead = true
             }
         }
@@ -233,7 +240,7 @@ final class MangaReadingProgressManager: ObservableObject {
         var progress = progressMap[mangaId] ?? MangaProgress()
         let uniqueLatestChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
 
-        guard !progress.readChapterNumbers.contains(chapterNumber) else {
+        guard !containsChapter(chapterNumber, in: progress.readChapterNumbers) else {
             // Still update metadata if provided even for already-read chapters
             var changed = false
             if let t = mangaTitle, progress.title != t { progress.title = t; changed = true }
@@ -265,7 +272,7 @@ final class MangaReadingProgressManager: ObservableObject {
             return
         }
 
-        progress.readChapterNumbers.insert(chapterNumber)
+        insertChapter(chapterNumber, into: &progress.readChapterNumbers)
         progress.lastReadChapter = chapterNumber
         progress.lastReadDate = Date()
         if let t = mangaTitle { progress.title = t }
@@ -300,7 +307,7 @@ final class MangaReadingProgressManager: ObservableObject {
     /// Mark a chapter as unread.
     func markChapterUnread(mangaId: Int, chapterNumber: String) {
         guard var progress = progressMap[mangaId] else { return }
-        progress.readChapterNumbers.remove(chapterNumber)
+        removeChapter(chapterNumber, from: &progress.readChapterNumbers)
         progressMap[mangaId] = progress
         save()
     }
@@ -311,7 +318,7 @@ final class MangaReadingProgressManager: ObservableObject {
         let uniqueChapterNumbers = ChapterIdentityNormalizer.deduplicatedNumbers(chapterNumbers)
         let uniqueLatestChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
         for ch in uniqueChapterNumbers {
-            progress.readChapterNumbers.insert(ch)
+            insertChapter(ch, into: &progress.readChapterNumbers)
         }
         if let last = uniqueChapterNumbers.last {
             progress.lastReadChapter = last
@@ -494,6 +501,51 @@ final class MangaReadingProgressManager: ObservableObject {
             progress.contentParams = contentParams
             progress.isNovel = isNovel
         }
+    }
+
+    private func chapterKeyCandidates(for chapterNumber: String) -> [String] {
+        let trimmed = chapterNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = ChapterIdentityNormalizer.key(for: chapterNumber)
+        var keys: [String] = []
+        for key in [chapterNumber, trimmed, normalized] where !key.isEmpty && !keys.contains(key) {
+            keys.append(key)
+        }
+        return keys
+    }
+
+    private func containsChapter(_ chapterNumber: String, in chapters: Set<String>) -> Bool {
+        let candidates = Set(chapterKeyCandidates(for: chapterNumber))
+        if !chapters.isDisjoint(with: candidates) {
+            return true
+        }
+
+        let normalized = ChapterIdentityNormalizer.key(for: chapterNumber)
+        return chapters.contains { ChapterIdentityNormalizer.key(for: $0) == normalized }
+    }
+
+    private func insertChapter(_ chapterNumber: String, into chapters: inout Set<String>) {
+        for key in chapterKeyCandidates(for: chapterNumber) {
+            chapters.insert(key)
+        }
+    }
+
+    private func removeChapter(_ chapterNumber: String, from chapters: inout Set<String>) {
+        let candidates = Set(chapterKeyCandidates(for: chapterNumber))
+        let normalized = ChapterIdentityNormalizer.key(for: chapterNumber)
+        chapters = chapters.filter { saved in
+            !candidates.contains(saved) && ChapterIdentityNormalizer.key(for: saved) != normalized
+        }
+    }
+
+    private func storedValue<Value>(in dictionary: [String: Value], for chapterNumber: String) -> Value? {
+        for key in chapterKeyCandidates(for: chapterNumber) {
+            if let value = dictionary[key] {
+                return value
+            }
+        }
+
+        let normalized = ChapterIdentityNormalizer.key(for: chapterNumber)
+        return dictionary.first { ChapterIdentityNormalizer.key(for: $0.key) == normalized }?.value
     }
 
     private func syncTrackerProgress(mangaId: Int, progress: MangaProgress, chapterNumber: Int, explicitTitle: String?, explicitTotalChapters: Int?) {
