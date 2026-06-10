@@ -243,8 +243,9 @@ final class MangaHomeSourceManager: ObservableObject {
                 MangaHomeSource.aidoku(source, order: index)
             }
 
-        let legacySources = legacySources(from: modules, orderOffset: aidokuSources.count)
-        return aidokuSources + legacySources
+        // Home feeds are Aidoku-only. Legacy JS modules remain available through
+        // compatibility routes, but they do not expose reliable home sections.
+        return aidokuSources
     }
 
     @MainActor

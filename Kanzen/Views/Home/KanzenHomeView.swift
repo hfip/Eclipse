@@ -175,10 +175,10 @@ struct KanzenHomeView: View {
 
     private var emptyModulesView: some View {
         VStack(spacing: 12) {
-            Image(systemName: "puzzlepiece.extension")
+            Image(systemName: "shippingbox")
                 .font(.system(size: 42))
                 .foregroundColor(.secondary)
-            Text("No manga sources installed")
+            Text("No Aidoku home sources installed")
                 .font(.headline)
                 .foregroundColor(.secondary)
             NavigationLink(destination: AidokuSourcesSettingsView()) {
