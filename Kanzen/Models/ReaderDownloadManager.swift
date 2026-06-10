@@ -592,7 +592,7 @@ final class ReaderDownloadManager: ObservableObject {
                   let mangaKey = item.provider.mangaKey else {
                 throw downloadError("Missing Aidoku source metadata.")
             }
-            guard AidokuSourceManager.shared.metadata(id: sourceId)?.isEnabled != false else {
+            guard await AidokuSourceManager.shared.metadata(id: sourceId)?.isEnabled != false else {
                 throw downloadError("This Aidoku source is disabled.")
             }
             let seed = AidokuRunner.Manga(
