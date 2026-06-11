@@ -7,6 +7,9 @@
 
 import SwiftUI
 import Kingfisher
+#if !os(tvOS)
+import AidokuRunner
+#endif
 
 
 
@@ -378,12 +381,7 @@ var nextControllers: [UIViewController]?
         pendingPagePersist = page
         pendingPagePersistChapterNumber = chapter.chapterNumber
         pendingPagePersistTask?.cancel()
-        pendingPagePersistTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            await MainActor.run {
-                self?.flushPendingPagePosition()
-            }
-        }
+        pendingPagePersistTask = nil
     }
 
     private var readerReadThreshold: Double {
@@ -699,3 +697,313 @@ var nextControllers: [UIViewController]?
         return "0"
     }
 }
+
+#if !os(tvOS)
+enum KanzenReaderMode: String, CaseIterable, Identifiable {
+    case ltr
+    case rtl
+    case webtoon
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ltr: return "Left to Right"
+        case .rtl: return "Right to Left"
+        case .webtoon: return "Continuous Scroll"
+        }
+    }
+
+    var readingMode: ReadingMode {
+        switch self {
+        case .ltr: return .LTR
+        case .rtl: return .RTL
+        case .webtoon: return .WEBTOON
+        }
+    }
+
+    static func currentDefault() -> KanzenReaderMode {
+        let migrated = UserDefaults.standard.object(forKey: "kanzenReaderMode") as? String
+        if let migrated, let mode = KanzenReaderMode(rawValue: migrated) {
+            return mode
+        }
+
+        let legacy = UserDefaults.standard.integer(forKey: "readingMode")
+        let mode = ReadingMode(rawValue: legacy) ?? .WEBTOON
+        let resolved: KanzenReaderMode
+        switch mode {
+        case .LTR: resolved = .ltr
+        case .RTL: resolved = .rtl
+        case .WEBTOON, .VERTICAL: resolved = .webtoon
+        }
+        UserDefaults.standard.set(resolved.rawValue, forKey: "kanzenReaderMode")
+        return resolved
+    }
+}
+
+struct KanzenReaderPage: Identifiable {
+    let id: String
+    let pageData: PageData
+    let index: Int
+
+    var text: String? { pageData.textContent }
+    var isText: Bool { text != nil }
+    var isImageLike: Bool { pageData.imageData != nil || pageData.urlString != nil || pageData.aidokuPage != nil }
+
+    init(pageData: PageData, index: Int, chapterNumber: String) {
+        self.pageData = pageData
+        self.index = index
+        self.id = "\(chapterNumber)-\(index)-\(pageData.cacheKey)"
+    }
+}
+
+@MainActor
+final class KanzenReaderSession {
+    let kanzen: KanzenEngine
+    private(set) var chapters: [Chapter]
+    private(set) var selectedChapter: Chapter
+    let mangaId: Int
+    let mangaTitle: String
+    let mangaCoverURL: String
+    let mangaRoute: MangaContentRoute?
+    let mangaFormat: String?
+    let totalChapters: Int?
+    let latestChapterNumbers: [String]?
+    let trackerAniListId: Int?
+    let trackerMALId: Int?
+
+    private let loader: KanzenReaderPageLoader
+    private var lastSavedChapterNumber: String?
+    private var lastSavedPage = -1
+
+    var pages: [KanzenReaderPage] = []
+    var currentPage: Int = 0
+    var mode: KanzenReaderMode = KanzenReaderMode.currentDefault()
+
+    init(
+        kanzen: KanzenEngine,
+        chapters: [Chapter]?,
+        selectedChapter: Chapter?,
+        mangaId: Int,
+        mangaTitle: String,
+        mangaCoverURL: String,
+        mangaRoute: MangaContentRoute?,
+        mangaFormat: String?,
+        totalChapters: Int?,
+        latestChapterNumbers: [String]?,
+        trackerAniListId: Int?,
+        trackerMALId: Int?
+    ) {
+        self.kanzen = kanzen
+        let normalized = ChapterIdentityNormalizer.deduplicatedChapters(chapters ?? [], reindex: true)
+        self.chapters = normalized
+        if let selectedChapter,
+           let match = normalized.first(where: {
+               ChapterIdentityNormalizer.key(for: $0.chapterNumber) == ChapterIdentityNormalizer.key(for: selectedChapter.chapterNumber)
+           }) {
+            self.selectedChapter = match
+        } else {
+            self.selectedChapter = normalized.first ?? Chapter(chapterNumber: "", idx: 0, chapterData: nil)
+        }
+        self.mangaId = mangaId
+        self.mangaTitle = mangaTitle
+        self.mangaCoverURL = mangaCoverURL
+        self.mangaRoute = mangaRoute
+        self.mangaFormat = mangaFormat
+        self.totalChapters = totalChapters
+        self.latestChapterNumbers = latestChapterNumbers.map(ChapterIdentityNormalizer.deduplicatedNumbers)
+        self.trackerAniListId = trackerAniListId
+        self.trackerMALId = trackerMALId
+        self.loader = KanzenReaderPageLoader(kanzen: kanzen, route: mangaRoute)
+    }
+
+    var canMovePreviousChapter: Bool {
+        chapterIndex > 0
+    }
+
+    var canMoveNextChapter: Bool {
+        chapterIndex < chapters.count - 1
+    }
+
+    var chapterIndex: Int {
+        chapters.firstIndex(where: {
+            ChapterIdentityNormalizer.key(for: $0.chapterNumber) == ChapterIdentityNormalizer.key(for: selectedChapter.chapterNumber)
+        }) ?? min(max(selectedChapter.idx, 0), max(chapters.count - 1, 0))
+    }
+
+    var readThreshold: Double {
+        let raw = UserDefaults.standard.object(forKey: "readerReadThresholdPercent") as? Double ?? 80
+        return max(50, min(raw, 100)) / 100
+    }
+
+    func loadSelectedChapter() async throws -> [KanzenReaderPage] {
+        let pageData = try await loader.loadPages(for: selectedChapter, mode: mode)
+        guard !pageData.isEmpty else {
+            throw NSError(domain: "KanzenReader", code: 1, userInfo: [NSLocalizedDescriptionKey: "No pages found for this chapter."])
+        }
+        let mapped = pageData.enumerated().map { index, page in
+            KanzenReaderPage(pageData: page, index: index, chapterNumber: selectedChapter.chapterNumber)
+        }
+        pages = mapped
+        currentPage = restoredPage(in: mapped)
+        lastSavedChapterNumber = nil
+        lastSavedPage = -1
+        ReaderLogger.shared.log(
+            "Reader loaded chapter=\(selectedChapter.chapterNumber) pages=\(mapped.count) mode=\(mode.rawValue)",
+            type: "Reader"
+        )
+        return mapped
+    }
+
+    func selectChapter(_ chapter: Chapter) {
+        saveCurrentProgress(force: true)
+        if let match = chapters.first(where: {
+            ChapterIdentityNormalizer.key(for: $0.chapterNumber) == ChapterIdentityNormalizer.key(for: chapter.chapterNumber)
+        }) {
+            selectedChapter = match
+        } else {
+            selectedChapter = chapter
+        }
+        pages = []
+        currentPage = 0
+    }
+
+    func movePreviousChapter() -> Bool {
+        guard canMovePreviousChapter else { return false }
+        selectChapter(chapters[chapterIndex - 1])
+        return true
+    }
+
+    func moveNextChapter(markCurrentRead: Bool = true) -> Bool {
+        guard canMoveNextChapter else { return false }
+        if markCurrentRead {
+            markCurrentChapterRead()
+        }
+        selectChapter(chapters[chapterIndex + 1])
+        return true
+    }
+
+    func setCurrentPage(_ page: Int, totalPages: Int) {
+        let safeTotal = max(totalPages, 1)
+        currentPage = min(max(page, 0), safeTotal - 1)
+        markReadIfThresholdReached(page: currentPage, totalPages: safeTotal)
+    }
+
+    func saveCurrentProgress(force: Bool = false) {
+        guard mangaId != 0, !selectedChapter.chapterNumber.isEmpty else { return }
+        let pageCount = max(pages.count, 1)
+        let page = min(max(currentPage, 0), pageCount - 1)
+        guard force || lastSavedChapterNumber != selectedChapter.chapterNumber || lastSavedPage != page else { return }
+        lastSavedChapterNumber = selectedChapter.chapterNumber
+        lastSavedPage = page
+        MangaReadingProgressManager.shared.savePagePosition(
+            mangaId: mangaId,
+            chapterNumber: selectedChapter.chapterNumber,
+            page: page,
+            pageCount: pageCount,
+            mangaTitle: mangaTitle,
+            coverURL: mangaCoverURL,
+            format: mangaFormat,
+            totalChapters: totalChapters,
+            latestChapterNumbers: latestChapterNumbers,
+            route: mangaRoute,
+            trackerAniListId: trackerAniListId,
+            trackerMALId: trackerMALId,
+            readThreshold: readThreshold
+        )
+    }
+
+    func markCurrentChapterRead() {
+        guard mangaId != 0, !selectedChapter.chapterNumber.isEmpty else { return }
+        MangaReadingProgressManager.shared.markChapterRead(
+            mangaId: mangaId,
+            chapterNumber: selectedChapter.chapterNumber,
+            mangaTitle: mangaTitle,
+            coverURL: mangaCoverURL,
+            format: mangaFormat,
+            totalChapters: totalChapters,
+            latestChapterNumbers: latestChapterNumbers,
+            route: mangaRoute,
+            trackerAniListId: trackerAniListId,
+            trackerMALId: trackerMALId
+        )
+    }
+
+    private func markReadIfThresholdReached(page: Int, totalPages: Int) {
+        guard totalPages > 0 else { return }
+        let completion = Double(min(page + 1, totalPages)) / Double(totalPages)
+        if completion >= readThreshold || page >= totalPages - 1 {
+            markCurrentChapterRead()
+        }
+    }
+
+    private func restoredPage(in pages: [KanzenReaderPage]) -> Int {
+        guard mangaId != 0, !pages.isEmpty else { return 0 }
+        let saved = MangaReadingProgressManager.shared.pagePosition(
+            mangaId: mangaId,
+            chapterNumber: selectedChapter.chapterNumber
+        )
+        guard saved > 0 else { return 0 }
+        return min(max(saved, 0), pages.count - 1)
+    }
+}
+
+struct KanzenReaderPageLoader {
+    let kanzen: KanzenEngine
+    let route: MangaContentRoute?
+
+    func loadPages(for chapter: Chapter, mode: KanzenReaderMode) async throws -> [PageData] {
+        if let route,
+           let localPages = ReaderDownloadManager.shared.pages(for: route, chapterNumber: chapter.chapterNumber) {
+            ReaderLogger.shared.log("Reader using downloaded pages chapter=\(chapter.chapterNumber)", type: "ReaderDownload")
+            return localPages
+        }
+
+        guard let params = chapter.chapterData?.first?.params else {
+            throw NSError(domain: "KanzenReader", code: 2, userInfo: [NSLocalizedDescriptionKey: "No page source found for this chapter."])
+        }
+
+        if let payload = params as? ReaderDownloadedChapterPayload {
+            if let pages = ReaderDownloadManager.shared.pages(for: payload.route, chapterNumber: payload.chapterNumber) {
+                return pages
+            }
+            throw NSError(domain: "ReaderDownload", code: 404, userInfo: [NSLocalizedDescriptionKey: "Downloaded chapter files are missing."])
+        }
+
+        if let payload = params as? AidokuChapterPayload {
+            return try await AidokuSourceManager.shared.pageList(
+                sourceId: payload.sourceId,
+                manga: payload.manga,
+                chapter: payload.chapter,
+                nativePages: mode == .webtoon
+            )
+        }
+
+        if isLegacyNovelRoute {
+            let text = await withCheckedContinuation { continuation in
+                kanzen.extractText(params: params) { result in
+                    continuation.resume(returning: result)
+                }
+            }
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text != "undefined" else {
+                throw NSError(domain: "KanzenReader", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to extract text content."])
+            }
+            return [PageData(content: .text(text))]
+        }
+
+        let images = await withCheckedContinuation { continuation in
+            kanzen.extractImages(params: params) { result in
+                continuation.resume(returning: result)
+            }
+        } ?? []
+        return images.map { PageData(content: $0) }
+    }
+
+    private var isLegacyNovelRoute: Bool {
+        if case .legacyModule(_, _, let isNovel) = route {
+            return isNovel
+        }
+        return false
+    }
+}
+#endif

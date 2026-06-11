@@ -2,294 +2,424 @@
 //  readerManagerView.swift
 //  Kanzen
 //
-//  Created by Dawud Osman on 13/06/2025.
+//  UIKit-owned reader bridge. The lowercase type name is kept so every
+//  existing Detail/Library/History entry point can keep launching the reader.
 //
 
 import SwiftUI
-import Kingfisher
+import UIKit
 
 #if !os(tvOS)
-struct readerManagerView:View {
-    @State  var chapters: [Chapter]?
-    @State var selectedChapter: Chapter?
-    @ObservedObject var kanzen : KanzenEngine
-    @EnvironmentObject var settings : Settings
-    @Environment(\.dismiss) var dismiss
-    @State private var showFullScreen = true
-    @State private var showChapterlist: Bool = false
-    @State private var showReadingModePicker = false
-    @AppStorage("readerOrientationLockEnabled") private var orientationLocked = false
-    @AppStorage("readerOrientationLockMask") private var orientationLockMaskRaw = "all"
-    // new Implementation
-    
-    @StateObject   var reader_manager: readerManager
-    @State private var webtoonPageDisplay = ReaderPageDisplayState()
-    init (chapters: [Chapter]?,selectedChapter: Chapter?,kanzen: KanzenEngine, mangaId: Int = 0, mangaTitle: String = "", mangaCoverURL: String = "", mangaRoute: MangaContentRoute? = nil, mangaFormat: String? = nil, totalChapters: Int? = nil, latestChapterNumbers: [String]? = nil, trackerAniListId: Int? = nil, trackerMALId: Int? = nil)
-    {
+typealias KanzenReaderChildViewController = UIViewController & KanzenReaderChildControlling
+
+protocol KanzenReaderChildControlling: AnyObject {
+    var readerDelegate: KanzenReaderChildDelegate? { get set }
+    func setPages(_ pages: [KanzenReaderPage], startPage: Int)
+    func moveToPage(_ page: Int, animated: Bool)
+    func moveLeft()
+    func moveRight()
+}
+
+protocol KanzenReaderChildDelegate: AnyObject {
+    func readerChildDidRequestOverlayToggle()
+    func readerChildDidChangePage(_ page: Int, totalPages: Int)
+    func readerChildDidReachEnd()
+}
+
+struct readerManagerView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+
+    let chapters: [Chapter]?
+    let selectedChapter: Chapter?
+    let kanzen: KanzenEngine
+    let mangaId: Int
+    let mangaTitle: String
+    let mangaCoverURL: String
+    let mangaRoute: MangaContentRoute?
+    let mangaFormat: String?
+    let totalChapters: Int?
+    let latestChapterNumbers: [String]?
+    let trackerAniListId: Int?
+    let trackerMALId: Int?
+
+    init(
+        chapters: [Chapter]?,
+        selectedChapter: Chapter?,
+        kanzen: KanzenEngine,
+        mangaId: Int = 0,
+        mangaTitle: String = "",
+        mangaCoverURL: String = "",
+        mangaRoute: MangaContentRoute? = nil,
+        mangaFormat: String? = nil,
+        totalChapters: Int? = nil,
+        latestChapterNumbers: [String]? = nil,
+        trackerAniListId: Int? = nil,
+        trackerMALId: Int? = nil
+    ) {
+        self.chapters = chapters
+        self.selectedChapter = selectedChapter
         self.kanzen = kanzen
-        _reader_manager =  StateObject(wrappedValue: readerManager(kanzen:kanzen,chapters: chapters,selectedChapter: selectedChapter, mangaId: mangaId, mangaTitle: mangaTitle, mangaCoverURL: mangaCoverURL, mangaRoute: mangaRoute, mangaFormat: mangaFormat, totalChapters: totalChapters, latestChapterNumbers: latestChapterNumbers, trackerAniListId: trackerAniListId, trackerMALId: trackerMALId))
-        _chapters = State(initialValue: chapters)
-        _selectedChapter = State(initialValue: selectedChapter)
+        self.mangaId = mangaId
+        self.mangaTitle = mangaTitle
+        self.mangaCoverURL = mangaCoverURL
+        self.mangaRoute = mangaRoute
+        self.mangaFormat = mangaFormat
+        self.totalChapters = totalChapters
+        self.latestChapterNumbers = latestChapterNumbers
+        self.trackerAniListId = trackerAniListId
+        self.trackerMALId = trackerMALId
     }
-    
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            // Custom Back Button
-            
-            //pageReader(reader_manager: reader_manager)
-            
-            //ScrollView{LazyVStack{ForEach(reader_manager.currChapter) { chapter in chapter.body}}}
-            if(reader_manager.currChapter.count > 0)
-            {
-                readerContent()
-            }
-            else if let errorMessage = reader_manager.currentErrorMessage {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundColor(.white.opacity(0.72))
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.72))
-                        .multilineTextAlignment(.center)
-                    Button("Retry") {
-                        reader_manager.resetState()
-                    }
-                    .buttonStyle(.borderedProminent)
+
+    func makeUIViewController(context: Context) -> KanzenReaderViewController {
+        let session = KanzenReaderSession(
+            kanzen: kanzen,
+            chapters: chapters,
+            selectedChapter: selectedChapter,
+            mangaId: mangaId,
+            mangaTitle: mangaTitle,
+            mangaCoverURL: mangaCoverURL,
+            mangaRoute: mangaRoute,
+            mangaFormat: mangaFormat,
+            totalChapters: totalChapters,
+            latestChapterNumbers: latestChapterNumbers,
+            trackerAniListId: trackerAniListId,
+            trackerMALId: trackerMALId
+        )
+        let controller = KanzenReaderViewController(session: session)
+        controller.onClose = { dismiss() }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: KanzenReaderViewController, context: Context) {
+        uiViewController.onClose = { dismiss() }
+    }
+}
+
+final class KanzenReaderViewController: UIViewController, KanzenReaderChildDelegate {
+    let session: KanzenReaderSession
+    var onClose: (() -> Void)?
+
+    private let overlayView = KanzenReaderOverlayView()
+    private let loadingView = UIActivityIndicatorView(style: .large)
+    private let errorContainer = UIStackView()
+    private let errorLabel = UILabel()
+    private var activeReader: KanzenReaderChildViewController?
+    private var loadTask: Task<Void, Never>?
+    private var barsVisible = true
+
+    private var orientationLockEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "readerOrientationLockEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "readerOrientationLockEnabled") }
+    }
+
+    private var orientationLockMaskRaw: String {
+        get { UserDefaults.standard.string(forKey: "readerOrientationLockMask") ?? "all" }
+        set { UserDefaults.standard.set(newValue, forKey: "readerOrientationLockMask") }
+    }
+
+    init(session: KanzenReaderSession) {
+        self.session = session
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationCapturesStatusBarAppearance = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var prefersStatusBarHidden: Bool { !barsVisible }
+    override var prefersHomeIndicatorAutoHidden: Bool { !barsVisible }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = readerBackgroundColor()
+        configureLoadingView()
+        configureErrorView()
+        configureOverlay()
+        loadCurrentChapter()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        applyPersistedOrientationLockIfNeeded()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        session.saveCurrentProgress(force: true)
+        releaseActiveOrientationLock()
+    }
+
+    deinit {
+        loadTask?.cancel()
+    }
+
+    private func configureLoadingView() {
+        loadingView.color = .white
+        loadingView.hidesWhenStopped = true
+        loadingView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(loadingView)
+        NSLayoutConstraint.activate([
+            loadingView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loadingView.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+
+    private func configureErrorView() {
+        errorContainer.axis = .vertical
+        errorContainer.alignment = .center
+        errorContainer.spacing = 12
+        errorContainer.isHidden = true
+        errorContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
+        icon.tintColor = UIColor.white.withAlphaComponent(0.72)
+        icon.contentMode = .scaleAspectFit
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        icon.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        errorLabel.textColor = UIColor.white.withAlphaComponent(0.78)
+        errorLabel.font = .preferredFont(forTextStyle: .subheadline)
+        errorLabel.numberOfLines = 0
+        errorLabel.textAlignment = .center
+
+        let retry = UIButton(type: .system)
+        retry.setTitle("Retry", for: .normal)
+        retry.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+
+        errorContainer.addArrangedSubview(icon)
+        errorContainer.addArrangedSubview(errorLabel)
+        errorContainer.addArrangedSubview(retry)
+        view.addSubview(errorContainer)
+        NSLayoutConstraint.activate([
+            errorContainer.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+            errorContainer.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+            errorContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            errorContainer.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+
+    private func configureOverlay() {
+        overlayView.translatesAutoresizingMaskIntoConstraints = false
+        overlayView.onClose = { [weak self] in self?.closeReader() }
+        overlayView.onSettings = { [weak self] in self?.presentSettings() }
+        overlayView.onChapterList = { [weak self] in self?.presentChapterList() }
+        overlayView.onPreviousChapter = { [weak self] in self?.goToPreviousChapter() }
+        overlayView.onNextChapter = { [weak self] in self?.goToNextChapter() }
+        overlayView.onOrientationLock = { [weak self] in self?.toggleOrientationLock() }
+        view.addSubview(overlayView)
+        NSLayoutConstraint.activate([
+            overlayView.topAnchor.constraint(equalTo: view.topAnchor),
+            overlayView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            overlayView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            overlayView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        updateOverlay(page: 0, totalPages: 1)
+    }
+
+    private func loadCurrentChapter() {
+        loadTask?.cancel()
+        loadingView.startAnimating()
+        errorContainer.isHidden = true
+        activeReader?.view.isHidden = true
+
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let pages = try await self.session.loadSelectedChapter()
+                try Task.checkCancellation()
+                await MainActor.run {
+                    self.loadingView.stopAnimating()
+                    self.installReader(for: pages)
                 }
-                .padding()
-            }
-            else if reader_manager.isLoadingCurrentChapter {
-                CircularLoader()
-            }
-            else {
-                CircularLoader()
-            }
-            readerOverlay()
-        }
-        .ignoresSafeArea()
-        .statusBar(hidden: !showFullScreen)
-        
-        .sheet(isPresented: $showChapterlist)
-        {
-            ChapterList(readerManager:  reader_manager)
-        }
-        .sheet(isPresented: $showReadingModePicker){
-            readerManagerSettings(readerManager: reader_manager)
-        }
-        .onAppear {
-            applyPersistedOrientationLockIfNeeded()
-        }
-        .onDisappear {
-            releaseActiveOrientationLock()
-        }
-        .navigationBarBackButtonHidden(true)
-        .task {
-            reader_manager.initChapters()
-        }
-    }
-    
-    @ViewBuilder
-    func readerContent() -> some View {
-        switch(reader_manager.readingMode){
-        case .LTR: pageReader(reader_manager: reader_manager, pageViewConfig: .LTR).id("LTR").onTapGesture {
-            showFullScreen.toggle()
-        }
-        case .WEBTOON: WebtoonView(
-            reader_manager: reader_manager,
-            onPageChanged: { page in
-                webtoonPageDisplay.setIndex(page)
-            }
-        ) {
-            showFullScreen.toggle()
-        }
-        .id("WEBTOON")
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .RTL: pageReader(reader_manager: reader_manager,pageViewConfig: .RTL).id("RTL").onTapGesture {
-            showFullScreen.toggle()
-        }
-        case .VERTICAL: WebtoonView(
-            reader_manager: reader_manager,
-            onPageChanged: { page in
-                webtoonPageDisplay.setIndex(page)
-            }
-        ) {
-            showFullScreen.toggle()
-        }
-        .id("VERTICAL")
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-        }
-        
-    }
-    
-    @ViewBuilder
-    func readerOverlay() -> some View {
-        if showFullScreen {
-            GeometryReader { proxy in
-                VStack(spacing: 0) {
-                    // MARK: - Top Bar
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            if !reader_manager.mangaTitle.isEmpty {
-                                Text(reader_manager.mangaTitle)
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                            }
-                            Text(reader_manager.selectedChapter?.chapterNumber ?? "")
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.72))
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        Button {
-                            releaseActiveOrientationLock()
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.body.bold())
-                                .foregroundColor(.white)
-                                .frame(width: 34, height: 34)
-                                .background(Color.white.opacity(0.12))
-                                .clipShape(Circle())
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.black.opacity(0.78))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .frame(maxWidth: overlayBarMaxWidth(for: proxy.size.width))
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 12)
-                    .padding(.top, max(proxy.safeAreaInsets.top, 44) + 8)
-
-                    Spacer()
-
-                    // MARK: - Bottom Bar
-                    HStack(spacing: 18) {
-                        // Orientation lock
-                        Button {
-                            toggleOrientationLock()
-                        } label: {
-                            Image(systemName: orientationLocked ? "lock.fill" : "lock.open")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-
-                        // Settings
-                        Button {
-                            showReadingModePicker = true
-                        } label: {
-                            Image(systemName: "gearshape.fill")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-
-                        // Chapter list
-                        Button {
-                            showChapterlist = true
-                        } label: {
-                            Image(systemName: "list.bullet")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-
-                        Spacer(minLength: 8)
-
-                        // Page counter with chapter arrows
-                        HStack(spacing: 10) {
-                            Button {
-                                reader_manager.goToPreviousChapter()
-                            } label: {
-                                Image(systemName: "chevron.left")
-                                    .font(.callout.bold())
-                                    .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) > 0 ? .white : .white.opacity(0.3))
-                            }
-                            .disabled(reader_manager.selectedChapter?.idx == 0)
-
-                            ReaderPageCounterText(
-                                readerManager: reader_manager,
-                                webtoonPageDisplay: webtoonPageDisplay
-                            )
-
-                            Button {
-                                reader_manager.goToNextChapter()
-                            } label: {
-                                Image(systemName: "chevron.right")
-                                    .font(.callout.bold())
-                                    .foregroundColor((reader_manager.selectedChapter?.idx ?? 0) < (reader_manager.chapters?.count ?? 1) - 1 ? .white : .white.opacity(0.3))
-                            }
-                            .disabled(reader_manager.selectedChapter?.idx == (reader_manager.chapters?.count ?? 1) - 1)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.white.opacity(0.12))
-                        .cornerRadius(20)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color.black.opacity(0.78))
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .frame(maxWidth: overlayBarMaxWidth(for: proxy.size.width))
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 24) + 8)
+            } catch is CancellationError {
+                await MainActor.run { self.loadingView.stopAnimating() }
+            } catch {
+                await MainActor.run {
+                    self.loadingView.stopAnimating()
+                    self.showError(error.localizedDescription)
                 }
+                ReaderLogger.shared.log("Reader load failed: \(error.localizedDescription)", type: "ReaderError")
             }
         }
     }
 
-    private func overlayBarMaxWidth(for width: CGFloat) -> CGFloat {
-        min(max(width - 24, 1), 720)
+    private func installReader(for pages: [KanzenReaderPage]) {
+        let nextReader: KanzenReaderChildViewController
+        if pages.allSatisfy(\.isText) {
+            nextReader = KanzenTextReaderViewController()
+        } else if session.mode == .webtoon {
+            nextReader = KanzenWebtoonReaderViewController()
+        } else {
+            nextReader = KanzenPagedReaderViewController(mode: session.mode)
+        }
+
+        let needsNewReader: Bool
+        if let activeReader {
+            needsNewReader = ObjectIdentifier(type(of: activeReader)) != ObjectIdentifier(type(of: nextReader))
+        } else {
+            needsNewReader = true
+        }
+
+        if needsNewReader {
+            activeReader?.willMove(toParent: nil)
+            activeReader?.view.removeFromSuperview()
+            activeReader?.removeFromParent()
+
+            nextReader.readerDelegate = self
+            addChild(nextReader)
+            nextReader.view.translatesAutoresizingMaskIntoConstraints = false
+            view.insertSubview(nextReader.view, belowSubview: overlayView)
+            NSLayoutConstraint.activate([
+                nextReader.view.topAnchor.constraint(equalTo: view.topAnchor),
+                nextReader.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                nextReader.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                nextReader.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
+            nextReader.didMove(toParent: self)
+            activeReader = nextReader
+        } else {
+            activeReader?.readerDelegate = self
+            activeReader?.view.isHidden = false
+        }
+
+        view.backgroundColor = readerBackgroundColor()
+        activeReader?.setPages(pages, startPage: session.currentPage)
+        updateOverlay(page: session.currentPage, totalPages: pages.count)
+    }
+
+    private func showError(_ message: String) {
+        activeReader?.view.isHidden = true
+        errorLabel.text = message
+        errorContainer.isHidden = false
+    }
+
+    @objc private func retryTapped() {
+        loadCurrentChapter()
+    }
+
+    private func updateOverlay(page: Int, totalPages: Int) {
+        overlayView.update(
+            title: session.mangaTitle,
+            chapter: session.selectedChapter.chapterNumber,
+            page: page,
+            totalPages: totalPages,
+            canPrevious: session.canMovePreviousChapter,
+            canNext: session.canMoveNextChapter,
+            orientationLocked: orientationLockEnabled
+        )
+    }
+
+    func readerChildDidRequestOverlayToggle() {
+        setBarsVisible(!barsVisible, animated: true)
+    }
+
+    func readerChildDidChangePage(_ page: Int, totalPages: Int) {
+        session.setCurrentPage(page, totalPages: totalPages)
+        updateOverlay(page: page, totalPages: totalPages)
+    }
+
+    func readerChildDidReachEnd() {
+        session.markCurrentChapterRead()
+    }
+
+    private func setBarsVisible(_ visible: Bool, animated: Bool) {
+        barsVisible = visible
+        setNeedsStatusBarAppearanceUpdate()
+        let changes = {
+            self.overlayView.alpha = visible ? 1 : 0
+        }
+        if animated {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: changes)
+        } else {
+            changes()
+        }
+    }
+
+    private func closeReader() {
+        session.saveCurrentProgress(force: true)
+        releaseActiveOrientationLock()
+        onClose?()
+    }
+
+    private func goToPreviousChapter() {
+        guard session.movePreviousChapter() else { return }
+        loadCurrentChapter()
+    }
+
+    private func goToNextChapter() {
+        guard session.moveNextChapter(markCurrentRead: true) else { return }
+        loadCurrentChapter()
+    }
+
+    private func presentChapterList() {
+        let view = KanzenReaderChapterListView(
+            chapters: session.chapters,
+            selectedChapter: session.selectedChapter,
+            mangaId: session.mangaId
+        ) { [weak self] chapter in
+            self?.dismiss(animated: true)
+            self?.session.selectChapter(chapter)
+            self?.loadCurrentChapter()
+        }
+        present(UIHostingController(rootView: NavigationView { view }), animated: true)
+    }
+
+    private func presentSettings() {
+        let view = KanzenAidokuStyleReaderSettingsView(
+            titleKey: session.mangaRoute?.stableKey ?? "\(session.mangaId)",
+            onModeChanged: { [weak self] mode in
+                guard let self else { return }
+                self.session.mode = mode
+                UserDefaults.standard.set(mode.rawValue, forKey: "kanzenReaderMode")
+                self.loadCurrentChapter()
+            }
+        )
+        present(UIHostingController(rootView: NavigationView { view }), animated: true)
     }
 
     private func toggleOrientationLock() {
-        orientationLocked.toggle()
-        if orientationLocked {
-            let mask = currentExactOrientationMask()
-            orientationLockMaskRaw = rawValue(for: mask)
-            applyOrientationMask(mask, requestGeometryUpdate: false)
-        } else {
+        if orientationLockEnabled {
+            orientationLockEnabled = false
             orientationLockMaskRaw = "all"
-            applyOrientationMask(.all, requestGeometryUpdate: false)
+            applyOrientationMask(.all)
+        } else {
+            let mask = currentExactOrientationMask()
+            orientationLockEnabled = true
+            orientationLockMaskRaw = rawValue(for: mask)
+            applyOrientationMask(mask)
         }
+        updateOverlay(page: session.currentPage, totalPages: max(session.pages.count, 1))
     }
 
     private func applyPersistedOrientationLockIfNeeded() {
-        guard orientationLocked else { return }
-        applyOrientationMask(mask(for: orientationLockMaskRaw), requestGeometryUpdate: false)
+        guard orientationLockEnabled else { return }
+        applyOrientationMask(mask(for: orientationLockMaskRaw))
     }
 
     private func releaseActiveOrientationLock() {
-        applyOrientationMask(.all, requestGeometryUpdate: false)
+        AppDelegate.orientationLock = .all
+        if #available(iOS 16.0, *) {
+            activeWindowScene?.windows.first { $0.isKeyWindow }?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
     }
 
     private func currentExactOrientationMask() -> UIInterfaceOrientationMask {
-        guard let orientation = activeWindowScene?.interfaceOrientation else {
-            return .portrait
-        }
+        guard let orientation = activeWindowScene?.interfaceOrientation else { return .portrait }
         switch orientation {
-        case .portrait:
-            return .portrait
-        case .portraitUpsideDown:
-            return .portraitUpsideDown
-        case .landscapeLeft:
-            return .landscapeLeft
-        case .landscapeRight:
-            return .landscapeRight
-        default:
-            return orientation.isLandscape ? .landscape : .portrait
+        case .portrait: return .portrait
+        case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        default: return orientation.isLandscape ? .landscape : .portrait
         }
     }
 
-    private func applyOrientationMask(_ mask: UIInterfaceOrientationMask, requestGeometryUpdate: Bool) {
+    private func applyOrientationMask(_ mask: UIInterfaceOrientationMask) {
         AppDelegate.orientationLock = mask
-        if #available(iOS 16.0, *), requestGeometryUpdate, let windowScene = activeWindowScene {
-            windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
-        }
         if #available(iOS 16.0, *) {
             activeWindowScene?.windows.first { $0.isKeyWindow }?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         } else {
@@ -323,75 +453,321 @@ struct readerManagerView:View {
         default: return .all
         }
     }
-}
 
-final class ReaderPageDisplayState {
-    private weak var label: UILabel?
-    private var pageCount: Int = 1
-    private var fallbackIndex: Int = 0
-    private var usesWebtoonIndex = true
-    private var chapterSignature = ""
-    private(set) var index: Int = 0
-
-    func configure(label: UILabel, pageCount: Int, fallbackIndex: Int, usesWebtoonIndex: Bool, chapterSignature: String) {
-        self.label = label
-        let nextPageCount = max(pageCount, 1)
-        if self.chapterSignature != chapterSignature || self.pageCount != nextPageCount {
-            self.chapterSignature = chapterSignature
-            index = min(max(fallbackIndex, 0), max(nextPageCount - 1, 0))
+    private func readerBackgroundColor() -> UIColor {
+        switch UserDefaults.standard.string(forKey: "Reader.backgroundColor") {
+        case "white": return .white
+        case "system": return .systemBackground
+        case "auto": return traitCollection.userInterfaceStyle == .dark ? .black : .white
+        default: return .black
         }
-        self.pageCount = nextPageCount
-        self.fallbackIndex = max(fallbackIndex, 0)
-        self.usesWebtoonIndex = usesWebtoonIndex
-        updateLabel()
-    }
-
-    func setIndex(_ index: Int) {
-        let clamped = min(max(index, 0), max(pageCount - 1, 0))
-        guard self.index != clamped else { return }
-        self.index = clamped
-        updateLabel()
-    }
-
-    private func updateLabel() {
-        let current = usesWebtoonIndex ? index : fallbackIndex
-        label?.text = "\(min(current + 1, pageCount)) of \(pageCount)"
     }
 }
 
-private struct ReaderPageCounterText: UIViewRepresentable {
-    let readerManager: readerManager
-    let webtoonPageDisplay: ReaderPageDisplayState
+private final class KanzenReaderOverlayView: UIView {
+    var onClose: (() -> Void)?
+    var onSettings: (() -> Void)?
+    var onChapterList: (() -> Void)?
+    var onPreviousChapter: (() -> Void)?
+    var onNextChapter: (() -> Void)?
+    var onOrientationLock: (() -> Void)?
 
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
-        label.font = UIFont.monospacedDigitSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .medium)
-        label.textColor = .white
-        label.setContentCompressionResistancePriority(.required, for: .horizontal)
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        configure(label)
-        return label
+    private let topPanel = UIStackView()
+    private let bottomPanel = UIStackView()
+    private let titleLabel = UILabel()
+    private let chapterLabel = UILabel()
+    private let pageLabel = UILabel()
+    private let previousButton = UIButton(type: .system)
+    private let nextButton = UIButton(type: .system)
+    private let lockButton = UIButton(type: .system)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        configureTopPanel()
+        configureBottomPanel()
     }
 
-    func updateUIView(_ uiView: UILabel, context: Context) {
-        configure(uiView)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    private func configure(_ label: UILabel) {
-        let usesWebtoonIndex: Bool
-        switch readerManager.readingMode {
-        case .WEBTOON, .VERTICAL:
-            usesWebtoonIndex = true
-        case .LTR, .RTL:
-            usesWebtoonIndex = false
+    func update(
+        title: String,
+        chapter: String,
+        page: Int,
+        totalPages: Int,
+        canPrevious: Bool,
+        canNext: Bool,
+        orientationLocked: Bool
+    ) {
+        titleLabel.text = title.isEmpty ? "Reader" : title
+        chapterLabel.text = chapter
+        pageLabel.text = "\(min(max(page + 1, 1), max(totalPages, 1))) of \(max(totalPages, 1))"
+        previousButton.isEnabled = canPrevious
+        nextButton.isEnabled = canNext
+        previousButton.tintColor = canPrevious ? .white : UIColor.white.withAlphaComponent(0.3)
+        nextButton.tintColor = canNext ? .white : UIColor.white.withAlphaComponent(0.3)
+        lockButton.setImage(UIImage(systemName: orientationLocked ? "lock.fill" : "lock.open"), for: .normal)
+    }
+
+    private func configureTopPanel() {
+        topPanel.axis = .horizontal
+        topPanel.alignment = .center
+        topPanel.spacing = 12
+        topPanel.backgroundColor = UIColor.black.withAlphaComponent(0.78)
+        topPanel.layer.cornerRadius = 18
+        topPanel.isLayoutMarginsRelativeArrangement = true
+        topPanel.layoutMargins = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 10)
+        topPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.textColor = .white
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        chapterLabel.textColor = UIColor.white.withAlphaComponent(0.72)
+        chapterLabel.font = .preferredFont(forTextStyle: .subheadline)
+        chapterLabel.adjustsFontForContentSizeCategory = true
+        chapterLabel.lineBreakMode = .byTruncatingTail
+
+        let labels = UIStackView(arrangedSubviews: [titleLabel, chapterLabel])
+        labels.axis = .vertical
+        labels.spacing = 2
+
+        let close = iconButton("xmark", action: #selector(closeTapped))
+        topPanel.addArrangedSubview(labels)
+        topPanel.addArrangedSubview(close)
+        labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        addSubview(topPanel)
+        NSLayoutConstraint.activate([
+            topPanel.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 10),
+            topPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+            topPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            topPanel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            topPanel.widthAnchor.constraint(lessThanOrEqualToConstant: 720)
+        ])
+    }
+
+    private func configureBottomPanel() {
+        bottomPanel.axis = .horizontal
+        bottomPanel.alignment = .center
+        bottomPanel.spacing = 16
+        bottomPanel.backgroundColor = UIColor.black.withAlphaComponent(0.78)
+        bottomPanel.layer.cornerRadius = 22
+        bottomPanel.isLayoutMarginsRelativeArrangement = true
+        bottomPanel.layoutMargins = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        bottomPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        lockButton.tintColor = .white
+        lockButton.addTarget(self, action: #selector(lockTapped), for: .touchUpInside)
+        constrainIcon(lockButton)
+
+        let settings = iconButton("gearshape.fill", action: #selector(settingsTapped))
+        let list = iconButton("list.bullet", action: #selector(listTapped))
+        let spacer = UIView()
+
+        previousButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
+        previousButton.addTarget(self, action: #selector(previousTapped), for: .touchUpInside)
+        constrainIcon(previousButton, width: 28)
+
+        pageLabel.textColor = .white
+        pageLabel.font = .monospacedDigitSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .medium)
+        pageLabel.textAlignment = .center
+        pageLabel.adjustsFontSizeToFitWidth = true
+        pageLabel.minimumScaleFactor = 0.78
+        pageLabel.widthAnchor.constraint(equalToConstant: 82).isActive = true
+
+        nextButton.setImage(UIImage(systemName: "chevron.right"), for: .normal)
+        nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
+        constrainIcon(nextButton, width: 28)
+
+        let pager = UIStackView(arrangedSubviews: [previousButton, pageLabel, nextButton])
+        pager.axis = .horizontal
+        pager.alignment = .center
+        pager.spacing = 8
+        pager.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        pager.layer.cornerRadius = 18
+        pager.isLayoutMarginsRelativeArrangement = true
+        pager.layoutMargins = UIEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
+
+        [lockButton, settings, list, spacer, pager].forEach { bottomPanel.addArrangedSubview($0) }
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        addSubview(bottomPanel)
+        NSLayoutConstraint.activate([
+            bottomPanel.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            bottomPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+            bottomPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            bottomPanel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            bottomPanel.widthAnchor.constraint(lessThanOrEqualToConstant: 720)
+        ])
+    }
+
+    private func iconButton(_ systemName: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: systemName), for: .normal)
+        button.tintColor = .white
+        button.addTarget(self, action: action, for: .touchUpInside)
+        constrainIcon(button)
+        return button
+    }
+
+    private func constrainIcon(_ button: UIButton, width: CGFloat = 36) {
+        button.widthAnchor.constraint(equalToConstant: width).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    }
+
+    @objc private func closeTapped() { onClose?() }
+    @objc private func settingsTapped() { onSettings?() }
+    @objc private func listTapped() { onChapterList?() }
+    @objc private func previousTapped() { onPreviousChapter?() }
+    @objc private func nextTapped() { onNextChapter?() }
+    @objc private func lockTapped() { onOrientationLock?() }
+}
+
+private struct KanzenReaderChapterListView: View {
+    let chapters: [Chapter]
+    let selectedChapter: Chapter
+    let mangaId: Int
+    let onSelect: (Chapter) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var reversed = false
+
+    private var displayedChapters: [Chapter] {
+        reversed ? chapters.reversed() : chapters
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(displayedChapters) { chapter in
+                    Button {
+                        dismiss()
+                        onSelect(chapter)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(chapter.chapterNumber)
+                                    .foregroundColor(.primary)
+                                    .fontWeight(ChapterIdentityNormalizer.key(for: chapter.chapterNumber) == ChapterIdentityNormalizer.key(for: selectedChapter.chapterNumber) ? .bold : .regular)
+                                if let group = chapter.chapterData?.first?.scanlationGroup, !group.isEmpty {
+                                    Text(group)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            if mangaId != 0, MangaReadingProgressManager.shared.isChapterRead(mangaId: mangaId, chapterNumber: chapter.chapterNumber) {
+                                Text("Read")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("\(chapters.count) Chapters")
+                    Spacer()
+                    Button {
+                        reversed.toggle()
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                }
+            }
         }
-        webtoonPageDisplay.configure(
-            label: label,
-            pageCount: readerManager.currChapter.count,
-            fallbackIndex: readerManager.index,
-            usesWebtoonIndex: usesWebtoonIndex,
-            chapterSignature: "\(readerManager.selectedChapter?.idx ?? -1):\(readerManager.selectedChapter?.chapterNumber ?? ""):\(readerManager.currChapter.count)"
-        )
+        .navigationTitle("Chapters")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { dismiss() }
+            }
+        }
+    }
+}
+
+private struct KanzenAidokuStyleReaderSettingsView: View {
+    let titleKey: String
+    let onModeChanged: (KanzenReaderMode) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("kanzenReaderMode") private var modeRaw = KanzenReaderMode.currentDefault().rawValue
+    @AppStorage("Reader.downsampleImages") private var downsampleImages = true
+    @AppStorage("Reader.cropBorders") private var cropBorders = false
+    @AppStorage("Reader.disableDoubleTap") private var disableDoubleTap = false
+    @AppStorage("Reader.hideBarsOnSwipe") private var hideBarsOnSwipe = false
+    @AppStorage("Reader.backgroundColor") private var backgroundColor = "black"
+    @AppStorage("Reader.pagesToPreload") private var pagesToPreload = 3
+    @AppStorage("Reader.pagedPageLayout") private var pagedLayout = "single"
+    @AppStorage("Reader.splitWideImages") private var splitWideImages = false
+    @AppStorage("Reader.verticalInfiniteScroll") private var infiniteScroll = false
+    @AppStorage("Reader.pillarbox") private var pillarbox = false
+    @AppStorage("Reader.pillarboxAmount") private var pillarboxAmount = 15.0
+    @AppStorage("readerFontSize") private var textFontSize = 16.0
+    @AppStorage("readerLineSpacing") private var textLineSpacing = 1.6
+    @AppStorage("readerMargin") private var textHorizontalPadding = 4.0
+
+    var body: some View {
+        Form {
+            Section("General") {
+                Picker("Reading Mode", selection: Binding(
+                    get: { KanzenReaderMode(rawValue: modeRaw) ?? .webtoon },
+                    set: {
+                        modeRaw = $0.rawValue
+                        onModeChanged($0)
+                    }
+                )) {
+                    ForEach(KanzenReaderMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                Toggle("Downsample Images", isOn: $downsampleImages)
+                Toggle("Crop Borders", isOn: $cropBorders)
+                Toggle("Disable Double Tap Zoom", isOn: $disableDoubleTap)
+                Toggle("Hide Bars On Swipe", isOn: $hideBarsOnSwipe)
+                Picker("Background", selection: $backgroundColor) {
+                    Text("Black").tag("black")
+                    Text("White").tag("white")
+                    Text("System").tag("system")
+                    Text("Auto").tag("auto")
+                }
+            }
+
+            Section("Paged") {
+                Stepper("Pages To Preload: \(pagesToPreload)", value: $pagesToPreload, in: 1...10)
+                Picker("Page Layout", selection: $pagedLayout) {
+                    Text("Single").tag("single")
+                    Text("Double").tag("double")
+                    Text("Auto").tag("auto")
+                }
+                Toggle("Split Wide Images", isOn: $splitWideImages)
+            }
+
+            Section("Webtoon") {
+                Toggle("Infinite Vertical Scroll", isOn: $infiniteScroll)
+                Toggle("Pillarbox", isOn: $pillarbox)
+                Stepper("Pillarbox Amount: \(Int(pillarboxAmount))%", value: $pillarboxAmount, in: 5...95, step: 5)
+                    .disabled(!pillarbox)
+            }
+
+            Section("Text") {
+                Stepper("Font Size: \(Int(textFontSize))", value: $textFontSize, in: 12...32, step: 1)
+                Stepper("Line Spacing: \(String(format: "%.1f", textLineSpacing))", value: $textLineSpacing, in: 1...3, step: 0.1)
+                Stepper("Margin: \(Int(textHorizontalPadding))", value: $textHorizontalPadding, in: 0...30, step: 1)
+            }
+        }
+        .navigationTitle("Reader Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { dismiss() }
+            }
+        }
     }
 }
 #endif

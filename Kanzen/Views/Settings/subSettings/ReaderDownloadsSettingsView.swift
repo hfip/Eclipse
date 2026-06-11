@@ -470,33 +470,18 @@ struct ReaderDownloadedTitleDetailView: View {
             Button("Cancel", role: .cancel) { }
         }
         .fullScreenCover(item: $selectedChapter) { chapter in
-            if isNovel {
-                NovelReaderView(
-                    kanzen: kanzen,
-                    chapters: chapters,
-                    initialChapter: chapter,
-                    mangaId: title.mangaId,
-                    mangaTitle: title.title,
-                    mangaCoverURL: title.coverURL ?? "",
-                    mangaRoute: title.route,
-                    mangaFormat: title.format,
-                    totalChapters: chapters.count,
-                    latestChapterNumbers: chapters.map(\.chapterNumber)
-                )
-            } else {
-                readerManagerView(
-                    chapters: chapters,
-                    selectedChapter: chapter,
-                    kanzen: kanzen,
-                    mangaId: title.mangaId,
-                    mangaTitle: title.title,
-                    mangaCoverURL: title.coverURL ?? "",
-                    mangaRoute: title.route,
-                    mangaFormat: title.format,
-                    totalChapters: chapters.count,
-                    latestChapterNumbers: chapters.map(\.chapterNumber)
-                )
-            }
+            readerManagerView(
+                chapters: chapters,
+                selectedChapter: chapter,
+                kanzen: kanzen,
+                mangaId: title.mangaId,
+                mangaTitle: title.title,
+                mangaCoverURL: title.coverURL ?? "",
+                mangaRoute: title.route,
+                mangaFormat: title.format,
+                totalChapters: chapters.count,
+                latestChapterNumbers: chapters.map(\.chapterNumber)
+            )
         }
     }
 }

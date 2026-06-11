@@ -114,7 +114,7 @@ struct WebtoonView: UIViewControllerRepresentable {
         private var pendingScrollRetryScheduled = false
         private var pinchStartScale: CGFloat = 1
 
-        fileprivate static let defaultImageAspectRatio: CGFloat = 2.25
+        fileprivate static let defaultImageAspectRatio: CGFloat = 1.435
 
         init(reader_manager: readerManager, onPageChanged: @escaping (Int) -> Void, onTap: @escaping () -> Void) {
             self.reader_manager = reader_manager
@@ -397,8 +397,12 @@ struct WebtoonView: UIViewControllerRepresentable {
             let width = max(collectionView.bounds.width, 1)
             let oldFrame = layout.frameForItem(at: index)
             let oldHeight = oldFrame?.height ?? estimatedHeight(for: index, width: width) * layout.zoomScale
-            layout.invalidateLayout()
-            let newHeight = layout.heightForItem(at: IndexPath(item: index, section: 0), width: width) * layout.zoomScale
+            let newHeight: CGFloat
+            if let size, size.width > 0, size.height > 0 {
+                newHeight = max(1, width * (size.height / size.width)) * layout.zoomScale
+            } else {
+                newHeight = layout.heightForItem(at: IndexPath(item: index, section: 0), width: width) * layout.zoomScale
+            }
             let delta = newHeight - oldHeight
             guard abs(delta) >= 1 else { return }
 
@@ -492,7 +496,7 @@ struct WebtoonView: UIViewControllerRepresentable {
 
             let sorted = ratios.sorted()
             let median = sorted[sorted.count / 2]
-            return min(max(median, 1.6), 6.0)
+            return min(max(median, 1.1), 6.0)
         }
 
         private func updateCurrentPage(in collectionView: UICollectionView, force: Bool = false) {
@@ -515,9 +519,8 @@ struct WebtoonView: UIViewControllerRepresentable {
                 }
                 onPageChanged(visibleIndex)
 
-                let now = Date()
-                if force || now.timeIntervalSince(lastScrollLogTime) > 2 {
-                    lastScrollLogTime = now
+                if force, Date().timeIntervalSince(lastScrollLogTime) > 2 {
+                    lastScrollLogTime = Date()
                     ReaderLogger.shared.log("Webtoon current page=\(visibleIndex + 1)/\(pages.count)", type: "ReaderProgress")
                 }
             }
@@ -1432,8 +1435,37 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
     }
 }
 
-private enum ReaderWebtoonImagePipeline {
+enum ReaderWebtoonImagePipeline {
+    private static let decodedImageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.name = "Luna.Kanzen.Reader.DecodedImages"
+        cache.countLimit = 160
+        cache.totalCostLimit = 180 * 1024 * 1024
+        return cache
+    }()
+
     static func loadImage(
+        for page: PageData,
+        targetSize: CGSize,
+        scale: CGFloat,
+        taskSink: ((ImageTask) -> Void)? = nil
+    ) async throws -> UIImage {
+        let cacheKey = decodedCacheKey(for: page, targetSize: targetSize, scale: scale)
+        if let cached = decodedImageCache.object(forKey: cacheKey as NSString) {
+            return cached
+        }
+
+        let image = try await loadImageUncached(
+            for: page,
+            targetSize: targetSize,
+            scale: scale,
+            taskSink: taskSink
+        )
+        decodedImageCache.setObject(image, forKey: cacheKey as NSString, cost: cacheCost(for: image))
+        return image
+    }
+
+    private static func loadImageUncached(
         for page: PageData,
         targetSize: CGSize,
         scale: CGFloat,
@@ -1468,9 +1500,7 @@ private enum ReaderWebtoonImagePipeline {
 
         let imageRequest = ImageRequest(
             urlRequest: urlRequest,
-            processors: [
-                ReaderWebtoonDownsampleProcessor(width: max(targetSize.width, 1), scaleFactor: scale)
-            ]
+            processors: processors(for: targetSize, scale: scale)
         )
         let task = ImagePipeline.shared.loadImage(
             with: imageRequest,
@@ -1483,6 +1513,29 @@ private enum ReaderWebtoonImagePipeline {
             throw CancellationError()
         }
         return response.image
+    }
+
+    private static func decodedCacheKey(for page: PageData, targetSize: CGSize, scale: CGFloat) -> String {
+        "\(page.cacheKey)-w\(Int(max(targetSize.width, 1) * scale))-ds\(shouldDownsample ? 1 : 0)"
+    }
+
+    private static var shouldDownsample: Bool {
+        if UserDefaults.standard.object(forKey: "Reader.downsampleImages") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "Reader.downsampleImages")
+    }
+
+    private static func processors(for targetSize: CGSize, scale: CGFloat) -> [ImageProcessing] {
+        guard shouldDownsample else { return [] }
+        return [
+            ReaderWebtoonDownsampleProcessor(width: max(targetSize.width, 1), scaleFactor: scale)
+        ]
+    }
+
+    private static func cacheCost(for image: UIImage) -> Int {
+        let pixels = max(image.size.width * image.scale, 1) * max(image.size.height * image.scale, 1)
+        return min(Int(pixels * 4), 48 * 1024 * 1024)
     }
 
     private static func loadAidokuImage(
@@ -1546,9 +1599,7 @@ private enum ReaderWebtoonImagePipeline {
 
         let imageRequest = ImageRequest(
             urlRequest: urlRequest,
-            processors: [
-                ReaderWebtoonDownsampleProcessor(width: max(targetSize.width, 1), scaleFactor: scale)
-            ]
+            processors: processors(for: targetSize, scale: scale)
         )
         let task = ImagePipeline.shared.loadImage(
             with: imageRequest,
@@ -1609,10 +1660,15 @@ private enum ReaderWebtoonImagePipeline {
         )
 
         let output = processed ?? inputImage
-        let downsampled = ReaderWebtoonDownsampleProcessor(
-            width: max(targetSize.width, 1),
-            scaleFactor: scale
-        ).process(output) ?? output
+        let downsampled: UIImage
+        if shouldDownsample {
+            downsampled = ReaderWebtoonDownsampleProcessor(
+                width: max(targetSize.width, 1),
+                scaleFactor: scale
+            ).process(output) ?? output
+        } else {
+            downsampled = output
+        }
         ImagePipeline.shared.cache.storeCachedImage(ImageContainer(image: downsampled), for: cacheRequest)
         return downsampled
     }
@@ -1677,7 +1733,7 @@ private enum ReaderWebtoonImagePipeline {
             guard let source = CGImageSourceCreateWithData(data as CFData, imageSourceOptions) else {
                 throw ReaderWebtoonImageError.decodeFailed
             }
-            return try decodeImageSource(source, targetWidth: targetWidth, scale: scale)
+            return try decodeImageSource(source, targetWidth: shouldDownsample ? targetWidth : 0, scale: scale)
         }.value
     }
 
@@ -1687,7 +1743,7 @@ private enum ReaderWebtoonImagePipeline {
             guard let source = CGImageSourceCreateWithURL(url as CFURL, imageSourceOptions) else {
                 throw ReaderWebtoonImageError.decodeFailed
             }
-            return try decodeImageSource(source, targetWidth: targetWidth, scale: scale)
+            return try decodeImageSource(source, targetWidth: shouldDownsample ? targetWidth : 0, scale: scale)
         }.value
     }
 
@@ -1696,12 +1752,13 @@ private enum ReaderWebtoonImagePipeline {
         let pixelWidth = CGFloat((properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 0)
         let pixelHeight = CGFloat((properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 0)
 
+        let wantsDownsample = targetWidth > 0 && targetWidth.isFinite
         let targetPixelWidth = max(1, targetWidth * scale)
         let maxPixelSize: CGFloat
-        if pixelWidth > 0, pixelHeight > 0, pixelWidth > targetPixelWidth {
+        if wantsDownsample, pixelWidth > 0, pixelHeight > 0, pixelWidth > targetPixelWidth {
             maxPixelSize = max(targetPixelWidth, pixelHeight * (targetPixelWidth / pixelWidth))
         } else {
-            maxPixelSize = max(pixelWidth, pixelHeight, targetPixelWidth)
+            maxPixelSize = max(pixelWidth, pixelHeight, 1)
         }
 
         let options = [
@@ -1764,5 +1821,1108 @@ private struct ReaderWebtoonDownsampleProcessor: ImageProcessing {
             return image
         }
         return PlatformImage(cgImage: output, scale: scaleFactor, orientation: image.imageOrientation)
+    }
+}
+
+// MARK: - Aidoku-Style Kanzen Runtime
+
+protocol KanzenReaderHeightQueryable {
+    func kanzenReaderHeight(for width: CGFloat) -> CGFloat
+}
+
+final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChildControlling {
+    weak var readerDelegate: KanzenReaderChildDelegate?
+
+    private let layout = KanzenVerticalContentOffsetPreservingLayout()
+    private lazy var zoomView = KanzenZoomableTextureView(layout: layout)
+    private var pages: [KanzenReaderPage] = []
+    private var recentRatios: [CGFloat] = []
+    private var pageRatios: [String: CGFloat] = [:]
+    private var prefetchTasks: [String: Task<Void, Never>] = [:]
+    private var pendingStartPage: Int?
+    private var lastReportedPage = -1
+    private var didInitialScroll = false
+
+    override func loadView() {
+        view = zoomView
+    }
+
+    deinit {
+        cancelPrefetchTasks()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        layout.fallbackHeightProvider = { [weak self] indexPath, width in
+            self?.estimatedHeight(for: indexPath.item, width: width) ?? width * KanzenWebtoonPageNode.defaultRatio
+        }
+        zoomView.collectionNode.dataSource = self
+        zoomView.collectionNode.delegate = self
+        zoomView.collectionNode.backgroundColor = .black
+        zoomView.collectionNode.view.backgroundColor = .black
+        zoomView.collectionNode.view.isScrollEnabled = false
+        zoomView.collectionNode.automaticallyManagesSubnodes = true
+        zoomView.collectionNode.shouldAnimateSizeChanges = false
+        zoomView.collectionNode.insetsLayoutMarginsFromSafeArea = false
+        zoomView.collectionNode.setTuningParameters(zoomView.collectionNode.tuningParameters(for: .display), for: .minimum, rangeType: .display)
+        zoomView.collectionNode.setTuningParameters(zoomView.collectionNode.tuningParameters(for: .preload), for: .minimum, rangeType: .preload)
+        zoomView.collectionNode.setTuningParameters(zoomView.collectionNode.tuningParameters(for: .display), for: .lowMemory, rangeType: .display)
+        zoomView.collectionNode.setTuningParameters(zoomView.collectionNode.tuningParameters(for: .preload), for: .lowMemory, rangeType: .preload)
+        zoomView.onScroll = { [weak self] in self?.scrollViewDidMirrorScroll() }
+        zoomView.onLayout = { [weak self] in self?.layoutDidUpdate() }
+        zoomView.doubleTapEnabled = !UserDefaults.standard.bool(forKey: "Reader.disableDoubleTap")
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.numberOfTapsRequired = 1
+        tap.cancelsTouchesInView = false
+        tap.require(toFail: zoomView.doubleTapGesture)
+        zoomView.addGestureRecognizer(tap)
+    }
+
+    func setPages(_ pages: [KanzenReaderPage], startPage: Int) {
+        self.pages = pages
+        recentRatios.removeAll()
+        pageRatios.removeAll()
+        cancelPrefetchTasks()
+        pendingStartPage = min(max(startPage, 0), max(pages.count - 1, 0))
+        lastReportedPage = -1
+        didInitialScroll = false
+        layout.zoomScale = 1
+        layout.invalidateLayout()
+        zoomView.scrollView.zoomScale = 1
+        zoomView.collectionNode.reloadData()
+        zoomView.setNeedsLayout()
+        prefetchPages(around: pendingStartPage ?? 0)
+        DispatchQueue.main.async { [weak self] in
+            self?.scrollToPendingStartPage()
+        }
+    }
+
+    func moveToPage(_ page: Int, animated: Bool) {
+        guard !pages.isEmpty else { return }
+        let target = min(max(page, 0), pages.count - 1)
+        let indexPath = IndexPath(item: target, section: 0)
+        zoomView.collectionNode.view.layoutIfNeeded()
+        let frame = layout.layoutAttributesForItem(at: indexPath)?.frame
+        let offsetY = frame?.origin.y ?? estimatedOffset(for: target)
+        zoomView.setContentOffset(CGPoint(x: 0, y: max(offsetY, 0)), animated: animated)
+        prefetchPages(around: target)
+        updateCurrentPage(force: true)
+    }
+
+    func moveLeft() {
+        moveToPage(max(lastReportedPage - 1, 0), animated: true)
+    }
+
+    func moveRight() {
+        moveToPage(min(max(lastReportedPage + 1, 0), max(pages.count - 1, 0)), animated: true)
+    }
+
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        readerDelegate?.readerChildDidRequestOverlayToggle()
+    }
+
+    private func scrollViewDidMirrorScroll() {
+        updateCurrentPage(force: false)
+        if UserDefaults.standard.bool(forKey: "Reader.hideBarsOnSwipe"), zoomView.scrollView.isDragging {
+            readerDelegate?.readerChildDidRequestOverlayToggle()
+        }
+    }
+
+    private func layoutDidUpdate() {
+        zoomView.adjustContentSize()
+        scrollToPendingStartPage()
+    }
+
+    private func scrollToPendingStartPage() {
+        guard !didInitialScroll, let page = pendingStartPage, !pages.isEmpty else { return }
+        zoomView.collectionNode.view.layoutIfNeeded()
+        moveToPage(page, animated: false)
+        pendingStartPage = nil
+        didInitialScroll = true
+    }
+
+    private func updateCurrentPage(force: Bool) {
+        guard !pages.isEmpty else { return }
+        let scrollView = zoomView.scrollView
+        let midpoint = CGPoint(
+            x: scrollView.contentOffset.x + scrollView.bounds.width * 0.5,
+            y: scrollView.contentOffset.y + scrollView.bounds.height * 0.5
+        )
+        let index = zoomView.collectionNode.view.indexPathForItem(at: midpoint)?.item
+            ?? layout.indexForY(midpoint.y)
+            ?? 0
+        let safeIndex = min(max(index, 0), pages.count - 1)
+        guard force || safeIndex != lastReportedPage else { return }
+        lastReportedPage = safeIndex
+        readerDelegate?.readerChildDidChangePage(safeIndex, totalPages: pages.count)
+        prefetchPages(around: safeIndex)
+        if safeIndex >= pages.count - 1 {
+            readerDelegate?.readerChildDidReachEnd()
+        }
+    }
+
+    private func updateHeight(page: KanzenReaderPage, size: CGSize?, index: Int) {
+        guard index < pages.count, pages[index].id == page.id else { return }
+        if let size, size.width > 0, size.height > 0 {
+            let ratio = size.height / size.width
+            if ratio.isFinite {
+                pageRatios[page.id] = ratio
+                recentRatios.append(ratio)
+                if recentRatios.count > 20 {
+                    recentRatios.removeFirst(recentRatios.count - 20)
+                }
+            }
+        }
+
+        let oldFrame = layout.frameForItem(at: IndexPath(item: index, section: 0))
+        let wasAbove = (oldFrame?.maxY ?? 0) <= zoomView.scrollView.contentOffset.y + 1
+        let oldHeight = oldFrame?.height ?? estimatedHeight(for: index, width: max(view.bounds.width, 1))
+        layout.invalidateLayout()
+        zoomView.collectionNode.view.layoutIfNeeded()
+        zoomView.adjustContentSize()
+
+        if wasAbove,
+           let newFrame = layout.frameForItem(at: IndexPath(item: index, section: 0)) {
+            let delta = newFrame.height - oldHeight
+            guard abs(delta) >= 1 else { return }
+            let next = CGPoint(
+                x: zoomView.scrollView.contentOffset.x,
+                y: max(0, zoomView.scrollView.contentOffset.y + delta)
+            )
+            zoomView.setContentOffset(next, animated: false)
+        }
+    }
+
+    private func estimatedHeight(for index: Int, width: CGFloat) -> CGFloat {
+        guard index >= 0, index < pages.count else {
+            return width * KanzenWebtoonPageNode.defaultRatio
+        }
+        if let text = pages[index].text {
+            let constraint = CGSize(width: max(width - 48, 1), height: CGFloat.greatestFiniteMagnitude)
+            let rect = (text as NSString).boundingRect(
+                with: constraint,
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: UIFont.preferredFont(forTextStyle: .body)],
+                context: nil
+            )
+            return max(320, ceil(rect.height) + 64)
+        }
+        if let ratio = pageRatios[pages[index].id] {
+            return max(1, width * ratio)
+        }
+        return max(320, width * estimatedRatio())
+    }
+
+    private func estimatedOffset(for page: Int) -> CGFloat {
+        let width = max(view.bounds.width, 1)
+        return (0..<page).reduce(CGFloat(0)) { $0 + estimatedHeight(for: $1, width: width) }
+    }
+
+    private func estimatedRatio() -> CGFloat {
+        guard !recentRatios.isEmpty else { return KanzenWebtoonPageNode.defaultRatio }
+        let sorted = recentRatios.sorted()
+        return min(max(sorted[sorted.count / 2], 1.1), 6)
+    }
+
+    private func prefetchPages(around center: Int) {
+        guard !pages.isEmpty else { return }
+        let radius = max(0, UserDefaults.standard.object(forKey: "Reader.pagesToPreload") as? Int ?? 3)
+        guard radius > 0 else {
+            cancelPrefetchTasks()
+            return
+        }
+
+        let lower = max(center - radius, 0)
+        let upper = min(center + radius, pages.count - 1)
+        let targetIDs = Set(pages[lower...upper].map(\.id))
+
+        let staleIDs = prefetchTasks.keys.filter { !targetIDs.contains($0) }
+        for id in staleIDs {
+            prefetchTasks[id]?.cancel()
+            prefetchTasks[id] = nil
+        }
+
+        let targetSize = targetImageSize()
+        let scale = view.window?.screen.scale ?? UIScreen.main.scale
+        for index in lower...upper {
+            let page = pages[index]
+            guard page.isImageLike, prefetchTasks[page.id] == nil else { continue }
+            prefetchTasks[page.id] = Task(priority: .utility) { [weak self, page, targetSize, scale] in
+                _ = try? await ReaderWebtoonImagePipeline.loadImage(
+                    for: page.pageData,
+                    targetSize: targetSize,
+                    scale: scale
+                )
+                await MainActor.run {
+                    self?.prefetchTasks[page.id] = nil
+                }
+            }
+        }
+    }
+
+    private func cancelPrefetchTasks() {
+        prefetchTasks.values.forEach { $0.cancel() }
+        prefetchTasks.removeAll()
+    }
+
+    private func targetImageSize() -> CGSize {
+        let width = max(view.bounds.width * max(layout.zoomScale, 1), UIScreen.main.bounds.width, 1)
+        return CGSize(width: width, height: width * 2)
+    }
+}
+
+extension KanzenWebtoonReaderViewController: ASCollectionDataSource, ASCollectionDelegate {
+    func numberOfSections(in collectionNode: ASCollectionNode) -> Int { 1 }
+
+    func collectionNode(_ collectionNode: ASCollectionNode, numberOfItemsInSection section: Int) -> Int {
+        pages.count
+    }
+
+    func collectionNode(_ collectionNode: ASCollectionNode, nodeBlockForItemAt indexPath: IndexPath) -> ASCellNodeBlock {
+        guard indexPath.item < pages.count else { return { ASCellNode() } }
+        let page = pages[indexPath.item]
+        let targetWidth = max(collectionNode.bounds.width * max(layout.zoomScale, 1), UIScreen.main.bounds.width)
+        let targetSize = CGSize(width: targetWidth, height: targetWidth * 2)
+        let scale = collectionNode.view.window?.screen.scale ?? UIScreen.main.scale
+        return { [weak self] in
+            let node = KanzenWebtoonPageNode(
+                page: page,
+                targetSize: targetSize,
+                scale: scale,
+                estimatedRatio: self?.estimatedRatio() ?? KanzenWebtoonPageNode.defaultRatio
+            )
+            node.onHeightChanged = { [weak self] page, size, index in
+                self?.updateHeight(page: page, size: size, index: index)
+            }
+            return node
+        }
+    }
+}
+
+final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
+    let collectionNode: ASCollectionNode
+    let scrollView = UIScrollView()
+    let dummyZoomView = UIView()
+    let layout: KanzenVerticalContentOffsetPreservingLayout
+    var onScroll: (() -> Void)?
+    var onLayout: (() -> Void)?
+
+    var doubleTapEnabled: Bool {
+        get { doubleTapGesture.isEnabled }
+        set { doubleTapGesture.isEnabled = newValue }
+    }
+
+    lazy var doubleTapGesture: UITapGestureRecognizer = {
+        let gesture = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        gesture.numberOfTapsRequired = 2
+        return gesture
+    }()
+
+    init(layout: KanzenVerticalContentOffsetPreservingLayout) {
+        self.layout = layout
+        self.collectionNode = ASCollectionNode(collectionViewLayout: layout)
+        super.init(frame: .zero)
+        backgroundColor = .black
+
+        collectionNode.view.backgroundColor = .black
+        collectionNode.view.contentInsetAdjustmentBehavior = .never
+        collectionNode.view.showsVerticalScrollIndicator = false
+        collectionNode.view.showsHorizontalScrollIndicator = false
+        collectionNode.view.bounces = false
+        addSubview(collectionNode.view)
+
+        scrollView.backgroundColor = .clear
+        scrollView.delegate = self
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bounces = false
+        scrollView.bouncesZoom = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        dummyZoomView.backgroundColor = .clear
+        dummyZoomView.addGestureRecognizer(doubleTapGesture)
+        dummyZoomView.isUserInteractionEnabled = true
+        scrollView.addSubview(dummyZoomView)
+        addSubview(scrollView)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        collectionNode.view.frame = bounds
+        scrollView.frame = bounds
+        adjustContentSize()
+        onLayout?()
+    }
+
+    func adjustContentSize() {
+        collectionNode.view.collectionViewLayout.prepare()
+        let contentSize = collectionNode.view.collectionViewLayout.collectionViewContentSize
+        scrollView.contentSize = contentSize
+        dummyZoomView.frame = CGRect(origin: .zero, size: contentSize)
+    }
+
+    func setContentOffset(_ point: CGPoint, animated: Bool) {
+        let bounded = boundedOffset(point)
+        scrollView.setContentOffset(bounded, animated: animated)
+        collectionNode.view.setContentOffset(bounded, animated: false)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        collectionNode.view.contentOffset = scrollView.contentOffset
+        onScroll?()
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        guard abs(layout.zoomScale - scrollView.zoomScale) >= 0.01 else { return }
+        layout.zoomScale = scrollView.zoomScale
+        layout.invalidateLayout()
+        collectionNode.view.layoutIfNeeded()
+        adjustContentSize()
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        dummyZoomView
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        let targetScale: CGFloat = scrollView.zoomScale > 1.01 ? 1 : 2
+        let location = gesture.location(in: dummyZoomView)
+        if targetScale == 1 {
+            scrollView.setZoomScale(1, animated: true)
+        } else {
+            let width = scrollView.bounds.width / targetScale
+            let height = scrollView.bounds.height / targetScale
+            let rect = CGRect(x: location.x - width / 2, y: location.y - height / 2, width: width, height: height)
+            scrollView.zoom(to: rect, animated: true)
+        }
+    }
+
+    private func boundedOffset(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, 0), max(scrollView.contentSize.width - scrollView.bounds.width, 0)),
+            y: min(max(point.y, 0), max(scrollView.contentSize.height - scrollView.bounds.height, 0))
+        )
+    }
+}
+
+final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout {
+    var fallbackHeightProvider: ((IndexPath, CGFloat) -> CGFloat)?
+    var zoomScale: CGFloat = 1 {
+        didSet { zoomScale = min(max(zoomScale, 1), 5) }
+    }
+
+    private var attributes: [IndexPath: UICollectionViewLayoutAttributes] = [:]
+    private var contentSize = CGSize.zero
+
+    override var collectionViewContentSize: CGSize { contentSize }
+
+    override func prepare() {
+        guard let collectionView else { return }
+        attributes.removeAll()
+
+        let width = max(collectionView.bounds.width, 1)
+        var y: CGFloat = 0
+        for section in 0..<collectionView.numberOfSections {
+            for item in 0..<collectionView.numberOfItems(inSection: section) {
+                let indexPath = IndexPath(item: item, section: section)
+                let height = heightForItem(at: indexPath, width: width)
+                let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+                itemAttributes.frame = CGRect(x: 0, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
+                attributes[indexPath] = itemAttributes
+                y += height
+            }
+        }
+        contentSize = CGSize(width: width * zoomScale, height: y * zoomScale)
+    }
+
+    override func invalidateLayout() {
+        attributes.removeAll()
+        contentSize = .zero
+        super.invalidateLayout()
+    }
+
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        attributes.values
+            .filter { $0.frame.intersects(rect) }
+            .sorted { $0.indexPath.item < $1.indexPath.item }
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        if attributes.isEmpty { prepare() }
+        return attributes[indexPath]
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        true
+    }
+
+    func frameForItem(at indexPath: IndexPath) -> CGRect? {
+        if attributes.isEmpty { prepare() }
+        return attributes[indexPath]?.frame
+    }
+
+    func indexForY(_ y: CGFloat) -> Int? {
+        if attributes.isEmpty { prepare() }
+        guard !attributes.isEmpty else { return nil }
+        let sorted = attributes.values.sorted { $0.indexPath.item < $1.indexPath.item }
+        if let match = sorted.first(where: { $0.frame.minY <= y && y <= $0.frame.maxY }) {
+            return match.indexPath.item
+        }
+        return sorted.last(where: { $0.frame.minY <= y })?.indexPath.item ?? 0
+    }
+
+    private func heightForItem(at indexPath: IndexPath, width: CGFloat) -> CGFloat {
+        return max(fallbackHeightProvider?(indexPath, width) ?? width * KanzenWebtoonPageNode.defaultRatio, 1)
+    }
+}
+
+final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable {
+    static let defaultRatio: CGFloat = 1.435
+
+    private enum State {
+        case loading
+        case image
+        case text
+        case failed
+    }
+
+    let page: KanzenReaderPage
+    let targetSize: CGSize
+    let scale: CGFloat
+    let estimatedRatio: CGFloat
+    var onHeightChanged: ((KanzenReaderPage, CGSize?, Int) -> Void)?
+
+    private let imageNode = ASImageNode()
+    private let textNode = ASTextNode()
+    private let statusNode = ASTextNode()
+    private let retryNode = ASButtonNode()
+    private var state: State = .loading
+    private var ratio: CGFloat?
+    private var didStart = false
+    private var loadTask: Task<Void, Never>?
+    private var imageTask: ImageTask?
+
+    init(page: KanzenReaderPage, targetSize: CGSize, scale: CGFloat, estimatedRatio: CGFloat) {
+        self.page = page
+        self.targetSize = targetSize
+        self.scale = scale
+        self.estimatedRatio = estimatedRatio
+        super.init()
+        automaticallyManagesSubnodes = true
+        shouldAnimateSizeChanges = false
+        backgroundColor = .black
+
+        imageNode.backgroundColor = .black
+        imageNode.contentMode = .scaleToFill
+        imageNode.shouldAnimateSizeChanges = false
+
+        textNode.maximumNumberOfLines = 0
+        statusNode.attributedText = Self.labelText("Loading...")
+        retryNode.setAttributedTitle(Self.buttonText("Retry"), for: .normal)
+        retryNode.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        retryNode.contentEdgeInsets = UIEdgeInsets(top: 10, left: 18, bottom: 10, right: 18)
+        retryNode.addTarget(self, action: #selector(retryTapped), forControlEvents: .touchUpInside)
+    }
+
+    deinit {
+        cancel()
+    }
+
+    override func didEnterPreloadState() {
+        super.didEnterPreloadState()
+        loadIfNeeded()
+    }
+
+    override func didEnterDisplayState() {
+        super.didEnterDisplayState()
+        loadIfNeeded()
+    }
+
+    override func layoutSpecThatFits(_ constrainedSize: ASSizeRange) -> ASLayoutSpec {
+        let child: ASLayoutElement
+        switch state {
+        case .image:
+            child = imageNode
+        case .text:
+            child = ASInsetLayoutSpec(insets: UIEdgeInsets(top: 24, left: 24, bottom: 24, right: 24), child: textNode)
+        case .failed:
+            child = ASCenterLayoutSpec(horizontalPosition: .center, verticalPosition: .center, sizingOption: [], child: retryNode)
+        case .loading:
+            child = ASCenterLayoutSpec(horizontalPosition: .center, verticalPosition: .center, sizingOption: [], child: statusNode)
+        }
+        return ASRatioLayoutSpec(ratio: max(ratio ?? estimatedRatio, 0.2), child: child)
+    }
+
+    func kanzenReaderHeight(for width: CGFloat) -> CGFloat {
+        if let text = page.text {
+            let constraint = CGSize(width: max(width - 48, 1), height: CGFloat.greatestFiniteMagnitude)
+            let rect = (text as NSString).boundingRect(
+                with: constraint,
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: UIFont.preferredFont(forTextStyle: .body)],
+                context: nil
+            )
+            return max(320, ceil(rect.height) + 64)
+        }
+        return max(1, width * max(ratio ?? estimatedRatio, 0.2))
+    }
+
+    private func loadIfNeeded() {
+        guard !didStart else { return }
+        didStart = true
+
+        if let text = page.text {
+            textNode.attributedText = NSAttributedString(
+                string: text,
+                attributes: [.font: UIFont.preferredFont(forTextStyle: .body), .foregroundColor: UIColor.white]
+            )
+            state = .text
+            onHeightChanged?(page, nil, page.index)
+            setNeedsLayout()
+            return
+        }
+
+        guard page.isImageLike else {
+            state = .failed
+            setNeedsLayout()
+            return
+        }
+
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let image = try await ReaderWebtoonImagePipeline.loadImage(
+                    for: page.pageData,
+                    targetSize: targetSize,
+                    scale: scale,
+                    taskSink: { [weak self] task in
+                        Task { @MainActor in self?.imageTask = task }
+                    }
+                )
+                await MainActor.run {
+                    self.imageNode.image = image
+                    self.ratio = image.size.width > 0 ? image.size.height / image.size.width : self.estimatedRatio
+                    self.state = .image
+                    self.onHeightChanged?(self.page, image.size, self.page.index)
+                    self.invalidateCalculatedLayout()
+                    self.setNeedsLayout()
+                }
+            } catch {
+                await MainActor.run {
+                    self.state = .failed
+                    self.setNeedsLayout()
+                }
+            }
+        }
+    }
+
+    private func cancel() {
+        imageTask?.cancel()
+        loadTask?.cancel()
+        imageTask = nil
+        loadTask = nil
+    }
+
+    @objc private func retryTapped() {
+        cancel()
+        imageNode.image = nil
+        state = .loading
+        didStart = false
+        setNeedsLayout()
+        loadIfNeeded()
+    }
+
+    private static func labelText(_ value: String) -> NSAttributedString {
+        NSAttributedString(
+            string: value,
+            attributes: [.font: UIFont.preferredFont(forTextStyle: .callout), .foregroundColor: UIColor.white.withAlphaComponent(0.7)]
+        )
+    }
+
+    private static func buttonText(_ value: String) -> NSAttributedString {
+        NSAttributedString(
+            string: value,
+            attributes: [.font: UIFont.preferredFont(forTextStyle: .callout), .foregroundColor: UIColor.white]
+        )
+    }
+}
+
+final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChildControlling {
+    weak var readerDelegate: KanzenReaderChildDelegate?
+
+    private let mode: KanzenReaderMode
+    private var pages: [KanzenReaderPage] = []
+    private var units: [KanzenPagedUnit] = []
+    private var controllers: [KanzenReaderPageUnitViewController] = []
+    private var currentUnitIndex = 0
+    private lazy var pageViewController = UIPageViewController(
+        transitionStyle: .scroll,
+        navigationOrientation: .horizontal,
+        options: nil
+    )
+
+    init(mode: KanzenReaderMode) {
+        self.mode = mode
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        pageViewController.dataSource = self
+        pageViewController.delegate = self
+        addChild(pageViewController)
+        pageViewController.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(pageViewController.view)
+        NSLayoutConstraint.activate([
+            pageViewController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            pageViewController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            pageViewController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            pageViewController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        pageViewController.didMove(toParent: self)
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+    }
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self, UserDefaults.standard.string(forKey: "Reader.pagedPageLayout") == "auto" else { return }
+            let page = self.controllers[safe: self.currentUnitIndex]?.unit.firstPageIndex ?? 0
+            self.setPages(self.pages, startPage: page)
+        }
+    }
+
+    func setPages(_ pages: [KanzenReaderPage], startPage: Int) {
+        self.pages = pages
+        self.units = makeUnits(from: pages)
+        self.controllers = units.map { KanzenReaderPageUnitViewController(unit: $0) }
+        guard !controllers.isEmpty else { return }
+        currentUnitIndex = units.firstIndex { $0.contains(page: startPage) } ?? 0
+        pageViewController.setViewControllers([controllers[currentUnitIndex]], direction: .forward, animated: false)
+        reportCurrentPage()
+    }
+
+    func moveToPage(_ page: Int, animated: Bool) {
+        guard let nextIndex = units.firstIndex(where: { $0.contains(page: page) }),
+              nextIndex < controllers.count else { return }
+        let direction: UIPageViewController.NavigationDirection = nextIndex >= currentUnitIndex ? .forward : .reverse
+        currentUnitIndex = nextIndex
+        pageViewController.setViewControllers([controllers[nextIndex]], direction: direction, animated: animated)
+        reportCurrentPage()
+    }
+
+    func moveLeft() {
+        if mode == .rtl {
+            moveUnit(delta: 1)
+        } else {
+            moveUnit(delta: -1)
+        }
+    }
+
+    func moveRight() {
+        if mode == .rtl {
+            moveUnit(delta: -1)
+        } else {
+            moveUnit(delta: 1)
+        }
+    }
+
+    @objc private func handleTap() {
+        readerDelegate?.readerChildDidRequestOverlayToggle()
+    }
+
+    private func makeUnits(from pages: [KanzenReaderPage]) -> [KanzenPagedUnit] {
+        let layout = UserDefaults.standard.string(forKey: "Reader.pagedPageLayout") ?? "single"
+        let usesDouble = layout == "double" || (layout == "auto" && view.bounds.width > view.bounds.height)
+        guard usesDouble else {
+            return pages.map { KanzenPagedUnit(pages: [$0], firstPageIndex: $0.index) }
+        }
+
+        var result: [KanzenPagedUnit] = []
+        var index = 0
+        while index < pages.count {
+            let first = pages[index]
+            let second = index + 1 < pages.count ? pages[index + 1] : nil
+            result.append(KanzenPagedUnit(pages: [first, second].compactMap { $0 }, firstPageIndex: first.index))
+            index += 2
+        }
+        return result
+    }
+
+    private func moveUnit(delta: Int) {
+        let next = min(max(currentUnitIndex + delta, 0), max(controllers.count - 1, 0))
+        guard next != currentUnitIndex else { return }
+        let direction: UIPageViewController.NavigationDirection = next > currentUnitIndex ? .forward : .reverse
+        currentUnitIndex = next
+        pageViewController.setViewControllers([controllers[next]], direction: direction, animated: true)
+        reportCurrentPage()
+    }
+
+    private func reportCurrentPage() {
+        guard currentUnitIndex < controllers.count else { return }
+        let page = controllers[currentUnitIndex].unit.firstPageIndex
+        readerDelegate?.readerChildDidChangePage(page, totalPages: pages.count)
+        if page >= pages.count - 1 {
+            readerDelegate?.readerChildDidReachEnd()
+        }
+    }
+}
+
+extension KanzenPagedReaderViewController: UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+    func pageViewController(_ pageViewController: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
+        guard let current = controllers.firstIndex(of: viewController as! KanzenReaderPageUnitViewController) else { return nil }
+        let next = mode == .rtl ? current + 1 : current - 1
+        guard next >= 0, next < controllers.count else { return nil }
+        return controllers[next]
+    }
+
+    func pageViewController(_ pageViewController: UIPageViewController, viewControllerAfter viewController: UIViewController) -> UIViewController? {
+        guard let current = controllers.firstIndex(of: viewController as! KanzenReaderPageUnitViewController) else { return nil }
+        let next = mode == .rtl ? current - 1 : current + 1
+        guard next >= 0, next < controllers.count else { return nil }
+        return controllers[next]
+    }
+
+    func pageViewController(_ pageViewController: UIPageViewController, didFinishAnimating finished: Bool, previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+        guard completed, finished,
+              let visible = pageViewController.viewControllers?.first as? KanzenReaderPageUnitViewController,
+              let index = controllers.firstIndex(of: visible) else { return }
+        currentUnitIndex = index
+        reportCurrentPage()
+    }
+}
+
+struct KanzenPagedUnit {
+    let pages: [KanzenReaderPage]
+    let firstPageIndex: Int
+
+    func contains(page: Int) -> Bool {
+        pages.contains { $0.index == page }
+    }
+}
+
+final class KanzenReaderPageUnitViewController: UIViewController {
+    let unit: KanzenPagedUnit
+    private let stack = UIStackView()
+
+    init(unit: KanzenPagedUnit) {
+        self.unit = unit
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        stack.axis = .horizontal
+        stack.spacing = 0
+        stack.distribution = .fillEqually
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        for page in unit.pages {
+            let imageView = KanzenReaderImageView()
+            imageView.configure(page: page)
+            stack.addArrangedSubview(imageView)
+        }
+    }
+}
+
+final class KanzenReaderImageView: UIView {
+    private let imageView = UIImageView()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let retryButton = UIButton(type: .system)
+    private var page: KanzenReaderPage?
+    private var loadTask: Task<Void, Never>?
+    private var imageTask: ImageTask?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+        imageView.contentMode = .scaleAspectFit
+        imageView.backgroundColor = .black
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.setTitle("Retry", for: .normal)
+        retryButton.isHidden = true
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.addTarget(self, action: #selector(retry), for: .touchUpInside)
+        addSubview(imageView)
+        addSubview(spinner)
+        addSubview(retryButton)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+            retryButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            retryButton.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        cancel()
+    }
+
+    func configure(page: KanzenReaderPage) {
+        self.page = page
+        imageView.image = nil
+        retryButton.isHidden = true
+        load()
+    }
+
+    private func cancel() {
+        imageTask?.cancel()
+        loadTask?.cancel()
+    }
+
+    private func load() {
+        guard let page else { return }
+        cancel()
+        spinner.startAnimating()
+        retryButton.isHidden = true
+        let target = CGSize(width: max(bounds.width, UIScreen.main.bounds.width), height: max(bounds.height, UIScreen.main.bounds.height))
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        loadTask = Task { [weak self] in
+            do {
+                let image = try await ReaderWebtoonImagePipeline.loadImage(
+                    for: page.pageData,
+                    targetSize: target,
+                    scale: scale,
+                    taskSink: { [weak self] task in
+                        Task { @MainActor in self?.imageTask = task }
+                    }
+                )
+                await MainActor.run {
+                    self?.spinner.stopAnimating()
+                    self?.imageView.image = image
+                }
+            } catch {
+                await MainActor.run {
+                    self?.spinner.stopAnimating()
+                    self?.retryButton.isHidden = false
+                }
+            }
+        }
+    }
+
+    @objc private func retry() {
+        load()
+    }
+}
+
+final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildControlling, UIScrollViewDelegate {
+    weak var readerDelegate: KanzenReaderChildDelegate?
+
+    private let scrollView = UIScrollView()
+    private let stack = UIStackView()
+    private var pages: [KanzenReaderPage] = []
+    private var pendingStartPage = 0
+    private var lastReportedPage = -1
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = readerBackgroundColor()
+        scrollView.delegate = self
+        scrollView.alwaysBounceVertical = true
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stack)
+        view.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+        ])
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        restorePendingPageIfNeeded()
+    }
+
+    func setPages(_ pages: [KanzenReaderPage], startPage: Int) {
+        self.pages = pages
+        pendingStartPage = startPage
+        lastReportedPage = -1
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for page in pages {
+            let label = UILabel()
+            label.numberOfLines = 0
+            label.text = page.text ?? ""
+            label.font = readerFont()
+            label.textColor = readerTextColor()
+            label.textAlignment = readerTextAlignment()
+            let lineSpacing = UserDefaults.standard.object(forKey: "readerLineSpacing") as? Double ?? 1.6
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = readerTextAlignment()
+            paragraph.lineSpacing = CGFloat(max(0, lineSpacing - 1) * Double(label.font.pointSize))
+            label.attributedText = NSAttributedString(
+                string: page.text ?? "",
+                attributes: [.font: label.font as Any, .foregroundColor: readerTextColor(), .paragraphStyle: paragraph]
+            )
+            let container = UIView()
+            container.addSubview(label)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            let padding = CGFloat((UserDefaults.standard.object(forKey: "readerMargin") as? Double ?? 4) + 16)
+            NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
+                label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+                label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+                label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -24)
+            ])
+            stack.addArrangedSubview(container)
+        }
+        view.setNeedsLayout()
+        reportCurrentPage(force: true)
+    }
+
+    func moveToPage(_ page: Int, animated: Bool) {
+        let target = min(max(page, 0), max(pages.count - 1, 0))
+        let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+        let y = pages.count <= 1 ? 0 : maxOffset * (CGFloat(target) / CGFloat(max(pages.count - 1, 1)))
+        scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: animated)
+        reportCurrentPage(force: true)
+    }
+
+    func moveLeft() {
+        moveToPage(max(lastReportedPage - 1, 0), animated: true)
+    }
+
+    func moveRight() {
+        moveToPage(min(lastReportedPage + 1, max(pages.count - 1, 0)), animated: true)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        reportCurrentPage(force: false)
+    }
+
+    @objc private func handleTap() {
+        readerDelegate?.readerChildDidRequestOverlayToggle()
+    }
+
+    private func restorePendingPageIfNeeded() {
+        guard pendingStartPage > 0 else { return }
+        let page = pendingStartPage
+        pendingStartPage = 0
+        moveToPage(page, animated: false)
+    }
+
+    private func reportCurrentPage(force: Bool) {
+        guard !pages.isEmpty else { return }
+        let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 1)
+        let progress = min(max(scrollView.contentOffset.y / maxOffset, 0), 1)
+        let page = min(max(Int(round(progress * CGFloat(max(pages.count - 1, 0)))), 0), max(pages.count - 1, 0))
+        guard force || page != lastReportedPage else { return }
+        lastReportedPage = page
+        readerDelegate?.readerChildDidChangePage(page, totalPages: pages.count)
+        if page >= pages.count - 1 {
+            readerDelegate?.readerChildDidReachEnd()
+        }
+    }
+
+    private func readerFont() -> UIFont {
+        let size = CGFloat(UserDefaults.standard.object(forKey: "readerFontSize") as? Double ?? 16)
+        let weightRaw = UserDefaults.standard.string(forKey: "readerFontWeight") ?? "normal"
+        let weight: UIFont.Weight
+        switch weightRaw {
+        case "500": weight = .medium
+        case "700": weight = .bold
+        default: weight = .regular
+        }
+
+        switch UserDefaults.standard.string(forKey: "readerFontFamily") ?? "-apple-system" {
+        case "Georgia":
+            return UIFont(name: "Georgia", size: size) ?? .systemFont(ofSize: size, weight: weight)
+        case "Menlo":
+            return UIFont.monospacedSystemFont(ofSize: size, weight: weight)
+        case "ui-rounded":
+            let descriptor = UIFont.systemFont(ofSize: size, weight: weight).fontDescriptor.withDesign(.rounded)
+            return descriptor.map { UIFont(descriptor: $0, size: size) } ?? .systemFont(ofSize: size, weight: weight)
+        default:
+            return .systemFont(ofSize: size, weight: weight)
+        }
+    }
+
+    private func readerTextAlignment() -> NSTextAlignment {
+        switch UserDefaults.standard.string(forKey: "readerTextAlignment") ?? "left" {
+        case "center": return .center
+        case "right": return .right
+        case "justify": return .justified
+        default: return .left
+        }
+    }
+
+    private func readerBackgroundColor() -> UIColor {
+        switch UserDefaults.standard.integer(forKey: "readerColorPreset") {
+        case 1: return UIColor(red: 0.976, green: 0.945, blue: 0.894, alpha: 1)
+        case 2: return UIColor(red: 0.286, green: 0.286, blue: 0.302, alpha: 1)
+        case 3: return UIColor(red: 0.071, green: 0.071, blue: 0.071, alpha: 1)
+        case 4: return .black
+        default: return .white
+        }
+    }
+
+    private func readerTextColor() -> UIColor {
+        switch UserDefaults.standard.integer(forKey: "readerColorPreset") {
+        case 1: return UIColor(red: 0.31, green: 0.196, blue: 0.11, alpha: 1)
+        case 2: return UIColor(red: 0.843, green: 0.843, blue: 0.847, alpha: 1)
+        case 3: return UIColor(red: 0.918, green: 0.918, blue: 0.918, alpha: 1)
+        case 4: return .white
+        default: return .black
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

@@ -185,34 +185,19 @@ struct MangaDetailView: View {
                 let selectedReaderChapter = readerChapterList.first {
                     $0.chapterNumber == chapter.chapterNumber
                 } ?? readerChapterList.first ?? chapter
-                if selectedSource?.module.moduleData.novel == true {
-                    NovelReaderView(
-                        kanzen: chapterEngine,
-                        chapters: readerChapterList,
-                        initialChapter: selectedReaderChapter,
-                        mangaId: progressMangaId,
-                        mangaTitle: selectedSourceDisplayTitle,
-                        mangaCoverURL: selectedSourceCoverURL ?? "",
-                        mangaRoute: selectedContentRoute,
-                        mangaFormat: selectedSourceFormat,
-                        totalChapters: selectedSourceChapterTotal,
-                        latestChapterNumbers: currentChapterNumbers
-                    )
-                } else {
-                    readerManagerView(
-                        chapters: readerChapterList,
-                        selectedChapter: selectedReaderChapter,
-                        kanzen: chapterEngine,
-                        mangaId: progressMangaId,
-                        mangaTitle: selectedSourceDisplayTitle,
-                        mangaCoverURL: selectedSourceCoverURL ?? "",
-                        mangaRoute: selectedContentRoute,
-                        mangaFormat: selectedSourceFormat,
-                        totalChapters: selectedSourceChapterTotal,
-                        latestChapterNumbers: currentChapterNumbers,
-                        trackerAniListId: knownTrackerAniListId
-                    )
-                }
+                readerManagerView(
+                    chapters: readerChapterList,
+                    selectedChapter: selectedReaderChapter,
+                    kanzen: chapterEngine,
+                    mangaId: progressMangaId,
+                    mangaTitle: selectedSourceDisplayTitle,
+                    mangaCoverURL: selectedSourceCoverURL ?? "",
+                    mangaRoute: selectedContentRoute,
+                    mangaFormat: selectedSourceFormat,
+                    totalChapters: selectedSourceChapterTotal,
+                    latestChapterNumbers: currentChapterNumbers,
+                    trackerAniListId: knownTrackerAniListId
+                )
             }
         }
         .task {

@@ -119,33 +119,18 @@ struct contentView: View {
                 let selectedReaderChapter = readerChapterList.first {
                     $0.chapterNumber == chapter.chapterNumber
                 } ?? readerChapterList.first ?? chapter
-                if parentModule?.moduleData.novel == true {
-                    NovelReaderView(
-                        kanzen: kanzen,
-                        chapters: readerChapterList,
-                        initialChapter: selectedReaderChapter,
-                        mangaId: stableId,
-                        mangaTitle: title,
-                        mangaCoverURL: imageURL,
-                        mangaRoute: contentRoute,
-                        mangaFormat: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
-                        totalChapters: currentChapterNumbers?.count,
-                        latestChapterNumbers: currentChapterNumbers
-                    )
-                } else {
-                    readerManagerView(
-                        chapters: readerChapterList,
-                        selectedChapter: selectedReaderChapter,
-                        kanzen: kanzen,
-                        mangaId: stableId,
-                        mangaTitle: title,
-                        mangaCoverURL: imageURL,
-                        mangaRoute: contentRoute,
-                        mangaFormat: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
-                        totalChapters: currentChapterNumbers?.count,
-                        latestChapterNumbers: currentChapterNumbers
-                    )
-                }
+                readerManagerView(
+                    chapters: readerChapterList,
+                    selectedChapter: selectedReaderChapter,
+                    kanzen: kanzen,
+                    mangaId: stableId,
+                    mangaTitle: title,
+                    mangaCoverURL: imageURL,
+                    mangaRoute: contentRoute,
+                    mangaFormat: parentModule?.moduleData.novel == true ? "NOVEL" : "MANGA",
+                    totalChapters: currentChapterNumbers?.count,
+                    latestChapterNumbers: currentChapterNumbers
+                )
             }
             
         }
