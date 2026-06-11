@@ -33,17 +33,14 @@ struct SoraApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var settings = Settings()
     @StateObject private var theme = EclipseTheme.shared
-    @StateObject private var moduleManager = ModuleManager.shared
-    @StateObject private var favouriteManager = FavouriteManager.shared
 
     @State private var startupReady = false
     @State private var startupFallbackScheduled = false
     @State private var showSplash = true
-    private let startupFallbackDelay: TimeInterval = 20
+    private let startupFallbackDelay: TimeInterval = 3
 
 #if !os(tvOS)
     @AppStorage("showKanzen") private var showKanzen: Bool = false
-    let kanzen = KanzenEngine();
 #endif
 
     init() {
@@ -57,14 +54,6 @@ struct SoraApp: App {
         DispatchQueue.global(qos: .background).async {
             CacheManager.shared.checkAndAutoClearIfNeeded()
         }
-        // Initialize download manager early to reconnect background session
-        _ = DownloadManager.shared
-#if !os(tvOS)
-        // Initialize Reader downloads early so interrupted Kanzen queues are recovered separately.
-        Task { @MainActor in
-            _ = ReaderDownloadManager.shared
-        }
-#endif
     }
 
     var body: some Scene {
@@ -78,9 +67,6 @@ struct SoraApp: App {
                     KanzenMenu(onStartupReady: markStartupReady)
                         .environmentObject(settings)
                         .environmentObject(theme)
-                        .environmentObject(moduleManager)
-                        .environmentObject(favouriteManager)
-                        .environment(\.managedObjectContext, favouriteManager.container.viewContext)
                         .accentColor(settings.effectiveAccentColor)
                         .onAppear { scheduleStartupFallback() }
                 } else {

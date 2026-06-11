@@ -991,7 +991,7 @@
 				AD0000322FDA000000AD0032 /* Nuke */,
 				AD0000422FDB000000AD0042 /* AsyncDisplayKit */,
 			);
-			productName = Sora;
+			productName = Eclipse;
 			productReference = 13F0725B2E4B2D3300EF90EB /* Eclipse.app */;
 			productType = "com.apple.product-type.application";
 		};
