@@ -529,9 +529,9 @@ private final class KanzenReaderOverlayView: UIView {
         topPanel.alignment = .center
         topPanel.spacing = 12
         topPanel.backgroundColor = UIColor.black.withAlphaComponent(0.78)
-        topPanel.layer.cornerRadius = 18
+        topPanel.layer.cornerRadius = 22
         topPanel.isLayoutMarginsRelativeArrangement = true
-        topPanel.layoutMargins = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 10)
+        topPanel.layoutMargins = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
         topPanel.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.textColor = .white
@@ -619,6 +619,7 @@ private final class KanzenReaderOverlayView: UIView {
             bottomPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
             bottomPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
             bottomPanel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            topPanel.widthAnchor.constraint(equalTo: bottomPanel.widthAnchor),
             preferredWidth,
             bottomPanel.widthAnchor.constraint(lessThanOrEqualToConstant: 720)
         ])

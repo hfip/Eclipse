@@ -228,6 +228,7 @@ struct MangaDetailView: View {
             let minY = geometry.frame(in: .global).minY
             let stretchedHeight = heroHeight + max(0, minY)
             let yOffset = min(0, -minY)
+            let viewportWidth = geometry.size.width
             let coverURLString = selectedSourceCoverURL ?? manga.coverURL ?? ""
 
             ZStack(alignment: .bottomLeading) {
@@ -235,8 +236,7 @@ struct MangaDetailView: View {
                     .placeholder { Color.black.opacity(0.18) }
                     .resizable()
                     .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: stretchedHeight)
+                    .frame(width: viewportWidth, height: stretchedHeight)
                     .clipped()
                     .blur(radius: 18)
                     .overlay(Color.black.opacity(0.34))
@@ -245,10 +245,9 @@ struct MangaDetailView: View {
                     .placeholder { Color.clear }
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: max(heroHeight - 26, 260))
+                    .frame(width: max(viewportWidth - 20, 0), height: max(heroHeight - 26, 260), alignment: .center)
+                    .frame(width: viewportWidth, alignment: .center)
                     .padding(.top, 10)
-                    .padding(.horizontal, 10)
 
                 LinearGradient(
                     colors: [
@@ -259,6 +258,7 @@ struct MangaDetailView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
+                .frame(width: viewportWidth, height: stretchedHeight)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(selectedSourceDisplayTitle)
@@ -295,7 +295,7 @@ struct MangaDetailView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 18)
             }
-            .frame(height: stretchedHeight)
+            .frame(width: viewportWidth, height: stretchedHeight)
             .offset(y: yOffset)
         }
         .frame(height: heroHeight)

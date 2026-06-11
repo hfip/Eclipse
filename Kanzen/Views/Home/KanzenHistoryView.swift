@@ -10,6 +10,9 @@ import Kingfisher
 
 #if !os(tvOS)
 import AidokuRunner
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct KanzenHistoryView: View {
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
@@ -212,6 +215,7 @@ private struct KanzenHistoryResumeDestination: View {
     @State private var downloadedFallback: ReaderDownloadedTitle?
     @State private var errorMessage: String?
     @State private var didStartLoading = false
+    @State private var previousTabBarHidden: Bool?
 
     var body: some View {
         Group {
@@ -232,6 +236,12 @@ private struct KanzenHistoryResumeDestination: View {
                 )
                 .ignoresSafeArea()
                 .navigationBarHidden(true)
+                .onAppear {
+                    hideKanzenRootTabBarForReader()
+                }
+                .onDisappear {
+                    restoreKanzenRootTabBarAfterReader()
+                }
             } else if let downloadedFallback {
                 ReaderDownloadedTitleDetailView(title: downloadedFallback)
             } else if let errorMessage {
@@ -303,6 +313,17 @@ private struct KanzenHistoryResumeDestination: View {
                 ReaderLogger.shared.log("History resume failed route=\(route.stableKey): \(error.localizedDescription)", type: "History")
             }
         }
+    }
+
+    private func hideKanzenRootTabBarForReader() {
+        guard previousTabBarHidden == nil else { return }
+        previousTabBarHidden = setKanzenRootTabBarHidden(true)
+    }
+
+    private func restoreKanzenRootTabBarAfterReader() {
+        guard let previousTabBarHidden else { return }
+        _ = setKanzenRootTabBarHidden(previousTabBarHidden)
+        self.previousTabBarHidden = nil
     }
 
     @MainActor
@@ -565,5 +586,43 @@ private struct LoadedHistoryReader {
     let chapters: [Chapter]
     let selectedChapter: Chapter
     let latestChapterNumbers: [String]?
+}
+
+@discardableResult
+private func setKanzenRootTabBarHidden(_ hidden: Bool) -> Bool? {
+    guard let tabBarController = activeTabBarController() else { return nil }
+    let previous = tabBarController.tabBar.isHidden
+    tabBarController.tabBar.isHidden = hidden
+    return previous
+}
+
+private func activeTabBarController() -> UITabBarController? {
+    let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+    let root = scenes
+        .flatMap(\.windows)
+        .first { $0.isKeyWindow }?
+        .rootViewController
+    return findTabBarController(in: root)
+}
+
+private func findTabBarController(in controller: UIViewController?) -> UITabBarController? {
+    guard let controller else { return nil }
+    if let tabBarController = controller as? UITabBarController {
+        return tabBarController
+    }
+    if let navigationController = controller as? UINavigationController,
+       let found = findTabBarController(in: navigationController.visibleViewController) {
+        return found
+    }
+    if let presented = controller.presentedViewController,
+       let found = findTabBarController(in: presented) {
+        return found
+    }
+    for child in controller.children {
+        if let found = findTabBarController(in: child) {
+            return found
+        }
+    }
+    return nil
 }
 #endif
