@@ -29,6 +29,7 @@ android {
 
 dependencies {
     implementation(project(":core:design"))
+    implementation(project(":core:mpv"))
     implementation(project(":core:model"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
@@ -37,7 +38,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
-    implementation(libs.libvlc.all)
 
     testImplementation(libs.kotlin.test.junit)
 }

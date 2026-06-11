@@ -204,7 +204,7 @@ fun DetailRoute(
     onPlaybackProgress: (PlaybackProgressSnapshot) -> Unit,
     onPlaybackReady: (PlayerSource) -> Unit = {},
     onPlaybackFailure: (PlayerSource, String, Boolean) -> Unit = { _, _, _ -> },
-    preferredPlayer: InAppPlayer = InAppPlayer.VLC,
+    preferredPlayer: InAppPlayer = InAppPlayer.MPV,
     playbackSettings: PlaybackSettingsSnapshot = PlaybackSettingsSnapshot(),
 ) {
     val regularEpisodes = state.episodes.filterNot { it.isSpecial }

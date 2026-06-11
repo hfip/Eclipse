@@ -69,7 +69,7 @@ data class SettingsScreenState(
     val showNextEpisodeButton: Boolean = true,
     val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
-    val inAppPlayer: InAppPlayer = InAppPlayer.VLC,
+    val inAppPlayer: InAppPlayer = InAppPlayer.MPV,
     val enableSubtitlesByDefault: Boolean = false,
     val enableVLCSubtitleEditMenu: Boolean = true,
     val defaultSubtitleLanguage: String = "eng",
@@ -2778,7 +2778,7 @@ private fun PlayerButtons(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PlayerButtonRow(
             left = InAppPlayer.NORMAL,
-            right = InAppPlayer.VLC,
+            right = InAppPlayer.MPV,
             selected = selected,
             onSelected = onSelected,
         )
@@ -2804,7 +2804,7 @@ private fun PlayerButtonRow(
     ) {
         PlayerChoiceButton(
             player = left,
-            selected = left == selected || selected == InAppPlayer.MPV && left == InAppPlayer.EXTERNAL,
+            selected = left == selected,
             onSelected = onSelected,
             modifier = Modifier.weight(1f),
         )
@@ -2830,8 +2830,8 @@ private fun PlayerChoiceButton(
 ) {
     val label = when (player) {
         InAppPlayer.NORMAL -> "Normal"
-        InAppPlayer.VLC -> "VLC"
-        InAppPlayer.MPV -> "External"
+        InAppPlayer.VLC,
+        InAppPlayer.MPV -> "MPV"
         InAppPlayer.EXTERNAL -> "External"
     }
 

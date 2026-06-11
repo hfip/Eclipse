@@ -111,7 +111,7 @@ fun DownloadsRoute(
     onVerifyFiles: () -> Unit,
     onPlaybackReady: (PlayerSource) -> Unit = {},
     onPlaybackFailure: (PlayerSource, String, Boolean) -> Unit = { _, _, _ -> },
-    preferredPlayer: InAppPlayer = InAppPlayer.VLC,
+    preferredPlayer: InAppPlayer = InAppPlayer.MPV,
     playbackSettings: PlaybackSettingsSnapshot = PlaybackSettingsSnapshot(),
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(DownloadsTab.Active) }

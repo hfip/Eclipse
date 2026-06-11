@@ -25,6 +25,7 @@ struct contentView: View {
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
     @ObservedObject private var downloadManager = ReaderDownloadManager.shared
     @State private var showAddToCollection: Bool = false
+    @State private var shareItem: ReaderDetailShareItem?
     @State private var width: CGFloat = 150
     @State private var langaugeIdx: Int = 0
     @State private var showChaptersMenu: Bool = false
@@ -38,7 +39,7 @@ struct contentView: View {
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
     private var heroHeight: CGFloat {
-        min(max(UIScreen.main.bounds.height * 0.48, 360), isIPad ? 560 : 500)
+        min(max(UIScreen.main.bounds.height * 0.44, 320), isIPad ? 520 : 460)
     }
 
     /// Stable numeric ID derived from module + content params for progress & library.
@@ -142,18 +143,12 @@ struct contentView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .kanzenGradientBackground(scrollOffset: scrollOffset)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showAddToCollection = true
-                } label: {
-                    Image(systemName: libraryManager.isBookmarked(libraryItem) ? "bookmark.fill" : "bookmark")
-                }
-            }
-        }
         .sheet(isPresented: $showAddToCollection) {
             MangaAddToCollectionView(item: libraryItem)
                 .environmentObject(libraryManager)
+        }
+        .sheet(item: $shareItem) { item in
+            ActivityView(items: item.items)
         }
     }
     
@@ -241,20 +236,31 @@ struct contentView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: heroHeight)
                 .clipped()
+                .blur(radius: 18)
+                .overlay(Color.black.opacity(0.32))
+
+            KFImage(URL(string: imageURL))
+                .placeholder { Color.clear }
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity)
+                .frame(height: max(heroHeight - 34, 240))
+                .padding(.top, 12)
+                .padding(.horizontal, 16)
 
             LinearGradient(
                 colors: [
-                    Color.black.opacity(0.18),
-                    Color.black.opacity(0.45),
+                    Color.black.opacity(0.04),
+                    Color.black.opacity(0.35),
                     Color.black.opacity(0.98)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(title)
-                    .font(.system(size: isIPad ? 52 : 42, weight: .bold))
+                    .font(.system(size: isIPad ? 40 : 32, weight: .bold))
                     .fontWeight(.bold)
                     .foregroundColor(.white)
                     .lineLimit(3)
@@ -273,12 +279,14 @@ struct contentView: View {
 
                     Text(parentModule?.moduleData.novel == true ? "Light Novel" : "Manga")
                 }
-                .font(.title3)
+                .font(.subheadline)
                 .foregroundColor(.white.opacity(0.82))
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 22)
+            .padding(.bottom, 18)
         }
+        .frame(height: heroHeight)
+        .clipped()
     }
 
     @ViewBuilder
@@ -294,18 +302,29 @@ struct contentView: View {
             }
             .readerDetailIconButton()
 
-            Menu {
-                if let parentModule {
-                    Button { } label: {
-                        Label(parentModule.moduleData.sourceName, systemImage: "puzzlepiece.extension")
-                    }
-                    .disabled(true)
-                }
+            Button {
+                shareItem = ReaderDetailShareItem(
+                    title: title,
+                    sourceName: sourceDisplayName,
+                    sourceURLString: params
+                )
             } label: {
-                Image(systemName: "ellipsis")
+                Image(systemName: "square.and.arrow.up")
+            }
+            .readerDetailIconButton()
+
+            Button {
+                loadingState = true
+                getContentData()
+            } label: {
+                Image(systemName: "arrow.clockwise")
             }
             .readerDetailIconButton()
         }
+    }
+
+    private var sourceDisplayName: String {
+        parentModule?.moduleData.sourceName ?? "Source"
     }
 
     private func selectedChapterGroupForReading() -> [Chapter] {
@@ -324,8 +343,8 @@ struct contentView: View {
 
         VStack(alignment: .leading, spacing: 4) {
             Text(cleaned)
-                .font(.system(size: isIPad ? 30 : 27, weight: .regular))
-                .lineSpacing(4)
+                .font(isIPad ? .title3 : .body)
+                .lineSpacing(3)
                 .foregroundColor(.primary.opacity(0.92))
                 .lineLimit(expandedDescription ? nil : 5)
                 .onTapGesture {
@@ -336,7 +355,7 @@ struct contentView: View {
                 HStack {
                     Spacer()
                     Text("More")
-                        .font(.title3)
+                        .font(.callout)
                         .foregroundColor(.secondary)
                         .onTapGesture {
                             withAnimation { expandedDescription.toggle() }
@@ -354,13 +373,13 @@ struct contentView: View {
             HStack(spacing: 8) {
                 ForEach(tags, id: \.self) { tag in
                     Text(tag)
-                        .font(.callout)
+                        .font(.footnote)
                         .foregroundColor(.primary)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
                         .overlay(
                             Capsule()
-                                .stroke(Color.primary.opacity(0.75), lineWidth: 1)
+                                .stroke(Color.primary.opacity(0.55), lineWidth: 1)
                         )
                 }
             }
@@ -431,11 +450,16 @@ struct contentView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("\(selected.chapters.count) Chapters")
+                    Text(sourceDisplayName)
                         .font(.headline)
                         .fontWeight(.bold)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
                     Spacer()
+                    Text("\(selected.chapters.count) Chapters")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
 
                     if chaptersData.count > 1 {
                         Menu {
@@ -751,7 +775,7 @@ struct contentView: View {
                 .padding(.vertical, 12)
                 .foregroundColor(.white)
                 .background(Color.accentColor)
-                .cornerRadius(16)
+                .cornerRadius(12)
             }
             .buttonStyle(.plain)
         }

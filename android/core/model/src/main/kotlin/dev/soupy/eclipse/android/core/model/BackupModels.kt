@@ -236,7 +236,7 @@ data class BackupData(
     val enableVLCSubtitleEditMenu: Boolean = true,
     val preferredAnimeAudioLanguage: String = "jpn",
     @Serializable(with = InAppPlayerBackupSerializer::class)
-    val inAppPlayer: InAppPlayer = InAppPlayer.VLC,
+    val inAppPlayer: InAppPlayer = InAppPlayer.MPV,
     @SerialName("playerChoice")
     @Serializable(with = InAppPlayerBackupSerializer::class)
     val legacyPlayerChoice: InAppPlayer? = null,
@@ -323,7 +323,7 @@ data class BackupData(
 ) {
     val resolvedInAppPlayer: InAppPlayer
         get() = (legacyPlayerChoice ?: inAppPlayer).let { player ->
-            if (player == InAppPlayer.MPV) InAppPlayer.EXTERNAL else player
+            if (player == InAppPlayer.VLC) InAppPlayer.MPV else player
         }
 
     fun nextEpisodeThresholdPercent(): Int {
@@ -659,11 +659,10 @@ object InAppPlayerBackupSerializer : KSerializer<InAppPlayer> {
             ?: decoder.decodeString()
 
         return when (raw.trim().lowercase()) {
-            "vlc" -> InAppPlayer.VLC
-            "mpv" -> InAppPlayer.EXTERNAL
+            "vlc", "mpv" -> InAppPlayer.MPV
             "external", "outplayer", "outside" -> InAppPlayer.EXTERNAL
             "normal", "default", "media3", "exoplayer" -> InAppPlayer.NORMAL
-            else -> InAppPlayer.VLC
+            else -> InAppPlayer.MPV
         }
     }
 
@@ -671,8 +670,8 @@ object InAppPlayerBackupSerializer : KSerializer<InAppPlayer> {
         val jsonEncoder = encoder as? JsonEncoder
         val encoded = when (value) {
             InAppPlayer.NORMAL -> "Normal"
-            InAppPlayer.VLC -> "VLC"
-            InAppPlayer.MPV -> "External"
+            InAppPlayer.VLC,
+            InAppPlayer.MPV -> "MPV"
             InAppPlayer.EXTERNAL -> "External"
         }
         if (jsonEncoder != null) {

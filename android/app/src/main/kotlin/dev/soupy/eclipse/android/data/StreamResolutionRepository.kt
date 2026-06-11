@@ -638,7 +638,7 @@ class StreamResolutionRepository(
         request: StremioRequest,
         candidates: List<ResolvedStreamCandidate>,
     ): List<SubtitleTrack> {
-        if (settings.inAppPlayer != InAppPlayer.VLC ||
+        if (settings.inAppPlayer != InAppPlayer.MPV ||
             !settings.vlcOpenSubtitlesEnabled ||
             !settings.vlcOpenSubtitlesAutoFallbackEnabled ||
             !settings.enableSubtitlesByDefault

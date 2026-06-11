@@ -171,7 +171,8 @@ class TmdbService(
         }
 }
 
-private fun String.urlEncode(): String = URLEncoder.encode(this, Charsets.UTF_8)
+@Suppress("DEPRECATION")
+private fun String.urlEncode(): String = URLEncoder.encode(this, Charsets.UTF_8.name())
 
 private fun String.normalizedTmdbLanguage(): String =
     trim().takeIf { it.isNotBlank() } ?: "en-US"

@@ -22,6 +22,7 @@ include(
     ":core:model",
     ":core:network",
     ":core:storage",
+    ":core:mpv",
     ":core:player",
     ":core:js",
     ":feature:home",
@@ -35,4 +36,3 @@ include(
     ":feature:manga",
     ":feature:novel",
 )
-

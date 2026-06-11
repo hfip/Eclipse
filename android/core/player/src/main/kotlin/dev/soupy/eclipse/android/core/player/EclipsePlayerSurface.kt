@@ -56,6 +56,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -70,19 +71,15 @@ import dev.soupy.eclipse.android.core.model.PlayerEpisodeBrowserItem
 import dev.soupy.eclipse.android.core.model.PlayerSource
 import dev.soupy.eclipse.android.core.model.SkipSegment
 import dev.soupy.eclipse.android.core.model.SubtitleTrack
+import dev.soupy.eclipse.android.core.mpv.MpvPlayerController
+import dev.soupy.eclipse.android.core.mpv.MpvPlayerEvent
+import dev.soupy.eclipse.android.core.mpv.MpvPlayerView
+import dev.soupy.eclipse.android.core.mpv.MpvTrackOption
+import dev.soupy.eclipse.android.core.mpv.MpvTrackSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.IMedia
-import org.videolan.libvlc.util.VLCVideoLayout
-
-private const val VlcSubtitleSlaveType = 0
-private const val VlcExternalSubtitlePriority = 4
-private const val VlcDisabledTrackId = -1
 
 object EclipsePictureInPictureState {
     @Volatile
@@ -98,10 +95,11 @@ data class PlaybackProgressSnapshot(
 )
 
 @Composable
+@androidx.annotation.OptIn(UnstableApi::class)
 fun EclipsePlayerSurface(
     modifier: Modifier = Modifier,
     source: PlayerSource? = null,
-    preferredPlayer: InAppPlayer = InAppPlayer.VLC,
+    preferredPlayer: InAppPlayer = InAppPlayer.MPV,
     settings: PlaybackSettingsSnapshot = PlaybackSettingsSnapshot(),
     skipSegments: List<SkipSegment> = emptyList(),
     episodeBrowserItems: List<PlayerEpisodeBrowserItem> = emptyList(),
@@ -115,7 +113,7 @@ fun EclipsePlayerSurface(
 ) {
     DisposableEffect(source?.uri, preferredPlayer, settings.pictureInPictureEnabled) {
         val active = source != null &&
-            preferredPlayer == InAppPlayer.VLC &&
+            preferredPlayer.embeddedPlayerAlias() == InAppPlayer.MPV &&
             settings.pictureInPictureEnabled
         EclipsePictureInPictureState.enabled = active
         onDispose {
@@ -185,9 +183,9 @@ fun EclipsePlayerSurface(
         return
     }
 
-    val nativePlayerPackage = preferredPlayer.nativePackageName()
-    if (preferredPlayer == InAppPlayer.VLC) {
-        EmbeddedVlcPlayerPanel(
+    val resolvedPlayer = preferredPlayer.embeddedPlayerAlias()
+    if (resolvedPlayer == InAppPlayer.MPV) {
+        EmbeddedMpvPlayerPanel(
             source = source,
             modifier = modifier,
             settings = settings,
@@ -204,11 +202,11 @@ fun EclipsePlayerSurface(
         return
     }
 
-    if (preferredPlayer == InAppPlayer.EXTERNAL || nativePlayerPackage != null) {
+    if (resolvedPlayer == InAppPlayer.EXTERNAL) {
         ExternalPlayerPanel(
             source = source,
             playerLabel = preferredPlayer.externalPanelLabel(),
-            externalPlayer = nativePlayerPackage ?: settings.externalPlayer,
+            externalPlayer = settings.externalPlayer,
             modifier = modifier,
         )
         return
@@ -653,8 +651,8 @@ private fun EpisodeBrowserButton(
 }
 
 @Composable
-private fun VlcPlaybackShortcutRow(
-    mediaPlayer: MediaPlayer?,
+private fun MpvPlaybackShortcutRow(
+    controller: MpvPlayerController?,
     settings: PlaybackSettingsSnapshot,
     progressPercent: Float,
     currentPositionSeconds: Double,
@@ -677,9 +675,9 @@ private fun VlcPlaybackShortcutRow(
     ) {
         if (manualSkipSegment != null) {
             Button(
-                enabled = mediaPlayer != null,
+                enabled = controller != null,
                 onClick = {
-                    mediaPlayer?.setTime((manualSkipSegment.endTime * 1_000.0).toLong())
+                    controller?.seekToMs((manualSkipSegment.endTime * 1_000.0).toLong())
                     onProgressChanged()
                 },
                 modifier = Modifier.padding(end = 10.dp),
@@ -709,16 +707,16 @@ private fun VlcPlaybackShortcutRow(
         if (settings.holdSpeed > 1.0) {
             HoldSpeedSurface(
                 speed = settings.holdSpeed,
-                onHoldStart = { mediaPlayer?.setRate(settings.holdSpeed.toFloat()) },
-                onHoldEnd = { mediaPlayer?.setRate(settings.defaultPlaybackSpeed.toFloat()) },
+                onHoldStart = { controller?.setPlaybackSpeed(settings.holdSpeed) },
+                onHoldEnd = { controller?.setPlaybackSpeed(settings.defaultPlaybackSpeed) },
             )
         }
 
         if (settings.skip85sEnabled && (settings.skip85sAlwaysVisible || manualSkipSegment == null)) {
             Button(
-                enabled = mediaPlayer != null,
+                enabled = controller != null,
                 onClick = {
-                    mediaPlayer?.seekBy(85_000L)
+                    controller?.seekByMs(85_000L)
                     onProgressChanged()
                 },
                 modifier = Modifier.padding(start = 10.dp),
@@ -868,8 +866,8 @@ private fun PlayerView.installDoubleTapSeek(
 }
 
 @SuppressLint("ClickableViewAccessibility")
-private fun VLCVideoLayout.installVlcGestures(
-    mediaPlayer: MediaPlayer,
+private fun android.view.View.installMpvGestures(
+    controller: MpvPlayerController,
     enabled: Boolean,
     seekDeltaMs: Long,
     twoFingerPlayPauseEnabled: Boolean,
@@ -894,7 +892,7 @@ private fun VLCVideoLayout.installVlcGestures(
                 } else {
                     seekDeltaMs
                 }
-                mediaPlayer.seekBy(deltaMs)
+                controller.seekByMs(deltaMs)
                 onSeek()
                 return true
             }
@@ -928,11 +926,7 @@ private fun VLCVideoLayout.installVlcGestures(
             event.pointerCount >= 2 &&
             event.actionMasked == MotionEvent.ACTION_POINTER_UP
         ) {
-            if (mediaPlayer.isPlaying) {
-                mediaPlayer.pause()
-            } else {
-                mediaPlayer.play()
-            }
+            controller.togglePause()
             return@setOnTouchListener true
         }
         detector.onTouchEvent(event)
@@ -1033,17 +1027,8 @@ private fun ExoPlayer.seekBy(deltaMs: Long) {
     seekTo(targetPosition)
 }
 
-private fun MediaPlayer.seekBy(deltaMs: Long) {
-    val currentPosition = time.coerceAtLeast(0L)
-    val duration = length.takeIf { it > 0L }
-    val targetPosition = duration?.let { durationMs ->
-        (currentPosition + deltaMs).coerceIn(0L, (durationMs - 1_000L).coerceAtLeast(0L))
-    } ?: (currentPosition + deltaMs).coerceAtLeast(0L)
-    setTime(targetPosition)
-}
-
 @Composable
-private fun EmbeddedVlcPlayerPanel(
+private fun EmbeddedMpvPlayerPanel(
     source: PlayerSource,
     modifier: Modifier = Modifier,
     settings: PlaybackSettingsSnapshot,
@@ -1057,166 +1042,62 @@ private fun EmbeddedVlcPlayerPanel(
     onPlaybackReady: (PlayerSource) -> Unit,
     onPlaybackFailure: (PlayerSource, String, Boolean) -> Unit,
 ) {
-    var session by remember(source.uri) { mutableStateOf<VlcSession?>(null) }
+    var controller by remember(source.uri) { mutableStateOf<MpvPlayerController?>(null) }
     var playbackError by remember(source.uri) { mutableStateOf<String?>(null) }
-    var audioTracks by remember(source.uri) { mutableStateOf(emptyList<VlcTrackOption>()) }
-    var subtitleTracks by remember(source.uri) { mutableStateOf(emptyList<VlcTrackOption>()) }
-    var selectedAudioTrackId by remember(source.uri) { mutableStateOf(VlcDisabledTrackId) }
-    var selectedSubtitleTrackId by remember(source.uri) { mutableStateOf(VlcDisabledTrackId) }
-    var userSelectedAudioTrack by remember(source.uri) { mutableStateOf(false) }
-    var userSelectedSubtitleTrack by remember(source.uri) { mutableStateOf(false) }
+    var trackSnapshot by remember(source.uri) { mutableStateOf(MpvTrackSnapshot()) }
     var progressPercent by remember(source.uri) { mutableStateOf(0f) }
     var currentPositionSeconds by remember(source.uri) { mutableStateOf(0.0) }
     var isPlaybackActive by remember(source.uri) { mutableStateOf(false) }
-    var initialResumeApplied by remember(source.uri, source.resumePositionMs) { mutableStateOf(false) }
-    var autoAudioApplied by remember(source.uri, settings.preferredAnimeAudioLanguage) { mutableStateOf(false) }
-    var autoSubtitleApplied by remember(
-        source.uri,
-        settings.enableSubtitlesByDefault,
-        settings.defaultSubtitleLanguage,
-    ) {
-        mutableStateOf(false)
-    }
+    var reportedPlaybackReady by remember(source.uri) { mutableStateOf(false) }
+    var reportedFinished by remember(source.uri) { mutableStateOf(false) }
     KeepScreenAwakeWhilePlaying(isPlaybackActive)
 
-    fun refreshVlcTracks(player: MediaPlayer?) {
-        if (player == null) return
-        audioTracks = player.vlcAudioTrackOptions()
-        subtitleTracks = player.vlcSubtitleTrackOptions()
-        selectedAudioTrackId = player.getAudioTrack()
-        selectedSubtitleTrackId = player.getSpuTrack()
-    }
-
-    fun progressSnapshot(
-        player: MediaPlayer?,
+    fun toPlaybackSnapshot(
+        snapshot: dev.soupy.eclipse.android.core.mpv.MpvProgressSnapshot,
         forceFinished: Boolean = false,
         forceTrackerSync: Boolean = false,
-    ): PlaybackProgressSnapshot? {
-        if (player == null) return null
-        val durationMs = player.length.coerceAtLeast(0L)
-        if (durationMs <= 0L) return null
-        val positionMs = player.time
-            .coerceAtLeast(0L)
-            .coerceAtMost(durationMs)
+    ): PlaybackProgressSnapshot {
+        val durationMs = snapshot.durationMs.coerceAtLeast(0L)
+        val positionMs = snapshot.positionMs.coerceAtLeast(0L).coerceAtMost(durationMs)
         progressPercent = if (forceFinished) {
             1f
-        } else {
+        } else if (durationMs > 0L) {
             (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
         }
         currentPositionSeconds = positionMs / 1_000.0
         return PlaybackProgressSnapshot(
             positionMs = positionMs,
             durationMs = durationMs,
-            isFinished = forceFinished || positionMs >= (durationMs - 1_500L).coerceAtLeast(0L),
+            isFinished = forceFinished || snapshot.isFinished,
             forceTrackerSync = forceTrackerSync,
             playerSource = source,
         )
     }
 
-    fun emitProgressSnapshot(
+    fun emitCurrentSnapshot(
         forceFinished: Boolean = false,
         forceTrackerSync: Boolean = false,
     ) {
-        progressSnapshot(session?.mediaPlayer, forceFinished, forceTrackerSync)?.let(onProgress)
+        controller?.progressSnapshot()
+            ?.let { snapshot -> toPlaybackSnapshot(snapshot, forceFinished, forceTrackerSync) }
+            ?.let(onProgress)
     }
 
     DisposableEffect(source.uri) {
         onDispose {
             isPlaybackActive = false
-            emitProgressSnapshot(forceTrackerSync = true)
-            session?.release()
-            session = null
-        }
-    }
-
-    LaunchedEffect(session, settings.defaultPlaybackSpeed) {
-        session?.mediaPlayer?.setRate(settings.defaultPlaybackSpeed.toFloat())
-    }
-
-    LaunchedEffect(session, source.resumePositionMs) {
-        val player = session?.mediaPlayer ?: return@LaunchedEffect
-        val targetMs = source.resumePositionMs.coerceAtLeast(0L)
-        if (targetMs <= 0L || initialResumeApplied) return@LaunchedEffect
-        repeat(80) {
-            val durationMs = player.length
-            if (durationMs > 0L) {
-                val clamped = targetMs.coerceAtMost((durationMs - 1_000L).coerceAtLeast(0L))
-                player.setTime(clamped)
-                initialResumeApplied = true
-                emitProgressSnapshot()
-                return@LaunchedEffect
-            }
-            delay(250L)
-        }
-        player.setTime(targetMs)
-        initialResumeApplied = true
-        emitProgressSnapshot()
-    }
-
-    LaunchedEffect(session) {
-        while (isActive) {
-            refreshVlcTracks(session?.mediaPlayer)
-            delay(if (audioTracks.isEmpty() && subtitleTracks.isEmpty()) 300L else 1_000L)
-        }
-    }
-
-    LaunchedEffect(session, audioTracks, settings.preferredAnimeAudioLanguage) {
-        if (autoAudioApplied || userSelectedAudioTrack || !source.isAnimeLike()) return@LaunchedEffect
-        val player = session?.mediaPlayer ?: return@LaunchedEffect
-        val preferred = preferredVlcTrack(audioTracks, settings.preferredAnimeAudioLanguage) ?: return@LaunchedEffect
-        if (player.setAudioTrack(preferred.id)) {
-            selectedAudioTrackId = preferred.id
-            autoAudioApplied = true
-        }
-    }
-
-    LaunchedEffect(session, subtitleTracks, settings.enableSubtitlesByDefault, settings.defaultSubtitleLanguage) {
-        if (autoSubtitleApplied || userSelectedSubtitleTrack) return@LaunchedEffect
-        val player = session?.mediaPlayer ?: return@LaunchedEffect
-        if (!settings.enableSubtitlesByDefault) {
-            player.setSpuTrack(VlcDisabledTrackId)
-            selectedSubtitleTrackId = VlcDisabledTrackId
-            autoSubtitleApplied = true
-            return@LaunchedEffect
-        }
-        val preferred = preferredVlcTrack(subtitleTracks, settings.defaultSubtitleLanguage)
-            ?: subtitleTracks.firstOrNull()
-            ?: return@LaunchedEffect
-        if (player.setSpuTrack(preferred.id)) {
-            selectedSubtitleTrackId = preferred.id
-            autoSubtitleApplied = true
-        }
-    }
-
-    LaunchedEffect(session) {
-        while (isActive) {
-            val player = session?.mediaPlayer
-            isPlaybackActive = player?.isPlaying == true
-            val snapshot = progressSnapshot(player)
-            if (player != null && snapshot != null) {
-                val activeSegment = if (settings.aniSkipAutoSkip && player.isPlaying) {
-                    skipSegments.activeAt(snapshot.positionMs / 1_000.0)
-                } else {
-                    null
-                }
-                if (activeSegment != null) {
-                    player.setTime((activeSegment.endTime * 1_000.0).toLong())
-                    emitProgressSnapshot()
-                } else {
-                    onProgress(snapshot)
-                }
-            }
-            delay(1_000L)
+            emitCurrentSnapshot(forceTrackerSync = true)
         }
     }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        VlcPlaybackShortcutRow(
-            mediaPlayer = session?.mediaPlayer,
+        MpvPlaybackShortcutRow(
+            controller = controller,
             settings = settings,
             progressPercent = progressPercent,
             currentPositionSeconds = currentPositionSeconds,
@@ -1226,38 +1107,27 @@ private fun EmbeddedVlcPlayerPanel(
             nextEpisodePosterUrl = nextEpisodePosterUrl,
             onNextEpisode = onNextEpisode,
             onSelectEpisode = onSelectEpisode,
-            onProgressChanged = { emitProgressSnapshot() },
+            onProgressChanged = { emitCurrentSnapshot() },
         )
 
-        VlcPlaybackTrackControls(
-            audioTracks = audioTracks,
-            subtitleTracks = subtitleTracks,
-            selectedAudioTrackId = selectedAudioTrackId,
-            selectedSubtitleTrackId = selectedSubtitleTrackId,
+        MpvPlaybackTrackControls(
+            audioTracks = trackSnapshot.audioTracks,
+            subtitleTracks = trackSnapshot.subtitleTracks,
+            selectedAudioTrackId = trackSnapshot.selectedAudioTrackId,
+            selectedSubtitleTrackId = trackSnapshot.selectedSubtitleTrackId,
             showSubtitleStyleSummary = settings.enableVLCSubtitleEditMenu,
             subtitleStyleSummary = settings.vlcSubtitleStyleSummary(),
             onAudioTrackSelected = { track ->
-                val player = session?.mediaPlayer ?: return@VlcPlaybackTrackControls
-                userSelectedAudioTrack = true
-                if (player.setAudioTrack(track.id)) {
-                    selectedAudioTrackId = track.id
-                }
-                refreshVlcTracks(player)
+                controller?.selectAudioTrack(track.id)
+                trackSnapshot = controller?.trackSnapshot() ?: trackSnapshot
             },
             onSubtitleDisabled = {
-                val player = session?.mediaPlayer ?: return@VlcPlaybackTrackControls
-                userSelectedSubtitleTrack = true
-                player.setSpuTrack(VlcDisabledTrackId)
-                selectedSubtitleTrackId = VlcDisabledTrackId
-                refreshVlcTracks(player)
+                controller?.selectSubtitleTrack(MpvPlayerController.DisabledTrackId)
+                trackSnapshot = controller?.trackSnapshot() ?: trackSnapshot
             },
             onSubtitleTrackSelected = { track ->
-                val player = session?.mediaPlayer ?: return@VlcPlaybackTrackControls
-                userSelectedSubtitleTrack = true
-                if (player.setSpuTrack(track.id)) {
-                    selectedSubtitleTrackId = track.id
-                }
-                refreshVlcTracks(player)
+                controller?.selectSubtitleTrack(track.id)
+                trackSnapshot = controller?.trackSnapshot() ?: trackSnapshot
             },
         )
 
@@ -1268,67 +1138,61 @@ private fun EmbeddedVlcPlayerPanel(
             color = androidx.compose.ui.graphics.Color.Black,
         ) {
             key(source.uri) {
-                AndroidView(
+                MpvPlayerView(
+                    source = source,
+                    settings = settings,
                     modifier = Modifier.fillMaxSize(),
-                    factory = { context ->
-                        VLCVideoLayout(context).also { layout ->
-                            runCatching {
-                                VlcSession.create(
-                                    context = context,
-                                    layout = layout,
-                                    source = source,
-                                    settings = settings,
-                                )
-                            }.onSuccess { created ->
-                                session?.release()
-                                session = created
-                                refreshVlcTracks(created.mediaPlayer)
-                                onPlaybackReady(source)
-                                layout.installVlcGestures(
-                                    mediaPlayer = created.mediaPlayer,
-                                    enabled = settings.doubleTapSeekEnabled,
-                                    seekDeltaMs = (settings.doubleTapSeekSeconds * 1_000.0).toLong(),
-                                    twoFingerPlayPauseEnabled = settings.playerTwoFingerTapPlayPauseEnabled,
-                                    brightnessGestureEnabled = settings.brightnessGestureEnabled,
-                                    volumeGestureEnabled = settings.volumeGestureEnabled,
-                                    onSeek = {
-                                        onProgress(
-                                            PlaybackProgressSnapshot(
-                                                positionMs = created.mediaPlayer.time.coerceAtLeast(0L),
-                                                durationMs = created.mediaPlayer.length.coerceAtLeast(0L),
-                                                playerSource = source,
-                                            ),
-                                        )
-                                    },
-                                )
-                                playbackError = null
-                            }.onFailure { error ->
-                                val message = error.message ?: "Embedded VLC playback failed."
-                                playbackError = message
-                                onPlaybackFailure(source, message, message.isLikelySourceFailure())
-                            }
-                        }
+                    resolveProxiedUrl = { url, headers -> PlayerHeaderProxy.proxiedUrl(url, headers) },
+                    onControllerReady = { controller = it },
+                    configureView = { view, activeController ->
+                        view.installMpvGestures(
+                            controller = activeController,
+                            enabled = settings.doubleTapSeekEnabled,
+                            seekDeltaMs = (settings.doubleTapSeekSeconds * 1_000.0).toLong(),
+                            twoFingerPlayPauseEnabled = settings.playerTwoFingerTapPlayPauseEnabled,
+                            brightnessGestureEnabled = settings.brightnessGestureEnabled,
+                            volumeGestureEnabled = settings.volumeGestureEnabled,
+                            onSeek = { emitCurrentSnapshot() },
+                        )
                     },
-                    update = { layout ->
-                        session?.mediaPlayer?.let { mediaPlayer ->
-                            mediaPlayer.setRate(settings.defaultPlaybackSpeed.toFloat())
-                            layout.installVlcGestures(
-                                mediaPlayer = mediaPlayer,
-                                enabled = settings.doubleTapSeekEnabled,
-                                seekDeltaMs = (settings.doubleTapSeekSeconds * 1_000.0).toLong(),
-                                twoFingerPlayPauseEnabled = settings.playerTwoFingerTapPlayPauseEnabled,
-                                brightnessGestureEnabled = settings.brightnessGestureEnabled,
-                                volumeGestureEnabled = settings.volumeGestureEnabled,
-                                onSeek = {
-                                    onProgress(
-                                        PlaybackProgressSnapshot(
-                                            positionMs = mediaPlayer.time.coerceAtLeast(0L),
-                                            durationMs = mediaPlayer.length.coerceAtLeast(0L),
-                                            playerSource = source,
-                                        ),
-                                    )
-                                },
-                            )
+                    onEvent = { event ->
+                        when (event) {
+                            MpvPlayerEvent.Ready -> {
+                                if (!reportedPlaybackReady) {
+                                    reportedPlaybackReady = true
+                                    playbackError = null
+                                    onPlaybackReady(source)
+                                }
+                            }
+                            is MpvPlayerEvent.Progress -> {
+                                isPlaybackActive = event.snapshot.isPlaying
+                                val playbackSnapshot = toPlaybackSnapshot(event.snapshot)
+                                val activeSegment = if (settings.aniSkipAutoSkip && event.snapshot.isPlaying) {
+                                    skipSegments.activeAt(playbackSnapshot.positionMs / 1_000.0)
+                                } else {
+                                    null
+                                }
+                                if (activeSegment != null) {
+                                    controller?.seekToMs((activeSegment.endTime * 1_000.0).toLong())
+                                    emitCurrentSnapshot()
+                                } else {
+                                    onProgress(playbackSnapshot)
+                                }
+                            }
+                            is MpvPlayerEvent.TracksChanged -> {
+                                trackSnapshot = event.snapshot
+                            }
+                            MpvPlayerEvent.Ended -> {
+                                if (!reportedFinished) {
+                                    reportedFinished = true
+                                    emitCurrentSnapshot(forceFinished = true, forceTrackerSync = true)
+                                }
+                            }
+                            is MpvPlayerEvent.Error -> {
+                                playbackError = event.message
+                                isPlaybackActive = false
+                                onPlaybackFailure(source, event.message, event.message.isLikelySourceFailure())
+                            }
                         }
                     },
                 )
@@ -1339,7 +1203,7 @@ private fun EmbeddedVlcPlayerPanel(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Embedded VLC unavailable",
+                            text = "Embedded MPV unavailable",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -1356,16 +1220,16 @@ private fun EmbeddedVlcPlayerPanel(
 }
 
 @Composable
-private fun VlcPlaybackTrackControls(
-    audioTracks: List<VlcTrackOption>,
-    subtitleTracks: List<VlcTrackOption>,
+private fun MpvPlaybackTrackControls(
+    audioTracks: List<MpvTrackOption>,
+    subtitleTracks: List<MpvTrackOption>,
     selectedAudioTrackId: Int,
     selectedSubtitleTrackId: Int,
     showSubtitleStyleSummary: Boolean,
     subtitleStyleSummary: String,
-    onAudioTrackSelected: (VlcTrackOption) -> Unit,
+    onAudioTrackSelected: (MpvTrackOption) -> Unit,
     onSubtitleDisabled: () -> Unit,
-    onSubtitleTrackSelected: (VlcTrackOption) -> Unit,
+    onSubtitleTrackSelected: (MpvTrackOption) -> Unit,
 ) {
     GlassPanel(
         modifier = Modifier.fillMaxWidth(),
@@ -1373,19 +1237,18 @@ private fun VlcPlaybackTrackControls(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                VlcTrackDropdown(
+                MpvTrackDropdown(
                     modifier = Modifier.weight(1f),
                     title = "Audio",
-                    selectedLabel = audioTracks.firstOrNull { it.id == selectedAudioTrackId }?.name
-                        ?: "Auto",
+                    selectedLabel = audioTracks.firstOrNull { it.id == selectedAudioTrackId }?.name ?: "Auto",
                     emptyLabel = "No audio tracks",
                     tracks = audioTracks,
                     onTrackSelected = onAudioTrackSelected,
                 )
-                VlcSubtitleDropdown(
+                MpvSubtitleDropdown(
                     modifier = Modifier.weight(1f),
                     selectedLabel = subtitleTracks.firstOrNull { it.id == selectedSubtitleTrackId }?.name
-                        ?: if (selectedSubtitleTrackId == VlcDisabledTrackId) "Off" else "Auto",
+                        ?: if (selectedSubtitleTrackId == MpvPlayerController.DisabledTrackId) "Off" else "Auto",
                     tracks = subtitleTracks,
                     onDisabled = onSubtitleDisabled,
                     onTrackSelected = onSubtitleTrackSelected,
@@ -1405,13 +1268,13 @@ private fun VlcPlaybackTrackControls(
 }
 
 @Composable
-private fun VlcTrackDropdown(
+private fun MpvTrackDropdown(
     modifier: Modifier = Modifier,
     title: String,
     selectedLabel: String,
     emptyLabel: String,
-    tracks: List<VlcTrackOption>,
-    onTrackSelected: (VlcTrackOption) -> Unit,
+    tracks: List<MpvTrackOption>,
+    onTrackSelected: (MpvTrackOption) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
@@ -1456,12 +1319,12 @@ private fun VlcTrackDropdown(
 }
 
 @Composable
-private fun VlcSubtitleDropdown(
+private fun MpvSubtitleDropdown(
     modifier: Modifier = Modifier,
     selectedLabel: String,
-    tracks: List<VlcTrackOption>,
+    tracks: List<MpvTrackOption>,
     onDisabled: () -> Unit,
-    onTrackSelected: (VlcTrackOption) -> Unit,
+    onTrackSelected: (MpvTrackOption) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
@@ -1512,109 +1375,6 @@ private fun VlcSubtitleDropdown(
     }
 }
 
-private class VlcSession(
-    val mediaPlayer: MediaPlayer,
-    private val libVlc: LibVLC,
-) {
-    fun release() {
-        runCatching { mediaPlayer.stop() }
-        runCatching { mediaPlayer.detachViews() }
-        runCatching { mediaPlayer.release() }
-        runCatching { libVlc.release() }
-    }
-
-    companion object {
-        fun create(
-            context: Context,
-            layout: VLCVideoLayout,
-            source: PlayerSource,
-            settings: PlaybackSettingsSnapshot,
-        ): VlcSession {
-            val libVlc = LibVLC(
-                context.applicationContext,
-                arrayListOf(
-                    "--network-caching=1500",
-                    "--http-reconnect",
-                ),
-            )
-            val mediaPlayer = MediaPlayer(libVlc)
-            mediaPlayer.attachViews(layout, null, false, false)
-            val proxiedMediaUri = if (settings.vlcHeaderProxyEnabled) {
-                AndroidVlcHeaderProxy.proxiedUrl(source.uri, source.headers)
-            } else {
-                null
-            }
-            val media = Media(libVlc, Uri.parse(proxiedMediaUri ?: source.uri))
-            if (proxiedMediaUri == null) {
-                source.headers.forEach { (name, value) ->
-                    media.addOption(":http-header=$name: $value")
-                }
-            }
-            source.vlcSubtitleUris().forEach { subtitleUri ->
-                val proxiedSubtitleUri = if (settings.vlcHeaderProxyEnabled) {
-                    AndroidVlcHeaderProxy.proxiedUrl(subtitleUri, source.headers)
-                } else {
-                    null
-                }
-                media.addSlave(IMedia.Slave(VlcSubtitleSlaveType, VlcExternalSubtitlePriority, proxiedSubtitleUri ?: subtitleUri))
-            }
-            mediaPlayer.media = media
-            media.release()
-            mediaPlayer.play()
-            mediaPlayer.setRate(settings.defaultPlaybackSpeed.toFloat())
-            return VlcSession(mediaPlayer, libVlc)
-        }
-    }
-}
-
-private fun MediaPlayer.vlcAudioTrackOptions(): List<VlcTrackOption> =
-    runCatching {
-        getAudioTracks()
-            ?.map { track ->
-                VlcTrackOption(
-                    id = track.id,
-                    name = track.name?.takeIf { it.isNotBlank() } ?: "Audio ${track.id}",
-                )
-            }
-            .orEmpty()
-    }.getOrDefault(emptyList())
-
-private fun MediaPlayer.vlcSubtitleTrackOptions(): List<VlcTrackOption> =
-    runCatching {
-        getSpuTracks()
-            ?.filter { track -> track.id >= 0 && !track.name.isDisabledTrackName() }
-            ?.map { track ->
-                VlcTrackOption(
-                    id = track.id,
-                    name = track.name?.takeIf { it.isNotBlank() } ?: "Subtitle ${track.id}",
-                )
-            }
-            .orEmpty()
-    }.getOrDefault(emptyList())
-
-private fun preferredVlcTrack(
-    tracks: List<VlcTrackOption>,
-    preferredLanguage: String,
-): VlcTrackOption? {
-    val languageTokens = languageTokens(preferredLanguage)
-    if (tracks.isEmpty() || languageTokens.isEmpty()) return null
-    val dialogueTokens = setOf("dialogue", "dialog", "full", "complete", "cc")
-    val lessPreferredTokens = setOf("sign", "songs", "song", "karaoke", "forced")
-    return tracks
-        .map { track ->
-            val lowerName = track.name.lowercase()
-            val score = languageTokens.count { token -> lowerName.contains(token) } * 100 +
-                dialogueTokens.count { token -> lowerName.contains(token) } * 10 -
-                lessPreferredTokens.count { token -> lowerName.contains(token) } * 8
-            track to score
-        }
-        .filter { (_, score) -> score > 0 }
-        .maxWithOrNull(
-            compareBy<Pair<VlcTrackOption, Int>> { it.second }
-                .thenByDescending { -it.first.id },
-        )
-        ?.first
-}
 
 @Composable
 private fun ExternalPlayerPanel(
@@ -1693,16 +1453,14 @@ private fun PlayerSource.externalPlayerIntent(externalPlayer: String): Intent {
     }
 }
 
-private fun InAppPlayer.nativePackageName(): String? = when (this) {
-    InAppPlayer.VLC -> "org.videolan.vlc"
-    InAppPlayer.MPV -> null
-    InAppPlayer.NORMAL,
-    InAppPlayer.EXTERNAL -> null
+private fun InAppPlayer.embeddedPlayerAlias(): InAppPlayer = when (this) {
+    InAppPlayer.VLC -> InAppPlayer.MPV
+    else -> this
 }
 
 private fun InAppPlayer.externalPanelLabel(): String = when (this) {
-    InAppPlayer.VLC -> "VLC"
-    InAppPlayer.MPV -> "External Player"
+    InAppPlayer.VLC,
+    InAppPlayer.MPV -> "MPV"
     InAppPlayer.EXTERNAL -> "External Player"
     InAppPlayer.NORMAL -> "Normal Player"
 }
@@ -1759,6 +1517,7 @@ private fun PlayerSource.vlcSubtitleUris(): List<String> =
         .mapNotNull { subtitle -> subtitle.uri?.takeIf { it.isNotBlank() } }
         .distinct()
 
+@androidx.annotation.OptIn(UnstableApi::class)
 private fun PlayerView.applySubtitleStyle(settings: PlaybackSettingsSnapshot) {
     subtitleView?.apply {
         setApplyEmbeddedStyles(false)
@@ -1887,7 +1646,7 @@ enum class PlayerBackend {
 
 data class PlaybackSessionState(
     val backend: PlayerBackend = PlayerBackend.NORMAL,
-    val preferredInAppPlayer: InAppPlayer = InAppPlayer.VLC,
+    val preferredInAppPlayer: InAppPlayer = InAppPlayer.MPV,
     val currentSource: PlayerSource? = null,
 )
 

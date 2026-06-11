@@ -180,7 +180,7 @@ class BackupDocumentTest {
 
         assertEquals("1.0", document.payload.version)
         assertEquals("#401F73", document.payload.settingsGradientColor)
-        assertEquals(InAppPlayer.VLC, document.payload.resolvedInAppPlayer)
+        assertEquals(InAppPlayer.MPV, document.payload.resolvedInAppPlayer)
         assertEquals(true, document.payload.useClassicScheduleUI)
         assertEquals(1.25, document.payload.defaultPlaybackSpeed)
         assertEquals(90, document.payload.nextEpisodeThresholdPercent())
