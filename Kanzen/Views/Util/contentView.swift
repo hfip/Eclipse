@@ -37,6 +37,10 @@ struct contentView: View {
     @AppStorage(ReaderDetailElement.orderStorageKey) private var readerDetailElementOrder = ReaderDetailElement.defaultOrderRawValue
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
+    private var heroHeight: CGFloat {
+        min(max(UIScreen.main.bounds.height * 0.48, 360), isIPad ? 560 : 500)
+    }
+
     /// Stable numeric ID derived from module + content params for progress & library.
     private var stableId: Int {
         guard let module = parentModule else { return 0 }
@@ -87,16 +91,17 @@ struct contentView: View {
     
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 18) {
                 headerSection
+                primaryActionSection
+                    .padding(.horizontal, 16)
 
                 ForEach(visibleReaderDetailElements) { element in
-                    Divider()
                     readerDetailElementView(element)
+                        .padding(.horizontal, 16)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .padding(.bottom, 24)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
@@ -228,60 +233,85 @@ struct contentView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        HStack(alignment: .top, spacing: 14) {
+        ZStack(alignment: .bottomLeading) {
             KFImage(URL(string: imageURL))
-                .placeholder { ProgressView() }
+                .placeholder { Color.black.opacity(0.18) }
                 .resizable()
                 .scaledToFill()
-                .frame(width: width, height: width * 1.5)
+                .frame(maxWidth: .infinity)
+                .frame(height: heroHeight)
                 .clipped()
-                .cornerRadius(16)
 
-            VStack(alignment: .leading, spacing: 6) {
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.18),
+                    Color.black.opacity(0.45),
+                    Color.black.opacity(0.98)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
                 Text(title)
-                    .font(.title2)
+                    .font(.system(size: isIPad ? 52 : 42, weight: .bold))
                     .fontWeight(.bold)
+                    .foregroundColor(.white)
                     .lineLimit(3)
+                    .minimumScaleFactor(0.72)
 
-                if parentModule?.moduleData.novel == true {
-                    Text("Light Novel")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.2))
-                        .cornerRadius(4)
-                } else {
-                    Text("Manga")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.2))
-                        .cornerRadius(4)
-                }
-
-                if let contentData = contentData {
-                    if let status = contentData["status"] as? String {
-                        Label(status, systemImage: "clock.arrow.circlepath")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                HStack(spacing: 10) {
+                    if let status = contentData?["status"] as? String {
+                        Text(status)
                     }
 
-                    if let authorArtist = contentData["authorArtist"] as? [String], !authorArtist.isEmpty {
+                    if let authorArtist = contentData?["authorArtist"] as? [String], !authorArtist.isEmpty {
+                        Image(systemName: "person.fill")
                         Text(authorArtist.joined(separator: ", "))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
+                            .lineLimit(1)
                     }
-                }
 
-                if let parentModule = parentModule {
-                    Label(parentModule.moduleData.sourceName, systemImage: "puzzlepiece.extension")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text(parentModule?.moduleData.novel == true ? "Light Novel" : "Manga")
                 }
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.82))
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 22)
         }
+    }
+
+    @ViewBuilder
+    private var primaryActionSection: some View {
+        let chapters = selectedChapterGroupForReading()
+        HStack(spacing: 12) {
+            readButton(chapters: chapters)
+
+            Button {
+                showAddToCollection = true
+            } label: {
+                Image(systemName: libraryManager.isBookmarked(libraryItem) ? "bookmark.fill" : "bookmark")
+            }
+            .readerDetailIconButton()
+
+            Menu {
+                if let parentModule {
+                    Button { } label: {
+                        Label(parentModule.moduleData.sourceName, systemImage: "puzzlepiece.extension")
+                    }
+                    .disabled(true)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .readerDetailIconButton()
+        }
+    }
+
+    private func selectedChapterGroupForReading() -> [Chapter] {
+        guard let contentChapters, !contentChapters.isEmpty else { return [] }
+        let index = min(max(langaugeIdx, 0), contentChapters.count - 1)
+        return contentChapters[index].chapters
     }
 
     // MARK: - Description
@@ -293,24 +323,25 @@ struct contentView: View {
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
 
         VStack(alignment: .leading, spacing: 4) {
-            Text("Synopsis")
-                .font(.headline)
-
             Text(cleaned)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .lineLimit(expandedDescription ? nil : 4)
+                .font(.system(size: isIPad ? 30 : 27, weight: .regular))
+                .lineSpacing(4)
+                .foregroundColor(.primary.opacity(0.92))
+                .lineLimit(expandedDescription ? nil : 5)
                 .onTapGesture {
                     withAnimation { expandedDescription.toggle() }
                 }
 
             if !expandedDescription {
-                Text("Show more")
-                    .font(.caption)
-                    .foregroundColor(.accentColor)
-                    .onTapGesture {
-                        withAnimation { expandedDescription.toggle() }
-                    }
+                HStack {
+                    Spacer()
+                    Text("More")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                        .onTapGesture {
+                            withAnimation { expandedDescription.toggle() }
+                        }
+                }
             }
         }
     }
@@ -319,18 +350,18 @@ struct contentView: View {
 
     @ViewBuilder
     private func tagsSection(_ tags: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tags")
-                .font(.headline)
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 6)], spacing: 6) {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
                 ForEach(tags, id: \.self) { tag in
                     Text(tag)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.15))
-                        .cornerRadius(6)
+                        .font(.callout)
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 7)
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.primary.opacity(0.75), lineWidth: 1)
+                        )
                 }
             }
         }
@@ -399,9 +430,6 @@ struct contentView: View {
             let displayed: [Chapter] = reverseChapterlist ? Array(selected.chapters.reversed()) : selected.chapters
 
             VStack(alignment: .leading, spacing: 0) {
-                readButton(chapters: selected.chapters)
-                    .padding(.bottom, 8)
-
                 HStack {
                     Text("\(selected.chapters.count) Chapters")
                         .font(.headline)

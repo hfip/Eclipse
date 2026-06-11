@@ -555,7 +555,7 @@ private final class KanzenReaderOverlayView: UIView {
 
         addSubview(topPanel)
         let preferredWidth = topPanel.widthAnchor.constraint(equalTo: widthAnchor, constant: -72)
-        preferredWidth.priority = .defaultHigh
+        preferredWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             topPanel.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 10),
             topPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
@@ -613,7 +613,7 @@ private final class KanzenReaderOverlayView: UIView {
 
         addSubview(bottomPanel)
         let preferredWidth = bottomPanel.widthAnchor.constraint(equalTo: widthAnchor, constant: -72)
-        preferredWidth.priority = .defaultHigh
+        preferredWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             bottomPanel.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -10),
             bottomPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),

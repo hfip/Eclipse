@@ -95,9 +95,14 @@ struct AidokuMangaDetailView: View {
     @State private var selectedChapterData: Chapter?
     @State private var showAddToCollection = false
     @State private var reverseChapterList = false
+    @State private var expandedDescription = false
     @State private var scrollOffset: CGFloat = 0
     @AppStorage(ReaderDetailElement.orderStorageKey) private var readerDetailElementOrder = ReaderDetailElement.defaultOrderRawValue
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
+
+    private var heroHeight: CGFloat {
+        min(max(UIScreen.main.bounds.height * 0.48, 360), isIPad ? 560 : 500)
+    }
 
     private var route: MangaContentRoute {
         .aidoku(sourceId: sourceId, mangaKey: manga.key)
@@ -141,16 +146,17 @@ struct AidokuMangaDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 18) {
                 headerSection
+                primaryActionSection
+                    .padding(.horizontal, 16)
 
                 ForEach(visibleReaderDetailElements) { element in
-                    Divider()
                     readerDetailElementView(element)
+                        .padding(.horizontal, 16)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .padding(.bottom, 24)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
@@ -237,74 +243,131 @@ struct AidokuMangaDetailView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        HStack(alignment: .top, spacing: 14) {
+        ZStack(alignment: .bottomLeading) {
             KFImage(URL(string: coverURL))
-                .placeholder { Rectangle().fill(Color.gray.opacity(0.22)) }
+                .placeholder { Color.black.opacity(0.18) }
                 .resizable()
                 .scaledToFill()
-                .frame(width: 150, height: 225)
+                .frame(maxWidth: .infinity)
+                .frame(height: heroHeight)
                 .clipped()
-                .cornerRadius(16)
 
-            VStack(alignment: .leading, spacing: 7) {
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.18),
+                    Color.black.opacity(0.45),
+                    Color.black.opacity(0.98)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
                 Text(manga.title)
-                    .font(.title2)
+                    .font(.system(size: isIPad ? 52 : 42, weight: .bold))
                     .fontWeight(.bold)
+                    .foregroundColor(.white)
                     .lineLimit(3)
+                    .minimumScaleFactor(0.72)
 
-                Text(viewerTitle(manga.viewer))
-                    .font(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.2))
-                    .cornerRadius(4)
+                HStack(spacing: 10) {
+                    if manga.status != .unknown {
+                        Text(statusTitle(manga.status))
+                    }
 
-                if manga.status != .unknown {
-                    Label(statusTitle(manga.status), systemImage: "clock.arrow.circlepath")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    let creators = creatorLine
+                    if !creators.isEmpty {
+                        Image(systemName: "person.fill")
+                        Text(creators)
+                            .lineLimit(1)
+                    }
+
+                    Text(viewerTitle(manga.viewer))
                 }
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.82))
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 22)
+        }
+    }
 
-                let creators = (manga.authors ?? []) + (manga.artists ?? [])
-                if !creators.isEmpty {
-                    Text(Array(Set(creators)).joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
+    private var creatorLine: String {
+        let creators = (manga.authors ?? []) + (manga.artists ?? [])
+        return Array(Set(creators)).sorted().joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private var primaryActionSection: some View {
+        let chapters = chapterModels()
+        HStack(spacing: 12) {
+            readButton(chapters: chapters)
+
+            Button {
+                showAddToCollection = true
+            } label: {
+                Image(systemName: libraryManager.isBookmarked(libraryItem) ? "bookmark.fill" : "bookmark")
+            }
+            .readerDetailIconButton()
+
+            Menu {
+                Button {
+                    Task { await loadDetails(force: true) }
+                } label: {
+                    Label("Refresh Source", systemImage: "arrow.clockwise")
                 }
 
                 if let source = sourceManager.metadata(id: sourceId) {
-                    Label(source.name, systemImage: "shippingbox")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Button { } label: {
+                        Label(source.name, systemImage: "shippingbox")
+                    }
+                    .disabled(true)
                 }
+            } label: {
+                Image(systemName: "ellipsis")
             }
+            .readerDetailIconButton()
         }
     }
 
     private func descriptionSection(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Synopsis")
-                .font(.headline)
             Text(cleanedDescription(text))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+                .font(.system(size: isIPad ? 30 : 27, weight: .regular))
+                .lineSpacing(4)
+                .foregroundColor(.primary.opacity(0.92))
+                .lineLimit(expandedDescription ? nil : 5)
+                .onTapGesture {
+                    withAnimation { expandedDescription.toggle() }
+                }
+
+            if !expandedDescription {
+                HStack {
+                    Spacer()
+                    Text("More")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                        .onTapGesture {
+                            withAnimation { expandedDescription.toggle() }
+                        }
+                }
+            }
         }
     }
 
     private func tagsSection(_ tags: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tags")
-                .font(.headline)
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 6)], spacing: 6) {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
                 ForEach(tags, id: \.self) { tag in
                     Text(tag)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.15))
-                        .cornerRadius(6)
+                        .font(.callout)
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 7)
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.primary.opacity(0.75), lineWidth: 1)
+                        )
                 }
             }
         }
@@ -397,9 +460,6 @@ struct AidokuMangaDetailView: View {
         } else {
             let displayed = reverseChapterList ? Array(chapters.reversed()) : chapters
             VStack(alignment: .leading, spacing: 0) {
-                readButton(chapters: chapters)
-                    .padding(.bottom, 8)
-
                 HStack {
                     Text("\(chapters.count) Chapters")
                         .font(.headline)
@@ -630,17 +690,17 @@ struct AidokuMangaDetailView: View {
             selectedChapterData = target
         } label: {
             HStack {
-                Image(systemName: lastRead == nil && readChapters.isEmpty ? "play.fill" : "book.fill")
-                    .font(.subheadline)
-                Text(lastRead == nil && readChapters.isEmpty ? "Start Reading" : "Continue Reading")
-                    .font(.subheadline)
+                Image(systemName: "book.fill")
+                    .font(.title3)
+                Text(lastRead == nil && readChapters.isEmpty ? "Read Now" : "Continue")
+                    .font(.title3)
                     .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .padding(.vertical, 15)
             .foregroundColor(.white)
             .background(Color.accentColor)
-            .cornerRadius(16)
+            .cornerRadius(14)
         }
         .buttonStyle(.plain)
         .disabled(target == nil)
@@ -825,6 +885,17 @@ struct MangaSourceRepairView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+extension View {
+    func readerDetailIconButton() -> some View {
+        self
+            .font(.title2)
+            .frame(width: 64, height: 58)
+            .foregroundColor(.accentColor)
+            .background(Color.primary.opacity(0.08))
+            .cornerRadius(14)
     }
 }
 #endif

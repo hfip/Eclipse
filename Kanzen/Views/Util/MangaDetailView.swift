@@ -45,6 +45,10 @@ struct MangaDetailView: View {
 
     private let coverWidth: CGFloat = isIPad ? 150 * iPadScaleSmall : 150
 
+    private var heroHeight: CGFloat {
+        min(max(UIScreen.main.bounds.height * 0.48, 360), isIPad ? 560 : 500)
+    }
+
     private var libraryItem: MangaLibraryItem {
         if let selectedSource {
             return MangaLibraryItem.fromModule(
@@ -135,22 +139,23 @@ struct MangaDetailView: View {
     }
 
     private var selectedSourceCoverURL: String? {
-        guard let selectedSource, !selectedSource.manga.imageURL.isEmpty else { return manga.coverURL }
+        guard let selectedSource, !selectedSource.manga.imageURL.isEmpty else { return nil }
         return selectedSource.manga.imageURL
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 18) {
                 headerSection
+                primaryActionSection
+                    .padding(.horizontal, 16)
 
                 ForEach(visibleReaderDetailElements) { element in
-                    Divider()
                     readerDetailElementView(element)
+                        .padding(.horizontal, 16)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .padding(.bottom, 24)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
@@ -219,41 +224,118 @@ struct MangaDetailView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        HStack(alignment: .top, spacing: 14) {
-            KFImage(URL(string: manga.coverURL ?? ""))
-                .placeholder { ProgressView() }
+        ZStack(alignment: .bottomLeading) {
+            KFImage(URL(string: selectedSourceCoverURL ?? ""))
+                .placeholder { Color.black.opacity(0.18) }
                 .resizable()
                 .scaledToFill()
-                .frame(width: coverWidth, height: coverWidth * 1.5)
+                .frame(maxWidth: .infinity)
+                .frame(height: heroHeight)
                 .clipped()
-                .cornerRadius(16)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(manga.displayTitle)
-                    .font(.title2)
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.18),
+                    Color.black.opacity(0.45),
+                    Color.black.opacity(0.98)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(selectedSourceDisplayTitle)
+                    .font(.system(size: isIPad ? 52 : 42, weight: .bold))
                     .fontWeight(.bold)
+                    .foregroundColor(.white)
                     .lineLimit(3)
+                    .minimumScaleFactor(0.72)
 
-                if let format = manga.format {
-                    Text(formatLabel(format))
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.2))
-                        .cornerRadius(4)
+                HStack(spacing: 10) {
+                    if let status = manga.status {
+                        Text(statusLabel(status))
+                    }
+
+                    if let format = selectedSourceFormat ?? manga.format {
+                        Text(formatLabel(format))
+                    }
+
+                    if let score = manga.averageScore {
+                        Image(systemName: "star.fill")
+                        Text("\(score)%")
+                    }
                 }
-
-                if let status = manga.status {
-                    Label(statusLabel(status), systemImage: statusIcon(status))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-
-                // Stats in a 2-column grid to avoid cramping
-                statsGrid
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.82))
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 22)
         }
+    }
+
+    @ViewBuilder
+    private var primaryActionSection: some View {
+        let chapters = selectedChapterGroupForReading()
+        HStack(spacing: 12) {
+            if chapters.isEmpty {
+                Button { } label: {
+                    HStack {
+                        Image(systemName: "book.fill")
+                            .font(.title3)
+                        Text(selectedSource == nil ? "Choose Source" : "Read Now")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .foregroundColor(.white.opacity(0.6))
+                    .background(Color.accentColor.opacity(0.45))
+                    .cornerRadius(14)
+                }
+                .buttonStyle(.plain)
+                .disabled(true)
+            } else {
+                readButton(chapters: chapters)
+            }
+
+            Button {
+                showAddToCollection = true
+            } label: {
+                Image(systemName: libraryManager.isBookmarked(libraryItem) ? "bookmark.fill" : "bookmark")
+            }
+            .readerDetailIconButton()
+
+            Menu {
+                if let selectedSource {
+                    Button { } label: {
+                        Label(selectedSource.module.moduleData.sourceName, systemImage: "puzzlepiece.extension")
+                    }
+                    .disabled(true)
+                }
+
+                Button {
+                    withAnimation {
+                        selectedSource = nil
+                        loadedChapters = nil
+                        chapterLoadError = nil
+                        loadingChapters = false
+                        chapterLanguageIdx = 0
+                    }
+                } label: {
+                    Label("Change Source", systemImage: "arrow.left.arrow.right")
+                }
+                .disabled(selectedSource == nil)
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .readerDetailIconButton()
+        }
+    }
+
+    private func selectedChapterGroupForReading() -> [Chapter] {
+        guard let loadedChapters, !loadedChapters.isEmpty else { return [] }
+        let index = min(max(chapterLanguageIdx, 0), loadedChapters.count - 1)
+        return loadedChapters[index].chapters
     }
 
     @ViewBuilder
@@ -297,24 +379,25 @@ struct MangaDetailView: View {
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
 
         VStack(alignment: .leading, spacing: 4) {
-            Text("Synopsis")
-                .font(.headline)
-
             Text(cleaned)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .lineLimit(expandedDescription ? nil : 4)
+                .font(.system(size: isIPad ? 30 : 27, weight: .regular))
+                .lineSpacing(4)
+                .foregroundColor(.primary.opacity(0.92))
+                .lineLimit(expandedDescription ? nil : 5)
                 .onTapGesture {
                     withAnimation { expandedDescription.toggle() }
                 }
 
             if !expandedDescription {
-                Text("Show more")
-                    .font(.caption)
-                    .foregroundColor(.accentColor)
-                    .onTapGesture {
-                        withAnimation { expandedDescription.toggle() }
-                    }
+                HStack {
+                    Spacer()
+                    Text("More")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                        .onTapGesture {
+                            withAnimation { expandedDescription.toggle() }
+                        }
+                }
             }
         }
     }
@@ -323,18 +406,11 @@ struct MangaDetailView: View {
 
     @ViewBuilder
     private func genresSection(_ genres: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Genres")
-                .font(.headline)
-
-            if #available(iOS 16.0, macOS 13.0, *) {
-                FlowLayout(spacing: 6) {
-                    ForEach(genres, id: \.self) { genre in
-                        genreTag(genre)
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(genres, id: \.self) { genre in
+                    genreTag(genre)
                 }
-            } else {
-                wrappedGenres(genres)
             }
         }
     }
@@ -342,11 +418,14 @@ struct MangaDetailView: View {
     @ViewBuilder
     private func genreTag(_ genre: String) -> some View {
         Text(genre)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.accentColor.opacity(0.15))
-            .cornerRadius(6)
+            .font(.callout)
+            .foregroundColor(.primary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 7)
+            .overlay(
+                Capsule()
+                    .stroke(Color.primary.opacity(0.75), lineWidth: 1)
+            )
     }
 
     @ViewBuilder
@@ -581,10 +660,6 @@ struct MangaDetailView: View {
         let displayed: [Chapter] = reverseChapters ? Array(selected.chapters.reversed()) : selected.chapters
 
         VStack(alignment: .leading, spacing: 0) {
-            // Read / Continue button
-            readButton(chapters: selected.chapters)
-                .padding(.bottom, 8)
-
             HStack {
                 Text("\(selected.chapters.count) Chapters")
                     .font(.headline)
@@ -893,16 +968,16 @@ struct MangaDetailView: View {
             } label: {
                 HStack {
                     Image(systemName: hasProgress ? "book.fill" : "play.fill")
-                        .font(.subheadline)
-                    Text(hasProgress ? "Continue Reading" : "Start Reading")
-                        .font(.subheadline)
+                        .font(.title3)
+                    Text(hasProgress ? "Continue" : "Read Now")
+                        .font(.title3)
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .padding(.vertical, 15)
                 .foregroundColor(.white)
                 .background(Color.accentColor)
-                .cornerRadius(16)
+                .cornerRadius(14)
             }
             .buttonStyle(.plain)
         }
