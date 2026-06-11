@@ -1,17 +1,22 @@
 package dev.soupy.eclipse.android.data
 
 import android.content.Context
+import dev.soupy.eclipse.android.core.model.BackupReaderDownloadItem
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 
-class ReaderCacheRepository(
-    context: Context,
+class ReaderCacheRepository internal constructor(
+    private val root: File,
 ) {
-    private val root = File(context.cacheDir, "reader-cache")
+    constructor(context: Context) : this(File(context.cacheDir, "reader-cache"))
+
+    private val manifestFile = File(root, ".reader_downloads.json")
 
     suspend fun stats(): Result<ReaderCacheStats> = runCatching {
         withContext(Dispatchers.IO) {
@@ -26,6 +31,31 @@ class ReaderCacheRepository(
                 root.deleteRecursively()
             }
             current
+        }
+    }
+
+    suspend fun exportDownloads(): Result<List<BackupReaderDownloadItem>> = runCatching {
+        withContext(Dispatchers.IO) {
+            readManifest()
+        }
+    }
+
+    suspend fun restoreDownloads(items: List<BackupReaderDownloadItem>): Result<Unit> = runCatching {
+        withContext(Dispatchers.IO) {
+            if (items.isEmpty()) return@withContext
+            writeManifest(
+                items.map { item ->
+                    item.copy(
+                        status = if (item.status.equals("completed", ignoreCase = true)) {
+                            "metadata-only"
+                        } else {
+                            item.status.ifBlank { "metadata-only" }
+                        },
+                        progress = item.progress.coerceIn(0.0, 1.0),
+                        error = item.error ?: "Files are not embedded in Luna backups; reopen the chapter to rebuild Android's app-scoped reader cache.",
+                    )
+                },
+            )
         }
     }
 
@@ -67,6 +97,8 @@ class ReaderCacheRepository(
         chapterParams: String?,
         isNovel: Boolean,
         content: KanzenReaderContentSnapshot,
+        title: String = "",
+        chapterNumber: String = "",
     ): Result<KanzenReaderContentSnapshot> = runCatching {
         withContext(Dispatchers.IO) {
             val directory = cacheDirectory(moduleId, chapterParams, isNovel)
@@ -75,6 +107,14 @@ class ReaderCacheRepository(
             if (isNovel) {
                 content.text?.takeIf(String::isNotBlank)?.let { text ->
                     File(directory, "chapter.txt").writeText(text)
+                    rememberDownload(
+                        moduleId = moduleId,
+                        chapterParams = chapterParams,
+                        isNovel = isNovel,
+                        title = title,
+                        chapterNumber = chapterNumber,
+                        directory = directory,
+                    )
                     return@withContext content.copy(
                         isCached = true,
                         cacheMessage = "Cached chapter text for offline reading.",
@@ -101,7 +141,16 @@ class ReaderCacheRepository(
                     imageUrls = cachedPages.map { file -> file.toURI().toString() },
                     isCached = true,
                     cacheMessage = "Cached ${cachedPages.size} page${if (cachedPages.size == 1) "" else "s"} for offline reading.",
-                )
+                ).also {
+                    rememberDownload(
+                        moduleId = moduleId,
+                        chapterParams = chapterParams,
+                        isNovel = isNovel,
+                        title = title,
+                        chapterNumber = chapterNumber,
+                        directory = directory,
+                    )
+                }
             }
         }
     }
@@ -111,24 +160,73 @@ class ReaderCacheRepository(
         chapterParams: String?,
         isNovel: Boolean,
     ): File? {
-        if (moduleId.isNullOrBlank() || moduleId == "anilist" || chapterParams.isNullOrBlank()) {
-            return null
-        }
-        return File(root, "${if (isNovel) "novel" else "manga"}-${"$moduleId|$chapterParams".sha256()}")
+        val key = cacheKey(moduleId, chapterParams, isNovel) ?: return null
+        return File(root, key.directoryName)
     }
 
     private fun statsSnapshot(): ReaderCacheStats {
         if (!root.isDirectory) return ReaderCacheStats()
         val entries = root.listFiles()
             .orEmpty()
-            .count(File::isDirectory)
+            .filter { file -> file.isDirectory }
+            .count()
         val files = root.walkTopDown()
-            .filter(File::isFile)
+            .filter { file -> file.isFile && file != manifestFile }
             .toList()
+        val downloads = readManifest()
         return ReaderCacheStats(
             entryCount = entries,
             fileCount = files.size,
             byteCount = files.sumOf(File::length),
+            downloadCount = downloads.count { item -> item.status.equals("completed", ignoreCase = true) },
+            restoredMetadataCount = downloads.count { item -> item.status.equals("metadata-only", ignoreCase = true) },
+        )
+    }
+
+    private fun rememberDownload(
+        moduleId: String?,
+        chapterParams: String?,
+        isNovel: Boolean,
+        title: String,
+        chapterNumber: String,
+        directory: File,
+    ) {
+        val key = cacheKey(moduleId, chapterParams, isNovel) ?: return
+        val bytes = directory.walkTopDown()
+            .filter(File::isFile)
+            .filterNot { it == manifestFile }
+            .sumOf(File::length)
+        val item = BackupReaderDownloadItem(
+            id = key.id,
+            routeKey = key.routeKey,
+            title = title.ifBlank { if (isNovel) "Novel chapter" else "Manga chapter" },
+            chapterNumber = chapterNumber,
+            status = "completed",
+            progress = 1.0,
+            downloadedBytes = bytes,
+            error = null,
+        )
+        val updated = (readManifest().filterNot { existing -> existing.id == item.id } + item)
+            .sortedWith(compareBy<BackupReaderDownloadItem> { it.title.lowercase() }.thenBy { it.chapterNumber })
+        writeManifest(updated)
+    }
+
+    private fun readManifest(): List<BackupReaderDownloadItem> =
+        runCatching {
+            if (!manifestFile.isFile) return emptyList()
+            ReaderCacheJson.decodeFromString(
+                ListSerializer(BackupReaderDownloadItem.serializer()),
+                manifestFile.readText(),
+            )
+        }.getOrDefault(emptyList())
+
+    private fun writeManifest(items: List<BackupReaderDownloadItem>) {
+        root.mkdirs()
+        manifestFile.writeText(
+            ReaderCacheJson.encodeToString(
+                ListSerializer(BackupReaderDownloadItem.serializer()),
+                items,
+            ),
         )
     }
 
@@ -173,14 +271,48 @@ data class ReaderCacheStats(
     val entryCount: Int = 0,
     val fileCount: Int = 0,
     val byteCount: Long = 0L,
+    val downloadCount: Int = 0,
+    val restoredMetadataCount: Int = 0,
 ) {
     val displayText: String
-        get() = if (fileCount == 0) {
+        get() = if (fileCount == 0 && restoredMetadataCount == 0) {
             "Reader cache empty."
         } else {
-            "$entryCount cached ${if (entryCount == 1) "chapter" else "chapters"}, " +
-                "$fileCount ${if (fileCount == 1) "file" else "files"}, ${byteCount.toHumanSize()}."
+            buildList {
+                if (fileCount > 0) {
+                    add(
+                        "$entryCount cached ${if (entryCount == 1) "chapter" else "chapters"}, " +
+                            "$fileCount ${if (fileCount == 1) "file" else "files"}, ${byteCount.toHumanSize()}",
+                    )
+                }
+                if (downloadCount > 0) add("$downloadCount reader download${if (downloadCount == 1) "" else "s"}")
+                if (restoredMetadataCount > 0) add("$restoredMetadataCount restored reader download marker${if (restoredMetadataCount == 1) "" else "s"}")
+            }.joinToString("; ") + "."
         }
+}
+
+private data class ReaderCacheKey(
+    val routeKey: String,
+    val id: String,
+    val directoryName: String,
+)
+
+private fun cacheKey(
+    moduleId: String?,
+    chapterParams: String?,
+    isNovel: Boolean,
+): ReaderCacheKey? {
+    if (moduleId.isNullOrBlank() || moduleId == "anilist" || chapterParams.isNullOrBlank()) {
+        return null
+    }
+    val type = if (isNovel) "novel" else "manga"
+    val routeKey = "$type:$moduleId:$chapterParams"
+    val id = routeKey.sha256()
+    return ReaderCacheKey(
+        routeKey = routeKey,
+        id = id,
+        directoryName = "$type-$id",
+    )
 }
 
 private fun String.sha256(): String =
@@ -203,3 +335,9 @@ private fun Long.toHumanSize(): String =
         this >= 1024L -> "${this / 1024L} KB"
         else -> "$this B"
     }
+
+private val ReaderCacheJson = Json {
+    ignoreUnknownKeys = true
+    explicitNulls = false
+    encodeDefaults = true
+}

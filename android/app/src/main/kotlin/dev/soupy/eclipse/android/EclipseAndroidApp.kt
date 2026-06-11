@@ -210,7 +210,7 @@ fun EclipseAndroidApp(
     }
     val playbackSettings = PlaybackSettingsSnapshot(
         enableSubtitlesByDefault = settingsState.enableSubtitlesByDefault,
-        enableVLCSubtitleEditMenu = settingsState.playerSubtitleAppearanceEnabled,
+        playerSubtitleAppearanceEnabled = settingsState.playerSubtitleAppearanceEnabled,
         defaultSubtitleLanguage = settingsState.defaultSubtitleLanguage,
         preferredAnimeAudioLanguage = settingsState.preferredAnimeAudioLanguage,
         subtitleForegroundColor = settingsState.subtitleForegroundColor,
@@ -222,7 +222,7 @@ fun EclipseAndroidApp(
         holdSpeed = settingsState.holdSpeedPlayer,
         externalPlayer = settingsState.externalPlayer,
         alwaysLandscape = settingsState.alwaysLandscape,
-        vlcHeaderProxyEnabled = settingsState.playerHeaderProxyEnabled,
+        playerHeaderProxyEnabled = settingsState.playerHeaderProxyEnabled,
         pictureInPictureEnabled = settingsState.playerPictureInPictureEnabled,
         brightnessGestureEnabled = settingsState.playerBrightnessGestureEnabled,
         volumeGestureEnabled = settingsState.playerVolumeGestureEnabled,
@@ -235,7 +235,7 @@ fun EclipseAndroidApp(
         skip85sEnabled = settingsState.skip85sEnabled,
         skip85sAlwaysVisible = settingsState.skip85sAlwaysVisible,
         showNextEpisodeButton = settingsState.showNextEpisodeButton,
-        showVlcEpisodeBrowserButton = settingsState.playerEpisodeBrowserButton,
+        playerEpisodeBrowserButton = settingsState.playerEpisodeBrowserButton,
         showNextEpisodePosterButton = settingsState.showNextEpisodePosterButton,
         nextEpisodeThreshold = settingsState.nextEpisodeThreshold,
     )
@@ -679,13 +679,17 @@ fun EclipseAndroidApp(
                             onExternalPlayerChanged = settingsViewModel::setExternalPlayer,
                             onPreferDownloadedMediaChanged = settingsViewModel::setPreferDownloadedMedia,
                             onAlwaysLandscapeChanged = settingsViewModel::setAlwaysLandscape,
-                            onVlcBrightnessGestureChanged = settingsViewModel::setVlcBrightnessGestureEnabled,
-                            onVlcVolumeGestureChanged = settingsViewModel::setVlcVolumeGestureEnabled,
+                            onPlayerHeaderProxyChanged = settingsViewModel::setPlayerHeaderProxyEnabled,
+                            onPlayerBrightnessGestureChanged = settingsViewModel::setPlayerBrightnessGestureEnabled,
+                            onPlayerVolumeGestureChanged = settingsViewModel::setPlayerVolumeGestureEnabled,
                             onPlayerTwoFingerTapPlayPauseChanged = settingsViewModel::setPlayerTwoFingerTapPlayPauseEnabled,
-                            onVlcDoubleTapSeekEnabledChanged = settingsViewModel::setVlcDoubleTapSeekEnabled,
-                            onVlcDoubleTapSeekSecondsChanged = settingsViewModel::setVlcDoubleTapSeekSeconds,
-                            onVlcOpenSubtitlesChanged = settingsViewModel::setVlcOpenSubtitlesEnabled,
-                            onVlcOpenSubtitlesAutoFallbackChanged = settingsViewModel::setVlcOpenSubtitlesAutoFallbackEnabled,
+                            onPlayerDoubleTapSeekEnabledChanged = settingsViewModel::setPlayerDoubleTapSeekEnabled,
+                            onPlayerDoubleTapSeekSecondsChanged = settingsViewModel::setPlayerDoubleTapSeekSeconds,
+                            onPlayerPictureInPictureChanged =
+                                settingsViewModel::setPlayerPictureInPictureEnabled,
+                            onPlayerOpenSubtitlesChanged = settingsViewModel::setPlayerOpenSubtitlesEnabled,
+                            onPlayerOpenSubtitlesAutoFallbackChanged =
+                                settingsViewModel::setPlayerOpenSubtitlesAutoFallbackEnabled,
                             onSubtitleForegroundColorChanged = settingsViewModel::setSubtitleForegroundColor,
                             onSubtitleStrokeColorChanged = settingsViewModel::setSubtitleStrokeColor,
                             onSubtitleStrokeWidthChanged = settingsViewModel::setSubtitleStrokeWidth,
@@ -758,8 +762,8 @@ fun EclipseAndroidApp(
                             onFilterHorrorContentChanged = settingsViewModel::setFilterHorrorContent,
                             onSimilarityAlgorithmChanged = settingsViewModel::setSimilarityAlgorithm,
                             onIntroDbAppChanged = settingsViewModel::setIntroDbAppEnabled,
-                            onShowVlcEpisodeBrowserButtonChanged =
-                                settingsViewModel::setShowVlcEpisodeBrowserButton,
+                            onPlayerEpisodeBrowserButtonChanged =
+                                settingsViewModel::setPlayerEpisodeBrowserButton,
                             onMediaDetailElementVisibleChanged =
                                 settingsViewModel::setMediaDetailElementVisible,
                             onMoveMediaDetailElement = settingsViewModel::moveMediaDetailElement,

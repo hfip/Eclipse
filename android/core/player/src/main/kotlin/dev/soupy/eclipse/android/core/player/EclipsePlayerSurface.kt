@@ -756,11 +756,6 @@ private fun NextEpisodeButtonContent(
     }
 }
 
-private data class VlcTrackOption(
-    val id: Int,
-    val name: String,
-)
-
 @Composable
 private fun HoldSpeedSurface(
     speed: Double,
@@ -1639,7 +1634,6 @@ private fun Context.findActivity(): Activity? = when (this) {
 
 enum class PlayerBackend {
     NORMAL,
-    VLC,
     MPV,
     EXTERNAL,
 }

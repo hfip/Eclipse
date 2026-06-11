@@ -26,7 +26,10 @@ data class SourceHealthRecord(
 data class SourceHealthSnapshot(
     val records: Map<String, SourceHealthRecord> = emptyMap(),
     val lastDailyCheckAt: Long? = null,
-)
+) {
+    val hasUserData: Boolean
+        get() = records.isNotEmpty() || lastDailyCheckAt != null
+}
 
 enum class SourceHealthDisplayKind {
     UNCHECKED,

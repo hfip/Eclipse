@@ -104,6 +104,8 @@ The original Luna project is available at `https://github.com/cranci1/Luna`.
 
 Source code for builds distributed from this repository is available at `https://github.com/Soupy-dev/Eclipse`. If you redistribute an IPA or another binary, provide the corresponding source under GPLv3.
 
+Credits to https://github.com/mpv-android/mpv-android for mpv in android. Credits to https://github.com/Aidoku/Aidoku for powering Reader Mode.
+
 This program comes with no warranty, to the extent permitted by law.
 
 ## Bring Your Own Sources

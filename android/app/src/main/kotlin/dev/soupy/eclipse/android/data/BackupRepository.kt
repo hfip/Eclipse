@@ -9,6 +9,7 @@ import dev.soupy.eclipse.android.core.model.StremioAddonBackup
 import dev.soupy.eclipse.android.core.model.hasBackupData
 import dev.soupy.eclipse.android.core.network.EclipseJson
 import dev.soupy.eclipse.android.core.storage.BackupFileStore
+import dev.soupy.eclipse.android.core.storage.LoggerStore
 import dev.soupy.eclipse.android.core.storage.MangaStore
 import dev.soupy.eclipse.android.core.storage.ServiceDao
 import dev.soupy.eclipse.android.core.storage.ServiceEntity
@@ -33,6 +34,8 @@ class BackupRepository(
     private val backupFileStore: BackupFileStore,
     private val settingsStore: SettingsStore,
     private val mangaStore: MangaStore,
+    private val sourceHealthRepository: SourceHealthRepository,
+    private val loggerStore: LoggerStore,
     private val serviceDao: ServiceDao,
     private val stremioAddonDao: StremioAddonDao,
     private val progressRepository: ProgressRepository,
@@ -42,6 +45,7 @@ class BackupRepository(
     private val ratingsRepository: RatingsRepository,
     private val recommendationRepository: RecommendationRepository,
     private val kanzenRepository: KanzenRepository,
+    private val readerCacheRepository: ReaderCacheRepository,
 ) {
     suspend fun loadStatus(): Result<BackupStatusSnapshot> = runCatching {
         backupFileStore.read().toStatus()
@@ -75,6 +79,8 @@ class BackupRepository(
         val services = serviceDao.observeAll().first()
         val addons = stremioAddonDao.observeAll().first()
         val manga = mangaStore.read()
+        val sourceHealth = sourceHealthRepository.exportSnapshot()
+        val appLogs = loggerStore.read()
         val exportedProgress = progressRepository.exportForBackup(
             payload?.progressData ?: BackupData().progressData,
         )
@@ -107,6 +113,9 @@ class BackupRepository(
         val exportedAidokuState = manga.takeIf { it.hasUserData }?.toBackupAidokuState()
             ?: payload?.aidokuState
         val exportedKanzenModules = kanzenRepository.exportModules(exportedMangaModules)
+        val exportedReaderDownloads = readerCacheRepository.exportDownloads().getOrDefault(emptyList())
+            .takeIf { it.isNotEmpty() }
+            ?: payload?.readerDownloads.orEmpty()
 
         return BackupDocument(
             payload = BackupData(
@@ -118,6 +127,7 @@ class BackupRepository(
                 selectedAppearance = settings.selectedAppearance,
                 enableSubtitlesByDefault = settings.enableSubtitlesByDefault,
                 defaultSubtitleLanguage = settings.defaultSubtitleLanguage,
+                playerSubtitleAppearanceEnabled = settings.playerSubtitleAppearanceEnabled,
                 enableVLCSubtitleEditMenu = settings.playerSubtitleAppearanceEnabled,
                 preferredAnimeAudioLanguage = settings.preferredAnimeAudioLanguage,
                 inAppPlayer = settings.inAppPlayer,
@@ -136,18 +146,33 @@ class BackupRepository(
                 skip85sEnabled = settings.skip85sEnabled,
                 skip85sAlwaysVisible = settings.skip85sAlwaysVisible,
                 showNextEpisodeButton = settings.showNextEpisodeButton,
+                showEpisodeBrowserButton = settings.playerEpisodeBrowserButton,
                 showVLCEpisodeBrowserButton = settings.playerEpisodeBrowserButton,
                 showNextEpisodePosterButton = settings.showNextEpisodePosterButton,
                 nextEpisodeThreshold = settings.nextEpisodeThreshold / 100.0,
+                playerHeaderProxyEnabled = settings.playerHeaderProxyEnabled,
                 vlcHeaderProxyEnabled = settings.playerHeaderProxyEnabled,
+                playerBrightnessGestureEnabled = settings.playerBrightnessGestureEnabled,
                 vlcBrightnessGestureEnabled = settings.playerBrightnessGestureEnabled,
+                playerVolumeGestureEnabled = settings.playerVolumeGestureEnabled,
                 vlcVolumeGestureEnabled = settings.playerVolumeGestureEnabled,
                 playerTwoFingerTapPlayPauseEnabled = settings.playerTwoFingerTapPlayPauseEnabled,
+                playerDoubleTapSeekEnabled = settings.playerDoubleTapSeekEnabled,
                 vlcDoubleTapSeekEnabled = settings.playerDoubleTapSeekEnabled,
+                playerDoubleTapSeekSeconds = settings.playerDoubleTapSeekSeconds,
                 vlcDoubleTapSeekSeconds = settings.playerDoubleTapSeekSeconds,
+                playerPictureInPictureEnabled = settings.playerPictureInPictureEnabled,
                 vlcPiPEnabled = settings.playerPictureInPictureEnabled,
+                playerOpenSubtitlesEnabled = settings.playerOpenSubtitlesEnabled,
                 vlcOpenSubtitlesEnabled = settings.playerOpenSubtitlesEnabled,
+                playerOpenSubtitlesAutoFallbackEnabled = settings.playerOpenSubtitlesAutoFallbackEnabled,
                 vlcOpenSubtitlesAutoFallbackEnabled = settings.playerOpenSubtitlesAutoFallbackEnabled,
+                playerPerformanceOverlayEnabled = payload?.playerPerformanceOverlayEnabled ?: false,
+                mpvForegroundFPS = payload?.mpvForegroundFPS ?: 30,
+                mpvRenderBackend = payload?.mpvRenderBackend ?: "opengl",
+                mpvMetalQualityProfile = payload?.mpvMetalQualityProfile ?: "auto",
+                mpvAppExitPictureInPictureEnabled = payload?.mpvAppExitPictureInPictureEnabled ?: false,
+                smartInAppPlayerChoosingEnabled = payload?.smartInAppPlayerChoosingEnabled ?: false,
                 subtitleForegroundColor = settings.subtitleForegroundColor,
                 subtitleStrokeColor = settings.subtitleStrokeColor,
                 subtitleStrokeWidth = settings.subtitleStrokeWidth,
@@ -170,9 +195,17 @@ class BackupRepository(
                 horizontalEpisodeList = settings.horizontalEpisodeList,
                 mediaDetailElementOrder = settings.mediaDetailElementOrder,
                 mediaDetailHiddenElements = settings.mediaDetailHiddenElements,
+                readerDetailElementOrder = payload?.readerDetailElementOrder ?: BackupData().readerDetailElementOrder,
+                readerDetailHiddenElements = payload?.readerDetailHiddenElements ?: "",
+                heroBannerCatalogId = settings.heroBannerCatalogId,
+                heroBannerBehavior = settings.heroBannerBehavior,
+                atmosphereStyle = settings.atmosphereStyle,
+                atmosphereSolidColorSource = settings.atmosphereSolidColorSource,
+                atmosphereSolidColor = settings.atmosphereSolidColor,
                 mediaColumnsPortrait = settings.mediaColumnsPortrait,
                 mediaColumnsLandscape = settings.mediaColumnsLandscape,
                 readingMode = settings.readingMode,
+                readerReadThresholdPercent = payload?.readerReadThresholdPercent ?: 80.0,
                 readerFontSize = settings.readerFontSize,
                 readerFontFamily = settings.readerFontFamily,
                 readerFontWeight = settings.readerFontWeight,
@@ -197,7 +230,9 @@ class BackupRepository(
                 mangaCatalogs = exportedMangaCatalogs,
                 kanzenModules = exportedKanzenModules,
                 aidokuState = exportedAidokuState,
-                readerDownloads = payload?.readerDownloads.orEmpty(),
+                readerDownloads = exportedReaderDownloads,
+                sourceHealth = sourceHealth.takeIf { it.hasUserData } ?: payload?.sourceHealth,
+                appLogs = appLogs.takeIf { it.hasUserData } ?: payload?.appLogs,
                 recommendationCache = exportedRecommendationCache,
                 userRatings = exportedRatings,
                 userRatingNotes = exportedRatingNotes,
@@ -216,6 +251,9 @@ class BackupRepository(
         recommendationRepository.restoreFromBackup(payload.recommendationCache).getOrThrow()
         kanzenRepository.restoreFromBackup(payload.kanzenModules).getOrThrow()
         mangaStore.write(payload.toMangaLibrarySnapshot())
+        readerCacheRepository.restoreDownloads(payload.readerDownloads).getOrThrow()
+        payload.sourceHealth?.let { sourceHealthRepository.restoreSnapshot(it) }
+        payload.appLogs?.let { loggerStore.write(it) }
         val importedServices = syncServices(payload.services)
         val importedAddons = payload.stremioAddons?.let { syncAddons(it) }
             ?: stremioAddonDao.observeAll().first()
@@ -389,6 +427,8 @@ private fun BackupDocument.toStatus(
         if (payload.kanzenModules.isNotEmpty()) add("modules")
         if (payload.aidokuState?.hasUserData == true) add("aidoku")
         if (payload.readerDownloads.isNotEmpty()) add("reader downloads")
+        if (payload.sourceHealth?.hasUserData == true) add("source health")
+        if (payload.appLogs?.hasUserData == true) add("logs")
         if (payload.recommendationCache.hasBackupData() || payload.userRatings.isNotEmpty()) add("personalization")
     }
     val preservationText = if (preservedSections.isEmpty()) {

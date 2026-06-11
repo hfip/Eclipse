@@ -64,7 +64,12 @@ class MpvPlayerController internal constructor(
         view.playFile(mediaUrl)
         source.subtitles.forEachIndexed { index, subtitle ->
             val subtitleUrl = subtitle.uri?.takeIf { it.isNotBlank() } ?: return@forEachIndexed
-            val resolvedSubtitleUrl = source.proxiedOrOriginal(settings, resolveProxiedUrl, subtitleUrl)
+            val resolvedSubtitleUrl = source.proxiedOrOriginal(
+                settings = settings,
+                resolveProxiedUrl = resolveProxiedUrl,
+                url = subtitleUrl,
+                headers = source.headers + subtitle.headers,
+            )
             val mode = if (settings.enableSubtitlesByDefault && (subtitle.isDefault || index == 0)) "select" else "auto"
             MPVLib.command(arrayOf("sub-add", resolvedSubtitleUrl, mode, subtitle.label.ifBlank { subtitle.language ?: "Subtitle" }))
         }
@@ -177,6 +182,7 @@ class MpvPlayerController internal constructor(
         settings: PlaybackSettingsSnapshot,
         resolveProxiedUrl: (String, Map<String, String>) -> String?,
         url: String,
+        headers: Map<String, String> = this.headers,
     ): String =
         if (settings.playerHeaderProxyEnabled) {
             resolveProxiedUrl(url, headers) ?: url

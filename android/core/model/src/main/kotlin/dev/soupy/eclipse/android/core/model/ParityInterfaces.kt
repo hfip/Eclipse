@@ -72,7 +72,7 @@ data class PlaybackStartRequest(
 @Serializable
 data class PlaybackSettingsSnapshot(
     val enableSubtitlesByDefault: Boolean = false,
-    val enableVLCSubtitleEditMenu: Boolean = true,
+    val playerSubtitleAppearanceEnabled: Boolean = true,
     val defaultSubtitleLanguage: String = "eng",
     val preferredAnimeAudioLanguage: String = "jpn",
     val subtitleForegroundColor: String? = null,
@@ -84,7 +84,7 @@ data class PlaybackSettingsSnapshot(
     val holdSpeed: Double = 2.0,
     val externalPlayer: String = "none",
     val alwaysLandscape: Boolean = false,
-    val vlcHeaderProxyEnabled: Boolean = true,
+    val playerHeaderProxyEnabled: Boolean = true,
     val pictureInPictureEnabled: Boolean = false,
     val brightnessGestureEnabled: Boolean = false,
     val volumeGestureEnabled: Boolean = false,
@@ -97,17 +97,10 @@ data class PlaybackSettingsSnapshot(
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
     val showNextEpisodeButton: Boolean = true,
-    val showVlcEpisodeBrowserButton: Boolean = true,
+    val playerEpisodeBrowserButton: Boolean = true,
     val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
-) {
-    val playerSubtitleAppearanceEnabled: Boolean
-        get() = enableVLCSubtitleEditMenu
-    val playerHeaderProxyEnabled: Boolean
-        get() = vlcHeaderProxyEnabled
-    val playerEpisodeBrowserButton: Boolean
-        get() = showVlcEpisodeBrowserButton
-}
+)
 
 interface PlaybackBackend {
     val backend: InAppPlayer

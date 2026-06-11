@@ -39,4 +39,28 @@ class PlayerSourceTest {
         assertNull(decoded.serviceHref)
         assertNull(decoded.progressTarget)
     }
+
+    @Test
+    fun subtitleHeadersRoundTripThroughPlayerSource() {
+        val source = PlayerSource(
+            uri = "https://example.test/video.m3u8",
+            headers = mapOf("Referer" to "https://example.test/player"),
+            subtitles = listOf(
+                SubtitleTrack(
+                    id = "sub-1",
+                    label = "English",
+                    language = "eng",
+                    uri = "https://example.test/subtitles/en.vtt",
+                    format = "vtt",
+                    headers = mapOf("Cookie" to "subtitle-session=abc"),
+                    isDefault = true,
+                ),
+            ),
+        )
+
+        val decoded = json.decodeFromString<PlayerSource>(json.encodeToString(source))
+
+        assertEquals("subtitle-session=abc", decoded.subtitles.single().headers.getValue("Cookie"))
+        assertEquals("https://example.test/player", decoded.headers.getValue("Referer"))
+    }
 }

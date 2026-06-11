@@ -45,6 +45,7 @@ class BackupDocumentTest {
               "selectedAppearance": "dark",
               "enableSubtitlesByDefault": true,
               "defaultSubtitleLanguage": "eng",
+              "playerSubtitleAppearanceEnabled": false,
               "preferredAnimeAudioLanguage": "jpn",
               "inAppPlayer": "VLC",
               "useClassicScheduleUI": true,
@@ -55,12 +56,27 @@ class BackupDocumentTest {
               "aniSkipEnabled": false,
               "introDBEnabled": false,
               "skip85sAlwaysVisible": true,
+              "playerHeaderProxyEnabled": true,
               "vlcHeaderProxyEnabled": false,
+              "showEpisodeBrowserButton": true,
+              "playerBrightnessGestureEnabled": true,
+              "playerVolumeGestureEnabled": true,
               "playerTwoFingerTapPlayPauseEnabled": false,
+              "playerDoubleTapSeekEnabled": false,
+              "playerDoubleTapSeekSeconds": 20.0,
               "vlcDoubleTapSeekEnabled": true,
               "vlcDoubleTapSeekSeconds": 15.0,
+              "playerPictureInPictureEnabled": true,
+              "vlcPiPEnabled": false,
+              "playerOpenSubtitlesEnabled": false,
+              "playerOpenSubtitlesAutoFallbackEnabled": true,
               "vlcOpenSubtitlesEnabled": true,
               "vlcOpenSubtitlesAutoFallbackEnabled": false,
+              "playerPerformanceOverlayEnabled": true,
+              "mpvForegroundFPS": 60,
+              "mpvRenderBackend": "metal",
+              "mpvMetalQualityProfile": "sharp",
+              "mpvAppExitPictureInPictureEnabled": true,
               "skip85sEnabled": true,
               "showVLCEpisodeBrowserButton": false,
               "nextEpisodeThreshold": 0.9,
@@ -76,7 +92,15 @@ class BackupDocumentTest {
               "servicesAutoModeQualityPreference": "1080p",
               "mediaDetailElementOrder": "actions,overview,details,cast,ratingNotes,episodes",
               "mediaDetailHiddenElements": "cast",
+              "readerDetailElementOrder": "chapters,overview,tags,ratingNotes",
+              "readerDetailHiddenElements": "tags",
+              "heroBannerCatalogId": "popularAnime",
+              "heroBannerBehavior": "carousel",
+              "atmosphereStyle": "solid",
+              "atmosphereSolidColorSource": "custom",
+              "atmosphereSolidColor": "#224466",
               "readerFontFamily": "Georgia",
+              "readerReadThresholdPercent": 75.0,
               "collections": [
                 {
                   "id": "8F5C2E48-77FB-430F-B904-AB0FEEA420A8",
@@ -197,6 +221,29 @@ class BackupDocumentTest {
                   "downloadedBytes": 42
                 }
               ],
+              "sourceHealth": {
+                "records": {
+                  "service:first": {
+                    "sourceId": "service:first",
+                    "sourceName": "Example",
+                    "endpointStatus": "HEALTHY",
+                    "lastEndpointCheckedAt": 1770000000000,
+                    "lastPlaybackSuccessAt": 1770000001000
+                  }
+                },
+                "lastDailyCheckAt": 1770000002000
+              },
+              "appLogs": {
+                "entries": [
+                  {
+                    "id": "log-1",
+                    "timestamp": 1770000003000,
+                    "tag": "ServiceRuntime",
+                    "message": "Resolved stream",
+                    "level": "info"
+                  }
+                ]
+              },
               "recommendationCache": [
                 {
                   "id": 99,
@@ -225,17 +272,32 @@ class BackupDocumentTest {
         assertEquals(1.25, document.payload.defaultPlaybackSpeed)
         assertEquals(90, document.payload.nextEpisodeThresholdPercent())
         assertEquals(true, document.payload.enableSubtitlesByDefault)
+        assertEquals(false, document.payload.resolvedPlayerSubtitleAppearanceEnabled)
         assertEquals("org.videolan.vlc", document.payload.externalPlayer)
         assertEquals(true, document.payload.alwaysLandscape)
         assertEquals(false, document.payload.aniSkipEnabled)
         assertEquals(false, document.payload.introDBEnabled)
         assertEquals(true, document.payload.skip85sAlwaysVisible)
         assertEquals(false, document.payload.vlcHeaderProxyEnabled)
+        assertEquals(true, document.payload.resolvedPlayerHeaderProxyEnabled)
         assertEquals(false, document.payload.playerTwoFingerTapPlayPauseEnabled)
         assertEquals(true, document.payload.vlcDoubleTapSeekEnabled)
         assertEquals(15.0, document.payload.vlcDoubleTapSeekSeconds)
         assertEquals(true, document.payload.vlcOpenSubtitlesEnabled)
         assertEquals(false, document.payload.vlcOpenSubtitlesAutoFallbackEnabled)
+        assertEquals(true, document.payload.resolvedShowEpisodeBrowserButton)
+        assertEquals(true, document.payload.resolvedPlayerBrightnessGestureEnabled)
+        assertEquals(true, document.payload.resolvedPlayerVolumeGestureEnabled)
+        assertEquals(false, document.payload.resolvedPlayerDoubleTapSeekEnabled)
+        assertEquals(20.0, document.payload.resolvedPlayerDoubleTapSeekSeconds)
+        assertEquals(true, document.payload.resolvedPlayerPictureInPictureEnabled)
+        assertEquals(false, document.payload.resolvedPlayerOpenSubtitlesEnabled)
+        assertEquals(true, document.payload.resolvedPlayerOpenSubtitlesAutoFallbackEnabled)
+        assertEquals(true, document.payload.playerPerformanceOverlayEnabled)
+        assertEquals(60, document.payload.mpvForegroundFPS)
+        assertEquals("metal", document.payload.mpvRenderBackend)
+        assertEquals("sharp", document.payload.mpvMetalQualityProfile)
+        assertEquals(true, document.payload.mpvAppExitPictureInPictureEnabled)
         assertEquals(true, document.payload.skip85sEnabled)
         assertEquals(false, document.payload.showVLCEpisodeBrowserButton)
         assertEquals("#FFFFFF", document.payload.subtitleForegroundColor)
@@ -249,7 +311,15 @@ class BackupDocumentTest {
         assertEquals("1080p", document.payload.servicesAutoModeQualityPreference)
         assertEquals("actions,overview,details,cast,ratingNotes,episodes", document.payload.mediaDetailElementOrder)
         assertEquals("cast", document.payload.mediaDetailHiddenElements)
+        assertEquals("chapters,overview,tags,ratingNotes", document.payload.readerDetailElementOrder)
+        assertEquals("tags", document.payload.readerDetailHiddenElements)
+        assertEquals("popularAnime", document.payload.heroBannerCatalogId)
+        assertEquals("carousel", document.payload.heroBannerBehavior)
+        assertEquals("solid", document.payload.atmosphereStyle)
+        assertEquals("custom", document.payload.atmosphereSolidColorSource)
+        assertEquals("#224466", document.payload.atmosphereSolidColor)
         assertEquals("Georgia", document.payload.readerFontFamily)
+        assertEquals(75.0, document.payload.readerReadThresholdPercent)
         assertEquals(1, document.payload.collections.single().items.size)
         assertTrue(document.payload.progressData.jsonObject.containsKey("movieProgress"))
         assertEquals("viewer", document.payload.trackerState.accounts.single().username)
@@ -265,6 +335,11 @@ class BackupDocumentTest {
         assertEquals(true, aidokuState.showMatureSources)
         assertEquals(false, aidokuState.autoUpdateSources)
         assertEquals("download-1", document.payload.readerDownloads.single().id)
+        val sourceHealth = assertNotNull(document.payload.sourceHealth)
+        assertEquals(SourceHealthStatus.HEALTHY, sourceHealth.records.getValue("service:first").endpointStatus)
+        assertEquals(1770000002000, sourceHealth.lastDailyCheckAt)
+        val appLogs = assertNotNull(document.payload.appLogs)
+        assertEquals("ServiceRuntime", appLogs.entries.single().tag)
         assertEquals(7.5, document.payload.userRatings.getValue("99"))
         assertEquals("rewatch with friends", document.payload.userRatingNotes.getValue("99"))
         assertTrue("futureIosOnlySection" in document.unknownKeys)
@@ -273,6 +348,14 @@ class BackupDocumentTest {
         assertTrue(encoded.contains("userRatingNotes"))
         assertTrue(encoded.contains("aidokuState"))
         assertTrue(encoded.contains("readerDownloads"))
+        assertTrue(encoded.contains("sourceHealth"))
+        assertTrue(encoded.contains("appLogs"))
+        assertTrue(encoded.contains("heroBannerCatalogId"))
+        assertTrue(encoded.contains("atmosphereSolidColor"))
+        assertTrue(encoded.contains("showEpisodeBrowserButton"))
+        assertTrue(encoded.contains("playerSubtitleAppearanceEnabled"))
+        assertTrue(encoded.contains("playerDoubleTapSeekEnabled"))
+        assertTrue(encoded.contains("readerDetailElementOrder"))
     }
 
     @Test

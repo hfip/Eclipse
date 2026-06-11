@@ -71,7 +71,7 @@ data class SettingsScreenState(
     val nextEpisodeThreshold: Int = 90,
     val inAppPlayer: InAppPlayer = InAppPlayer.MPV,
     val enableSubtitlesByDefault: Boolean = false,
-    val enableVLCSubtitleEditMenu: Boolean = true,
+    val playerSubtitleAppearanceEnabled: Boolean = true,
     val defaultSubtitleLanguage: String = "eng",
     val preferredAnimeAudioLanguage: String = "jpn",
     val defaultPlaybackSpeed: Double = 1.0,
@@ -79,15 +79,15 @@ data class SettingsScreenState(
     val externalPlayer: String = "none",
     val preferDownloadedMedia: Boolean = false,
     val alwaysLandscape: Boolean = false,
-    val vlcHeaderProxyEnabled: Boolean = true,
-    val vlcBrightnessGestureEnabled: Boolean = false,
-    val vlcVolumeGestureEnabled: Boolean = false,
+    val playerHeaderProxyEnabled: Boolean = true,
+    val playerBrightnessGestureEnabled: Boolean = false,
+    val playerVolumeGestureEnabled: Boolean = false,
     val playerTwoFingerTapPlayPauseEnabled: Boolean = true,
-    val vlcDoubleTapSeekEnabled: Boolean = true,
-    val vlcDoubleTapSeekSeconds: Double = 10.0,
-    val vlcPiPEnabled: Boolean = false,
-    val vlcOpenSubtitlesEnabled: Boolean = false,
-    val vlcOpenSubtitlesAutoFallbackEnabled: Boolean = true,
+    val playerDoubleTapSeekEnabled: Boolean = true,
+    val playerDoubleTapSeekSeconds: Double = 10.0,
+    val playerPictureInPictureEnabled: Boolean = false,
+    val playerOpenSubtitlesEnabled: Boolean = false,
+    val playerOpenSubtitlesAutoFallbackEnabled: Boolean = true,
     val subtitleForegroundColor: String? = null,
     val subtitleStrokeColor: String? = null,
     val subtitleStrokeWidth: Double = 1.0,
@@ -99,7 +99,7 @@ data class SettingsScreenState(
     val aniSkipAutoSkip: Boolean = false,
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
-    val showVlcEpisodeBrowserButton: Boolean = true,
+    val playerEpisodeBrowserButton: Boolean = true,
     val showScheduleTab: Boolean = true,
     val showLocalScheduleTime: Boolean = true,
     val useClassicScheduleUI: Boolean = false,
@@ -159,28 +159,7 @@ data class SettingsScreenState(
     val githubReleaseShowAlertPending: Boolean = false,
     val githubReleaseStatus: String = "Release checks have not run yet.",
     val isCheckingGitHubRelease: Boolean = false,
-) {
-    val playerSubtitleAppearanceEnabled: Boolean
-        get() = enableVLCSubtitleEditMenu
-    val playerEpisodeBrowserButton: Boolean
-        get() = showVlcEpisodeBrowserButton
-    val playerHeaderProxyEnabled: Boolean
-        get() = vlcHeaderProxyEnabled
-    val playerBrightnessGestureEnabled: Boolean
-        get() = vlcBrightnessGestureEnabled
-    val playerVolumeGestureEnabled: Boolean
-        get() = vlcVolumeGestureEnabled
-    val playerDoubleTapSeekEnabled: Boolean
-        get() = vlcDoubleTapSeekEnabled
-    val playerDoubleTapSeekSeconds: Double
-        get() = vlcDoubleTapSeekSeconds
-    val playerPictureInPictureEnabled: Boolean
-        get() = vlcPiPEnabled
-    val playerOpenSubtitlesEnabled: Boolean
-        get() = vlcOpenSubtitlesEnabled
-    val playerOpenSubtitlesAutoFallbackEnabled: Boolean
-        get() = vlcOpenSubtitlesAutoFallbackEnabled
-}
+)
 
 data class CatalogSettingsRow(
     val id: String,
@@ -300,7 +279,7 @@ private val ReaderFontWeights = listOf(
     "bold" to "Bold",
 )
 
-private val VlcLanguageOptions = listOf(
+private val PlayerLanguageOptions = listOf(
     "eng" to "English",
     "jpn" to "Japanese",
     "zho" to "Chinese",
@@ -391,13 +370,15 @@ fun SettingsRoute(
     onExternalPlayerChanged: (String) -> Unit,
     onPreferDownloadedMediaChanged: (Boolean) -> Unit,
     onAlwaysLandscapeChanged: (Boolean) -> Unit,
-    onVlcBrightnessGestureChanged: (Boolean) -> Unit,
-    onVlcVolumeGestureChanged: (Boolean) -> Unit,
+    onPlayerHeaderProxyChanged: (Boolean) -> Unit,
+    onPlayerBrightnessGestureChanged: (Boolean) -> Unit,
+    onPlayerVolumeGestureChanged: (Boolean) -> Unit,
     onPlayerTwoFingerTapPlayPauseChanged: (Boolean) -> Unit,
-    onVlcDoubleTapSeekEnabledChanged: (Boolean) -> Unit,
-    onVlcDoubleTapSeekSecondsChanged: (Double) -> Unit,
-    onVlcOpenSubtitlesChanged: (Boolean) -> Unit,
-    onVlcOpenSubtitlesAutoFallbackChanged: (Boolean) -> Unit,
+    onPlayerDoubleTapSeekEnabledChanged: (Boolean) -> Unit,
+    onPlayerDoubleTapSeekSecondsChanged: (Double) -> Unit,
+    onPlayerPictureInPictureChanged: (Boolean) -> Unit,
+    onPlayerOpenSubtitlesChanged: (Boolean) -> Unit,
+    onPlayerOpenSubtitlesAutoFallbackChanged: (Boolean) -> Unit,
     onSubtitleForegroundColorChanged: (String?) -> Unit,
     onSubtitleStrokeColorChanged: (String?) -> Unit,
     onSubtitleStrokeWidthChanged: (Double) -> Unit,
@@ -448,7 +429,7 @@ fun SettingsRoute(
     onFilterHorrorContentChanged: (Boolean) -> Unit,
     onSimilarityAlgorithmChanged: (SimilarityAlgorithm) -> Unit,
     onIntroDbAppChanged: (Boolean) -> Unit,
-    onShowVlcEpisodeBrowserButtonChanged: (Boolean) -> Unit,
+    onPlayerEpisodeBrowserButtonChanged: (Boolean) -> Unit,
     onMediaDetailElementVisibleChanged: (MediaDetailElement, Boolean) -> Unit,
     onMoveMediaDetailElement: (MediaDetailElement, Int) -> Unit,
     onResetMediaDetailLayout: () -> Unit,
@@ -699,13 +680,15 @@ fun SettingsRoute(
                 onExternalPlayerChanged = onExternalPlayerChanged,
                 onPreferDownloadedMediaChanged = onPreferDownloadedMediaChanged,
                 onAlwaysLandscapeChanged = onAlwaysLandscapeChanged,
-                onVlcBrightnessGestureChanged = onVlcBrightnessGestureChanged,
-                onVlcVolumeGestureChanged = onVlcVolumeGestureChanged,
+                onPlayerHeaderProxyChanged = onPlayerHeaderProxyChanged,
+                onPlayerBrightnessGestureChanged = onPlayerBrightnessGestureChanged,
+                onPlayerVolumeGestureChanged = onPlayerVolumeGestureChanged,
                 onPlayerTwoFingerTapPlayPauseChanged = onPlayerTwoFingerTapPlayPauseChanged,
-                onVlcDoubleTapSeekEnabledChanged = onVlcDoubleTapSeekEnabledChanged,
-                onVlcDoubleTapSeekSecondsChanged = onVlcDoubleTapSeekSecondsChanged,
-                onVlcOpenSubtitlesChanged = onVlcOpenSubtitlesChanged,
-                onVlcOpenSubtitlesAutoFallbackChanged = onVlcOpenSubtitlesAutoFallbackChanged,
+                onPlayerDoubleTapSeekEnabledChanged = onPlayerDoubleTapSeekEnabledChanged,
+                onPlayerDoubleTapSeekSecondsChanged = onPlayerDoubleTapSeekSecondsChanged,
+                onPlayerPictureInPictureChanged = onPlayerPictureInPictureChanged,
+                onPlayerOpenSubtitlesChanged = onPlayerOpenSubtitlesChanged,
+                onPlayerOpenSubtitlesAutoFallbackChanged = onPlayerOpenSubtitlesAutoFallbackChanged,
             )
         }
 
@@ -734,7 +717,7 @@ fun SettingsRoute(
                 title = "Episode Browser Button",
                 description = "Show a player button for jumping to another loaded episode while playback is active.",
                 checked = state.playerEpisodeBrowserButton,
-                onCheckedChange = onShowVlcEpisodeBrowserButtonChanged,
+                onCheckedChange = onPlayerEpisodeBrowserButtonChanged,
             )
         }
 
@@ -1607,13 +1590,15 @@ private fun PlayerPreferencesCard(
     onExternalPlayerChanged: (String) -> Unit,
     onPreferDownloadedMediaChanged: (Boolean) -> Unit,
     onAlwaysLandscapeChanged: (Boolean) -> Unit,
-    onVlcBrightnessGestureChanged: (Boolean) -> Unit,
-    onVlcVolumeGestureChanged: (Boolean) -> Unit,
+    onPlayerHeaderProxyChanged: (Boolean) -> Unit,
+    onPlayerBrightnessGestureChanged: (Boolean) -> Unit,
+    onPlayerVolumeGestureChanged: (Boolean) -> Unit,
     onPlayerTwoFingerTapPlayPauseChanged: (Boolean) -> Unit,
-    onVlcDoubleTapSeekEnabledChanged: (Boolean) -> Unit,
-    onVlcDoubleTapSeekSecondsChanged: (Double) -> Unit,
-    onVlcOpenSubtitlesChanged: (Boolean) -> Unit,
-    onVlcOpenSubtitlesAutoFallbackChanged: (Boolean) -> Unit,
+    onPlayerDoubleTapSeekEnabledChanged: (Boolean) -> Unit,
+    onPlayerDoubleTapSeekSecondsChanged: (Double) -> Unit,
+    onPlayerPictureInPictureChanged: (Boolean) -> Unit,
+    onPlayerOpenSubtitlesChanged: (Boolean) -> Unit,
+    onPlayerOpenSubtitlesAutoFallbackChanged: (Boolean) -> Unit,
 ) {
     GlassPanel {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -1630,13 +1615,13 @@ private fun PlayerPreferencesCard(
             ReaderOptionButtons(
                 title = "Default Subtitle Language",
                 selected = state.defaultSubtitleLanguage,
-                options = VlcLanguageOptions,
+                options = PlayerLanguageOptions,
                 onSelected = onDefaultSubtitleLanguageChanged,
             )
             ReaderOptionButtons(
                 title = "Preferred Anime Audio",
                 selected = state.preferredAnimeAudioLanguage,
-                options = VlcLanguageOptions,
+                options = PlayerLanguageOptions,
                 onSelected = onPreferredAnimeAudioLanguageChanged,
             )
             ReaderValueSlider(
@@ -1664,14 +1649,19 @@ private fun PlayerPreferencesCard(
                 onCheckedChange = onAlwaysLandscapeChanged,
             )
             SettingInlineToggle(
+                title = "Header Proxy",
+                checked = state.playerHeaderProxyEnabled,
+                onCheckedChange = onPlayerHeaderProxyChanged,
+            )
+            SettingInlineToggle(
                 title = "Brightness Gesture",
                 checked = state.playerBrightnessGestureEnabled,
-                onCheckedChange = onVlcBrightnessGestureChanged,
+                onCheckedChange = onPlayerBrightnessGestureChanged,
             )
             SettingInlineToggle(
                 title = "Volume Gesture",
                 checked = state.playerVolumeGestureEnabled,
-                onCheckedChange = onVlcVolumeGestureChanged,
+                onCheckedChange = onPlayerVolumeGestureChanged,
             )
             SettingInlineToggle(
                 title = "Two-Finger Play/Pause",
@@ -1681,24 +1671,29 @@ private fun PlayerPreferencesCard(
             SettingInlineToggle(
                 title = "Double-Tap Seek",
                 checked = state.playerDoubleTapSeekEnabled,
-                onCheckedChange = onVlcDoubleTapSeekEnabledChanged,
+                onCheckedChange = onPlayerDoubleTapSeekEnabledChanged,
             )
             ReaderValueSlider(
                 title = "Double-Tap Seek Seconds",
                 valueLabel = "%.0fs".format(state.playerDoubleTapSeekSeconds),
                 value = state.playerDoubleTapSeekSeconds.coerceIn(5.0, 60.0).toFloat(),
                 valueRange = 5f..60f,
-                onValueChange = { onVlcDoubleTapSeekSecondsChanged(roundedToFiveStep(it).toDouble()) },
+                onValueChange = { onPlayerDoubleTapSeekSecondsChanged(roundedToFiveStep(it).toDouble()) },
+            )
+            SettingInlineToggle(
+                title = "Picture-in-Picture",
+                checked = state.playerPictureInPictureEnabled,
+                onCheckedChange = onPlayerPictureInPictureChanged,
             )
             SettingInlineToggle(
                 title = "OpenSubtitles",
                 checked = state.playerOpenSubtitlesEnabled,
-                onCheckedChange = onVlcOpenSubtitlesChanged,
+                onCheckedChange = onPlayerOpenSubtitlesChanged,
             )
             SettingInlineToggle(
                 title = "OpenSubtitles Fallback",
                 checked = state.playerOpenSubtitlesAutoFallbackEnabled,
-                onCheckedChange = onVlcOpenSubtitlesAutoFallbackChanged,
+                onCheckedChange = onPlayerOpenSubtitlesAutoFallbackChanged,
             )
         }
     }

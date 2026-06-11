@@ -1133,7 +1133,12 @@ private fun StremioRequest.catalogSearchTitles(): List<String> {
     val filtered = values
         .map { title -> title.trim() }
         .filter { title -> title.isNotBlank() }
-        .filterNot { title -> title.startsWith("tt") || title.startsWith("tmdb:") || title.startsWith("imdb:") }
+        .filterNot { title ->
+            title.startsWith("tt") ||
+                title.startsWith("tmdb:") ||
+                title.startsWith("tmdb_id:") ||
+                title.startsWith("imdb:")
+        }
     return filtered.ifEmpty { listOf(summary) }
 }
 
@@ -1475,6 +1480,7 @@ private fun StremioStream.toResolvedCandidate(
                         label = subtitle.label ?: subtitle.lang ?: "Subtitle",
                         language = subtitle.lang,
                         uri = subtitleUrl,
+                        headers = behaviorHints?.proxyHeaders?.request.orEmpty(),
                     )
                 }
             },
@@ -1612,6 +1618,7 @@ private fun buildServiceSubtitleTracks(
             language = language,
             uri = uri,
             format = subtitle.firstString("format", "type") ?: uri.subtitleFormatFromUrl(),
+            headers = subtitle.headerStrings(),
             isDefault = subtitle.booleanValue("default") ||
                 subtitle.booleanValue("isDefault") ||
                 subtitle.matchesDefaultSubtitle(defaultSubtitle, uri, label, language),

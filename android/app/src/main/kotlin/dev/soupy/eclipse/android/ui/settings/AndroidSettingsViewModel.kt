@@ -116,7 +116,7 @@ class AndroidSettingsViewModel(
                     nextEpisodeThreshold = settings.nextEpisodeThreshold,
                     inAppPlayer = settings.inAppPlayer,
                     enableSubtitlesByDefault = settings.enableSubtitlesByDefault,
-                    enableVLCSubtitleEditMenu = settings.playerSubtitleAppearanceEnabled,
+                    playerSubtitleAppearanceEnabled = settings.playerSubtitleAppearanceEnabled,
                     defaultSubtitleLanguage = settings.defaultSubtitleLanguage,
                     preferredAnimeAudioLanguage = settings.preferredAnimeAudioLanguage,
                     defaultPlaybackSpeed = settings.defaultPlaybackSpeed,
@@ -124,15 +124,15 @@ class AndroidSettingsViewModel(
                     externalPlayer = settings.externalPlayer,
                     preferDownloadedMedia = settings.preferDownloadedMedia,
                     alwaysLandscape = settings.alwaysLandscape,
-                    vlcHeaderProxyEnabled = settings.playerHeaderProxyEnabled,
-                    vlcBrightnessGestureEnabled = settings.playerBrightnessGestureEnabled,
-                    vlcVolumeGestureEnabled = settings.playerVolumeGestureEnabled,
+                    playerHeaderProxyEnabled = settings.playerHeaderProxyEnabled,
+                    playerBrightnessGestureEnabled = settings.playerBrightnessGestureEnabled,
+                    playerVolumeGestureEnabled = settings.playerVolumeGestureEnabled,
                     playerTwoFingerTapPlayPauseEnabled = settings.playerTwoFingerTapPlayPauseEnabled,
-                    vlcDoubleTapSeekEnabled = settings.playerDoubleTapSeekEnabled,
-                    vlcDoubleTapSeekSeconds = settings.playerDoubleTapSeekSeconds,
-                    vlcPiPEnabled = settings.playerPictureInPictureEnabled,
-                    vlcOpenSubtitlesEnabled = settings.playerOpenSubtitlesEnabled,
-                    vlcOpenSubtitlesAutoFallbackEnabled = settings.playerOpenSubtitlesAutoFallbackEnabled,
+                    playerDoubleTapSeekEnabled = settings.playerDoubleTapSeekEnabled,
+                    playerDoubleTapSeekSeconds = settings.playerDoubleTapSeekSeconds,
+                    playerPictureInPictureEnabled = settings.playerPictureInPictureEnabled,
+                    playerOpenSubtitlesEnabled = settings.playerOpenSubtitlesEnabled,
+                    playerOpenSubtitlesAutoFallbackEnabled = settings.playerOpenSubtitlesAutoFallbackEnabled,
                     subtitleForegroundColor = settings.subtitleForegroundColor,
                     subtitleStrokeColor = settings.subtitleStrokeColor,
                     subtitleStrokeWidth = settings.subtitleStrokeWidth,
@@ -144,7 +144,7 @@ class AndroidSettingsViewModel(
                     aniSkipAutoSkip = settings.aniSkipAutoSkip,
                     skip85sEnabled = settings.skip85sEnabled,
                     skip85sAlwaysVisible = settings.skip85sAlwaysVisible,
-                    showVlcEpisodeBrowserButton = settings.playerEpisodeBrowserButton,
+                    playerEpisodeBrowserButton = settings.playerEpisodeBrowserButton,
                     showScheduleTab = settings.showScheduleTab,
                     showLocalScheduleTime = settings.showLocalScheduleTime,
                     useClassicScheduleUI = settings.useClassicScheduleUI,
@@ -497,9 +497,9 @@ class AndroidSettingsViewModel(
         }
     }
 
-    fun setShowVlcEpisodeBrowserButton(enabled: Boolean) {
+    fun setPlayerEpisodeBrowserButton(enabled: Boolean) {
         viewModelScope.launch {
-            settingsStore.setShowVlcEpisodeBrowserButton(enabled)
+            settingsStore.setPlayerEpisodeBrowserButton(enabled)
         }
     }
 
@@ -635,29 +635,29 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = enabled,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
-    fun setEnableVLCSubtitleEditMenu(enabled: Boolean) {
+    fun setPlayerSubtitleAppearanceEnabled(enabled: Boolean) {
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = enabled,
+            playerSubtitleAppearanceEnabled = enabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -665,14 +665,14 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = language,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -680,14 +680,14 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = language,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -695,14 +695,14 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = value,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -710,14 +710,14 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = value,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -725,14 +725,14 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = value,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -740,7 +740,7 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
@@ -748,7 +748,7 @@ class AndroidSettingsViewModel(
             externalPlayer = current.externalPlayer,
             preferDownloadedMedia = enabled,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
@@ -756,40 +756,40 @@ class AndroidSettingsViewModel(
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = enabled,
-            vlcHeaderProxyEnabled = current.playerHeaderProxyEnabled,
+            playerHeaderProxyEnabled = current.playerHeaderProxyEnabled,
         )
     }
 
-    fun setVlcHeaderProxyEnabled(enabled: Boolean) {
+    fun setPlayerHeaderProxyEnabled(enabled: Boolean) {
         val current = _state.value
         updatePlayerPreferences(
             enableSubtitlesByDefault = current.enableSubtitlesByDefault,
-            enableVLCSubtitleEditMenu = current.playerSubtitleAppearanceEnabled,
+            playerSubtitleAppearanceEnabled = current.playerSubtitleAppearanceEnabled,
             defaultSubtitleLanguage = current.defaultSubtitleLanguage,
             preferredAnimeAudioLanguage = current.preferredAnimeAudioLanguage,
             defaultPlaybackSpeed = current.defaultPlaybackSpeed,
             holdSpeedPlayer = current.holdSpeedPlayer,
             externalPlayer = current.externalPlayer,
             alwaysLandscape = current.alwaysLandscape,
-            vlcHeaderProxyEnabled = enabled,
+            playerHeaderProxyEnabled = enabled,
         )
     }
 
-    fun setVlcBrightnessGestureEnabled(enabled: Boolean) {
+    fun setPlayerBrightnessGestureEnabled(enabled: Boolean) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcBrightnessGestureEnabled = enabled))
+        updatePlayerGestures(current.copy(playerBrightnessGestureEnabled = enabled))
     }
 
-    fun setVlcVolumeGestureEnabled(enabled: Boolean) {
+    fun setPlayerVolumeGestureEnabled(enabled: Boolean) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcVolumeGestureEnabled = enabled))
+        updatePlayerGestures(current.copy(playerVolumeGestureEnabled = enabled))
     }
 
     fun setPlayerTwoFingerTapPlayPauseEnabled(enabled: Boolean) {
@@ -797,29 +797,29 @@ class AndroidSettingsViewModel(
         updatePlayerGestures(current.copy(playerTwoFingerTapPlayPauseEnabled = enabled))
     }
 
-    fun setVlcDoubleTapSeekEnabled(enabled: Boolean) {
+    fun setPlayerDoubleTapSeekEnabled(enabled: Boolean) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcDoubleTapSeekEnabled = enabled))
+        updatePlayerGestures(current.copy(playerDoubleTapSeekEnabled = enabled))
     }
 
-    fun setVlcDoubleTapSeekSeconds(value: Double) {
+    fun setPlayerDoubleTapSeekSeconds(value: Double) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcDoubleTapSeekSeconds = value))
+        updatePlayerGestures(current.copy(playerDoubleTapSeekSeconds = value))
     }
 
-    fun setVlcPiPEnabled(enabled: Boolean) {
+    fun setPlayerPictureInPictureEnabled(enabled: Boolean) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcPiPEnabled = enabled))
+        updatePlayerGestures(current.copy(playerPictureInPictureEnabled = enabled))
     }
 
-    fun setVlcOpenSubtitlesEnabled(enabled: Boolean) {
+    fun setPlayerOpenSubtitlesEnabled(enabled: Boolean) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcOpenSubtitlesEnabled = enabled))
+        updatePlayerGestures(current.copy(playerOpenSubtitlesEnabled = enabled))
     }
 
-    fun setVlcOpenSubtitlesAutoFallbackEnabled(enabled: Boolean) {
+    fun setPlayerOpenSubtitlesAutoFallbackEnabled(enabled: Boolean) {
         val current = _state.value
-        updatePlayerGestures(current.copy(vlcOpenSubtitlesAutoFallbackEnabled = enabled))
+        updatePlayerGestures(current.copy(playerOpenSubtitlesAutoFallbackEnabled = enabled))
     }
 
     fun setSubtitleForegroundColor(value: String?) {
@@ -879,7 +879,7 @@ class AndroidSettingsViewModel(
 
     private fun updatePlayerPreferences(
         enableSubtitlesByDefault: Boolean,
-        enableVLCSubtitleEditMenu: Boolean,
+        playerSubtitleAppearanceEnabled: Boolean,
         defaultSubtitleLanguage: String,
         preferredAnimeAudioLanguage: String,
         defaultPlaybackSpeed: Double,
@@ -887,12 +887,12 @@ class AndroidSettingsViewModel(
         externalPlayer: String,
         preferDownloadedMedia: Boolean = _state.value.preferDownloadedMedia,
         alwaysLandscape: Boolean,
-        vlcHeaderProxyEnabled: Boolean,
+        playerHeaderProxyEnabled: Boolean,
     ) {
         viewModelScope.launch {
             settingsStore.updatePlayerPreferences(
                 enableSubtitlesByDefault = enableSubtitlesByDefault,
-                enableVLCSubtitleEditMenu = enableVLCSubtitleEditMenu,
+                playerSubtitleAppearanceEnabled = playerSubtitleAppearanceEnabled,
                 defaultSubtitleLanguage = defaultSubtitleLanguage,
                 preferredAnimeAudioLanguage = preferredAnimeAudioLanguage,
                 defaultPlaybackSpeed = defaultPlaybackSpeed,
@@ -900,7 +900,7 @@ class AndroidSettingsViewModel(
                 externalPlayer = externalPlayer,
                 preferDownloadedMedia = preferDownloadedMedia,
                 alwaysLandscape = alwaysLandscape,
-                vlcHeaderProxyEnabled = vlcHeaderProxyEnabled,
+                playerHeaderProxyEnabled = playerHeaderProxyEnabled,
             )
         }
     }
@@ -908,14 +908,14 @@ class AndroidSettingsViewModel(
     private fun updatePlayerGestures(state: SettingsScreenState) {
         viewModelScope.launch {
             settingsStore.updatePlayerGestures(
-                vlcBrightnessGestureEnabled = state.playerBrightnessGestureEnabled,
-                vlcVolumeGestureEnabled = state.playerVolumeGestureEnabled,
+                playerBrightnessGestureEnabled = state.playerBrightnessGestureEnabled,
+                playerVolumeGestureEnabled = state.playerVolumeGestureEnabled,
                 playerTwoFingerTapPlayPauseEnabled = state.playerTwoFingerTapPlayPauseEnabled,
-                vlcDoubleTapSeekEnabled = state.playerDoubleTapSeekEnabled,
-                vlcDoubleTapSeekSeconds = state.playerDoubleTapSeekSeconds,
-                vlcPiPEnabled = state.playerPictureInPictureEnabled,
-                vlcOpenSubtitlesEnabled = state.playerOpenSubtitlesEnabled,
-                vlcOpenSubtitlesAutoFallbackEnabled = state.playerOpenSubtitlesAutoFallbackEnabled,
+                playerDoubleTapSeekEnabled = state.playerDoubleTapSeekEnabled,
+                playerDoubleTapSeekSeconds = state.playerDoubleTapSeekSeconds,
+                playerPictureInPictureEnabled = state.playerPictureInPictureEnabled,
+                playerOpenSubtitlesEnabled = state.playerOpenSubtitlesEnabled,
+                playerOpenSubtitlesAutoFallbackEnabled = state.playerOpenSubtitlesAutoFallbackEnabled,
             )
         }
     }

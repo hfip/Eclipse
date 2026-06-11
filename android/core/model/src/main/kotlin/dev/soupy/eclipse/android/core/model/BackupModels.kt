@@ -293,6 +293,7 @@ data class BackupData(
     val selectedAppearance: String = "system",
     val enableSubtitlesByDefault: Boolean = false,
     val defaultSubtitleLanguage: String = "eng",
+    val playerSubtitleAppearanceEnabled: Boolean? = null,
     val enableVLCSubtitleEditMenu: Boolean = true,
     val preferredAnimeAudioLanguage: String = "jpn",
     @Serializable(with = InAppPlayerBackupSerializer::class)
@@ -315,18 +316,33 @@ data class BackupData(
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
     val showNextEpisodeButton: Boolean = true,
+    val showEpisodeBrowserButton: Boolean? = null,
     val showVLCEpisodeBrowserButton: Boolean = true,
     val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Double = 0.90,
+    val playerHeaderProxyEnabled: Boolean? = null,
     val vlcHeaderProxyEnabled: Boolean = true,
+    val playerBrightnessGestureEnabled: Boolean? = null,
     val vlcBrightnessGestureEnabled: Boolean = false,
+    val playerVolumeGestureEnabled: Boolean? = null,
     val vlcVolumeGestureEnabled: Boolean = false,
     val playerTwoFingerTapPlayPauseEnabled: Boolean = true,
+    val playerDoubleTapSeekEnabled: Boolean? = null,
     val vlcDoubleTapSeekEnabled: Boolean = true,
+    val playerDoubleTapSeekSeconds: Double? = null,
     val vlcDoubleTapSeekSeconds: Double = 10.0,
+    val playerPictureInPictureEnabled: Boolean? = null,
     val vlcPiPEnabled: Boolean = false,
+    val playerOpenSubtitlesEnabled: Boolean? = null,
     val vlcOpenSubtitlesEnabled: Boolean = false,
+    val playerOpenSubtitlesAutoFallbackEnabled: Boolean? = null,
     val vlcOpenSubtitlesAutoFallbackEnabled: Boolean = true,
+    val playerPerformanceOverlayEnabled: Boolean = false,
+    val mpvForegroundFPS: Int = 30,
+    val mpvRenderBackend: String = "opengl",
+    val mpvMetalQualityProfile: String = "auto",
+    val mpvAppExitPictureInPictureEnabled: Boolean = false,
+    val smartInAppPlayerChoosingEnabled: Boolean = false,
     @Serializable(with = BackupColorStringSerializer::class)
     val subtitleForegroundColor: String? = null,
     @Serializable(with = BackupColorStringSerializer::class)
@@ -351,9 +367,18 @@ data class BackupData(
     val horizontalEpisodeList: Boolean = false,
     val mediaDetailElementOrder: String = MediaDetailElement.DefaultOrderRawValue,
     val mediaDetailHiddenElements: String = "",
+    val readerDetailElementOrder: String = "overview,tags,ratingNotes,chapters",
+    val readerDetailHiddenElements: String = "",
+    val heroBannerCatalogId: String = "trending",
+    val heroBannerBehavior: String = HeroBannerBehavior.Default.rawValue,
+    val atmosphereStyle: String = AtmosphereStyle.Default.rawValue,
+    val atmosphereSolidColorSource: String = AtmosphereSolidColorSource.Default.rawValue,
+    @Serializable(with = BackupColorStringSerializer::class)
+    val atmosphereSolidColor: String = "#401F73",
     val mediaColumnsPortrait: Int = 3,
     val mediaColumnsLandscape: Int = 5,
     val readingMode: Int = 2,
+    val readerReadThresholdPercent: Double = 80.0,
     val readerFontSize: Double = 16.0,
     val readerFontFamily: String = "-apple-system",
     val readerFontWeight: String = "normal",
@@ -379,6 +404,8 @@ data class BackupData(
     val kanzenModules: List<ModuleBackup> = emptyList(),
     val aidokuState: BackupAidokuState? = null,
     val readerDownloads: List<BackupReaderDownloadItem> = emptyList(),
+    val sourceHealth: SourceHealthSnapshot? = null,
+    val appLogs: AppLogSnapshot? = null,
     val recommendationCache: JsonElement = JsonArray(emptyList()),
     @SerialName("userRatings") val userRatings: Map<String, Double> = emptyMap(),
     val userRatingNotes: Map<String, String> = emptyMap(),
@@ -387,6 +414,36 @@ data class BackupData(
         get() = (legacyPlayerChoice ?: inAppPlayer).let { player ->
             if (player == InAppPlayer.VLC) InAppPlayer.MPV else player
         }
+
+    val resolvedPlayerSubtitleAppearanceEnabled: Boolean
+        get() = playerSubtitleAppearanceEnabled ?: enableVLCSubtitleEditMenu
+
+    val resolvedShowEpisodeBrowserButton: Boolean
+        get() = showEpisodeBrowserButton ?: showVLCEpisodeBrowserButton
+
+    val resolvedPlayerHeaderProxyEnabled: Boolean
+        get() = playerHeaderProxyEnabled ?: vlcHeaderProxyEnabled
+
+    val resolvedPlayerBrightnessGestureEnabled: Boolean
+        get() = playerBrightnessGestureEnabled ?: vlcBrightnessGestureEnabled
+
+    val resolvedPlayerVolumeGestureEnabled: Boolean
+        get() = playerVolumeGestureEnabled ?: vlcVolumeGestureEnabled
+
+    val resolvedPlayerDoubleTapSeekEnabled: Boolean
+        get() = playerDoubleTapSeekEnabled ?: vlcDoubleTapSeekEnabled
+
+    val resolvedPlayerDoubleTapSeekSeconds: Double
+        get() = playerDoubleTapSeekSeconds ?: vlcDoubleTapSeekSeconds
+
+    val resolvedPlayerPictureInPictureEnabled: Boolean
+        get() = playerPictureInPictureEnabled ?: vlcPiPEnabled
+
+    val resolvedPlayerOpenSubtitlesEnabled: Boolean
+        get() = playerOpenSubtitlesEnabled ?: vlcOpenSubtitlesEnabled
+
+    val resolvedPlayerOpenSubtitlesAutoFallbackEnabled: Boolean
+        get() = playerOpenSubtitlesAutoFallbackEnabled ?: vlcOpenSubtitlesAutoFallbackEnabled
 
     fun nextEpisodeThresholdPercent(): Int {
         val percent = if (nextEpisodeThreshold <= 1.0) {

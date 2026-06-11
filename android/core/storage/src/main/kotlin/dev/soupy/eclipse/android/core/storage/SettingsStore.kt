@@ -34,7 +34,7 @@ data class AppSettings(
     val selectedAppearance: String = "system",
     val enableSubtitlesByDefault: Boolean = false,
     val defaultSubtitleLanguage: String = "eng",
-    val enableVLCSubtitleEditMenu: Boolean = true,
+    val playerSubtitleAppearanceEnabled: Boolean = true,
     val preferredAnimeAudioLanguage: String = "jpn",
     val inAppPlayer: InAppPlayer = InAppPlayer.MPV,
     val autoModeEnabled: Boolean = true,
@@ -56,18 +56,18 @@ data class AppSettings(
     val skip85sEnabled: Boolean = false,
     val skip85sAlwaysVisible: Boolean = false,
     val showNextEpisodeButton: Boolean = true,
-    val showVlcEpisodeBrowserButton: Boolean = true,
+    val playerEpisodeBrowserButton: Boolean = true,
     val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
-    val vlcHeaderProxyEnabled: Boolean = true,
-    val vlcBrightnessGestureEnabled: Boolean = false,
-    val vlcVolumeGestureEnabled: Boolean = false,
+    val playerHeaderProxyEnabled: Boolean = true,
+    val playerBrightnessGestureEnabled: Boolean = false,
+    val playerVolumeGestureEnabled: Boolean = false,
     val playerTwoFingerTapPlayPauseEnabled: Boolean = true,
-    val vlcDoubleTapSeekEnabled: Boolean = true,
-    val vlcDoubleTapSeekSeconds: Double = 10.0,
-    val vlcPiPEnabled: Boolean = false,
-    val vlcOpenSubtitlesEnabled: Boolean = false,
-    val vlcOpenSubtitlesAutoFallbackEnabled: Boolean = true,
+    val playerDoubleTapSeekEnabled: Boolean = true,
+    val playerDoubleTapSeekSeconds: Double = 10.0,
+    val playerPictureInPictureEnabled: Boolean = false,
+    val playerOpenSubtitlesEnabled: Boolean = false,
+    val playerOpenSubtitlesAutoFallbackEnabled: Boolean = true,
     val subtitleForegroundColor: String? = null,
     val subtitleStrokeColor: String? = null,
     val subtitleStrokeWidth: Double = 1.0,
@@ -111,28 +111,7 @@ data class AppSettings(
     val servicesAutoSelectEpisodesEnabled: Boolean = false,
     val filterHorrorContent: Boolean = false,
     val selectedSimilarityAlgorithm: SimilarityAlgorithm = SimilarityAlgorithm.HYBRID,
-) {
-    val playerSubtitleAppearanceEnabled: Boolean
-        get() = enableVLCSubtitleEditMenu
-    val playerEpisodeBrowserButton: Boolean
-        get() = showVlcEpisodeBrowserButton
-    val playerHeaderProxyEnabled: Boolean
-        get() = vlcHeaderProxyEnabled
-    val playerBrightnessGestureEnabled: Boolean
-        get() = vlcBrightnessGestureEnabled
-    val playerVolumeGestureEnabled: Boolean
-        get() = vlcVolumeGestureEnabled
-    val playerDoubleTapSeekEnabled: Boolean
-        get() = vlcDoubleTapSeekEnabled
-    val playerDoubleTapSeekSeconds: Double
-        get() = vlcDoubleTapSeekSeconds
-    val playerPictureInPictureEnabled: Boolean
-        get() = vlcPiPEnabled
-    val playerOpenSubtitlesEnabled: Boolean
-        get() = vlcOpenSubtitlesEnabled
-    val playerOpenSubtitlesAutoFallbackEnabled: Boolean
-        get() = vlcOpenSubtitlesAutoFallbackEnabled
-}
+)
 
 class SettingsStore(
     private val context: Context,
@@ -187,7 +166,7 @@ class SettingsStore(
 
     suspend fun updatePlayerPreferences(
         enableSubtitlesByDefault: Boolean,
-        enableVLCSubtitleEditMenu: Boolean,
+        playerSubtitleAppearanceEnabled: Boolean,
         defaultSubtitleLanguage: String,
         preferredAnimeAudioLanguage: String,
         defaultPlaybackSpeed: Double,
@@ -195,11 +174,11 @@ class SettingsStore(
         externalPlayer: String,
         preferDownloadedMedia: Boolean,
         alwaysLandscape: Boolean,
-        vlcHeaderProxyEnabled: Boolean,
+        playerHeaderProxyEnabled: Boolean,
     ) {
         context.dataStore.edit { prefs ->
             prefs[Keys.enableSubtitlesByDefault] = enableSubtitlesByDefault
-            prefs[Keys.enableVLCSubtitleEditMenu] = true
+            prefs[Keys.legacyEnableVlcSubtitleEditMenu] = playerSubtitleAppearanceEnabled
             prefs[Keys.defaultSubtitleLanguage] = defaultSubtitleLanguage.normalizedLanguageCode("eng")
             prefs[Keys.preferredAnimeAudioLanguage] = preferredAnimeAudioLanguage.normalizedLanguageCode("jpn")
             prefs[Keys.defaultPlaybackSpeed] = defaultPlaybackSpeed.coerceIn(0.25, 2.0)
@@ -207,29 +186,29 @@ class SettingsStore(
             prefs[Keys.externalPlayer] = externalPlayer.trim().ifBlank { "none" }
             prefs[Keys.preferDownloadedMedia] = preferDownloadedMedia
             prefs[Keys.alwaysLandscape] = alwaysLandscape
-            prefs[Keys.vlcHeaderProxyEnabled] = true
+            prefs[Keys.legacyVlcHeaderProxyEnabled] = playerHeaderProxyEnabled
         }
     }
 
     suspend fun updatePlayerGestures(
-        vlcBrightnessGestureEnabled: Boolean,
-        vlcVolumeGestureEnabled: Boolean,
+        playerBrightnessGestureEnabled: Boolean,
+        playerVolumeGestureEnabled: Boolean,
         playerTwoFingerTapPlayPauseEnabled: Boolean,
-        vlcDoubleTapSeekEnabled: Boolean,
-        vlcDoubleTapSeekSeconds: Double,
-        vlcPiPEnabled: Boolean,
-        vlcOpenSubtitlesEnabled: Boolean,
-        vlcOpenSubtitlesAutoFallbackEnabled: Boolean,
+        playerDoubleTapSeekEnabled: Boolean,
+        playerDoubleTapSeekSeconds: Double,
+        playerPictureInPictureEnabled: Boolean,
+        playerOpenSubtitlesEnabled: Boolean,
+        playerOpenSubtitlesAutoFallbackEnabled: Boolean,
     ) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.vlcBrightnessGestureEnabled] = vlcBrightnessGestureEnabled
-            prefs[Keys.vlcVolumeGestureEnabled] = vlcVolumeGestureEnabled
+            prefs[Keys.legacyVlcBrightnessGestureEnabled] = playerBrightnessGestureEnabled
+            prefs[Keys.legacyVlcVolumeGestureEnabled] = playerVolumeGestureEnabled
             prefs[Keys.playerTwoFingerTapPlayPauseEnabled] = playerTwoFingerTapPlayPauseEnabled
-            prefs[Keys.vlcDoubleTapSeekEnabled] = vlcDoubleTapSeekEnabled
-            prefs[Keys.vlcDoubleTapSeekSeconds] = vlcDoubleTapSeekSeconds.coerceIn(5.0, 60.0)
-            prefs[Keys.vlcPiPEnabled] = false
-            prefs[Keys.vlcOpenSubtitlesEnabled] = vlcOpenSubtitlesEnabled
-            prefs[Keys.vlcOpenSubtitlesAutoFallbackEnabled] = vlcOpenSubtitlesAutoFallbackEnabled
+            prefs[Keys.legacyVlcDoubleTapSeekEnabled] = playerDoubleTapSeekEnabled
+            prefs[Keys.legacyVlcDoubleTapSeekSeconds] = playerDoubleTapSeekSeconds.coerceIn(5.0, 60.0)
+            prefs[Keys.legacyVlcPiPEnabled] = playerPictureInPictureEnabled
+            prefs[Keys.legacyVlcOpenSubtitlesEnabled] = playerOpenSubtitlesEnabled
+            prefs[Keys.legacyVlcOpenSubtitlesAutoFallbackEnabled] = playerOpenSubtitlesAutoFallbackEnabled
         }
     }
 
@@ -344,9 +323,9 @@ class SettingsStore(
         }
     }
 
-    suspend fun setShowVlcEpisodeBrowserButton(enabled: Boolean) {
+    suspend fun setPlayerEpisodeBrowserButton(enabled: Boolean) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.showVlcEpisodeBrowserButton] = enabled
+            prefs[Keys.legacyShowVlcEpisodeBrowserButton] = enabled
         }
     }
 
@@ -538,7 +517,7 @@ class SettingsStore(
             prefs[Keys.selectedAppearance] = payload.selectedAppearance
             prefs[Keys.enableSubtitlesByDefault] = payload.enableSubtitlesByDefault
             prefs[Keys.defaultSubtitleLanguage] = payload.defaultSubtitleLanguage
-            prefs[Keys.enableVLCSubtitleEditMenu] = true
+            prefs[Keys.legacyEnableVlcSubtitleEditMenu] = payload.resolvedPlayerSubtitleAppearanceEnabled
             prefs[Keys.preferredAnimeAudioLanguage] = payload.preferredAnimeAudioLanguage
             prefs[Keys.inAppPlayer] = payload.resolvedInAppPlayer.name
             prefs[Keys.showScheduleTab] = payload.showScheduleTab
@@ -557,18 +536,18 @@ class SettingsStore(
             prefs[Keys.skip85sEnabled] = payload.skip85sEnabled
             prefs[Keys.skip85sAlwaysVisible] = payload.skip85sAlwaysVisible
             prefs[Keys.showNextEpisodeButton] = payload.showNextEpisodeButton
-            prefs[Keys.showVlcEpisodeBrowserButton] = payload.showVLCEpisodeBrowserButton
+            prefs[Keys.legacyShowVlcEpisodeBrowserButton] = payload.resolvedShowEpisodeBrowserButton
             prefs[Keys.showNextEpisodePosterButton] = payload.showNextEpisodePosterButton
             prefs[Keys.nextEpisodeThreshold] = payload.nextEpisodeThresholdPercent()
-            prefs[Keys.vlcHeaderProxyEnabled] = true
-            prefs[Keys.vlcBrightnessGestureEnabled] = payload.vlcBrightnessGestureEnabled
-            prefs[Keys.vlcVolumeGestureEnabled] = payload.vlcVolumeGestureEnabled
+            prefs[Keys.legacyVlcHeaderProxyEnabled] = payload.resolvedPlayerHeaderProxyEnabled
+            prefs[Keys.legacyVlcBrightnessGestureEnabled] = payload.resolvedPlayerBrightnessGestureEnabled
+            prefs[Keys.legacyVlcVolumeGestureEnabled] = payload.resolvedPlayerVolumeGestureEnabled
             prefs[Keys.playerTwoFingerTapPlayPauseEnabled] = payload.playerTwoFingerTapPlayPauseEnabled
-            prefs[Keys.vlcDoubleTapSeekEnabled] = payload.vlcDoubleTapSeekEnabled
-            prefs[Keys.vlcDoubleTapSeekSeconds] = payload.vlcDoubleTapSeekSeconds
-            prefs[Keys.vlcPiPEnabled] = false
-            prefs[Keys.vlcOpenSubtitlesEnabled] = payload.vlcOpenSubtitlesEnabled
-            prefs[Keys.vlcOpenSubtitlesAutoFallbackEnabled] = payload.vlcOpenSubtitlesAutoFallbackEnabled
+            prefs[Keys.legacyVlcDoubleTapSeekEnabled] = payload.resolvedPlayerDoubleTapSeekEnabled
+            prefs[Keys.legacyVlcDoubleTapSeekSeconds] = payload.resolvedPlayerDoubleTapSeekSeconds
+            prefs[Keys.legacyVlcPiPEnabled] = payload.resolvedPlayerPictureInPictureEnabled
+            prefs[Keys.legacyVlcOpenSubtitlesEnabled] = payload.resolvedPlayerOpenSubtitlesEnabled
+            prefs[Keys.legacyVlcOpenSubtitlesAutoFallbackEnabled] = payload.resolvedPlayerOpenSubtitlesAutoFallbackEnabled
             val subtitleForegroundColor = payload.subtitleForegroundColor.normalizedOptionalColor()
             if (subtitleForegroundColor != null) {
                 prefs[Keys.subtitleForegroundColor] = subtitleForegroundColor
@@ -601,6 +580,12 @@ class SettingsStore(
                 MediaDetailElement.sanitizedOrderRawValue(payload.mediaDetailElementOrder)
             prefs[Keys.mediaDetailHiddenElements] =
                 MediaDetailElement.sanitizedHiddenRawValue(payload.mediaDetailHiddenElements)
+            prefs[Keys.heroBannerCatalogId] = payload.heroBannerCatalogId.trim().ifBlank { "trending" }
+            prefs[Keys.heroBannerBehavior] = HeroBannerBehavior.sanitizedRawValue(payload.heroBannerBehavior)
+            prefs[Keys.atmosphereStyle] = AtmosphereStyle.sanitizedRawValue(payload.atmosphereStyle)
+            prefs[Keys.atmosphereSolidColorSource] =
+                AtmosphereSolidColorSource.sanitizedRawValue(payload.atmosphereSolidColorSource)
+            prefs[Keys.atmosphereSolidColor] = payload.atmosphereSolidColor.normalizedColor(DefaultSettingsGradientColor)
             prefs[Keys.mediaColumnsPortrait] = payload.mediaColumnsPortrait
             prefs[Keys.mediaColumnsLandscape] = payload.mediaColumnsLandscape
             prefs[Keys.readingMode] = payload.readingMode
@@ -631,7 +616,7 @@ class SettingsStore(
         selectedAppearance = preferences[Keys.selectedAppearance] ?: "system",
         enableSubtitlesByDefault = preferences[Keys.enableSubtitlesByDefault] ?: false,
         defaultSubtitleLanguage = preferences[Keys.defaultSubtitleLanguage] ?: "eng",
-        enableVLCSubtitleEditMenu = true,
+        playerSubtitleAppearanceEnabled = preferences[Keys.legacyEnableVlcSubtitleEditMenu] ?: true,
         preferredAnimeAudioLanguage = preferences[Keys.preferredAnimeAudioLanguage] ?: "jpn",
         inAppPlayer = preferences[Keys.inAppPlayer]?.toInAppPlayer() ?: InAppPlayer.MPV,
         autoModeEnabled = preferences[Keys.autoModeEnabled] ?: true,
@@ -653,18 +638,19 @@ class SettingsStore(
         skip85sEnabled = preferences[Keys.skip85sEnabled] ?: false,
         skip85sAlwaysVisible = preferences[Keys.skip85sAlwaysVisible] ?: false,
         showNextEpisodeButton = preferences[Keys.showNextEpisodeButton] ?: true,
-        showVlcEpisodeBrowserButton = preferences[Keys.showVlcEpisodeBrowserButton] ?: true,
+        playerEpisodeBrowserButton = preferences[Keys.legacyShowVlcEpisodeBrowserButton] ?: true,
         showNextEpisodePosterButton = preferences[Keys.showNextEpisodePosterButton] ?: false,
         nextEpisodeThreshold = preferences[Keys.nextEpisodeThreshold] ?: 90,
-        vlcHeaderProxyEnabled = true,
-        vlcBrightnessGestureEnabled = preferences[Keys.vlcBrightnessGestureEnabled] ?: false,
-        vlcVolumeGestureEnabled = preferences[Keys.vlcVolumeGestureEnabled] ?: false,
+        playerHeaderProxyEnabled = preferences[Keys.legacyVlcHeaderProxyEnabled] ?: true,
+        playerBrightnessGestureEnabled = preferences[Keys.legacyVlcBrightnessGestureEnabled] ?: false,
+        playerVolumeGestureEnabled = preferences[Keys.legacyVlcVolumeGestureEnabled] ?: false,
         playerTwoFingerTapPlayPauseEnabled = preferences[Keys.playerTwoFingerTapPlayPauseEnabled] ?: true,
-        vlcDoubleTapSeekEnabled = preferences[Keys.vlcDoubleTapSeekEnabled] ?: true,
-        vlcDoubleTapSeekSeconds = preferences[Keys.vlcDoubleTapSeekSeconds] ?: 10.0,
-        vlcPiPEnabled = false,
-        vlcOpenSubtitlesEnabled = preferences[Keys.vlcOpenSubtitlesEnabled] ?: false,
-        vlcOpenSubtitlesAutoFallbackEnabled = preferences[Keys.vlcOpenSubtitlesAutoFallbackEnabled] ?: true,
+        playerDoubleTapSeekEnabled = preferences[Keys.legacyVlcDoubleTapSeekEnabled] ?: true,
+        playerDoubleTapSeekSeconds = preferences[Keys.legacyVlcDoubleTapSeekSeconds] ?: 10.0,
+        playerPictureInPictureEnabled = preferences[Keys.legacyVlcPiPEnabled] ?: false,
+        playerOpenSubtitlesEnabled = preferences[Keys.legacyVlcOpenSubtitlesEnabled] ?: false,
+        playerOpenSubtitlesAutoFallbackEnabled =
+            preferences[Keys.legacyVlcOpenSubtitlesAutoFallbackEnabled] ?: true,
         subtitleForegroundColor = preferences[Keys.subtitleForegroundColor],
         subtitleStrokeColor = preferences[Keys.subtitleStrokeColor],
         subtitleStrokeWidth = preferences[Keys.subtitleStrokeWidth] ?: 1.0,
@@ -721,7 +707,7 @@ class SettingsStore(
         val selectedAppearance = stringPreferencesKey("selected_appearance")
         val enableSubtitlesByDefault = booleanPreferencesKey("enable_subtitles_by_default")
         val defaultSubtitleLanguage = stringPreferencesKey("default_subtitle_language")
-        val enableVLCSubtitleEditMenu = booleanPreferencesKey("enable_vlc_subtitle_edit_menu")
+        val legacyEnableVlcSubtitleEditMenu = booleanPreferencesKey("enable_vlc_subtitle_edit_menu")
         val preferredAnimeAudioLanguage = stringPreferencesKey("preferred_anime_audio_language")
         val inAppPlayer = stringPreferencesKey("in_app_player")
         val autoModeEnabled = booleanPreferencesKey("auto_mode_enabled")
@@ -743,18 +729,19 @@ class SettingsStore(
         val skip85sEnabled = booleanPreferencesKey("skip_85s_enabled")
         val skip85sAlwaysVisible = booleanPreferencesKey("skip_85s_always_visible")
         val showNextEpisodeButton = booleanPreferencesKey("show_next_episode_button")
-        val showVlcEpisodeBrowserButton = booleanPreferencesKey("show_vlc_episode_browser_button")
+        val legacyShowVlcEpisodeBrowserButton = booleanPreferencesKey("show_vlc_episode_browser_button")
         val showNextEpisodePosterButton = booleanPreferencesKey("show_next_episode_poster_button")
         val nextEpisodeThreshold = intPreferencesKey("next_episode_threshold")
-        val vlcHeaderProxyEnabled = booleanPreferencesKey("vlc_header_proxy_enabled")
-        val vlcBrightnessGestureEnabled = booleanPreferencesKey("vlc_brightness_gesture_enabled")
-        val vlcVolumeGestureEnabled = booleanPreferencesKey("vlc_volume_gesture_enabled")
+        val legacyVlcHeaderProxyEnabled = booleanPreferencesKey("vlc_header_proxy_enabled")
+        val legacyVlcBrightnessGestureEnabled = booleanPreferencesKey("vlc_brightness_gesture_enabled")
+        val legacyVlcVolumeGestureEnabled = booleanPreferencesKey("vlc_volume_gesture_enabled")
         val playerTwoFingerTapPlayPauseEnabled = booleanPreferencesKey("player_two_finger_tap_play_pause_enabled")
-        val vlcDoubleTapSeekEnabled = booleanPreferencesKey("vlc_double_tap_seek_enabled")
-        val vlcDoubleTapSeekSeconds = doublePreferencesKey("vlc_double_tap_seek_seconds")
-        val vlcPiPEnabled = booleanPreferencesKey("vlc_pip_enabled")
-        val vlcOpenSubtitlesEnabled = booleanPreferencesKey("vlc_open_subtitles_enabled")
-        val vlcOpenSubtitlesAutoFallbackEnabled = booleanPreferencesKey("vlc_open_subtitles_auto_fallback_enabled")
+        val legacyVlcDoubleTapSeekEnabled = booleanPreferencesKey("vlc_double_tap_seek_enabled")
+        val legacyVlcDoubleTapSeekSeconds = doublePreferencesKey("vlc_double_tap_seek_seconds")
+        val legacyVlcPiPEnabled = booleanPreferencesKey("vlc_pip_enabled")
+        val legacyVlcOpenSubtitlesEnabled = booleanPreferencesKey("vlc_open_subtitles_enabled")
+        val legacyVlcOpenSubtitlesAutoFallbackEnabled =
+            booleanPreferencesKey("vlc_open_subtitles_auto_fallback_enabled")
         val subtitleForegroundColor = stringPreferencesKey("subtitle_foreground_color")
         val subtitleStrokeColor = stringPreferencesKey("subtitle_stroke_color")
         val subtitleStrokeWidth = doublePreferencesKey("subtitle_stroke_width")

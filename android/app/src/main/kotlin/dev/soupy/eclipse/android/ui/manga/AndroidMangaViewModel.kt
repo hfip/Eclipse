@@ -354,6 +354,8 @@ class AndroidMangaViewModel(
                         moduleId = item.moduleId,
                         chapterParams = selectedChapter.params,
                         content = loaded,
+                        title = item.title,
+                        chapterNumber = chapterNumber.toString(),
                     )
                 }
                 preloadNextKanzenChapter(
@@ -765,6 +767,8 @@ class AndroidMangaViewModel(
         moduleId: String?,
         chapterParams: String?,
         content: KanzenReaderContentSnapshot,
+        title: String = "",
+        chapterNumber: String = "",
     ) {
         val cache = readerCacheRepository ?: return
         viewModelScope.launch {
@@ -773,6 +777,8 @@ class AndroidMangaViewModel(
                 chapterParams = chapterParams,
                 isNovel = false,
                 content = content,
+                title = title,
+                chapterNumber = chapterNumber,
             ).onSuccess {
                 updateReaderCacheStats()
             }
@@ -807,6 +813,8 @@ class AndroidMangaViewModel(
                     chapterParams = nextParams,
                     isNovel = false,
                     content = content,
+                    title = reader.title,
+                    chapterNumber = nextChapter.number.toString(),
                 ).onSuccess {
                     updateReaderCacheStats()
                 }

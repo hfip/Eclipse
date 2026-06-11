@@ -12,9 +12,21 @@ class ParityModelsTest {
     @Test
     fun androidParityChecklistHasNoUncheckedItems() {
         assertTrue(AndroidParityChecklist.items.isNotEmpty())
+        assertEquals(AndroidParityChecklist.items.size, AndroidParityChecklist.items.map { it.id }.toSet().size)
         assertEquals(emptyList(), AndroidParityChecklist.uncheckedItems)
         assertTrue(AndroidParityChecklist.items.any { it.status == AndroidParityStatus.NON_PORTABLE })
-        assertTrue(AndroidParityChecklist.items.any { it.id == "native-aidoku-runner" })
+        assertTrue(AndroidParityChecklist.items.any { it.id == "reader-native-aidoku-runner" })
+        AndroidParityChecklist.items.forEach { item ->
+            assertTrue(item.requiredBehaviors.isNotEmpty(), "Missing required behaviors for ${item.id}")
+            assertTrue(item.androidEvidence.isNotEmpty(), "Missing Android evidence for ${item.id}")
+            assertTrue(item.verification.isNotEmpty(), "Missing verification for ${item.id}")
+        }
+        AndroidParityChecklist.implementedItems.forEach { item ->
+            assertTrue(
+                item.androidEvidence.any { evidence -> evidence.startsWith("android/") },
+                "Implemented parity item ${item.id} needs at least one repository evidence path",
+            )
+        }
     }
 
     @Test
@@ -110,6 +122,24 @@ class ParityModelsTest {
 
         assertTrue(decoded.showNextEpisodePosterButton)
         assertFalse(legacy.showNextEpisodePosterButton)
+    }
+
+    @Test
+    fun appLogSnapshotPrependsAndCapsExportedRows() {
+        val snapshot = (1..5).fold(AppLogSnapshot()) { current, index ->
+            current.append(
+                AppLogEntry(
+                    id = "log-$index",
+                    timestamp = index.toLong(),
+                    tag = "reader",
+                    message = "message $index",
+                ),
+                maxEntries = 3,
+            )
+        }
+
+        assertEquals(listOf("log-5", "log-4", "log-3"), snapshot.entries.map(AppLogEntry::id))
+        assertTrue(snapshot.hasUserData)
     }
 
     @Test

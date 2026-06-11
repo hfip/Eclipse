@@ -200,11 +200,14 @@ class EclipseAppContainer(
         libraryRepository = libraryRepository,
         tmdbEnabled = tmdbApiKey.isNotBlank(),
     )
+    val readerCacheRepository: ReaderCacheRepository = ReaderCacheRepository(context)
     val backupRepository: BackupRepository = BackupRepository(
         context = context,
         backupFileStore = backupFileStore,
         settingsStore = settingsStore,
         mangaStore = mangaStore,
+        sourceHealthRepository = sourceHealthRepository,
+        loggerStore = loggerStore,
         serviceDao = database.serviceDao(),
         stremioAddonDao = database.stremioAddonDao(),
         progressRepository = progressRepository,
@@ -214,12 +217,12 @@ class EclipseAppContainer(
         ratingsRepository = ratingsRepository,
         recommendationRepository = recommendationRepository,
         kanzenRepository = kanzenRepository,
+        readerCacheRepository = readerCacheRepository,
     )
     val downloadsRepository: DownloadsRepository = DownloadsRepository(
         downloadsStore = downloadsStore,
         workManager = WorkManager.getInstance(context.applicationContext),
     )
-    val readerCacheRepository: ReaderCacheRepository = ReaderCacheRepository(context)
     val mangaRepository: MangaRepository = MangaRepository(
         mangaStore = mangaStore,
         backupFileStore = backupFileStore,

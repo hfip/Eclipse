@@ -18,6 +18,10 @@ class LoggerStore(
 
     suspend fun read(): AppLogSnapshot = store.read() ?: AppLogSnapshot()
 
+    suspend fun write(snapshot: AppLogSnapshot) {
+        store.write(snapshot)
+    }
+
     suspend fun append(entry: AppLogEntry) {
         store.write(read().append(entry))
     }
@@ -26,4 +30,3 @@ class LoggerStore(
         store.write(AppLogSnapshot())
     }
 }
-

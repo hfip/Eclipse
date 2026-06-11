@@ -104,6 +104,9 @@ data class AppLogEntry(
 data class AppLogSnapshot(
     val entries: List<AppLogEntry> = emptyList(),
 ) {
+    val hasUserData: Boolean
+        get() = entries.isNotEmpty()
+
     fun append(entry: AppLogEntry, maxEntries: Int = 500): AppLogSnapshot =
         copy(entries = (listOf(entry) + entries).take(maxEntries))
 }

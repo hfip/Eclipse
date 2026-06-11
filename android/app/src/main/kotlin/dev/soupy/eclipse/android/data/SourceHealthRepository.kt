@@ -46,6 +46,15 @@ class SourceHealthRepository(
         _snapshot.value = sourceHealthStore.read()
     }
 
+    suspend fun exportSnapshot(): SourceHealthSnapshot = currentSnapshot()
+
+    suspend fun restoreSnapshot(snapshot: SourceHealthSnapshot) {
+        mutex.withLock {
+            sourceHealthStore.write(snapshot)
+            _snapshot.value = snapshot
+        }
+    }
+
     suspend fun runDailyEnabledSourceChecksIfNeeded(force: Boolean = false): SourceHealthCheckSummary {
         val current = currentSnapshot()
         val now = System.currentTimeMillis()

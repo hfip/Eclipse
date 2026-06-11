@@ -142,6 +142,27 @@ class StreamResolutionRepositoryEpisodeMatchingTest {
     }
 
     @Test
+    fun streamIdsForTmdbIdMetaIncludeSeasonScopedAnimeFallback() {
+        val request = animeRequest(
+            season = 2,
+            episode = 1,
+            localSeason = 2,
+            localEpisode = 1,
+            absoluteEpisode = 13,
+            seasonEpisodeCount = 13,
+            autoMode = true,
+        )
+        val meta = StremioMetaPreview(id = "tmdb_id:100")
+
+        val ids = streamIdsFromMeta(meta, request)
+
+        assertEquals(
+            listOf("tmdb_id:100:2:1", "tmdb_id:100:1:1"),
+            ids,
+        )
+    }
+
+    @Test
     fun autoModeUsesAbsoluteEpisodeForBundledCustomServiceEpisodes() {
         val selection = animeSelection(
             season = 2,

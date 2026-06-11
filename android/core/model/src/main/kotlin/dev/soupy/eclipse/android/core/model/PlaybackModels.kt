@@ -66,6 +66,7 @@ data class EpisodeInfo(
 @Serializable
 enum class InAppPlayer {
     NORMAL,
+    @Deprecated("Legacy backup/settings alias. Android ships MPV for this advanced embedded player path.")
     VLC,
     MPV,
     EXTERNAL,
@@ -78,6 +79,7 @@ data class SubtitleTrack(
     val language: String? = null,
     val uri: String? = null,
     val format: String? = null,
+    val headers: Map<String, String> = emptyMap(),
     val isDefault: Boolean = false,
 )
 
