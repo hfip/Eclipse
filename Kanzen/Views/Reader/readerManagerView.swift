@@ -106,6 +106,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     private var activeReader: KanzenReaderChildViewController?
     private var loadTask: Task<Void, Never>?
     private var barsVisible = true
+    private var didRequestClose = false
 
     private var orientationLockEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "readerOrientationLockEnabled") }
@@ -144,8 +145,8 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         applyPersistedOrientationLockIfNeeded()
     }
 
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
         session.saveCurrentProgress(force: true)
         releaseActiveOrientationLock()
     }
@@ -317,6 +318,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
 
     func readerChildDidChangePage(_ page: Int, totalPages: Int) {
         session.setCurrentPage(page, totalPages: totalPages)
+        session.saveCurrentProgress(force: false)
         updateOverlay(page: page, totalPages: totalPages)
     }
 
@@ -338,8 +340,8 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     }
 
     private func closeReader() {
-        session.saveCurrentProgress(force: true)
-        releaseActiveOrientationLock()
+        guard !didRequestClose else { return }
+        didRequestClose = true
         onClose?()
     }
 
@@ -546,11 +548,14 @@ private final class KanzenReaderOverlayView: UIView {
         labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         addSubview(topPanel)
+        let preferredWidth = topPanel.widthAnchor.constraint(equalTo: widthAnchor, constant: -72)
+        preferredWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             topPanel.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 10),
             topPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
             topPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
             topPanel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            preferredWidth,
             topPanel.widthAnchor.constraint(lessThanOrEqualToConstant: 720)
         ])
     }
@@ -601,11 +606,14 @@ private final class KanzenReaderOverlayView: UIView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         addSubview(bottomPanel)
+        let preferredWidth = bottomPanel.widthAnchor.constraint(equalTo: widthAnchor, constant: -72)
+        preferredWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             bottomPanel.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -10),
             bottomPanel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
             bottomPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
             bottomPanel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            preferredWidth,
             bottomPanel.widthAnchor.constraint(lessThanOrEqualToConstant: 720)
         ])
     }

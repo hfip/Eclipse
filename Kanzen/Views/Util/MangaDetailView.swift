@@ -632,79 +632,78 @@ struct MangaDetailView: View {
 
             Divider().padding(.vertical, 4)
 
-            ForEach(Array(displayed.enumerated()), id: \.element.id) { displayIndex, chapter in
-                let isRead = progressManager.isChapterRead(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber)
-                let chapterTitle = chapter.chapterData?.first?.title ?? ""
-                let downloadStatus = downloadManager.status(for: selectedContentRoute, chapterNumber: chapter.chapterNumber)
-                let downloadProgress = downloadManager.progress(for: selectedContentRoute, chapterNumber: chapter.chapterNumber)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(displayed.enumerated()), id: \.element.id) { displayIndex, chapter in
+                    let isRead = progressManager.isChapterRead(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber)
+                    let chapterTitle = chapter.chapterData?.first?.title ?? ""
+                    let downloadStatus = downloadManager.status(for: selectedContentRoute, chapterNumber: chapter.chapterNumber)
+                    let downloadProgress = downloadManager.progress(for: selectedContentRoute, chapterNumber: chapter.chapterNumber)
 
-                Button {
-                    selectedChapterData = chapter
-                } label: {
-                    HStack(spacing: 0) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            // Chapter number + title
-                            if !chapterTitle.isEmpty {
-                                Text(chapter.chapterNumber)
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(isRead ? .secondary : .primary)
-                                    .lineLimit(1)
-                                Text(chapterTitle)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            } else {
-                                Text(chapter.chapterNumber)
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(isRead ? .secondary : .primary)
-                                    .lineLimit(1)
-                            }
-
-                            // Scanlation group
-                            if let data = chapter.chapterData, let first = data.first, !first.scanlationGroup.isEmpty {
-                                Text(first.scanlationGroup)
-                                    .font(.caption2)
-                                    .foregroundColor(.accentColor.opacity(0.8))
-                                    .lineLimit(1)
-                            }
-
-                            if !isRead, let progressLabel = progressManager.pageProgressLabel(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber) {
-                                Text(progressLabel)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
-                                ProgressView(value: downloadProgress)
-                                    .tint(downloadStatus == .paused ? .gray : .accentColor)
-                                    .frame(maxWidth: 180)
-                            }
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        // Chapter number + title
+                        if !chapterTitle.isEmpty {
+                            Text(chapter.chapterNumber)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(isRead ? .secondary : .primary)
+                                .lineLimit(1)
+                            Text(chapterTitle)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Text(chapter.chapterNumber)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(isRead ? .secondary : .primary)
+                                .lineLimit(1)
                         }
 
-                        Spacer(minLength: 8)
+                        // Scanlation group
+                        if let data = chapter.chapterData, let first = data.first, !first.scanlationGroup.isEmpty {
+                            Text(first.scanlationGroup)
+                                .font(.caption2)
+                                .foregroundColor(.accentColor.opacity(0.8))
+                                .lineLimit(1)
+                        }
 
-                        downloadBadge(for: downloadStatus)
-
-                        if isRead {
-                            Text("Read")
+                        if !isRead, let progressLabel = progressManager.pageProgressLabel(mangaId: progressMangaId, chapterNumber: chapter.chapterNumber) {
+                            Text(progressLabel)
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(4)
+                                .lineLimit(1)
+                        }
+
+                        if downloadStatus == .downloading || downloadStatus == .queued || downloadStatus == .paused {
+                            ProgressView(value: downloadProgress)
+                                .tint(downloadStatus == .paused ? .gray : .accentColor)
+                                .frame(maxWidth: 180)
                         }
                     }
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .opacity(isRead ? 0.6 : 1.0)
+
+                    Spacer(minLength: 8)
+
+                    downloadBadge(for: downloadStatus)
+
+                    if isRead {
+                        Text("Read")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12))
+                            .cornerRadius(4)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .opacity(isRead ? 0.6 : 1.0)
+                .onTapGesture {
+                    selectedChapterData = chapter
+                }
                 .contextMenu {
                     if isRead {
                         Button {
@@ -777,7 +776,8 @@ struct MangaDetailView: View {
 
                     downloadContextMenu(for: chapter, status: downloadStatus)
                 }
-                Divider()
+                    Divider()
+                }
             }
         }
     }

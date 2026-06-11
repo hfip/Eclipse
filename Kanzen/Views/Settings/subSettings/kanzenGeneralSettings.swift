@@ -142,6 +142,14 @@ struct KanzenGeneralSettingsView: View {
                         .foregroundColor(.secondary)
                         .monospacedDigit()
                 }
+
+                Button(action: resetReaderTextSettings) {
+                    HStack {
+                        Text("Reset Reader Text Defaults")
+                        Spacer()
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                }
             }
             .background(LunaScrollTracker())
 
@@ -295,6 +303,16 @@ struct KanzenGeneralSettingsView: View {
         uiA.getRed(&rA, green: &gA, blue: &bA, alpha: &aA)
         uiB.getRed(&rB, green: &gB, blue: &bB, alpha: &aB)
         return abs(rA - rB) < 0.02 && abs(gA - gB) < 0.02 && abs(bA - bB) < 0.02
+    }
+
+    private func resetReaderTextSettings() {
+        readerFontSize = 16
+        readerFontFamily = "-apple-system"
+        readerFontWeight = "normal"
+        readerColorPreset = 0
+        readerTextAlignment = "left"
+        readerLineSpacing = 1.6
+        readerMargin = 4
     }
 
     private func readerDetailElementRow(_ element: ReaderDetailElement) -> some View {
