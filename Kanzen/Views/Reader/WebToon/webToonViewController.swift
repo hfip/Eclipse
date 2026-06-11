@@ -1854,6 +1854,7 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        layout.itemCountProvider = { [weak self] in self?.pages.count ?? 0 }
         layout.fallbackHeightProvider = { [weak self] indexPath, width in
             self?.estimatedHeight(for: indexPath.item, width: width) ?? width * KanzenWebtoonPageNode.defaultRatio
         }
@@ -2215,6 +2216,7 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
 }
 
 final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout {
+    var itemCountProvider: (() -> Int)?
     var fallbackHeightProvider: ((IndexPath, CGFloat) -> CGFloat)?
     var zoomScale: CGFloat = 1 {
         didSet { zoomScale = min(max(zoomScale, 1), 5) }
@@ -2231,14 +2233,25 @@ final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout 
 
         let width = max(collectionView.bounds.width, 1)
         var y: CGFloat = 0
-        for section in 0..<collectionView.numberOfSections {
-            for item in 0..<collectionView.numberOfItems(inSection: section) {
-                let indexPath = IndexPath(item: item, section: section)
+        if let itemCount = itemCountProvider?(), itemCount > 0 {
+            for item in 0..<itemCount {
+                let indexPath = IndexPath(item: item, section: 0)
                 let height = heightForItem(at: indexPath, width: width)
                 let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
                 itemAttributes.frame = CGRect(x: 0, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
                 attributes[indexPath] = itemAttributes
                 y += height
+            }
+        } else {
+            for section in 0..<collectionView.numberOfSections {
+                for item in 0..<collectionView.numberOfItems(inSection: section) {
+                    let indexPath = IndexPath(item: item, section: section)
+                    let height = heightForItem(at: indexPath, width: width)
+                    let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+                    itemAttributes.frame = CGRect(x: 0, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
+                    attributes[indexPath] = itemAttributes
+                    y += height
+                }
             }
         }
         contentSize = CGSize(width: width * zoomScale, height: y * zoomScale)
