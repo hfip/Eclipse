@@ -14,6 +14,19 @@ import AsyncDisplayKit
 import AidokuRunner
 import ZIPFoundation
 
+private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor {
+    switch UserDefaults.standard.string(forKey: "Reader.backgroundColor") {
+    case "white":
+        return .white
+    case "system":
+        return .systemBackground
+    case "auto":
+        return style == .dark ? .black : .white
+    default:
+        return .black
+    }
+}
+
 struct WebtoonView: UIViewControllerRepresentable {
     let reader_manager: readerManager
     var onPageChanged: (Int) -> Void = { _ in }
@@ -1854,15 +1867,21 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        applyCanvasColor()
         layout.itemCountProvider = { [weak self] in self?.pages.count ?? 0 }
         layout.fallbackHeightProvider = { [weak self] indexPath, width in
             self?.estimatedHeight(for: indexPath.item, width: width) ?? width * KanzenWebtoonPageNode.defaultRatio
         }
+        layout.pillarboxInsetProvider = { width in
+            guard UserDefaults.standard.bool(forKey: "Reader.pillarbox") else { return 0 }
+            let amount = UserDefaults.standard.object(forKey: "Reader.pillarboxAmount") as? Double ?? 15
+            let fraction = CGFloat(min(max(amount, 0), 90)) / 100
+            return floor(width * fraction * 0.5)
+        }
         zoomView.collectionNode.dataSource = self
         zoomView.collectionNode.delegate = self
-        zoomView.collectionNode.backgroundColor = .black
-        zoomView.collectionNode.view.backgroundColor = .black
+        zoomView.collectionNode.backgroundColor = view.backgroundColor
+        zoomView.collectionNode.view.backgroundColor = view.backgroundColor
         zoomView.collectionNode.view.isScrollEnabled = false
         zoomView.collectionNode.automaticallyManagesSubnodes = true
         zoomView.collectionNode.shouldAnimateSizeChanges = false
@@ -1903,9 +1922,26 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
         }
     }
 
+    func applyReaderSettings(reloadCurrentPages: Bool) {
+        applyCanvasColor()
+        zoomView.doubleTapEnabled = !UserDefaults.standard.bool(forKey: "Reader.disableDoubleTap")
+        if reloadCurrentPages {
+            setPages(pages, startPage: max(lastReportedPage, 0))
+            return
+        }
+        layout.invalidateLayout()
+        zoomView.collectionNode.view.layoutIfNeeded()
+        zoomView.adjustContentSize()
+        prefetchPages(around: max(lastReportedPage, 0))
+    }
+
     private func requestNextChapterFromOverscroll() {
         guard !requestedNextChapterFromOverscroll else { return }
         guard lastReportedPage >= pages.count - 1 else { return }
+        if UserDefaults.standard.object(forKey: "Reader.verticalInfiniteScroll") != nil,
+           !UserDefaults.standard.bool(forKey: "Reader.verticalInfiniteScroll") {
+            return
+        }
         if readerDelegate?.readerChildDidRequestNextChapter() == true {
             requestedNextChapterFromOverscroll = true
         }
@@ -2083,6 +2119,14 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
     private func targetImageSize() -> CGSize {
         let width = max(view.bounds.width * max(layout.zoomScale, 1), UIScreen.main.bounds.width, 1)
         return CGSize(width: width, height: width * 2)
+    }
+
+    private func applyCanvasColor() {
+        let color = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        view.backgroundColor = color
+        zoomView.backgroundColor = color
+        zoomView.collectionNode.backgroundColor = color
+        zoomView.collectionNode.view.backgroundColor = color
     }
 }
 
@@ -2286,6 +2330,7 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate, UIGestureRe
 final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout {
     var itemCountProvider: (() -> Int)?
     var fallbackHeightProvider: ((IndexPath, CGFloat) -> CGFloat)?
+    var pillarboxInsetProvider: ((CGFloat) -> CGFloat)?
     var zoomScale: CGFloat = 1 {
         didSet { zoomScale = min(max(zoomScale, 1), 5) }
     }
@@ -2299,14 +2344,16 @@ final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout 
         guard let collectionView else { return }
         attributes.removeAll()
 
-        let width = max(collectionView.bounds.width, 1)
+        let fullWidth = max(collectionView.bounds.width, 1)
+        let inset = min(max(pillarboxInsetProvider?(fullWidth) ?? 0, 0), fullWidth * 0.45)
+        let width = max(fullWidth - inset * 2, 1)
         var y: CGFloat = 0
         if let itemCount = itemCountProvider?(), itemCount > 0 {
             for item in 0..<itemCount {
                 let indexPath = IndexPath(item: item, section: 0)
                 let height = heightForItem(at: indexPath, width: width)
                 let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
-                itemAttributes.frame = CGRect(x: 0, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
+                itemAttributes.frame = CGRect(x: inset * zoomScale, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
                 attributes[indexPath] = itemAttributes
                 y += height
             }
@@ -2316,13 +2363,13 @@ final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout 
                     let indexPath = IndexPath(item: item, section: section)
                     let height = heightForItem(at: indexPath, width: width)
                     let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
-                    itemAttributes.frame = CGRect(x: 0, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
+                    itemAttributes.frame = CGRect(x: inset * zoomScale, y: y * zoomScale, width: width * zoomScale, height: height * zoomScale)
                     attributes[indexPath] = itemAttributes
                     y += height
                 }
             }
         }
-        contentSize = CGSize(width: width * zoomScale, height: y * zoomScale)
+        contentSize = CGSize(width: fullWidth * zoomScale, height: y * zoomScale)
     }
 
     override func invalidateLayout() {
@@ -2562,7 +2609,7 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        applyCanvasColor()
         pageViewController.dataSource = self
         pageViewController.delegate = self
         addChild(pageViewController)
@@ -2598,6 +2645,16 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         currentUnitIndex = units.firstIndex { $0.contains(page: startPage) } ?? 0
         pageViewController.setViewControllers([controllers[currentUnitIndex]], direction: .forward, animated: false)
         reportCurrentPage()
+    }
+
+    func applyReaderSettings(reloadCurrentPages: Bool) {
+        applyCanvasColor()
+        if reloadCurrentPages {
+            let page = controllers[safe: currentUnitIndex]?.unit.firstPageIndex ?? 0
+            setPages(pages, startPage: page)
+        } else {
+            controllers[safe: currentUnitIndex]?.applyReaderSettings()
+        }
     }
 
     func moveToPage(_ page: Int, animated: Bool) {
@@ -2664,6 +2721,12 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
             readerDelegate?.readerChildDidReachEnd()
         }
     }
+
+    private func applyCanvasColor() {
+        view.backgroundColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        pageViewController.view.backgroundColor = view.backgroundColor
+        controllers[safe: currentUnitIndex]?.applyReaderSettings()
+    }
 }
 
 extension KanzenPagedReaderViewController: UIPageViewControllerDataSource, UIPageViewControllerDelegate {
@@ -2714,7 +2777,7 @@ final class KanzenReaderPageUnitViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
         stack.axis = .horizontal
         stack.spacing = 0
         stack.distribution = .fillEqually
@@ -2731,6 +2794,11 @@ final class KanzenReaderPageUnitViewController: UIViewController {
             imageView.configure(page: page)
             stack.addArrangedSubview(imageView)
         }
+    }
+
+    func applyReaderSettings() {
+        view.backgroundColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        stack.arrangedSubviews.compactMap { $0 as? KanzenReaderImageView }.forEach { $0.applyReaderSettings() }
     }
 }
 
@@ -2750,8 +2818,7 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .black
-        scrollView.backgroundColor = .black
+        applyReaderSettings()
         scrollView.delegate = self
         scrollView.minimumZoomScale = 1
         scrollView.maximumZoomScale = 5
@@ -2762,7 +2829,6 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addGestureRecognizer(doubleTapGesture)
         imageView.contentMode = .scaleAspectFit
-        imageView.backgroundColor = .black
         spinner.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("Retry", for: .normal)
         retryButton.isHidden = true
@@ -2803,12 +2869,21 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
 
     func configure(page: KanzenReaderPage) {
         self.page = page
+        applyReaderSettings()
         imageView.image = nil
         retryButton.isHidden = true
         scrollView.setZoomScale(1, animated: false)
         imageView.frame = CGRect(origin: .zero, size: scrollView.bounds.size)
         scrollView.contentSize = imageView.bounds.size
         load()
+    }
+
+    func applyReaderSettings() {
+        let color = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        backgroundColor = color
+        scrollView.backgroundColor = color
+        imageView.backgroundColor = color
+        doubleTapGesture.isEnabled = !UserDefaults.standard.bool(forKey: "Reader.disableDoubleTap")
     }
 
     private func cancel() {
@@ -2965,6 +3040,14 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
         reportCurrentPage(force: true)
     }
 
+    func applyReaderSettings(reloadCurrentPages: Bool) {
+        view.backgroundColor = readerBackgroundColor()
+        scrollView.backgroundColor = view.backgroundColor
+        if reloadCurrentPages {
+            setPages(pages, startPage: max(lastReportedPage, pendingStartPage, 0))
+        }
+    }
+
     func moveToPage(_ page: Int, animated: Bool) {
         let target = min(max(page, 0), max(pages.count - 1, 0))
         let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
@@ -3020,6 +3103,10 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
     private func detectEndOverscroll(in scrollView: UIScrollView) {
         guard !requestedNextChapterFromOverscroll else { return }
         guard lastReportedPage >= pages.count - 1 else { return }
+        if UserDefaults.standard.object(forKey: "Reader.verticalInfiniteScroll") != nil,
+           !UserDefaults.standard.bool(forKey: "Reader.verticalInfiniteScroll") {
+            return
+        }
         let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
         let threshold = max(64, min(scrollView.bounds.height * 0.12, 120))
         guard scrollView.contentOffset.y > maxOffset + threshold else { return }

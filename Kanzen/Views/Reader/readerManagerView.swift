@@ -15,6 +15,7 @@ typealias KanzenReaderChildViewController = UIViewController & KanzenReaderChild
 protocol KanzenReaderChildControlling: AnyObject {
     var readerDelegate: KanzenReaderChildDelegate? { get set }
     func setPages(_ pages: [KanzenReaderPage], startPage: Int)
+    func applyReaderSettings(reloadCurrentPages: Bool)
     func moveToPage(_ page: Int, animated: Bool)
     func moveLeft()
     func moveRight()
@@ -25,6 +26,19 @@ protocol KanzenReaderChildDelegate: AnyObject {
     func readerChildDidChangePage(_ page: Int, totalPages: Int)
     func readerChildDidReachEnd()
     func readerChildDidRequestNextChapter() -> Bool
+}
+
+private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor {
+    switch UserDefaults.standard.string(forKey: "Reader.backgroundColor") {
+    case "white":
+        return .white
+    case "system":
+        return .systemBackground
+    case "auto":
+        return style == .dark ? .black : .white
+    default:
+        return .black
+    }
 }
 
 struct readerManagerView: UIViewControllerRepresentable {
@@ -138,6 +152,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         configureLoadingView()
         configureErrorView()
         configureOverlay()
+        ReaderLogger.shared.log("Reader controller opened title=\(mangaLogTitle) chapter=\(session.selectedChapter.chapterNumber) mode=\(session.mode.rawValue)", type: "Reader")
         loadCurrentChapter()
     }
 
@@ -225,6 +240,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         loadingView.startAnimating()
         errorContainer.isHidden = true
         activeReader?.view.isHidden = true
+        ReaderLogger.shared.log("Reader chapter load start chapter=\(session.selectedChapter.chapterNumber) mode=\(session.mode.rawValue)", type: "Reader")
 
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -288,7 +304,10 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
 
         view.backgroundColor = readerBackgroundColor()
         activeReader?.setPages(pages, startPage: session.currentPage)
+        activeReader?.applyReaderSettings(reloadCurrentPages: false)
         updateOverlay(page: session.currentPage, totalPages: pages.count)
+        let rendererName = activeReader.map { String(describing: type(of: $0)) } ?? "unknown"
+        ReaderLogger.shared.log("Reader installed renderer=\(rendererName) chapter=\(session.selectedChapter.chapterNumber) pages=\(pages.count) startPage=\(session.currentPage)", type: "Reader")
     }
 
     private func showError(_ message: String) {
@@ -375,16 +394,32 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     }
 
     private func presentSettings() {
+        ReaderLogger.shared.log("Reader settings opened chapter=\(session.selectedChapter.chapterNumber) mode=\(session.mode.rawValue)", type: "ReaderSettings")
         let view = KanzenAidokuStyleReaderSettingsView(
             titleKey: session.mangaRoute?.stableKey ?? "\(session.mangaId)",
             onModeChanged: { [weak self] mode in
                 guard let self else { return }
                 self.session.mode = mode
                 UserDefaults.standard.set(mode.rawValue, forKey: "kanzenReaderMode")
+                ReaderLogger.shared.log("Reader mode changed mode=\(mode.rawValue)", type: "ReaderSettings")
                 self.loadCurrentChapter()
+            },
+            onSettingsChanged: { [weak self] requiresReload, key in
+                self?.applyReaderSettings(reloadPages: requiresReload, changedKey: key)
             }
         )
         present(UIHostingController(rootView: NavigationView { view }), animated: true)
+    }
+
+    private func applyReaderSettings(reloadPages: Bool, changedKey: String) {
+        view.backgroundColor = readerBackgroundColor()
+        ReaderLogger.shared.log("Reader setting changed key=\(changedKey) reload=\(reloadPages)", type: "ReaderSettings")
+
+        if reloadPages {
+            activeReader?.setPages(session.pages, startPage: session.currentPage)
+        }
+        activeReader?.applyReaderSettings(reloadCurrentPages: false)
+        updateOverlay(page: session.currentPage, totalPages: max(session.pages.count, 1))
     }
 
     private func toggleOrientationLock() {
@@ -463,12 +498,11 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     }
 
     private func readerBackgroundColor() -> UIColor {
-        switch UserDefaults.standard.string(forKey: "Reader.backgroundColor") {
-        case "white": return .white
-        case "system": return .systemBackground
-        case "auto": return traitCollection.userInterfaceStyle == .dark ? .black : .white
-        default: return .black
-        }
+        kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+    }
+
+    private var mangaLogTitle: String {
+        session.mangaTitle.isEmpty ? "<untitled>" : session.mangaTitle
     }
 }
 
@@ -714,18 +748,17 @@ private struct KanzenReaderChapterListView: View {
 private struct KanzenAidokuStyleReaderSettingsView: View {
     let titleKey: String
     let onModeChanged: (KanzenReaderMode) -> Void
+    let onSettingsChanged: (_ requiresReload: Bool, _ key: String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @AppStorage("kanzenReaderMode") private var modeRaw = KanzenReaderMode.currentDefault().rawValue
     @AppStorage("Reader.downsampleImages") private var downsampleImages = true
-    @AppStorage("Reader.cropBorders") private var cropBorders = false
     @AppStorage("Reader.disableDoubleTap") private var disableDoubleTap = false
     @AppStorage("Reader.hideBarsOnSwipe") private var hideBarsOnSwipe = false
     @AppStorage("Reader.backgroundColor") private var backgroundColor = "black"
     @AppStorage("Reader.pagesToPreload") private var pagesToPreload = 3
     @AppStorage("Reader.pagedPageLayout") private var pagedLayout = "single"
-    @AppStorage("Reader.splitWideImages") private var splitWideImages = false
-    @AppStorage("Reader.verticalInfiniteScroll") private var infiniteScroll = false
+    @AppStorage("Reader.verticalInfiniteScroll") private var infiniteScroll = true
     @AppStorage("Reader.pillarbox") private var pillarbox = false
     @AppStorage("Reader.pillarboxAmount") private var pillarboxAmount = 15.0
     @AppStorage("readerFontSize") private var textFontSize = 16.0
@@ -747,7 +780,6 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     }
                 }
                 Toggle("Downsample Images", isOn: $downsampleImages)
-                Toggle("Crop Borders", isOn: $cropBorders)
                 Toggle("Disable Double Tap Zoom", isOn: $disableDoubleTap)
                 Toggle("Hide Bars On Swipe", isOn: $hideBarsOnSwipe)
                 Picker("Background", selection: $backgroundColor) {
@@ -756,6 +788,7 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     Text("System").tag("system")
                     Text("Auto").tag("auto")
                 }
+                .pickerStyle(.menu)
             }
 
             Section("Paged") {
@@ -765,7 +798,7 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     Text("Double").tag("double")
                     Text("Auto").tag("auto")
                 }
-                Toggle("Split Wide Images", isOn: $splitWideImages)
+                .pickerStyle(.menu)
             }
 
             Section("Webtoon") {
@@ -788,6 +821,18 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                 Button("Close") { dismiss() }
             }
         }
+        .onChange(of: downsampleImages) { _ in onSettingsChanged(true, "Reader.downsampleImages") }
+        .onChange(of: disableDoubleTap) { _ in onSettingsChanged(false, "Reader.disableDoubleTap") }
+        .onChange(of: hideBarsOnSwipe) { _ in onSettingsChanged(false, "Reader.hideBarsOnSwipe") }
+        .onChange(of: backgroundColor) { _ in onSettingsChanged(false, "Reader.backgroundColor") }
+        .onChange(of: pagesToPreload) { _ in onSettingsChanged(false, "Reader.pagesToPreload") }
+        .onChange(of: pagedLayout) { _ in onSettingsChanged(true, "Reader.pagedPageLayout") }
+        .onChange(of: infiniteScroll) { _ in onSettingsChanged(false, "Reader.verticalInfiniteScroll") }
+        .onChange(of: pillarbox) { _ in onSettingsChanged(true, "Reader.pillarbox") }
+        .onChange(of: pillarboxAmount) { _ in onSettingsChanged(true, "Reader.pillarboxAmount") }
+        .onChange(of: textFontSize) { _ in onSettingsChanged(true, "readerFontSize") }
+        .onChange(of: textLineSpacing) { _ in onSettingsChanged(true, "readerLineSpacing") }
+        .onChange(of: textHorizontalPadding) { _ in onSettingsChanged(true, "readerMargin") }
     }
 }
 #endif

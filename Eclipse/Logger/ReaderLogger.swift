@@ -60,6 +60,8 @@ class ReaderLogger: @unchecked Sendable {
         switch trimmed.lowercased() {
         case "aidoku", "aidokuruntime", "aidokusource", "aidokuhome", "aidokusearch":
             return "Aidoku"
+        case "readersearch":
+            return "Reader Search"
         case "readerdebug", "readerprogress":
             return "Reader"
         case "readerperf":

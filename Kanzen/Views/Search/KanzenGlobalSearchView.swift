@@ -51,10 +51,13 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
 
     private var searchToken = UUID()
     private var pendingSearchCount = 0
+    private var searchStartedAt = Date.distantPast
+    private var didLogFirstSourceResult = false
 
     func refreshSources(from modules: [ModuleDataContainer], aidokuManager: AidokuSourceManager) {
         MangaHomeSourceManager.shared.refreshSources(from: modules)
         sources = MangaHomeSourceManager.shared.enabledSources(aidokuManager: aidokuManager, modules: modules)
+        ReaderLogger.shared.log("Global search sources refreshed aidoku=\(sources.filter(\.isAidoku).count) total=\(sources.count)", type: "ReaderSearch")
     }
 
     func resetSearch() {
@@ -79,6 +82,7 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
             failedSourceNames = []
             isSearching = false
             hasSearched = true
+            ReaderLogger.shared.log("Global search skipped no Aidoku sources queryLength=\(trimmed.count)", type: "ReaderSearch")
             return
         }
 
@@ -89,15 +93,28 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
         sections = []
         failedSourceNames = []
         pendingSearchCount = activeSources.count
+        searchStartedAt = Date()
+        didLogFirstSourceResult = false
+        ReaderLogger.shared.log(
+            "Global search started queryLength=\(trimmed.count) sources=\(activeSources.count)",
+            type: "ReaderSearch"
+        )
 
         for source in activeSources {
             Task { @MainActor in
                 guard self.searchToken == token else { return }
+                let sourceStartedAt = Date()
+                ReaderLogger.shared.log("Global search source started source=\(source.id)", type: "ReaderSearch")
                 defer {
                     if self.searchToken == token {
                         self.pendingSearchCount = max(0, self.pendingSearchCount - 1)
                         if self.pendingSearchCount == 0 {
                             self.isSearching = false
+                            let elapsed = Int(Date().timeIntervalSince(self.searchStartedAt) * 1000)
+                            ReaderLogger.shared.log(
+                                "Global search completed sections=\(self.sections.count) failures=\(self.failedSourceNames.count) elapsedMs=\(elapsed)",
+                                type: "ReaderSearch"
+                            )
                         }
                     }
                 }
@@ -105,14 +122,22 @@ private final class MangaGlobalModuleSearchViewModel: ObservableObject {
                 do {
                     let items = try await Self.searchSource(source, query: trimmed, page: 1)
                     guard self.searchToken == token else { return }
+                    let elapsed = Int(Date().timeIntervalSince(sourceStartedAt) * 1000)
+                    ReaderLogger.shared.log("Global search source finished source=\(source.id) count=\(items.count) elapsedMs=\(elapsed)", type: "ReaderSearch")
                     if !items.isEmpty {
+                        if !self.didLogFirstSourceResult {
+                            self.didLogFirstSourceResult = true
+                            let firstElapsed = Int(Date().timeIntervalSince(self.searchStartedAt) * 1000)
+                            ReaderLogger.shared.log("Global search first visible section source=\(source.id) elapsedMs=\(firstElapsed)", type: "ReaderSearch")
+                        }
                         sections.append(MangaModuleSearchSection(id: source.id, source: source, items: items))
                     }
                 } catch {
                     guard self.searchToken == token else { return }
                     failedSourceNames.append(source.name)
                     failedSourceNames.sort()
-                    ReaderLogger.shared.log("Search failed source=\(source.id): \(error.localizedDescription)", type: "AidokuSearch")
+                    let elapsed = Int(Date().timeIntervalSince(sourceStartedAt) * 1000)
+                    ReaderLogger.shared.log("Global search source failed source=\(source.id) elapsedMs=\(elapsed): \(error.localizedDescription)", type: "ReaderSearch")
                 }
             }
         }
@@ -519,15 +544,20 @@ private final class MangaAidokuAdvancedSearchViewModel: ObservableObject {
         guard let sourceId = source.sourceId, filters.isEmpty, !isLoadingFilters else { return }
         isLoadingFilters = true
         errorMessage = nil
+        ReaderLogger.shared.log("Advanced search filters started source=\(source.id)", type: "ReaderSearch")
 
         Task { @MainActor in
+            let started = Date()
             do {
                 filters = try await AidokuSourceManager.shared.filters(sourceId: sourceId)
                 isLoadingFilters = false
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                ReaderLogger.shared.log("Advanced search filters loaded source=\(source.id) count=\(filters.count) elapsedMs=\(elapsed)", type: "ReaderSearch")
             } catch {
                 errorMessage = error.localizedDescription
                 isLoadingFilters = false
-                ReaderLogger.shared.log("Advanced filters failed source=\(source.id): \(error.localizedDescription)", type: "AidokuSearch")
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                ReaderLogger.shared.log("Advanced search filters failed source=\(source.id) elapsedMs=\(elapsed): \(error.localizedDescription)", type: "ReaderSearch")
             }
         }
     }
@@ -537,19 +567,24 @@ private final class MangaAidokuAdvancedSearchViewModel: ObservableObject {
         searchToken = token
         isSearching = true
         errorMessage = nil
+        ReaderLogger.shared.log("Advanced search started source=\(source.id) queryLength=\(query.trimmingCharacters(in: .whitespacesAndNewlines).count) filters=\(filters.count)", type: "ReaderSearch")
 
         Task { @MainActor in
+            let started = Date()
             do {
                 let results = try await MangaGlobalModuleSearchViewModel.searchSource(source, query: query, page: 1, filters: filters)
                 guard searchToken == token else { return }
                 items = results
                 isSearching = false
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                ReaderLogger.shared.log("Advanced search finished source=\(source.id) count=\(results.count) elapsedMs=\(elapsed)", type: "ReaderSearch")
             } catch {
                 guard searchToken == token else { return }
                 items = []
                 errorMessage = error.localizedDescription
                 isSearching = false
-                ReaderLogger.shared.log("Advanced search failed source=\(source.id): \(error.localizedDescription)", type: "AidokuSearch")
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                ReaderLogger.shared.log("Advanced search failed source=\(source.id) elapsedMs=\(elapsed): \(error.localizedDescription)", type: "ReaderSearch")
             }
         }
     }
