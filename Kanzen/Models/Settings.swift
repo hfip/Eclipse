@@ -1,6 +1,6 @@
 //
 //  Settings.swift
-//  Luna
+//  Eclipse
 //
 //  Created by Dawud Osman on 17/11/2025.
 //
@@ -322,26 +322,26 @@ struct MPVRenderBackendSupport {
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
     static let metalRendererEnabled = false
 
-    #if LUNA_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP
+    #if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP
     static let forkExposesMetalSampleBufferPictureInPicture = true
     #else
     static let forkExposesMetalSampleBufferPictureInPicture = false
     #endif
 
-    #if LUNA_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-    static let lunaImplementsMetalSampleBufferPictureInPicture = true
+    #if ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+    static let eclipseImplementsMetalSampleBufferPictureInPicture = true
     #else
-    static let lunaImplementsMetalSampleBufferPictureInPicture = false
+    static let eclipseImplementsMetalSampleBufferPictureInPicture = false
     #endif
 
-    #if LUNA_MPVKIT_METAL_BITMAP_SUBTITLES_VALIDATED
+    #if ECLIPSE_MPVKIT_METAL_BITMAP_SUBTITLES_VALIDATED
     static let metalBitmapSubtitlesValidated = true
     #else
     static let metalBitmapSubtitlesValidated = false
     #endif
     static let metalBitmapSubtitlesAllowed = true
 
-    #if LUNA_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+    #if ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
     static let metalLiveQualityReconfigurationAvailable = true
     #else
     static let metalLiveQualityReconfigurationAvailable = false
@@ -350,7 +350,7 @@ struct MPVRenderBackendSupport {
     static var metalSampleBufferPictureInPictureAvailable: Bool {
         bundledMPVKitSupportsMoltenVKInlineRendering
             && forkExposesMetalSampleBufferPictureInPicture
-            && lunaImplementsMetalSampleBufferPictureInPicture
+            && eclipseImplementsMetalSampleBufferPictureInPicture
     }
 
     static var metalIsFullySupported: Bool {
@@ -363,7 +363,7 @@ struct MPVRenderBackendSupport {
             "revision=\(bundledMPVKitRevision)",
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
             "forkMetalSampleBufferPiP=\(forkExposesMetalSampleBufferPictureInPicture)",
-            "lunaMetalPiP=\(lunaImplementsMetalSampleBufferPictureInPicture)",
+            "eclipseMetalPiP=\(eclipseImplementsMetalSampleBufferPictureInPicture)",
             "metalRendererEnabled=\(metalRendererEnabled)",
             "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
             "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
@@ -404,8 +404,8 @@ struct MPVRenderBackendSupport {
         guard forkExposesMetalSampleBufferPictureInPicture else {
             return "MPVKit \(bundledMPVKitVersion) bundled in this build does not expose Metal sample-buffer PiP frames"
         }
-        guard lunaImplementsMetalSampleBufferPictureInPicture else {
-            return "Luna Metal sample-buffer PiP adapter is not enabled in this build"
+        guard eclipseImplementsMetalSampleBufferPictureInPicture else {
+            return "Eclipse Metal sample-buffer PiP adapter is not enabled in this build"
         }
         return nil
     }
@@ -438,11 +438,11 @@ class Settings: ObservableObject {
     }
 
     var effectiveAccentColor: Color {
-        UserDefaults.standard.bool(forKey: "showKanzen") && !LunaTheme.shared.globalAppearanceEnabled ? readerAccentColor : accentColor
+        UserDefaults.standard.bool(forKey: "showKanzen") && !EclipseTheme.shared.globalAppearanceEnabled ? readerAccentColor : accentColor
     }
 
     var effectiveAppearance: Appearance {
-        UserDefaults.standard.bool(forKey: "showKanzen") && !LunaTheme.shared.globalAppearanceEnabled ? readerSelectedAppearance : selectedAppearance
+        UserDefaults.standard.bool(forKey: "showKanzen") && !EclipseTheme.shared.globalAppearanceEnabled ? readerSelectedAppearance : selectedAppearance
     }
     
     // In-App Player Settings

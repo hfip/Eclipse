@@ -2,7 +2,7 @@
 //  KanzenHomeView.swift
 //  Kanzen
 //
-//  Created by Luna on 2025.
+//  Created by Eclipse on 2025.
 //
 
 import SwiftUI

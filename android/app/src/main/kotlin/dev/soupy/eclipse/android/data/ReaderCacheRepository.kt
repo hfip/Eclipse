@@ -52,7 +52,7 @@ class ReaderCacheRepository internal constructor(
                             item.status.ifBlank { "metadata-only" }
                         },
                         progress = item.progress.coerceIn(0.0, 1.0),
-                        error = item.error ?: "Files are not embedded in Luna backups; reopen the chapter to rebuild Android's app-scoped reader cache.",
+                        error = item.error ?: "Files are not embedded in Eclipse backups; reopen the chapter to rebuild Android's app-scoped reader cache.",
                     )
                 },
             )

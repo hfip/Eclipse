@@ -287,7 +287,7 @@ fun FeaturePlaceholderScreen(
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                text = "Eclipse routes are connected to the Luna-style shell, persistence, playback, and backup flow.",
+                text = "Eclipse routes are connected to the Eclipse-style shell, persistence, playback, and backup flow.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             )

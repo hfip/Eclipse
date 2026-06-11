@@ -1,23 +1,23 @@
 {
   "name": "Eclipse",
-  "identifier": "dev.soupy.luna.source",
-  "sourceURL": "https://raw.githubusercontent.com/Soupy-dev/Luna/main/altsource.json",
+  "identifier": "dev.soupy.eclipse.source",
+  "sourceURL": "https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/altsource.json",
   "subtitle": "A source for the Eclipse fork.",
   "description": "Eclipse is a media app fork with anime, manga, light novel, download, and playback-focused additions. The app ships without services or addons.",
-  "iconURL": "https://raw.githubusercontent.com/Soupy-dev/Luna/main/Luna/Assets.xcassets/AppIcon.appiconset/Default.png",
-  "website": "https://github.com/Soupy-dev/Luna",
+  "iconURL": "https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/Eclipse/Assets.xcassets/AppIcon.appiconset/Default.png",
+  "website": "https://github.com/Soupy-dev/Eclipse",
   "tintColor": "#6D8CFF",
   "featuredApps": [
-    "me.cranci.solar"
+    "app.Eclipse.Soupy"
   ],
   "apps": [
     {
       "name": "Eclipse",
-      "bundleIdentifier": "me.cranci.solar",
+      "bundleIdentifier": "app.Eclipse.Soupy",
       "developerName": "Soupy-dev",
       "subtitle": "Anime, manga, downloads, and playback tools.",
-      "localizedDescription": "Eclipse is a fork of Luna with expanded anime handling, AniList and Trakt sync, catalogs, downloads, Stremio addon support, manga mode, light novel support, and playback improvements. The app does not include services or addons.",
-      "iconURL": "https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/Luna/Assets.xcassets/AppIcon.appiconset/Default.png",
+      "localizedDescription": "Eclipse has expanded anime handling, AniList and Trakt sync, catalogs, downloads, Stremio addon support, manga mode, light novel support, and playback improvements. The app does not include services or addons.",
+      "iconURL": "https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/Eclipse/Assets.xcassets/AppIcon.appiconset/Default.png",
       "tintColor": "#6D8CFF",
       "category": "entertainment",
       "versions": [

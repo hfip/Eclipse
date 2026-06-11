@@ -84,7 +84,7 @@ private data class AppDestination(
     val icon: ImageVector,
 )
 
-private val lunaDestinations = listOf(
+private val eclipseDestinations = listOf(
     AppDestination("home", "Home", Icons.Rounded.Home),
     AppDestination("schedule", "Schedule", Icons.Rounded.Schedule),
     AppDestination("downloads", "Downloads", Icons.Rounded.DownloadForOffline),
@@ -299,7 +299,7 @@ fun EclipseAndroidApp(
         if (settingsState.showKanzen) {
             kanzenDestinations
         } else {
-            lunaDestinations.filter { destination ->
+            eclipseDestinations.filter { destination ->
                 destination.route != "schedule" || settingsState.showScheduleTab
             }
         }

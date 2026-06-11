@@ -10,7 +10,7 @@ import UIKit
 #if !os(tvOS)
 struct KanzenGeneralSettingsView: View {
     @EnvironmentObject var settings: Settings
-    @StateObject private var theme = LunaTheme.shared
+    @StateObject private var theme = EclipseTheme.shared
     @StateObject private var accentColorManager = AccentColorManager.shared
     @AppStorage("readerFontSize") private var readerFontSize: Double = 16
     @AppStorage("readerFontFamily") private var readerFontFamily = "-apple-system"
@@ -51,7 +51,7 @@ struct KanzenGeneralSettingsView: View {
                         .fontWeight(.medium)
 
                     HStack(spacing: 12) {
-                        ForEach(LunaTheme.gradientPresets, id: \.name) { preset in
+                        ForEach(EclipseTheme.gradientPresets, id: \.name) { preset in
                             Button {
                                 gradientColorBinding.wrappedValue = preset.color
                             } label: {
@@ -91,7 +91,7 @@ struct KanzenGeneralSettingsView: View {
                     }
                 }
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
 
             Section(header: Text("Reader Text")) {
                 HStack {
@@ -151,7 +151,7 @@ struct KanzenGeneralSettingsView: View {
                     }
                 }
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
 
             Section(
                 header: Text("Reader Progress"),
@@ -165,7 +165,7 @@ struct KanzenGeneralSettingsView: View {
                         .monospacedDigit()
                 }
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
 
             Section(
                 header: Text("Reader Detail Page"),
@@ -197,10 +197,10 @@ struct KanzenGeneralSettingsView: View {
                 }
             }
             .environment(\.editMode, .constant(.active))
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
         }
         .navigationTitle(Text("Appearance"))
-        .lunaSettingsStyle()
+        .eclipseSettingsStyle()
         .onAppear(perform: reloadReaderDetailElements)
     }
 

@@ -91,7 +91,7 @@ struct AidokuSourcesSettingsView: View {
                 }
                 .disabled(sourceManager.isRefreshing || isBusy)
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
 
             Section(header: Text("Installed Sources"), footer: Text("Disabled or hidden mature sources do not appear on Discover or Search.")) {
                 Toggle("Show Mature Sources", isOn: $sourceManager.showMatureSources)
@@ -124,7 +124,7 @@ struct AidokuSourcesSettingsView: View {
                     Label("Import .aix Package", systemImage: "square.and.arrow.down")
                 }
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
 
             Section(header: Text("Available Sources")) {
                 DisclosureGroup(isExpanded: $showAvailableSources) {
@@ -145,11 +145,11 @@ struct AidokuSourcesSettingsView: View {
                     }
                 }
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
         }
         .navigationTitle("Aidoku Sources")
         .navigationBarTitleDisplayMode(.inline)
-        .lunaSettingsStyle()
+        .eclipseSettingsStyle()
         .toolbar {
             EditButton()
         }

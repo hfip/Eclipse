@@ -19,7 +19,7 @@ struct ModuleData: Codable, Equatable
 
     enum CodingKeys: String, CodingKey {
         case sourceName, author, version, language, novel
-        // Luna format
+        // Eclipse format
         case iconURL
         case scriptURL
         // Sora format
@@ -34,13 +34,13 @@ struct ModuleData: Codable, Equatable
         version = try container.decode(String.self, forKey: .version)
         language = try container.decode(String.self, forKey: .language)
         novel = try container.decodeIfPresent(Bool.self, forKey: .novel)
-        // Accept both "iconURL" (Luna) and "iconUrl" (Sora)
+        // Accept both "iconURL" (Eclipse) and "iconUrl" (Sora)
         if let val = try container.decodeIfPresent(String.self, forKey: .iconURL) {
             iconURL = val
         } else {
             iconURL = try container.decode(String.self, forKey: .iconUrl)
         }
-        // Accept both "scriptURL" (Luna) and "scriptUrl" (Sora)
+        // Accept both "scriptURL" (Eclipse) and "scriptUrl" (Sora)
         if let val = try container.decodeIfPresent(String.self, forKey: .scriptURL) {
             scriptURL = val
         } else {
@@ -66,14 +66,14 @@ struct ModuleData: Codable, Equatable
 
         enum CodingKeys: String, CodingKey {
             case name
-            case iconURL   // Luna format
+            case iconURL   // Eclipse format
             case icon      // Sora format
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             name = try container.decode(String.self, forKey: .name)
-            // Accept both "iconURL" (Luna) and "icon" (Sora)
+            // Accept both "iconURL" (Eclipse) and "icon" (Sora)
             if let val = try container.decodeIfPresent(String.self, forKey: .iconURL) {
                 iconURL = val
             } else {

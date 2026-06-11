@@ -21,7 +21,7 @@
 
 ## Why Eclipse
 
-Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku as well. Star the repo if you like my work!
+Eclipse was designed to bridge Eclipse services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku as well. Star the repo if you like my work!
 
 ## Screenshots
 
@@ -73,7 +73,7 @@ https://github.com/Soupy-dev/Eclipse/releases
 AltStore and SideStore users can add this source:
 
 ```text
-https://raw.githubusercontent.com/Soupy-dev/Luna/main/altsource.json
+https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/altsource.json
 ```
 
 New to sideloading? This guide is a good starting point:

@@ -2,7 +2,7 @@
 //  KanzenGlobalSearchView.swift
 //  Kanzen
 //
-//  Created by Luna on 2025.
+//  Created by Eclipse on 2025.
 //
 
 import SwiftUI
@@ -238,7 +238,7 @@ struct KanzenGlobalSearchView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 28)
-            .background(LunaTheme.shared.cardBackground)
+            .background(EclipseTheme.shared.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 18)], alignment: .leading, spacing: 18) {
@@ -351,7 +351,7 @@ struct KanzenGlobalSearchView: View {
                     }
                 }
             }
-            .background(LunaTheme.shared.cardBackground)
+            .background(EclipseTheme.shared.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
@@ -481,7 +481,7 @@ private struct MangaSearchSourceCard: View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(LunaTheme.shared.cardBackground)
+                    .fill(EclipseTheme.shared.cardBackground)
 
                 KFImage(URL(string: source.iconURL))
                     .placeholder {
@@ -612,7 +612,7 @@ private struct MangaAidokuAdvancedSearchView: View {
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
-                .background(LunaTheme.shared.cardBackground)
+                .background(EclipseTheme.shared.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         } else {
             VStack(alignment: .leading, spacing: 14) {
@@ -621,7 +621,7 @@ private struct MangaAidokuAdvancedSearchView: View {
                 }
             }
             .padding(14)
-            .background(LunaTheme.shared.cardBackground)
+            .background(EclipseTheme.shared.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }

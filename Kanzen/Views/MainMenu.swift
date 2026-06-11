@@ -1,6 +1,6 @@
 //
 //  MainMenu.swift
-//  Luna
+//  Eclipse
 //
 //  Created by Dawud Osman on 17/11/2025.
 //

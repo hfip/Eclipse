@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 
 WORKING_LOCATION="$(pwd)"
-PROJECT_NAME="Luna"
+PROJECT_NAME="Eclipse"
 APPLICATION_NAME="Eclipse"
 
 PLATFORM=${1:-ios}

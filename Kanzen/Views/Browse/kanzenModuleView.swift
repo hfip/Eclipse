@@ -140,7 +140,7 @@ struct KanzenModuleView: View {
                  }
                  
                  // Remove default list styling
-                 .lunaHideScrollBackground()
+                 .eclipseHideScrollBackground()
                  .background(Color.clear)
              .navigationTitle("Modules")
              .navigationBarTitleDisplayMode(.inline)

@@ -2,7 +2,7 @@
 //  MangaCatalogSettingsView.swift
 //  Kanzen
 //
-//  Created by Luna on 2025.
+//  Created by Eclipse on 2025.
 //
 
 import SwiftUI
@@ -74,11 +74,11 @@ struct MangaCatalogSettingsView: View {
                     }
                 }
             }
-            .background(LunaScrollTracker())
+            .background(EclipseScrollTracker())
         }
         .navigationTitle("Home Sources")
         .navigationBarTitleDisplayMode(.inline)
-        .lunaSettingsStyle()
+        .eclipseSettingsStyle()
         .toolbar {
             EditButton()
         }

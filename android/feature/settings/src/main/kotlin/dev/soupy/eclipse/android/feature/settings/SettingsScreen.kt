@@ -129,7 +129,7 @@ data class SettingsScreenState(
     val isBackupBusy: Boolean = false,
     val hasLocalBackup: Boolean = false,
     val backupStatusHeadline: String = "No local backup yet",
-    val backupStatusMessage: String = "Export a JSON archive or import an existing Luna backup.",
+    val backupStatusMessage: String = "Export a JSON archive or import an existing Eclipse backup.",
     val catalogs: List<CatalogSettingsRow> = emptyList(),
     val storageMetrics: List<StorageMetricRow> = emptyList(),
     val storageStatus: String = "Storage has not been measured yet.",
@@ -861,7 +861,7 @@ fun SettingsRoute(
         item {
             SectionHeading(
                 title = "Catalogs",
-                subtitle = "Home rows follow the same enabled state and order that Luna stores in backups.",
+                subtitle = "Home rows follow the same enabled state and order that Eclipse stores in backups.",
             )
         }
 
@@ -916,7 +916,7 @@ fun SettingsRoute(
         item {
             SectionHeading(
                 title = "Backup",
-                subtitle = "Export and restore Luna-compatible JSON archives.",
+                subtitle = "Export and restore Eclipse-compatible JSON archives.",
             )
         }
 

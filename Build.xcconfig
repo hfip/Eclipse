@@ -1,15 +1,15 @@
 //
 //  Build.xcconfig
-//  Luna
+//  Eclipse
 //
 //  Created by Dominic on 04.11.25.
 //
 
 APP_NAME = Eclipse
-DEVELOPMENT_TEAM = 399LMK6Q2Y
-BUNDLE_IDENTIFIER = me.cranci.solar
+DEVELOPMENT_TEAM = ANMK3Y568U
+BUNDLE_IDENTIFIER = app.Eclipse.Soupy
 ICLOUD_CONTAINER_ID = iCloud.me.cranci.sora
-CODE_SIGN_ENTITLEMENTS = Luna/Luna.entitlements
+CODE_SIGN_ENTITLEMENTS = Eclipse/Eclipse.entitlements
 TMDB_API_KEY =
 ANILIST_CLIENT_ID =
 ANILIST_CLIENT_SECRET =

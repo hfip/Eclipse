@@ -203,7 +203,7 @@ fun NovelRoute(
                 title = "Novels",
                 subtitle = "${state.novelCount} saved - ${state.readChapterCount} chapters read",
                 imageUrl = state.recent.firstOrNull()?.coverUrl,
-                supportingText = "Light novel progress, reader history, and novel-capable Kanzen modules load from Luna backups.",
+                supportingText = "Light novel progress, reader history, and novel-capable Kanzen modules load from Eclipse backups.",
             )
         }
 
@@ -211,7 +211,7 @@ fun NovelRoute(
             item {
                 GlassPanel {
                     Text(
-                        text = "Imported staged novel data from the local Luna backup.",
+                        text = "Imported staged novel data from the local Eclipse backup.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.tertiary,
                     )
@@ -488,7 +488,7 @@ fun NovelRoute(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = "Import a Luna backup with novel progress or install novel-capable Kanzen modules to populate this library.",
+                            text = "Import a Eclipse backup with novel progress or install novel-capable Kanzen modules to populate this library.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.74f),
                         )

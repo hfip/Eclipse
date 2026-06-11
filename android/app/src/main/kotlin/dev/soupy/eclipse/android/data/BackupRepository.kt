@@ -405,12 +405,12 @@ private fun BackupDocument?.toStatus(): BackupStatusSnapshot = if (this == null)
     BackupStatusSnapshot(
         hasLocalBackup = false,
         headline = "No local backup yet",
-        supportingText = "Export a JSON archive from Settings or import an existing Luna backup.",
+        supportingText = "Export a JSON archive from Settings or import an existing Eclipse backup.",
     )
 } else {
     toStatus(
         headline = "Local backup ready",
-        supportingPrefix = "A Luna-compatible JSON archive is staged locally for re-export.",
+        supportingPrefix = "A Eclipse-compatible JSON archive is staged locally for re-export.",
     )
 }
 

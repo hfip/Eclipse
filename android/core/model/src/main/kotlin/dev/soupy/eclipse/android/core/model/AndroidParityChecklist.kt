@@ -27,7 +27,7 @@ object AndroidParityChecklist {
         implemented(
             id = "media-home-catalogs",
             title = "Home catalogs and ordering",
-            iosSource = "Luna/HomeViewModel.swift, Luna/Models/CatalogModels.swift",
+            iosSource = "Eclipse/HomeViewModel.swift, Eclipse/Models/CatalogModels.swift",
             androidOwner = "HomeRepository, CatalogSettingsStore, BackupCatalog",
             requiredBehaviors = listOf(
                 "Use iOS default catalog IDs, ordering, display styles, and enabled state.",
@@ -43,7 +43,7 @@ object AndroidParityChecklist {
         implemented(
             id = "media-hero-atmosphere",
             title = "Hero and atmosphere settings",
-            iosSource = "Luna/HomeView.swift, Luna/SettingsView.swift",
+            iosSource = "Eclipse/HomeView.swift, Eclipse/SettingsView.swift",
             androidOwner = "SettingsStore, SettingsScreen, HomeRoute",
             requiredBehaviors = listOf(
                 "Persist hero catalog and behavior defaults.",
@@ -59,7 +59,7 @@ object AndroidParityChecklist {
         implemented(
             id = "media-search-ranking-caps",
             title = "Search ranking, result caps, and filters",
-            iosSource = "Luna/SearchView.swift, Luna/ServicesResultsSheet.swift",
+            iosSource = "Eclipse/SearchView.swift, Eclipse/ServicesResultsSheet.swift",
             androidOwner = "SearchRepository, StreamResolutionRepository, SimilarityAlgorithm",
             requiredBehaviors = listOf(
                 "Keep bounded search/service result sets so large providers do not overload UI.",
@@ -76,7 +76,7 @@ object AndroidParityChecklist {
         implemented(
             id = "media-detail-layout",
             title = "Detail ordering, hidden sections, ratings, notes, and collections",
-            iosSource = "Luna/MediaDetailView.swift, Luna/CollectionModels.swift",
+            iosSource = "Eclipse/MediaDetailView.swift, Eclipse/CollectionModels.swift",
             androidOwner = "DetailRepository, LibraryRepository, SettingsStore, BackupModels",
             requiredBehaviors = listOf(
                 "Persist iOS detail element order and hidden element settings.",
@@ -93,7 +93,7 @@ object AndroidParityChecklist {
         implemented(
             id = "schedule-settings",
             title = "Schedule modes and local time",
-            iosSource = "Luna/ScheduleView.swift, Luna/SettingsView.swift",
+            iosSource = "Eclipse/ScheduleView.swift, Eclipse/SettingsView.swift",
             androidOwner = "ScheduleRepository, SettingsStore, SettingsScreen",
             requiredBehaviors = listOf(
                 "Persist show schedule tab, local time, classic UI, and default schedule mode.",
@@ -108,7 +108,7 @@ object AndroidParityChecklist {
         implemented(
             id = "tmdb-language-cache-release",
             title = "TMDB language, cache, and release prompts",
-            iosSource = "Luna/TMDBClient.swift, Luna/CacheManager.swift, Luna/GitHubReleaseChecker.swift",
+            iosSource = "Eclipse/TMDBClient.swift, Eclipse/CacheManager.swift, Eclipse/GitHubReleaseChecker.swift",
             androidOwner = "SettingsStore, CacheRepository, ReleaseRepository, AndroidSettingsViewModel",
             requiredBehaviors = listOf(
                 "Persist TMDB language, cache thresholds, and auto-clear settings.",
@@ -125,7 +125,7 @@ object AndroidParityChecklist {
         implemented(
             id = "services-lifecycle",
             title = "Service install, update, enable, order, and sandboxing",
-            iosSource = "Luna/JSController.swift, Luna/ServiceManager.swift",
+            iosSource = "Eclipse/JSController.swift, Eclipse/ServiceManager.swift",
             androidOwner = "ServicesRepository, SettingsStore, LoggerStore",
             requiredBehaviors = listOf(
                 "Install, update, enable, disable, and order services like iOS.",
@@ -142,7 +142,7 @@ object AndroidParityChecklist {
         implemented(
             id = "services-progressive-resolution",
             title = "Progressive search, detail, episode, and stream resolution",
-            iosSource = "Luna/ServiceManager.swift, Luna/StreamResolver.swift",
+            iosSource = "Eclipse/ServiceManager.swift, Eclipse/StreamResolver.swift",
             androidOwner = "StreamResolutionRepository, SourceHealthRepository",
             requiredBehaviors = listOf(
                 "Resolve services progressively from search through details, episodes, and streams.",
@@ -158,7 +158,7 @@ object AndroidParityChecklist {
         implemented(
             id = "stremio-addons",
             title = "Stremio manifest, catalog, Kitsu/anime IDs, and subtitle addons",
-            iosSource = "Luna/StremioAddonManager.swift, Luna/StremioClient.swift",
+            iosSource = "Eclipse/StremioAddonManager.swift, Eclipse/StremioClient.swift",
             androidOwner = "StremioRepository, StreamResolutionRepository, BackupModels",
             requiredBehaviors = listOf(
                 "Validate addon manifests and preserve addon lifecycle in backups.",
@@ -176,7 +176,7 @@ object AndroidParityChecklist {
         implemented(
             id = "player-backends",
             title = "MPV default, Media3 fallback, and legacy VLC migration",
-            iosSource = "Luna/PlayerViewController.swift, Luna/MPVNativeRenderer.swift",
+            iosSource = "Eclipse/PlayerViewController.swift, Eclipse/MPVNativeRenderer.swift",
             androidOwner = "core:mpv, core:player, SettingsStore, BackupModels",
             requiredBehaviors = listOf(
                 "Default embedded Android playback to MPV.",
@@ -195,7 +195,7 @@ object AndroidParityChecklist {
         implemented(
             id = "player-stream-transport",
             title = "Headers, redirects, HLS, direct HTTP, and local files",
-            iosSource = "Luna/MPVHeaderProxy.swift, Luna/HLSDownloader.swift",
+            iosSource = "Eclipse/MPVHeaderProxy.swift, Eclipse/HLSDownloader.swift",
             androidOwner = "PlayerHeaderProxy, MpvPlayerController, DownloadsRepository",
             requiredBehaviors = listOf(
                 "Use a neutral player header proxy for custom headers, cookies, redirects, subtitles, and HLS.",
@@ -212,7 +212,7 @@ object AndroidParityChecklist {
         implemented(
             id = "player-subtitles-tracks-audio",
             title = "Subtitles, track switching, and anime audio defaults",
-            iosSource = "Luna/PlayerSettings.swift, Luna/MPVNativeRenderer.swift",
+            iosSource = "Eclipse/PlayerSettings.swift, Eclipse/MPVNativeRenderer.swift",
             androidOwner = "PlaybackSettingsSnapshot, MpvPlayerController, SettingsScreen",
             requiredBehaviors = listOf(
                 "Apply ASS, SRT, VTT, external subtitle URLs, and subtitle styling settings.",
@@ -229,7 +229,7 @@ object AndroidParityChecklist {
         implemented(
             id = "player-progress-skip-next",
             title = "Resume, progress, finish sync, skips, next episode, and episode browser",
-            iosSource = "Luna/PlayerViewController.swift, Luna/AniSkip.swift, Luna/TheIntroDB.swift",
+            iosSource = "Eclipse/PlayerViewController.swift, Eclipse/AniSkip.swift, Eclipse/TheIntroDB.swift",
             androidOwner = "EclipsePlayerSurface, ProgressRepository, TrackerRepository, SettingsStore",
             requiredBehaviors = listOf(
                 "Resume playback, write progress, detect completion, and trigger tracker sync thresholds.",
@@ -246,7 +246,7 @@ object AndroidParityChecklist {
         implemented(
             id = "player-platform-controls",
             title = "PiP, rotation, gestures, and screen-awake behavior",
-            iosSource = "Luna/PlayerViewController.swift, UIKit PiP/idle timer behavior",
+            iosSource = "Eclipse/PlayerViewController.swift, UIKit PiP/idle timer behavior",
             androidOwner = "EclipsePlayerSurface, SettingsScreen, PlaybackSettingsSnapshot",
             requiredBehaviors = listOf(
                 "Keep the screen awake only while playback is active.",
@@ -263,7 +263,7 @@ object AndroidParityChecklist {
         implemented(
             id = "media-downloads",
             title = "Media downloads, HLS packaging, and offline restore",
-            iosSource = "Luna/DownloadManager.swift, Luna/HLSDownloader.swift",
+            iosSource = "Eclipse/DownloadManager.swift, Eclipse/HLSDownloader.swift",
             androidOwner = "DownloadsRepository, DownloadWorker, DownloadsScreen",
             requiredBehaviors = listOf(
                 "Keep media downloads in app-scoped storage without broad storage permissions.",
@@ -280,7 +280,7 @@ object AndroidParityChecklist {
         implemented(
             id = "trackers",
             title = "Tracker auth, progress, ratings, and tools",
-            iosSource = "Luna/TrackerManager.swift, Luna/TrackersSettingsView.swift",
+            iosSource = "Eclipse/TrackerManager.swift, Eclipse/TrackersSettingsView.swift",
             androidOwner = "TrackerRepository, AndroidSettingsViewModel, BackupModels",
             requiredBehaviors = listOf(
                 "Support AniList, MyAnimeList, and Trakt account state and OAuth/manual connection state.",
@@ -297,7 +297,7 @@ object AndroidParityChecklist {
         implemented(
             id = "backup-round-trip",
             title = "Backup restore, unknown keys, settings, and legacy player migration",
-            iosSource = "Luna/BackupManager.swift, Luna/BackupManagementView.swift",
+            iosSource = "Eclipse/BackupManager.swift, Eclipse/BackupManagementView.swift",
             androidOwner = "BackupRepository, BackupModels, SettingsStore",
             requiredBehaviors = listOf(
                 "Decode modern iOS backup keys Android supports and preserve unknown keys.",
@@ -383,7 +383,7 @@ object AndroidParityChecklist {
         implemented(
             id = "logs-export-clear",
             title = "Media logs, reader logs, export, and clear",
-            iosSource = "Luna/Logger.swift, Kanzen reader logger",
+            iosSource = "Eclipse/Logger.swift, Kanzen reader logger",
             androidOwner = "LoggerStore, LoggerRepository, SettingsScreen",
             requiredBehaviors = listOf(
                 "Expose combined media/service/reader logs in settings.",

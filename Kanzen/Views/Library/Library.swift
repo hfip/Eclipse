@@ -220,7 +220,7 @@ struct KanzenLibraryView: View {
             let previews = Array(collection.items.prefix(4))
             ZStack {
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(LunaTheme.shared.cardBackground)
+                    .fill(EclipseTheme.shared.cardBackground)
                     .frame(width: 140, height: 140)
 
                 if previews.isEmpty {

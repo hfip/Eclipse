@@ -2,7 +2,7 @@
 //  MangaReadingProgressManager.swift
 //  Kanzen
 //
-//  Created by Luna on 2026.
+//  Created by Eclipse on 2026.
 //
 
 import Foundation

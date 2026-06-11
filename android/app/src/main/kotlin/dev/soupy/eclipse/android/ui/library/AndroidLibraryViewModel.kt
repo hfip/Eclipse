@@ -176,7 +176,7 @@ private fun LibrarySnapshot.toUiState(): LibraryScreenState {
             LibraryMetric(
                 label = "Collections",
                 value = collections.size.toString(),
-                supportingText = "Bookmarks and custom media groups restored through Luna backups.",
+                supportingText = "Bookmarks and custom media groups restored through Eclipse backups.",
             ),
             LibraryMetric(
                 label = "Resume",

@@ -1438,7 +1438,7 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
 enum ReaderWebtoonImagePipeline {
     private static let decodedImageCache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
-        cache.name = "Luna.Kanzen.Reader.DecodedImages"
+        cache.name = "Eclipse.Kanzen.Reader.DecodedImages"
         cache.countLimit = 160
         cache.totalCostLimit = 180 * 1024 * 1024
         return cache
@@ -1788,7 +1788,7 @@ private struct ReaderWebtoonDownsampleProcessor: ImageProcessing {
     let scaleFactor: CGFloat
 
     var identifier: String {
-        "com.luna.reader.webtoon.downsample?w=\(Int(width * scaleFactor))"
+        "app.eclipse.soupy.reader.webtoon.downsample?w=\(Int(width * scaleFactor))"
     }
 
     func process(_ image: PlatformImage) -> PlatformImage? {

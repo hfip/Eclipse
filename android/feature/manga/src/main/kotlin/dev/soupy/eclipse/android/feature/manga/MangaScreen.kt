@@ -250,7 +250,7 @@ fun MangaRoute(
                 imageUrl = state.recent.firstOrNull()?.coverUrl,
                 supportingText = when {
                     surfaceMode == MangaSurfaceMode.LIBRARY ->
-                        "Saved manga, bookmarks, favorites, and custom Kanzen collections from Luna backups."
+                        "Saved manga, bookmarks, favorites, and custom Kanzen collections from Eclipse backups."
                     surfaceMode == MangaSurfaceMode.SEARCH ->
                         "Search AniList manga and installed Kanzen modules from the dedicated Kanzen shell."
                     surfaceMode == MangaSurfaceMode.HISTORY ->
@@ -260,7 +260,7 @@ fun MangaRoute(
                     state.novelCount > 0 ->
                         "${state.novelCount} novel progress ${if (state.novelCount == 1) "entry" else "entries"} restored with manga history."
                     else ->
-                        "Kanzen library, progress, module, and catalog data load from Luna backups."
+                        "Kanzen library, progress, module, and catalog data load from Eclipse backups."
                 },
             )
         }
@@ -269,7 +269,7 @@ fun MangaRoute(
             item {
                 GlassPanel {
                     Text(
-                        text = "Imported staged manga data from the local Luna backup.",
+                        text = "Imported staged manga data from the local Eclipse backup.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.tertiary,
                     )
@@ -608,7 +608,7 @@ fun MangaRoute(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = "Import a Luna backup or add Kanzen modules to populate your reader library.",
+                            text = "Import a Eclipse backup or add Kanzen modules to populate your reader library.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.74f),
                         )

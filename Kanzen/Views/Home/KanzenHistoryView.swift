@@ -2,7 +2,7 @@
 //  KanzenHistoryView.swift
 //  Kanzen
 //
-//  Created by Luna on 2026.
+//  Created by Eclipse on 2026.
 //
 
 import SwiftUI
@@ -175,7 +175,7 @@ struct KanzenHistoryView: View {
             Spacer()
         }
         .padding(12)
-        .background(LunaTheme.shared.cardBackground)
+        .background(EclipseTheme.shared.cardBackground)
         .cornerRadius(12)
     }
 
