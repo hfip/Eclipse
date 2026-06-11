@@ -775,6 +775,7 @@ final class KanzenReaderSession {
     private let loader: KanzenReaderPageLoader
     private var lastSavedChapterNumber: String?
     private var lastSavedPage = -1
+    private var thresholdMarkedChapterNumber: String?
 
     var pages: [KanzenReaderPage] = []
     var currentPage: Int = 0
@@ -848,6 +849,7 @@ final class KanzenReaderSession {
         currentPage = restoredPage(in: mapped)
         lastSavedChapterNumber = nil
         lastSavedPage = -1
+        thresholdMarkedChapterNumber = nil
         ReaderLogger.shared.log(
             "Reader loaded chapter=\(selectedChapter.chapterNumber) pages=\(mapped.count) mode=\(mode.rawValue)",
             type: "Reader"
@@ -915,6 +917,7 @@ final class KanzenReaderSession {
 
     func markCurrentChapterRead() {
         guard mangaId != 0, !selectedChapter.chapterNumber.isEmpty else { return }
+        thresholdMarkedChapterNumber = selectedChapter.chapterNumber
         MangaReadingProgressManager.shared.markChapterRead(
             mangaId: mangaId,
             chapterNumber: selectedChapter.chapterNumber,
@@ -931,6 +934,7 @@ final class KanzenReaderSession {
 
     private func markReadIfThresholdReached(page: Int, totalPages: Int) {
         guard totalPages > 0 else { return }
+        guard thresholdMarkedChapterNumber != selectedChapter.chapterNumber else { return }
         let completion = Double(min(page + 1, totalPages)) / Double(totalPages)
         if completion >= readThreshold || page >= totalPages - 1 {
             markCurrentChapterRead()

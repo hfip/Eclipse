@@ -1842,6 +1842,7 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
     private var pendingStartPage: Int?
     private var lastReportedPage = -1
     private var didInitialScroll = false
+    private var requestedNextChapterFromOverscroll = false
 
     override func loadView() {
         view = zoomView
@@ -1872,6 +1873,7 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
         zoomView.collectionNode.setTuningParameters(zoomView.collectionNode.tuningParameters(for: .preload), for: .lowMemory, rangeType: .preload)
         zoomView.onScroll = { [weak self] in self?.scrollViewDidMirrorScroll() }
         zoomView.onLayout = { [weak self] in self?.layoutDidUpdate() }
+        zoomView.onEndOverscroll = { [weak self] in self?.requestNextChapterFromOverscroll() }
         zoomView.doubleTapEnabled = !UserDefaults.standard.bool(forKey: "Reader.disableDoubleTap")
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -1889,14 +1891,23 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
         pendingStartPage = min(max(startPage, 0), max(pages.count - 1, 0))
         lastReportedPage = -1
         didInitialScroll = false
+        requestedNextChapterFromOverscroll = false
         layout.zoomScale = 1
         layout.invalidateLayout()
-        zoomView.scrollView.zoomScale = 1
+        zoomView.resetZoom()
         zoomView.collectionNode.reloadData()
         zoomView.setNeedsLayout()
         prefetchPages(around: pendingStartPage ?? 0)
         DispatchQueue.main.async { [weak self] in
             self?.scrollToPendingStartPage()
+        }
+    }
+
+    private func requestNextChapterFromOverscroll() {
+        guard !requestedNextChapterFromOverscroll else { return }
+        guard lastReportedPage >= pages.count - 1 else { return }
+        if readerDelegate?.readerChildDidRequestNextChapter() == true {
+            requestedNextChapterFromOverscroll = true
         }
     }
 
@@ -2103,13 +2114,16 @@ extension KanzenWebtoonReaderViewController: ASCollectionDataSource, ASCollectio
     }
 }
 
-final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
+final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let collectionNode: ASCollectionNode
     let scrollView = UIScrollView()
     let dummyZoomView = UIView()
     let layout: KanzenVerticalContentOffsetPreservingLayout
     var onScroll: (() -> Void)?
     var onLayout: (() -> Void)?
+    var onEndOverscroll: (() -> Void)?
+
+    private var pinchStartScale: CGFloat = 1
 
     var doubleTapEnabled: Bool {
         get { doubleTapGesture.isEnabled }
@@ -2119,6 +2133,12 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
     lazy var doubleTapGesture: UITapGestureRecognizer = {
         let gesture = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         gesture.numberOfTapsRequired = 2
+        return gesture
+    }()
+
+    private lazy var pinchGesture: UIPinchGestureRecognizer = {
+        let gesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        gesture.delegate = self
         return gesture
     }()
 
@@ -2139,13 +2159,15 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
         scrollView.delegate = self
         scrollView.minimumZoomScale = 1
         scrollView.maximumZoomScale = 5
-        scrollView.bounces = false
-        scrollView.bouncesZoom = false
+        scrollView.bounces = true
+        scrollView.alwaysBounceVertical = true
+        scrollView.bouncesZoom = true
         scrollView.showsVerticalScrollIndicator = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
         dummyZoomView.backgroundColor = .clear
         dummyZoomView.addGestureRecognizer(doubleTapGesture)
+        scrollView.addGestureRecognizer(pinchGesture)
         dummyZoomView.isUserInteractionEnabled = true
         scrollView.addSubview(dummyZoomView)
         addSubview(scrollView)
@@ -2176,34 +2198,73 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
         collectionNode.view.setContentOffset(bounded, animated: false)
     }
 
+    func resetZoom() {
+        setReaderZoomScale(1, anchor: CGPoint(x: bounds.midX, y: bounds.midY), animated: false)
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         collectionNode.view.contentOffset = scrollView.contentOffset
         onScroll?()
     }
 
-    func scrollViewDidZoom(_ scrollView: UIScrollView) {
-        guard abs(layout.zoomScale - scrollView.zoomScale) >= 0.01 else { return }
-        layout.zoomScale = scrollView.zoomScale
-        layout.invalidateLayout()
-        collectionNode.view.layoutIfNeeded()
-        adjustContentSize()
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        detectEndOverscroll(in: scrollView)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        detectEndOverscroll(in: scrollView)
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        dummyZoomView
+        nil
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === pinchGesture || otherGestureRecognizer === pinchGesture
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
         guard gesture.state == .ended else { return }
-        let targetScale: CGFloat = scrollView.zoomScale > 1.01 ? 1 : 2
-        let location = gesture.location(in: dummyZoomView)
-        if targetScale == 1 {
-            scrollView.setZoomScale(1, animated: true)
+        let targetScale: CGFloat = layout.zoomScale > 1.01 ? 1 : 2
+        setReaderZoomScale(targetScale, anchor: gesture.location(in: self), animated: true)
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            pinchStartScale = layout.zoomScale
+        case .changed, .ended:
+            setReaderZoomScale(pinchStartScale * gesture.scale, anchor: gesture.location(in: self), animated: false)
+        default:
+            break
+        }
+    }
+
+    private func setReaderZoomScale(_ scale: CGFloat, anchor: CGPoint, animated: Bool) {
+        let oldScale = max(layout.zoomScale, 1)
+        let nextScale = min(max(scale, 1), 5)
+        guard abs(oldScale - nextScale) >= 0.01 || nextScale == 1 else { return }
+        let anchorContent = CGPoint(
+            x: (scrollView.contentOffset.x + anchor.x) / oldScale,
+            y: (scrollView.contentOffset.y + anchor.y) / oldScale
+        )
+
+        let changes = {
+            self.layout.zoomScale = nextScale
+            self.layout.invalidateLayout()
+            self.collectionNode.view.layoutIfNeeded()
+            self.adjustContentSize()
+            let targetOffset = CGPoint(
+                x: anchorContent.x * nextScale - anchor.x,
+                y: anchorContent.y * nextScale - anchor.y
+            )
+            self.setContentOffset(targetOffset, animated: false)
+        }
+
+        if animated {
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: changes)
         } else {
-            let width = scrollView.bounds.width / targetScale
-            let height = scrollView.bounds.height / targetScale
-            let rect = CGRect(x: location.x - width / 2, y: location.y - height / 2, width: width, height: height)
-            scrollView.zoom(to: rect, animated: true)
+            changes()
         }
     }
 
@@ -2212,6 +2273,13 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate {
             x: min(max(point.x, 0), max(scrollView.contentSize.width - scrollView.bounds.width, 0)),
             y: min(max(point.y, 0), max(scrollView.contentSize.height - scrollView.bounds.height, 0))
         )
+    }
+
+    private func detectEndOverscroll(in scrollView: UIScrollView) {
+        let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+        let threshold = max(64, min(scrollView.bounds.height * 0.12, 120))
+        guard scrollView.contentOffset.y > maxOffset + threshold else { return }
+        onEndOverscroll?()
     }
 }
 
@@ -2666,33 +2734,49 @@ final class KanzenReaderPageUnitViewController: UIViewController {
     }
 }
 
-final class KanzenReaderImageView: UIView {
+final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
+    private let scrollView = UIScrollView()
     private let imageView = UIImageView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let retryButton = UIButton(type: .system)
     private var page: KanzenReaderPage?
     private var loadTask: Task<Void, Never>?
     private var imageTask: ImageTask?
+    private lazy var doubleTapGesture: UITapGestureRecognizer = {
+        let gesture = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        gesture.numberOfTapsRequired = 2
+        return gesture
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
+        scrollView.backgroundColor = .black
+        scrollView.delegate = self
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addGestureRecognizer(doubleTapGesture)
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .black
-        imageView.translatesAutoresizingMaskIntoConstraints = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("Retry", for: .normal)
         retryButton.isHidden = true
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.addTarget(self, action: #selector(retry), for: .touchUpInside)
-        addSubview(imageView)
+        scrollView.addSubview(imageView)
+        addSubview(scrollView)
         addSubview(spinner)
         addSubview(retryButton)
         NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
             retryButton.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -2708,10 +2792,22 @@ final class KanzenReaderImageView: UIView {
         cancel()
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if scrollView.zoomScale <= 1.01 || imageView.bounds.size == .zero {
+            imageView.frame = CGRect(origin: .zero, size: scrollView.bounds.size)
+            scrollView.contentSize = imageView.bounds.size
+        }
+        centerImageView()
+    }
+
     func configure(page: KanzenReaderPage) {
         self.page = page
         imageView.image = nil
         retryButton.isHidden = true
+        scrollView.setZoomScale(1, animated: false)
+        imageView.frame = CGRect(origin: .zero, size: scrollView.bounds.size)
+        scrollView.contentSize = imageView.bounds.size
         load()
     }
 
@@ -2753,6 +2849,36 @@ final class KanzenReaderImageView: UIView {
     @objc private func retry() {
         load()
     }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        imageView
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerImageView()
+    }
+
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended, imageView.image != nil else { return }
+        if scrollView.zoomScale > 1.01 {
+            scrollView.setZoomScale(1, animated: true)
+        } else {
+            let targetScale: CGFloat = 2
+            let location = gesture.location(in: imageView)
+            let width = scrollView.bounds.width / targetScale
+            let height = scrollView.bounds.height / targetScale
+            let rect = CGRect(x: location.x - width / 2, y: location.y - height / 2, width: width, height: height)
+            scrollView.zoom(to: rect, animated: true)
+        }
+    }
+
+    private func centerImageView() {
+        let boundsSize = scrollView.bounds.size
+        var frame = imageView.frame
+        frame.origin.x = frame.width < boundsSize.width ? (boundsSize.width - frame.width) / 2 : 0
+        frame.origin.y = frame.height < boundsSize.height ? (boundsSize.height - frame.height) / 2 : 0
+        imageView.frame = frame
+    }
 }
 
 final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildControlling, UIScrollViewDelegate {
@@ -2763,6 +2889,7 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
     private var pages: [KanzenReaderPage] = []
     private var pendingStartPage = 0
     private var lastReportedPage = -1
+    private var requestedNextChapterFromOverscroll = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -2802,6 +2929,7 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
         self.pages = pages
         pendingStartPage = startPage
         lastReportedPage = -1
+        requestedNextChapterFromOverscroll = false
         stack.arrangedSubviews.forEach {
             stack.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -2857,6 +2985,14 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
         reportCurrentPage(force: false)
     }
 
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        detectEndOverscroll(in: scrollView)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        detectEndOverscroll(in: scrollView)
+    }
+
     @objc private func handleTap() {
         readerDelegate?.readerChildDidRequestOverlayToggle()
     }
@@ -2878,6 +3014,17 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
         readerDelegate?.readerChildDidChangePage(page, totalPages: pages.count)
         if page >= pages.count - 1 {
             readerDelegate?.readerChildDidReachEnd()
+        }
+    }
+
+    private func detectEndOverscroll(in scrollView: UIScrollView) {
+        guard !requestedNextChapterFromOverscroll else { return }
+        guard lastReportedPage >= pages.count - 1 else { return }
+        let maxOffset = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+        let threshold = max(64, min(scrollView.bounds.height * 0.12, 120))
+        guard scrollView.contentOffset.y > maxOffset + threshold else { return }
+        if readerDelegate?.readerChildDidRequestNextChapter() == true {
+            requestedNextChapterFromOverscroll = true
         }
     }
 

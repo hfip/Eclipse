@@ -24,6 +24,7 @@ protocol KanzenReaderChildDelegate: AnyObject {
     func readerChildDidRequestOverlayToggle()
     func readerChildDidChangePage(_ page: Int, totalPages: Int)
     func readerChildDidReachEnd()
+    func readerChildDidRequestNextChapter() -> Bool
 }
 
 struct readerManagerView: UIViewControllerRepresentable {
@@ -318,12 +319,17 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
 
     func readerChildDidChangePage(_ page: Int, totalPages: Int) {
         session.setCurrentPage(page, totalPages: totalPages)
-        session.saveCurrentProgress(force: false)
         updateOverlay(page: page, totalPages: totalPages)
     }
 
     func readerChildDidReachEnd() {
         session.markCurrentChapterRead()
+    }
+
+    func readerChildDidRequestNextChapter() -> Bool {
+        guard session.canMoveNextChapter else { return false }
+        goToNextChapter()
+        return true
     }
 
     private func setBarsVisible(_ visible: Bool, animated: Bool) {
