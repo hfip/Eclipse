@@ -9,6 +9,8 @@ import SwiftUI
 import Kingfisher
 
 #if !os(tvOS)
+import AidokuRunner
+
 struct KanzenHistoryView: View {
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
     @State private var scrollOffset: CGFloat = 0
@@ -45,7 +47,7 @@ struct KanzenHistoryView: View {
                     } else {
                         LazyVStack(spacing: 10) {
                             ForEach(historyItems, id: \.id) { item in
-                                NavigationLink(destination: mangaDestination(for: item)) {
+                                NavigationLink(destination: mangaResumeDestination(for: item)) {
                                     historyRow(for: item)
                                 }
                                 .buttonStyle(.plain)
@@ -168,8 +170,13 @@ struct KanzenHistoryView: View {
     }
 
     @ViewBuilder
-    private func mangaDestination(for item: (id: Int, progress: MangaProgress)) -> some View {
-        MangaLibraryDestinationView(item: libraryItem(for: item))
+    private func mangaResumeDestination(for item: (id: Int, progress: MangaProgress)) -> some View {
+        let libraryItem = libraryItem(for: item)
+        KanzenHistoryResumeDestination(
+            mangaId: item.id,
+            item: libraryItem,
+            progress: item.progress
+        )
     }
 
     private func libraryItem(for item: (id: Int, progress: MangaProgress)) -> MangaLibraryItem {
@@ -192,5 +199,371 @@ struct KanzenHistoryView: View {
             trackerResolvedAt: item.progress.trackerResolvedAt
         )
     }
+}
+
+private struct KanzenHistoryResumeDestination: View {
+    let mangaId: Int
+    let item: MangaLibraryItem
+    let progress: MangaProgress
+
+    @StateObject private var kanzen = KanzenEngine()
+    @StateObject private var sourceManager = AidokuSourceManager.shared
+    @State private var loadedReader: LoadedHistoryReader?
+    @State private var downloadedFallback: ReaderDownloadedTitle?
+    @State private var errorMessage: String?
+    @State private var didStartLoading = false
+
+    var body: some View {
+        Group {
+            if let loadedReader {
+                readerManagerView(
+                    chapters: loadedReader.chapters,
+                    selectedChapter: loadedReader.selectedChapter,
+                    kanzen: kanzen,
+                    mangaId: mangaId,
+                    mangaTitle: loadedReader.title,
+                    mangaCoverURL: loadedReader.coverURL,
+                    mangaRoute: loadedReader.route,
+                    mangaFormat: loadedReader.format,
+                    totalChapters: loadedReader.latestChapterNumbers?.count ?? item.totalChapters,
+                    latestChapterNumbers: loadedReader.latestChapterNumbers,
+                    trackerAniListId: progress.trackerAniListId ?? item.trackerAniListId,
+                    trackerMALId: progress.trackerMALId ?? item.trackerMALId
+                )
+                .ignoresSafeArea()
+                .navigationBarHidden(true)
+            } else if let downloadedFallback {
+                ReaderDownloadedTitleDetailView(title: downloadedFallback)
+            } else if let errorMessage {
+                VStack(spacing: 14) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary)
+                    Text(item.title)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                    Text(errorMessage)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    NavigationLink {
+                        MangaLibraryDestinationView(item: item)
+                    } label: {
+                        Label("Open Details", systemImage: "info.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView("Opening reader...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task {
+                        await load()
+                    }
+            }
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @MainActor
+    private func load() async {
+        guard !didStartLoading else { return }
+        didStartLoading = true
+
+        guard let route = item.route ?? progress.route else {
+            errorMessage = "This history item is missing its source route. Open details to repair it."
+            return
+        }
+
+        if let downloaded = ReaderDownloadManager.shared.downloadedTitle(for: route),
+           sourceUnavailable(for: route) {
+            downloadedFallback = downloaded
+            return
+        }
+
+        do {
+            switch route {
+            case .aidoku(let sourceId, let mangaKey):
+                loadedReader = try await loadAidokuReader(sourceId: sourceId, mangaKey: mangaKey, route: route)
+            case .legacyModule(let moduleUUID, let contentParams, let isNovel):
+                loadedReader = try await loadLegacyReader(
+                    moduleUUID: moduleUUID,
+                    contentParams: contentParams,
+                    isNovel: isNovel,
+                    route: route
+                )
+            }
+        } catch {
+            if let downloaded = ReaderDownloadManager.shared.downloadedTitle(for: route) {
+                downloadedFallback = downloaded
+            } else {
+                errorMessage = error.localizedDescription
+                ReaderLogger.shared.log("History resume failed route=\(route.stableKey): \(error.localizedDescription)", type: "History")
+            }
+        }
+    }
+
+    @MainActor
+    private func loadAidokuReader(sourceId: String, mangaKey: String, route: MangaContentRoute) async throws -> LoadedHistoryReader {
+        guard let metadata = sourceManager.metadata(id: sourceId) else {
+            throw NSError(domain: "KanzenHistory", code: 1, userInfo: [NSLocalizedDescriptionKey: "This Aidoku source is missing."])
+        }
+        guard metadata.isEnabled else {
+            throw NSError(domain: "KanzenHistory", code: 2, userInfo: [NSLocalizedDescriptionKey: "\(metadata.name) is disabled."])
+        }
+
+        let seed = AidokuRunner.Manga(
+            sourceKey: sourceId,
+            key: mangaKey,
+            title: item.title,
+            cover: item.coverURL
+        )
+        let manga = try await sourceManager.mangaUpdate(
+            sourceId: sourceId,
+            manga: seed,
+            needsDetails: true,
+            needsChapters: true
+        )
+        let chapters = readerChapters(from: aidokuChapterModels(from: manga, sourceId: sourceId))
+        guard !chapters.isEmpty else {
+            throw NSError(domain: "KanzenHistory", code: 3, userInfo: [NSLocalizedDescriptionKey: "No chapters were found for this history item."])
+        }
+
+        let latestNumbers = ChapterIdentityNormalizer.deduplicatedNumbers(chapters.map(\.chapterNumber))
+        return LoadedHistoryReader(
+            title: manga.title,
+            coverURL: manga.cover ?? item.coverURL ?? "",
+            route: route,
+            format: viewerFormat(manga.viewer),
+            chapters: chapters,
+            selectedChapter: selectedChapter(from: chapters),
+            latestChapterNumbers: latestNumbers
+        )
+    }
+
+    @MainActor
+    private func loadLegacyReader(
+        moduleUUID: String,
+        contentParams: String,
+        isNovel: Bool,
+        route: MangaContentRoute
+    ) async throws -> LoadedHistoryReader {
+        guard let uuid = UUID(uuidString: moduleUUID),
+              let module = ModuleManager.shared.getModule(uuid) else {
+            throw NSError(domain: "KanzenHistory", code: 4, userInfo: [NSLocalizedDescriptionKey: "The legacy source module may have been removed."])
+        }
+
+        let content = try ModuleManager.shared.getModuleScript(module: module)
+        try kanzen.loadScript(content, isNovel: isNovel)
+        let result = try await extractLegacyChapters(params: contentParams)
+        let groups = legacyChapterGroups(from: result)
+        guard let selectedGroup = bestLegacyGroup(from: groups) else {
+            throw NSError(domain: "KanzenHistory", code: 5, userInfo: [NSLocalizedDescriptionKey: "No chapters were found for this history item."])
+        }
+
+        let chapters = readerChapters(from: selectedGroup.chapters)
+        guard !chapters.isEmpty else {
+            throw NSError(domain: "KanzenHistory", code: 6, userInfo: [NSLocalizedDescriptionKey: "No readable chapters were found for this history item."])
+        }
+
+        let latestNumbers = ChapterIdentityNormalizer.deduplicatedNumbers(chapters.map(\.chapterNumber))
+        return LoadedHistoryReader(
+            title: item.title,
+            coverURL: item.coverURL ?? "",
+            route: route,
+            format: isNovel ? "NOVEL" : (item.format ?? "MANGA"),
+            chapters: chapters,
+            selectedChapter: selectedChapter(from: chapters),
+            latestChapterNumbers: latestNumbers
+        )
+    }
+
+    private func sourceUnavailable(for route: MangaContentRoute) -> Bool {
+        switch route {
+        case .aidoku(let sourceId, _):
+            guard let metadata = sourceManager.metadata(id: sourceId) else { return true }
+            return !metadata.isEnabled
+        case .legacyModule(let moduleUUID, _, _):
+            guard let uuid = UUID(uuidString: moduleUUID) else { return true }
+            return ModuleManager.shared.getModule(uuid) == nil
+        }
+    }
+
+    private func selectedChapter(from chapters: [Chapter]) -> Chapter {
+        guard let lastReadChapter = progress.lastReadChapter else {
+            return chapters.first ?? Chapter(chapterNumber: "", idx: 0, chapterData: nil)
+        }
+        return chapters.first {
+            $0.chapterNumber == lastReadChapter ||
+            ChapterIdentityNormalizer.key(for: $0.chapterNumber) == ChapterIdentityNormalizer.key(for: lastReadChapter)
+        } ?? chapters.first ?? Chapter(chapterNumber: lastReadChapter, idx: 0, chapterData: nil)
+    }
+
+    private func aidokuChapterModels(from manga: AidokuRunner.Manga, sourceId: String) -> [Chapter] {
+        let chapters = (manga.chapters ?? []).enumerated().map { index, aidokuChapter in
+            let title = aidokuChapter.title ?? ""
+            let number = chapterNumberTitle(aidokuChapter, fallbackIndex: index)
+            let payload = AidokuChapterPayload(sourceId: sourceId, manga: manga, chapter: aidokuChapter)
+            let group = aidokuChapter.scanlators?.joined(separator: ", ") ?? ""
+            return Chapter(
+                chapterNumber: number,
+                idx: index,
+                chapterData: [ChapterData(params: payload, title: title, scanlationGroup: group)]
+            )
+        }
+        return ChapterIdentityNormalizer.deduplicatedChapters(chapters)
+    }
+
+    private func chapterNumberTitle(_ chapter: AidokuRunner.Chapter, fallbackIndex: Int) -> String {
+        if let volume = chapter.volumeNumber, let number = chapter.chapterNumber {
+            return "Vol. \(formatNumber(volume)) Ch. \(formatNumber(number))"
+        }
+        if let number = chapter.chapterNumber {
+            return "Chapter \(formatNumber(number))"
+        }
+        if let title = chapter.title, !title.isEmpty {
+            return title
+        }
+        return "Chapter \(fallbackIndex + 1)"
+    }
+
+    private func formatNumber(_ value: Float) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(value)
+    }
+
+    private func viewerFormat(_ viewer: AidokuRunner.Viewer) -> String {
+        switch viewer {
+        case .vertical, .webtoon:
+            return "WEBTOON"
+        default:
+            return "MANGA"
+        }
+    }
+
+    private func extractLegacyChapters(params: String) async throws -> Any {
+        try await withCheckedThrowingContinuation { continuation in
+            kanzen.extractChapters(params: params) { result in
+                if let result {
+                    continuation.resume(returning: result)
+                } else {
+                    continuation.resume(
+                        throwing: NSError(domain: "KanzenHistory", code: 7, userInfo: [NSLocalizedDescriptionKey: "The source did not return chapters."])
+                    )
+                }
+            }
+        }
+    }
+
+    private func legacyChapterGroups(from result: Any) -> [Chapters] {
+        var groups: [Chapters] = []
+
+        if let dictResult = result as? [String: Any] {
+            for (key, value) in dictResult {
+                var chapters: [Chapter] = []
+                if let rawChapters = value as? [Any?] {
+                    for (idx, rawChapter) in rawChapters.enumerated() {
+                        guard let chapter = rawChapter as? [Any?],
+                              let chapterName = chapter.first as? String,
+                              chapter.count > 1,
+                              let rawData = chapter[1] as? [[String: Any?]] else { continue }
+                        let chapterData = rawData.compactMap { ChapterData(dict: $0 as [String: Any]) }
+                        if !chapterData.isEmpty {
+                            chapters.append(Chapter(chapterNumber: chapterName, idx: idx, chapterData: chapterData))
+                        }
+                    }
+                }
+                if !chapters.isEmpty {
+                    groups.append(
+                        Chapters(
+                            language: key,
+                            chapters: ChapterIdentityNormalizer.deduplicatedChapters(chapters, reindex: true)
+                        )
+                    )
+                }
+            }
+        } else if let arrResult = result as? [[String: Any]] {
+            var chapters: [Chapter] = []
+            for (idx, chapterDict) in arrResult.enumerated() {
+                let name = (chapterDict["number"] as? Int).map { "Chapter \($0)" }
+                    ?? (chapterDict["title"] as? String)
+                    ?? "Chapter \(idx + 1)"
+                if let data = ChapterData(dict: chapterDict) {
+                    chapters.append(Chapter(chapterNumber: name, idx: idx, chapterData: [data]))
+                }
+            }
+            if !chapters.isEmpty {
+                groups.append(
+                    Chapters(
+                        language: "default",
+                        chapters: ChapterIdentityNormalizer.deduplicatedChapters(chapters, reindex: true)
+                    )
+                )
+            }
+        }
+
+        return groups
+    }
+
+    private func bestLegacyGroup(from groups: [Chapters]) -> Chapters? {
+        guard let lastReadChapter = progress.lastReadChapter else {
+            return groups.max(by: { $0.chapters.count < $1.chapters.count })
+        }
+        return groups.first {
+            $0.chapters.contains {
+                $0.chapterNumber == lastReadChapter ||
+                ChapterIdentityNormalizer.key(for: $0.chapterNumber) == ChapterIdentityNormalizer.key(for: lastReadChapter)
+            }
+        } ?? groups.max(by: { $0.chapters.count < $1.chapters.count })
+    }
+
+    private func readerChapters(from chapters: [Chapter]) -> [Chapter] {
+        ChapterIdentityNormalizer.deduplicatedChapters(chronologicalChapters(chapters), reindex: false).enumerated().map { index, chapter in
+            Chapter(
+                chapterNumber: chapter.chapterNumber,
+                idx: index,
+                chapterData: chapter.chapterData
+            )
+        }
+    }
+
+    private func chronologicalChapters(_ chapters: [Chapter]) -> [Chapter] {
+        chapters.sorted { lhs, rhs in
+            let lhsNumber = numericChapterValue(lhs.chapterNumber)
+            let rhsNumber = numericChapterValue(rhs.chapterNumber)
+            switch (lhsNumber, rhsNumber) {
+            case let (lhsValue?, rhsValue?):
+                if lhsValue != rhsValue { return lhsValue < rhsValue }
+                return lhs.idx < rhs.idx
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.idx > rhs.idx
+            }
+        }
+    }
+
+    private func numericChapterValue(_ text: String) -> Double? {
+        let pattern = #"(\d+(?:\.\d+)?)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, range: range)
+        guard let match = matches.last,
+              let valueRange = Range(match.range(at: 1), in: text) else { return nil }
+        return Double(text[valueRange])
+    }
+}
+
+private struct LoadedHistoryReader {
+    let title: String
+    let coverURL: String
+    let route: MangaContentRoute
+    let format: String?
+    let chapters: [Chapter]
+    let selectedChapter: Chapter
+    let latestChapterNumbers: [String]?
 }
 #endif

@@ -145,7 +145,7 @@ struct contentView: View {
             }
             
         }
-        .navigationTitle(title)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .kanzenGradientBackground(scrollOffset: scrollOffset)
         .sheet(isPresented: $showAddToCollection) {
@@ -254,7 +254,7 @@ struct contentView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
-                    .frame(height: max(stretchedHeight - 26, 260))
+                    .frame(height: max(heroHeight - 26, 260))
                     .padding(.top, 10)
                     .padding(.horizontal, 10)
 
