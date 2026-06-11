@@ -228,9 +228,10 @@ struct MangaDetailView: View {
             let minY = geometry.frame(in: .global).minY
             let stretchedHeight = heroHeight + max(0, minY)
             let yOffset = min(0, -minY)
+            let coverURLString = selectedSourceCoverURL ?? manga.coverURL ?? ""
 
             ZStack(alignment: .bottomLeading) {
-                KFImage(URL(string: selectedSourceCoverURL ?? manga.coverURL))
+                KFImage(URL(string: coverURLString))
                     .placeholder { Color.black.opacity(0.18) }
                     .resizable()
                     .scaledToFill()
@@ -240,7 +241,7 @@ struct MangaDetailView: View {
                     .blur(radius: 18)
                     .overlay(Color.black.opacity(0.34))
 
-                KFImage(URL(string: selectedSourceCoverURL ?? manga.coverURL))
+                KFImage(URL(string: coverURLString))
                     .placeholder { Color.clear }
                     .resizable()
                     .scaledToFit()
