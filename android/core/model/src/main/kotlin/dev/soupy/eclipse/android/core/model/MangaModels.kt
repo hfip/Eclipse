@@ -63,15 +63,45 @@ data class KanzenModuleRecord(
 }
 
 @Serializable
+data class RestoredAidokuSourceRecord(
+    val id: String = "",
+    val name: String = "",
+    val version: Int = 0,
+    val languages: List<String> = emptyList(),
+    val iconUrl: String? = null,
+    val sourceListUrl: String? = null,
+    val packageUrl: String? = null,
+    val isEnabled: Boolean = true,
+    val order: Int = 0,
+    val lastUpdated: String? = null,
+    val lastError: String? = null,
+) {
+    val displayName: String
+        get() = name.ifBlank { id.ifBlank { "Aidoku Source" } }
+
+    val subtitle: String
+        get() = listOfNotNull(
+            "Aidoku source restored from iOS backup",
+            languages.takeIf { it.isNotEmpty() }?.joinToString(),
+            if (isEnabled) "Enabled on iOS" else "Disabled on iOS",
+            lastError?.takeIf(String::isNotBlank),
+        ).joinToString(" - ")
+}
+
+@Serializable
 data class MangaLibrarySnapshot(
     val collections: List<MangaLibraryCollection> = emptyList(),
     val readingProgress: Map<String, MangaProgress> = emptyMap(),
     val catalogs: List<BackupCatalog> = emptyList(),
     val modules: List<KanzenModuleRecord> = emptyList(),
+    val aidokuState: BackupAidokuState? = null,
+    val restoredAidokuSources: List<RestoredAidokuSourceRecord> = emptyList(),
 ) {
     val hasUserData: Boolean
         get() = collections.isNotEmpty() ||
             readingProgress.isNotEmpty() ||
             catalogs.isNotEmpty() ||
-            modules.isNotEmpty()
+            modules.isNotEmpty() ||
+            aidokuState?.hasUserData == true ||
+            restoredAidokuSources.isNotEmpty()
 }

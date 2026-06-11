@@ -159,7 +159,28 @@ data class SettingsScreenState(
     val githubReleaseShowAlertPending: Boolean = false,
     val githubReleaseStatus: String = "Release checks have not run yet.",
     val isCheckingGitHubRelease: Boolean = false,
-)
+) {
+    val playerSubtitleAppearanceEnabled: Boolean
+        get() = enableVLCSubtitleEditMenu
+    val playerEpisodeBrowserButton: Boolean
+        get() = showVlcEpisodeBrowserButton
+    val playerHeaderProxyEnabled: Boolean
+        get() = vlcHeaderProxyEnabled
+    val playerBrightnessGestureEnabled: Boolean
+        get() = vlcBrightnessGestureEnabled
+    val playerVolumeGestureEnabled: Boolean
+        get() = vlcVolumeGestureEnabled
+    val playerDoubleTapSeekEnabled: Boolean
+        get() = vlcDoubleTapSeekEnabled
+    val playerDoubleTapSeekSeconds: Double
+        get() = vlcDoubleTapSeekSeconds
+    val playerPictureInPictureEnabled: Boolean
+        get() = vlcPiPEnabled
+    val playerOpenSubtitlesEnabled: Boolean
+        get() = vlcOpenSubtitlesEnabled
+    val playerOpenSubtitlesAutoFallbackEnabled: Boolean
+        get() = vlcOpenSubtitlesAutoFallbackEnabled
+}
 
 data class CatalogSettingsRow(
     val id: String,
@@ -712,7 +733,7 @@ fun SettingsRoute(
             SettingToggleCard(
                 title = "Episode Browser Button",
                 description = "Show a player button for jumping to another loaded episode while playback is active.",
-                checked = state.showVlcEpisodeBrowserButton,
+                checked = state.playerEpisodeBrowserButton,
                 onCheckedChange = onShowVlcEpisodeBrowserButtonChanged,
             )
         }
@@ -1644,12 +1665,12 @@ private fun PlayerPreferencesCard(
             )
             SettingInlineToggle(
                 title = "Brightness Gesture",
-                checked = state.vlcBrightnessGestureEnabled,
+                checked = state.playerBrightnessGestureEnabled,
                 onCheckedChange = onVlcBrightnessGestureChanged,
             )
             SettingInlineToggle(
                 title = "Volume Gesture",
-                checked = state.vlcVolumeGestureEnabled,
+                checked = state.playerVolumeGestureEnabled,
                 onCheckedChange = onVlcVolumeGestureChanged,
             )
             SettingInlineToggle(
@@ -1659,24 +1680,24 @@ private fun PlayerPreferencesCard(
             )
             SettingInlineToggle(
                 title = "Double-Tap Seek",
-                checked = state.vlcDoubleTapSeekEnabled,
+                checked = state.playerDoubleTapSeekEnabled,
                 onCheckedChange = onVlcDoubleTapSeekEnabledChanged,
             )
             ReaderValueSlider(
                 title = "Double-Tap Seek Seconds",
-                valueLabel = "%.0fs".format(state.vlcDoubleTapSeekSeconds),
-                value = state.vlcDoubleTapSeekSeconds.coerceIn(5.0, 60.0).toFloat(),
+                valueLabel = "%.0fs".format(state.playerDoubleTapSeekSeconds),
+                value = state.playerDoubleTapSeekSeconds.coerceIn(5.0, 60.0).toFloat(),
                 valueRange = 5f..60f,
                 onValueChange = { onVlcDoubleTapSeekSecondsChanged(roundedToFiveStep(it).toDouble()) },
             )
             SettingInlineToggle(
                 title = "OpenSubtitles",
-                checked = state.vlcOpenSubtitlesEnabled,
+                checked = state.playerOpenSubtitlesEnabled,
                 onCheckedChange = onVlcOpenSubtitlesChanged,
             )
             SettingInlineToggle(
                 title = "OpenSubtitles Fallback",
-                checked = state.vlcOpenSubtitlesAutoFallbackEnabled,
+                checked = state.playerOpenSubtitlesAutoFallbackEnabled,
                 onCheckedChange = onVlcOpenSubtitlesAutoFallbackChanged,
             )
         }

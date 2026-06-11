@@ -2,6 +2,7 @@ package dev.soupy.eclipse.android.data
 
 import dev.soupy.eclipse.android.core.model.BackupCollection
 import dev.soupy.eclipse.android.core.model.BackupData
+import dev.soupy.eclipse.android.core.model.BackupAidokuInstalledSource
 import dev.soupy.eclipse.android.core.model.KanzenModuleRecord
 import dev.soupy.eclipse.android.core.model.MangaLibraryCollection
 import dev.soupy.eclipse.android.core.model.MangaLibraryItem
@@ -9,6 +10,7 @@ import dev.soupy.eclipse.android.core.model.MangaLibrarySnapshot
 import dev.soupy.eclipse.android.core.model.MangaProgress
 import dev.soupy.eclipse.android.core.model.MangaProgressBackup
 import dev.soupy.eclipse.android.core.model.ModuleBackup
+import dev.soupy.eclipse.android.core.model.RestoredAidokuSourceRecord
 import dev.soupy.eclipse.android.core.network.EclipseJson
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -22,6 +24,10 @@ internal fun BackupData.toMangaLibrarySnapshot(): MangaLibrarySnapshot = MangaLi
     readingProgress = mangaReadingProgress.mapValues { (_, progress) -> progress.toMangaProgress() },
     catalogs = mangaCatalogs,
     modules = kanzenModules.map(ModuleBackup::toKanzenModuleRecord),
+    aidokuState = aidokuState,
+    restoredAidokuSources = aidokuState?.installedSources.orEmpty()
+        .sortedBy(BackupAidokuInstalledSource::order)
+        .map(BackupAidokuInstalledSource::toRestoredAidokuSourceRecord),
 )
 
 internal fun MangaLibrarySnapshot.toBackupCollections(): List<BackupCollection> =
@@ -41,6 +47,8 @@ internal fun MangaLibrarySnapshot.toBackupProgress(): Map<String, MangaProgressB
 
 internal fun MangaLibrarySnapshot.toBackupModules(): List<ModuleBackup> =
     modules.map(KanzenModuleRecord::toBackup)
+
+internal fun MangaLibrarySnapshot.toBackupAidokuState() = aidokuState
 
 private fun BackupCollection.toMangaLibraryCollection(): MangaLibraryCollection = MangaLibraryCollection(
     id = id,
@@ -110,6 +118,21 @@ private fun KanzenModuleRecord.toBackup(): ModuleBackup = ModuleBackup(
     moduleurl = moduleUrl,
     isActive = isActive,
 )
+
+private fun BackupAidokuInstalledSource.toRestoredAidokuSourceRecord(): RestoredAidokuSourceRecord =
+    RestoredAidokuSourceRecord(
+        id = id,
+        name = displayName,
+        version = version,
+        languages = languages,
+        iconUrl = externalIconURL ?: iconPath,
+        sourceListUrl = sourceListURL,
+        packageUrl = packageURL,
+        isEnabled = isEnabled,
+        order = order,
+        lastUpdated = lastUpdated,
+        lastError = lastError,
+    )
 
 private fun JsonObject.getObject(key: String): JsonObject? = this[key] as? JsonObject
 

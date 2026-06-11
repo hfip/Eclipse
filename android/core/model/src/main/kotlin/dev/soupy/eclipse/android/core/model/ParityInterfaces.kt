@@ -100,7 +100,14 @@ data class PlaybackSettingsSnapshot(
     val showVlcEpisodeBrowserButton: Boolean = true,
     val showNextEpisodePosterButton: Boolean = false,
     val nextEpisodeThreshold: Int = 90,
-)
+) {
+    val playerSubtitleAppearanceEnabled: Boolean
+        get() = enableVLCSubtitleEditMenu
+    val playerHeaderProxyEnabled: Boolean
+        get() = vlcHeaderProxyEnabled
+    val playerEpisodeBrowserButton: Boolean
+        get() = showVlcEpisodeBrowserButton
+}
 
 interface PlaybackBackend {
     val backend: InAppPlayer

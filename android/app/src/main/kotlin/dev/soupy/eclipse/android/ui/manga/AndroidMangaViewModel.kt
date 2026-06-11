@@ -654,6 +654,15 @@ class AndroidMangaViewModel(
                     ).joinToString(" - "),
                     isActive = module.isActive,
                 )
+            } + snapshot.restoredAidokuSources.map { source ->
+                MangaModuleRow(
+                    id = "aidoku:${source.id}",
+                    name = source.displayName,
+                    subtitle = source.subtitle,
+                    isActive = false,
+                    isPortable = false,
+                    statusText = "Not portable on Android",
+                )
             },
             kanzenAutoMode = previous.kanzenAutoMode,
         )

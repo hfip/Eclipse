@@ -221,6 +221,66 @@ data class MangaProgressBackup(
 )
 
 @Serializable
+data class BackupAidokuSourceListRecord(
+    val url: String = "",
+    val name: String = "",
+    val sourceCount: Int = 0,
+    val lastRefresh: String? = null,
+    val lastError: String? = null,
+)
+
+@Serializable
+data class BackupAidokuInstalledSource(
+    val id: String = "",
+    val name: String = "",
+    val version: Int = 0,
+    val languages: List<String> = emptyList(),
+    val iconPath: String? = null,
+    val externalIconURL: String? = null,
+    val contentRatingRawValue: Int = 0,
+    val sourceListURL: String? = null,
+    val packageURL: String? = null,
+    val isEnabled: Boolean = true,
+    val order: Int = 0,
+    val lastUpdated: String? = null,
+    val lastError: String? = null,
+    val payloadArchiveData: String? = null,
+) {
+    val isPortableOnAndroid: Boolean
+        get() = false
+
+    val displayName: String
+        get() = name.ifBlank { id.ifBlank { packageURL ?: "Aidoku Source" } }
+
+    val unavailableReason: String
+        get() = "Restored AidokuRunner source packages are preserved for backup parity, but Android uses portable Kanzen/WebView sources."
+}
+
+@Serializable
+data class BackupAidokuState(
+    val sourceLists: List<BackupAidokuSourceListRecord> = emptyList(),
+    val installedSources: List<BackupAidokuInstalledSource> = emptyList(),
+    val showMatureSources: Boolean = false,
+    val autoUpdateSources: Boolean = true,
+    val lastAutoUpdate: String? = null,
+) {
+    val hasUserData: Boolean
+        get() = sourceLists.isNotEmpty() || installedSources.isNotEmpty()
+}
+
+@Serializable
+data class BackupReaderDownloadItem(
+    val id: String = "",
+    val routeKey: String = "",
+    val title: String = "",
+    val chapterNumber: String = "",
+    val status: String = "none",
+    val progress: Double = 0.0,
+    val downloadedBytes: Long = 0,
+    val error: String? = null,
+)
+
+@Serializable
 data class BackupData(
     @Serializable(with = StringOrNumberAsStringSerializer::class)
     val version: String = "1.0",
@@ -317,6 +377,8 @@ data class BackupData(
     val mangaProgressData: JsonElement = JsonArray(emptyList()),
     val mangaCatalogs: List<BackupCatalog> = emptyList(),
     val kanzenModules: List<ModuleBackup> = emptyList(),
+    val aidokuState: BackupAidokuState? = null,
+    val readerDownloads: List<BackupReaderDownloadItem> = emptyList(),
     val recommendationCache: JsonElement = JsonArray(emptyList()),
     @SerialName("userRatings") val userRatings: Map<String, Double> = emptyMap(),
     val userRatingNotes: Map<String, String> = emptyMap(),

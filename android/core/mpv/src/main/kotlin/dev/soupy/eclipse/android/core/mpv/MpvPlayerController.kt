@@ -58,7 +58,7 @@ class MpvPlayerController internal constructor(
     ) {
         applySettings(settings)
         val mediaUrl = source.proxiedOrOriginal(settings, resolveProxiedUrl, source.uri)
-        if (!settings.vlcHeaderProxyEnabled) {
+        if (!settings.playerHeaderProxyEnabled) {
             MPVLib.setOptionString("http-header-fields", source.headers.toMpvHeaderFields())
         }
         view.playFile(mediaUrl)
@@ -178,7 +178,7 @@ class MpvPlayerController internal constructor(
         resolveProxiedUrl: (String, Map<String, String>) -> String?,
         url: String,
     ): String =
-        if (settings.vlcHeaderProxyEnabled) {
+        if (settings.playerHeaderProxyEnabled) {
             resolveProxiedUrl(url, headers) ?: url
         } else {
             url

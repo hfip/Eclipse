@@ -570,7 +570,16 @@ class AndroidNovelViewModel(
                         ).joinToString(" - "),
                         isActive = module.isActive,
                     )
-            },
+                } + snapshot.restoredAidokuSources.map { source ->
+                    NovelModuleRow(
+                        id = "aidoku:${source.id}",
+                        name = source.displayName,
+                        subtitle = source.subtitle,
+                        isActive = false,
+                        isPortable = false,
+                        statusText = "Not portable on Android",
+                    )
+                },
         )
         val selectedDetail = previous.selectedDetail?.let { detail ->
             nextState.findCatalogItem(detail.id)

@@ -639,8 +639,8 @@ class StreamResolutionRepository(
         candidates: List<ResolvedStreamCandidate>,
     ): List<SubtitleTrack> {
         if (settings.inAppPlayer != InAppPlayer.MPV ||
-            !settings.vlcOpenSubtitlesEnabled ||
-            !settings.vlcOpenSubtitlesAutoFallbackEnabled ||
+            !settings.playerOpenSubtitlesEnabled ||
+            !settings.playerOpenSubtitlesAutoFallbackEnabled ||
             !settings.enableSubtitlesByDefault
         ) {
             return emptyList()

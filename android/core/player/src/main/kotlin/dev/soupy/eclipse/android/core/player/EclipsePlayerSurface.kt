@@ -607,7 +607,7 @@ private fun EpisodeBrowserButton(
     episodes: List<PlayerEpisodeBrowserItem>,
     onSelectEpisode: (String) -> Unit,
 ) {
-    if (!settings.showVlcEpisodeBrowserButton || episodes.size < 2) return
+    if (!settings.playerEpisodeBrowserButton || episodes.size < 2) return
     var expanded by remember(episodes) { mutableStateOf(false) }
     Box {
         OutlinedButton(
@@ -1115,8 +1115,8 @@ private fun EmbeddedMpvPlayerPanel(
             subtitleTracks = trackSnapshot.subtitleTracks,
             selectedAudioTrackId = trackSnapshot.selectedAudioTrackId,
             selectedSubtitleTrackId = trackSnapshot.selectedSubtitleTrackId,
-            showSubtitleStyleSummary = settings.enableVLCSubtitleEditMenu,
-            subtitleStyleSummary = settings.vlcSubtitleStyleSummary(),
+            showSubtitleStyleSummary = settings.playerSubtitleAppearanceEnabled,
+            subtitleStyleSummary = settings.playerSubtitleStyleSummary(),
             onAudioTrackSelected = { track ->
                 controller?.selectAudioTrack(track.id)
                 trackSnapshot = controller?.trackSnapshot() ?: trackSnapshot
@@ -1512,7 +1512,7 @@ private fun SubtitleTrack.toSubtitleConfiguration(
         .build()
 }
 
-private fun PlayerSource.vlcSubtitleUris(): List<String> =
+private fun PlayerSource.externalSubtitleUris(): List<String> =
     subtitles
         .mapNotNull { subtitle -> subtitle.uri?.takeIf { it.isNotBlank() } }
         .distinct()
@@ -1602,7 +1602,7 @@ private fun PlayerSource.isAnimeLike(): Boolean =
         context?.isSpecial == true ||
         context?.titleOnlySearch == true
 
-private fun PlaybackSettingsSnapshot.vlcSubtitleStyleSummary(): String =
+private fun PlaybackSettingsSnapshot.playerSubtitleStyleSummary(): String =
     "Subtitle style: ${subtitleFontSize.roundToInt()}sp, stroke ${"%.1f".format(subtitleStrokeWidth)}, offset ${"%.0f".format(subtitleVerticalOffset)}"
 
 private fun String.isTorrentLikeUri(): Boolean {

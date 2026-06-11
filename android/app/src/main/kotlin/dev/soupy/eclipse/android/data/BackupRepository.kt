@@ -104,6 +104,8 @@ class BackupRepository(
             ?: payload?.mangaCatalogs.orEmpty()
         val exportedMangaModules = manga.takeIf { it.hasUserData }?.toBackupModules()
             ?: payload?.kanzenModules.orEmpty()
+        val exportedAidokuState = manga.takeIf { it.hasUserData }?.toBackupAidokuState()
+            ?: payload?.aidokuState
         val exportedKanzenModules = kanzenRepository.exportModules(exportedMangaModules)
 
         return BackupDocument(
@@ -116,7 +118,7 @@ class BackupRepository(
                 selectedAppearance = settings.selectedAppearance,
                 enableSubtitlesByDefault = settings.enableSubtitlesByDefault,
                 defaultSubtitleLanguage = settings.defaultSubtitleLanguage,
-                enableVLCSubtitleEditMenu = settings.enableVLCSubtitleEditMenu,
+                enableVLCSubtitleEditMenu = settings.playerSubtitleAppearanceEnabled,
                 preferredAnimeAudioLanguage = settings.preferredAnimeAudioLanguage,
                 inAppPlayer = settings.inAppPlayer,
                 showScheduleTab = settings.showScheduleTab,
@@ -134,18 +136,18 @@ class BackupRepository(
                 skip85sEnabled = settings.skip85sEnabled,
                 skip85sAlwaysVisible = settings.skip85sAlwaysVisible,
                 showNextEpisodeButton = settings.showNextEpisodeButton,
-                showVLCEpisodeBrowserButton = settings.showVlcEpisodeBrowserButton,
+                showVLCEpisodeBrowserButton = settings.playerEpisodeBrowserButton,
                 showNextEpisodePosterButton = settings.showNextEpisodePosterButton,
                 nextEpisodeThreshold = settings.nextEpisodeThreshold / 100.0,
-                vlcHeaderProxyEnabled = settings.vlcHeaderProxyEnabled,
-                vlcBrightnessGestureEnabled = settings.vlcBrightnessGestureEnabled,
-                vlcVolumeGestureEnabled = settings.vlcVolumeGestureEnabled,
+                vlcHeaderProxyEnabled = settings.playerHeaderProxyEnabled,
+                vlcBrightnessGestureEnabled = settings.playerBrightnessGestureEnabled,
+                vlcVolumeGestureEnabled = settings.playerVolumeGestureEnabled,
                 playerTwoFingerTapPlayPauseEnabled = settings.playerTwoFingerTapPlayPauseEnabled,
-                vlcDoubleTapSeekEnabled = settings.vlcDoubleTapSeekEnabled,
-                vlcDoubleTapSeekSeconds = settings.vlcDoubleTapSeekSeconds,
-                vlcPiPEnabled = settings.vlcPiPEnabled,
-                vlcOpenSubtitlesEnabled = settings.vlcOpenSubtitlesEnabled,
-                vlcOpenSubtitlesAutoFallbackEnabled = settings.vlcOpenSubtitlesAutoFallbackEnabled,
+                vlcDoubleTapSeekEnabled = settings.playerDoubleTapSeekEnabled,
+                vlcDoubleTapSeekSeconds = settings.playerDoubleTapSeekSeconds,
+                vlcPiPEnabled = settings.playerPictureInPictureEnabled,
+                vlcOpenSubtitlesEnabled = settings.playerOpenSubtitlesEnabled,
+                vlcOpenSubtitlesAutoFallbackEnabled = settings.playerOpenSubtitlesAutoFallbackEnabled,
                 subtitleForegroundColor = settings.subtitleForegroundColor,
                 subtitleStrokeColor = settings.subtitleStrokeColor,
                 subtitleStrokeWidth = settings.subtitleStrokeWidth,
@@ -194,6 +196,8 @@ class BackupRepository(
                 mangaProgressData = payload?.mangaProgressData ?: BackupData().mangaProgressData,
                 mangaCatalogs = exportedMangaCatalogs,
                 kanzenModules = exportedKanzenModules,
+                aidokuState = exportedAidokuState,
+                readerDownloads = payload?.readerDownloads.orEmpty(),
                 recommendationCache = exportedRecommendationCache,
                 userRatings = exportedRatings,
                 userRatingNotes = exportedRatingNotes,
@@ -383,6 +387,8 @@ private fun BackupDocument.toStatus(
         if (payload.catalogs.isNotEmpty()) add("catalogs")
         if (payload.mangaCollections.isNotEmpty() || payload.mangaReadingProgress.isNotEmpty() || payload.mangaProgressData.hasBackupData()) add("manga")
         if (payload.kanzenModules.isNotEmpty()) add("modules")
+        if (payload.aidokuState?.hasUserData == true) add("aidoku")
+        if (payload.readerDownloads.isNotEmpty()) add("reader downloads")
         if (payload.recommendationCache.hasBackupData() || payload.userRatings.isNotEmpty()) add("personalization")
     }
     val preservationText = if (preservedSections.isEmpty()) {

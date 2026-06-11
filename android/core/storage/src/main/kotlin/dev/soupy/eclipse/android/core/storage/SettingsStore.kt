@@ -111,7 +111,28 @@ data class AppSettings(
     val servicesAutoSelectEpisodesEnabled: Boolean = false,
     val filterHorrorContent: Boolean = false,
     val selectedSimilarityAlgorithm: SimilarityAlgorithm = SimilarityAlgorithm.HYBRID,
-)
+) {
+    val playerSubtitleAppearanceEnabled: Boolean
+        get() = enableVLCSubtitleEditMenu
+    val playerEpisodeBrowserButton: Boolean
+        get() = showVlcEpisodeBrowserButton
+    val playerHeaderProxyEnabled: Boolean
+        get() = vlcHeaderProxyEnabled
+    val playerBrightnessGestureEnabled: Boolean
+        get() = vlcBrightnessGestureEnabled
+    val playerVolumeGestureEnabled: Boolean
+        get() = vlcVolumeGestureEnabled
+    val playerDoubleTapSeekEnabled: Boolean
+        get() = vlcDoubleTapSeekEnabled
+    val playerDoubleTapSeekSeconds: Double
+        get() = vlcDoubleTapSeekSeconds
+    val playerPictureInPictureEnabled: Boolean
+        get() = vlcPiPEnabled
+    val playerOpenSubtitlesEnabled: Boolean
+        get() = vlcOpenSubtitlesEnabled
+    val playerOpenSubtitlesAutoFallbackEnabled: Boolean
+        get() = vlcOpenSubtitlesAutoFallbackEnabled
+}
 
 class SettingsStore(
     private val context: Context,

@@ -10,6 +10,28 @@ import kotlinx.serialization.json.Json
 
 class ParityModelsTest {
     @Test
+    fun androidParityChecklistHasNoUncheckedItems() {
+        assertTrue(AndroidParityChecklist.items.isNotEmpty())
+        assertEquals(emptyList(), AndroidParityChecklist.uncheckedItems)
+        assertTrue(AndroidParityChecklist.items.any { it.status == AndroidParityStatus.NON_PORTABLE })
+        assertTrue(AndroidParityChecklist.items.any { it.id == "native-aidoku-runner" })
+    }
+
+    @Test
+    fun restoredAidokuSourcesAreExplicitlyNonPortable() {
+        val source = BackupAidokuInstalledSource(
+            id = "example",
+            name = "Example Aidoku",
+            languages = listOf("en"),
+            packageURL = "https://source.example/pkg.aix",
+        )
+
+        assertFalse(source.isPortableOnAndroid)
+        assertEquals("Example Aidoku", source.displayName)
+        assertTrue(source.unavailableReason.contains("Android uses portable Kanzen/WebView sources"))
+    }
+
+    @Test
     fun catalogMergePreservesSavedRowsAndAddsIosDefaults() {
         val saved = listOf(
             BackupCatalog(

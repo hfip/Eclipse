@@ -7,6 +7,9 @@
 
 import SwiftUI
 import Kingfisher
+#if canImport(UIKit)
+import UIKit
+#endif
 
 #if !os(tvOS)
 struct MangaDetailView: View {
@@ -47,7 +50,9 @@ struct MangaDetailView: View {
     private let coverWidth: CGFloat = isIPad ? 150 * iPadScaleSmall : 150
 
     private var heroHeight: CGFloat {
-        min(max(UIScreen.main.bounds.height * 0.44, 320), isIPad ? 520 : 460)
+        let mediaStyleHeight: CGFloat = isIPad ? 680 : 550
+        let rotationSafeLimit = max(isIPad ? 520 : 360, UIScreen.main.bounds.height * 0.78)
+        return min(mediaStyleHeight, rotationSafeLimit)
     }
 
     private var libraryItem: MangaLibraryItem {
@@ -219,63 +224,78 @@ struct MangaDetailView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        ZStack(alignment: .bottomLeading) {
-            KFImage(URL(string: selectedSourceCoverURL ?? ""))
-                .placeholder { Color.black.opacity(0.18) }
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity)
-                .frame(height: heroHeight)
-                .clipped()
-                .blur(radius: 18)
-                .overlay(Color.black.opacity(0.32))
+        GeometryReader { geometry in
+            let minY = geometry.frame(in: .global).minY
+            let stretchedHeight = heroHeight + max(0, minY)
+            let yOffset = min(0, -minY)
 
-            KFImage(URL(string: selectedSourceCoverURL ?? ""))
-                .placeholder { Color.clear }
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity)
-                .frame(height: max(heroHeight - 34, 240))
-                .padding(.top, 12)
-                .padding(.horizontal, 16)
+            ZStack(alignment: .bottomLeading) {
+                KFImage(URL(string: selectedSourceCoverURL ?? manga.coverURL))
+                    .placeholder { Color.black.opacity(0.18) }
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: stretchedHeight)
+                    .clipped()
+                    .blur(radius: 18)
+                    .overlay(Color.black.opacity(0.34))
 
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.04),
-                    Color.black.opacity(0.35),
-                    Color.black.opacity(0.98)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+                KFImage(URL(string: selectedSourceCoverURL ?? manga.coverURL))
+                    .placeholder { Color.clear }
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: max(stretchedHeight - 26, 260))
+                    .padding(.top, 10)
+                    .padding(.horizontal, 10)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(selectedSourceDisplayTitle)
-                    .font(.system(size: isIPad ? 40 : 32, weight: .bold))
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.72)
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.02),
+                        Color.black.opacity(0.28),
+                        Color.black.opacity(0.98)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
 
-                HStack(spacing: 10) {
-                    if let status = manga.status {
-                        Text(statusLabel(status))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(selectedSourceDisplayTitle)
+                        .font(.system(size: isIPad ? 40 : 32, weight: .bold))
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.72)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = selectedSourceDisplayTitle
+                            } label: {
+                                Label("Copy Title", systemImage: "doc.on.doc")
+                            }
+                        }
+
+                    HStack(spacing: 10) {
+                        if let status = manga.status {
+                            Text(statusLabel(status))
+                        }
+
+                        if let format = selectedSourceFormat ?? manga.format {
+                            Text(formatLabel(format))
+                        }
+
+                        if let score = manga.averageScore {
+                            Image(systemName: "star.fill")
+                            Text("\(score)%")
+                        }
                     }
-
-                    if let format = selectedSourceFormat ?? manga.format {
-                        Text(formatLabel(format))
-                    }
-
-                    if let score = manga.averageScore {
-                        Image(systemName: "star.fill")
-                        Text("\(score)%")
-                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.82))
                 }
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.82))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 18)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 18)
+            .frame(height: stretchedHeight)
+            .offset(y: yOffset)
         }
         .frame(height: heroHeight)
         .clipped()

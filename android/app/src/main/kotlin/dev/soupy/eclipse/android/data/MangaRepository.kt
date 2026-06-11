@@ -6,6 +6,7 @@ import dev.soupy.eclipse.android.core.model.MangaLibraryItem
 import dev.soupy.eclipse.android.core.model.MangaLibraryCollection
 import dev.soupy.eclipse.android.core.model.MangaLibrarySnapshot
 import dev.soupy.eclipse.android.core.model.MangaProgress
+import dev.soupy.eclipse.android.core.model.RestoredAidokuSourceRecord
 import dev.soupy.eclipse.android.core.model.SimilarityAlgorithm
 import dev.soupy.eclipse.android.core.model.displayTitle
 import dev.soupy.eclipse.android.core.model.posterUrl
@@ -161,6 +162,7 @@ data class MangaOverviewSnapshot(
     val recentProgress: List<Pair<String, MangaProgress>>,
     val recentNovelProgress: List<Pair<String, MangaProgress>>,
     val modules: List<KanzenModuleRecord>,
+    val restoredAidokuSources: List<RestoredAidokuSourceRecord>,
     val catalogs: List<MangaCatalogSectionSnapshot>,
     val savedCount: Int,
     val readChapterCount: Int,
@@ -941,6 +943,7 @@ private fun MangaLibrarySnapshot.toOverview(
         recentProgress = progressEntries.map { (id, progress) -> id to progress },
         recentNovelProgress = novelProgressEntries.map { (id, progress) -> id to progress },
         modules = modules,
+        restoredAidokuSources = restoredAidokuSources.sortedBy(RestoredAidokuSourceRecord::order),
         catalogs = catalogs,
         savedCount = collections.flatMap(MangaLibraryCollection::items)
             .distinctBy { item -> item.aniListId }

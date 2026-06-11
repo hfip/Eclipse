@@ -124,6 +124,8 @@ data class MangaModuleRow(
     val name: String,
     val subtitle: String,
     val isActive: Boolean,
+    val isPortable: Boolean = true,
+    val statusText: String? = null,
 )
 
 data class MangaReaderPanelRow(
@@ -1492,7 +1494,7 @@ private fun MangaModuleCard(
                     Text(
                         text = listOf(
                             row.subtitle,
-                            if (row.isActive) "Active" else "Inactive",
+                            row.statusText ?: if (row.isActive) "Active" else "Inactive",
                         ).filter(String::isNotBlank).joinToString(" - "),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.tertiary,
@@ -1501,13 +1503,20 @@ private fun MangaModuleCard(
                 Switch(
                     checked = row.isActive,
                     onCheckedChange = onActiveChanged,
+                    enabled = row.isPortable,
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onUpdate) {
+                OutlinedButton(
+                    onClick = onUpdate,
+                    enabled = row.isPortable,
+                ) {
                     Text("Update")
                 }
-                OutlinedButton(onClick = onRemove) {
+                OutlinedButton(
+                    onClick = onRemove,
+                    enabled = row.isPortable,
+                ) {
                     Text("Remove")
                 }
             }

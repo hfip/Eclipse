@@ -8,6 +8,9 @@
 import SwiftUI
 import Foundation
 import Kingfisher
+#if canImport(UIKit)
+import UIKit
+#endif
 
 #if !os(tvOS)
 struct contentView: View {
@@ -39,7 +42,9 @@ struct contentView: View {
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
     private var heroHeight: CGFloat {
-        min(max(UIScreen.main.bounds.height * 0.44, 320), isIPad ? 520 : 460)
+        let mediaStyleHeight: CGFloat = isIPad ? 680 : 550
+        let rotationSafeLimit = max(isIPad ? 520 : 360, UIScreen.main.bounds.height * 0.78)
+        return min(mediaStyleHeight, rotationSafeLimit)
     }
 
     /// Stable numeric ID derived from module + content params for progress & library.
@@ -228,62 +233,77 @@ struct contentView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        ZStack(alignment: .bottomLeading) {
-            KFImage(URL(string: imageURL))
-                .placeholder { Color.black.opacity(0.18) }
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity)
-                .frame(height: heroHeight)
-                .clipped()
-                .blur(radius: 18)
-                .overlay(Color.black.opacity(0.32))
+        GeometryReader { geometry in
+            let minY = geometry.frame(in: .global).minY
+            let stretchedHeight = heroHeight + max(0, minY)
+            let yOffset = min(0, -minY)
 
-            KFImage(URL(string: imageURL))
-                .placeholder { Color.clear }
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity)
-                .frame(height: max(heroHeight - 34, 240))
-                .padding(.top, 12)
-                .padding(.horizontal, 16)
+            ZStack(alignment: .bottomLeading) {
+                KFImage(URL(string: imageURL))
+                    .placeholder { Color.black.opacity(0.18) }
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: stretchedHeight)
+                    .clipped()
+                    .blur(radius: 18)
+                    .overlay(Color.black.opacity(0.34))
 
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.04),
-                    Color.black.opacity(0.35),
-                    Color.black.opacity(0.98)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+                KFImage(URL(string: imageURL))
+                    .placeholder { Color.clear }
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: max(stretchedHeight - 26, 260))
+                    .padding(.top, 10)
+                    .padding(.horizontal, 10)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title)
-                    .font(.system(size: isIPad ? 40 : 32, weight: .bold))
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.72)
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.02),
+                        Color.black.opacity(0.28),
+                        Color.black.opacity(0.98)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
 
-                HStack(spacing: 10) {
-                    if let status = contentData?["status"] as? String {
-                        Text(status)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.system(size: isIPad ? 40 : 32, weight: .bold))
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.72)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = title
+                            } label: {
+                                Label("Copy Title", systemImage: "doc.on.doc")
+                            }
+                        }
+
+                    HStack(spacing: 10) {
+                        if let status = contentData?["status"] as? String {
+                            Text(status)
+                        }
+
+                        if let authorArtist = contentData?["authorArtist"] as? [String], !authorArtist.isEmpty {
+                            Image(systemName: "person.fill")
+                            Text(authorArtist.joined(separator: ", "))
+                                .lineLimit(1)
+                        }
+
+                        Text(parentModule?.moduleData.novel == true ? "Light Novel" : "Manga")
                     }
-
-                    if let authorArtist = contentData?["authorArtist"] as? [String], !authorArtist.isEmpty {
-                        Image(systemName: "person.fill")
-                        Text(authorArtist.joined(separator: ", "))
-                            .lineLimit(1)
-                    }
-
-                    Text(parentModule?.moduleData.novel == true ? "Light Novel" : "Manga")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.82))
                 }
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.82))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 18)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 18)
+            .frame(height: stretchedHeight)
+            .offset(y: yOffset)
         }
         .frame(height: heroHeight)
         .clipped()

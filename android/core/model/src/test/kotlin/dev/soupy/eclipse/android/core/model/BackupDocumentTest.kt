@@ -157,6 +157,46 @@ class BackupDocumentTest {
                   "title": "Manga"
                 }
               },
+              "aidokuState": {
+                "sourceLists": [
+                  {
+                    "url": "https://aidoku.example/sources.json",
+                    "name": "Example Sources",
+                    "sourceCount": 1,
+                    "lastRefresh": "2026-04-23T00:00:00Z"
+                  }
+                ],
+                "installedSources": [
+                  {
+                    "id": "example.en",
+                    "name": "Example Aidoku",
+                    "version": 3,
+                    "languages": ["en"],
+                    "externalIconURL": "https://aidoku.example/icon.png",
+                    "contentRatingRawValue": 0,
+                    "sourceListURL": "https://aidoku.example/sources.json",
+                    "packageURL": "https://aidoku.example/example.aix",
+                    "isEnabled": true,
+                    "order": 2,
+                    "lastUpdated": "2026-04-24T00:00:00Z",
+                    "payloadArchiveData": "YWJj"
+                  }
+                ],
+                "showMatureSources": true,
+                "autoUpdateSources": false,
+                "lastAutoUpdate": "2026-04-25T00:00:00Z"
+              },
+              "readerDownloads": [
+                {
+                  "id": "download-1",
+                  "routeKey": "aidoku:example.en:manga-key",
+                  "title": "Example Aidoku",
+                  "chapterNumber": "4",
+                  "status": "completed",
+                  "progress": 1.0,
+                  "downloadedBytes": 42
+                }
+              ],
               "recommendationCache": [
                 {
                   "id": 99,
@@ -218,12 +258,21 @@ class BackupDocumentTest {
         val stremioAddons = assertNotNull(document.payload.stremioAddons)
         assertEquals("https://addon.example", stremioAddons.single().resolvedTransportUrl)
         assertEquals("2", document.payload.mangaReadingProgress.getValue("123").lastReadChapter)
+        val aidokuState = assertNotNull(document.payload.aidokuState)
+        assertEquals("Example Sources", aidokuState.sourceLists.single().name)
+        assertEquals("Example Aidoku", aidokuState.installedSources.single().displayName)
+        assertEquals("YWJj", aidokuState.installedSources.single().payloadArchiveData)
+        assertEquals(true, aidokuState.showMatureSources)
+        assertEquals(false, aidokuState.autoUpdateSources)
+        assertEquals("download-1", document.payload.readerDownloads.single().id)
         assertEquals(7.5, document.payload.userRatings.getValue("99"))
         assertEquals("rewatch with friends", document.payload.userRatingNotes.getValue("99"))
         assertTrue("futureIosOnlySection" in document.unknownKeys)
         assertTrue(encoded.contains("futureIosOnlySection"))
         assertTrue(encoded.contains("manifestJSON"))
         assertTrue(encoded.contains("userRatingNotes"))
+        assertTrue(encoded.contains("aidokuState"))
+        assertTrue(encoded.contains("readerDownloads"))
     }
 
     @Test
