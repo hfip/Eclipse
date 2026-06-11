@@ -107,8 +107,10 @@ struct HomeView: View {
         }
         .navigationBarHidden(true)
         .onAppear {
-            reportStartupReadyIfNeeded()
             refreshContinueWatchingItems()
+            if homeViewModel.hasCompletedInitialLoad {
+                reportStartupReadyIfNeeded()
+            }
             if !homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
             }

@@ -77,8 +77,7 @@ struct KanzenMenu: View {
     let kanzen = KanzenEngine()
     private let onStartupReady: () -> Void
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var moduleManager = ModuleManager.shared
-    @StateObject private var favouriteManager = FavouriteManager.shared
+    @EnvironmentObject var moduleManager: ModuleManager
     @StateObject private var aidokuManager = AidokuSourceManager.shared
     @State private var selectedTab: KanzenRootTab = .home
 
@@ -130,11 +129,7 @@ struct KanzenMenu: View {
                 .tag(KanzenRootTab.settings)
         }
         .environmentObject(kanzen)
-        .environmentObject(moduleManager)
-        .environmentObject(favouriteManager)
-        .environment(\.managedObjectContext, favouriteManager.container.viewContext)
         .task {
-            _ = ReaderDownloadManager.shared
             await moduleManager.autoUpdateModulesIfNeeded()
             await aidokuManager.autoUpdateInstalledSourcesIfNeeded(reason: "reader-open")
         }

@@ -27,8 +27,11 @@ final class StremioAddonStore {
             if let error = error {
                 Logger.shared.log("Stremio: Failed to load persistent store: \(error.localizedDescription)", type: "Storage")
             } else {
-                self.container?.viewContext.automaticallyMergesChangesFromParent = true
-                self.container?.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+                DispatchQueue.main.async { [weak self] in
+                    guard let viewContext = self?.container?.viewContext else { return }
+                    viewContext.automaticallyMergesChangesFromParent = true
+                    viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+                }
             }
         }
     }
