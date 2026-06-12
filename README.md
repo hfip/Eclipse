@@ -90,7 +90,6 @@ SideStore is not required. Other sideloading options work too, and `r/sideloaded
 - MPV is the advanced in-app player and is default
 - VLC is not supported anymore, but may come back if v4 is good.
 - Use GitHub Issues for feature requests and bug reports.
-- The app does use AI for development. As I don't know swift well (learning other languages like Java and soon C, not swift). Just for transparency. The app gets tested a ton, and I do try to make sure the code looks okay
 - Development started in December 2025
 - Patreon is available if you want to support development: https://www.patreon.com/soupy698 but it will never unlock features or paywall anything. It's just a way to support development if you want to. And no, ads/telemetry will never be a thing in this app, so you don't have to worry about that either.
 
