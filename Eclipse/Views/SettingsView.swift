@@ -24,6 +24,7 @@ struct SettingsView: View {
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Eclipse")!
     private let originalProjectURL = URL(string: "https://github.com/cranci1/Luna")!
     private let licenseURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
+    private let privacyPolicyURL = URL(string: "https://github.com/Soupy-dev/Eclipse/blob/main/privacy-policy.md")!
 
     private var defaultScheduleMode: ScheduleMode {
         ScheduleMode.sanitized(defaultScheduleModeRaw)
@@ -243,7 +244,8 @@ struct SettingsView: View {
                         NavigationLink(destination: LegalNoticeView(
                             sourceCodeURL: sourceCodeURL,
                             originalProjectURL: originalProjectURL,
-                            licenseURL: licenseURL
+                            licenseURL: licenseURL,
+                            privacyPolicyURL: privacyPolicyURL
                         )) {
                             GlassSettingsRow(icon: "scroll.fill", iconColor: .cyan, title: "Legal & Source")
                         }
@@ -414,7 +416,8 @@ struct SettingsView: View {
             NavigationLink(destination: LegalNoticeView(
                 sourceCodeURL: sourceCodeURL,
                 originalProjectURL: originalProjectURL,
-                licenseURL: licenseURL
+                licenseURL: licenseURL,
+                privacyPolicyURL: privacyPolicyURL
             )) {
                 Text("Legal & Source")
             }
@@ -479,12 +482,18 @@ struct LegalNoticeView: View {
     let sourceCodeURL: URL
     let originalProjectURL: URL
     let licenseURL: URL
+    let privacyPolicyURL: URL
 
     var body: some View {
         List {
             Section("License") {
                 Text("Eclipse is released under the GNU General Public License version 3.")
                 Link("View GPLv3 License", destination: licenseURL)
+            }
+
+            Section("Privacy") {
+                Text("Eclipse's privacy policy explains what data the app stores locally and how optional third-party services are handled.")
+                Link("Privacy Policy", destination: privacyPolicyURL)
             }
 
             Section("Source") {
