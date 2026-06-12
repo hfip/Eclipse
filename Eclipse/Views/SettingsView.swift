@@ -24,7 +24,7 @@ struct SettingsView: View {
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Eclipse")!
     private let originalProjectURL = URL(string: "https://github.com/cranci1/Luna")!
     private let licenseURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
-    private let privacyPolicyURL = URL(string: "https://github.com/Soupy-dev/Eclipse/blob/main/privacy-policy.md")!
+    private let privacyPolicyURL = URL(string: "https://soupy-dev.github.io/Eclipse/privacy-policy/")!
 
     private var defaultScheduleMode: ScheduleMode {
         ScheduleMode.sanitized(defaultScheduleModeRaw)
