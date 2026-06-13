@@ -23,6 +23,7 @@ struct HomeView: View {
     @State private var continueWatchingItems: [ContinueWatchingItem] = []
     @State private var continueWatchingRefreshID = UUID()
     @State private var didReportStartupReady = false
+    @State private var observedPerformanceMode = PerformanceModeSettings.isEnabled
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var trackerManager = TrackerManager.shared
     @State private var scrollOffset: CGFloat = 0
@@ -143,6 +144,13 @@ struct HomeView: View {
             homeViewModel.refreshHeroContentForSettingsChange()
         }
         .onReceive(catalogManager.$catalogs) { _ in
+            guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
+            homeViewModel.resetContent()
+            loadContent()
+        }
+        .onReceive(catalogManager.$performanceModeEnabled) { enabled in
+            guard observedPerformanceMode != enabled else { return }
+            observedPerformanceMode = enabled
             guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
             homeViewModel.resetContent()
             loadContent()
@@ -962,6 +970,21 @@ struct ContinueWatchingCard: View {
     private var selectedEpisodePlaybackContext: EpisodePlaybackContext? {
         let baseContext = enrichedPlaybackContext ?? item.playbackContext
         guard let episode = selectedEpisodeForSearch else { return baseContext }
+        if PerformanceModeSettings.isEnabled, searchSheetIsAnime {
+            return EpisodePlaybackContext(
+                localSeasonNumber: episode.seasonNumber,
+                localEpisodeNumber: episode.episodeNumber,
+                anilistMediaId: nil,
+                kitsuMediaId: nil,
+                tmdbSeasonNumber: episode.seasonNumber,
+                tmdbEpisodeNumber: episode.episodeNumber,
+                tmdbEpisodeOffset: nil,
+                animeAbsoluteEpisodeNumber: nil,
+                animeSeasonEpisodeCount: nil,
+                isSpecial: false,
+                titleOnlySearch: false
+            )
+        }
         return baseContext?.forEpisodeNumber(episode.episodeNumber)
     }
 
@@ -1203,11 +1226,13 @@ struct ContinueWatchingCard: View {
                 let showArtworkURL = details.fullBackdropURL ?? details.fullPosterURL ?? item.posterURL
 
                 // Anime detection: same logic as MediaDetailView
-                let isJapanese = details.originCountry?.contains("JP") ?? false
+                let animeOriginCountries: Set<String> = ["JP", "CN", "KR", "TW"]
+                let isAsianAnimation = details.originCountry?.contains(where: { animeOriginCountries.contains($0) }) ?? false
                 let isAnimation = details.genres.contains { $0.id == 16 }
+                let performanceModeEnabled = PerformanceModeSettings.isEnabled
                 let detectedAsAnime = item.isAnime ||
                     item.playbackContext?.hasAnimeMediaId == true ||
-                    (isJapanese && isAnimation)
+                    (isAsianAnimation && isAnimation)
 
                 // Set visual details immediately
                 await MainActor.run {
@@ -1221,7 +1246,7 @@ struct ContinueWatchingCard: View {
                     self.isLoaded = true
                 }
 
-                if detectedAsAnime {
+                if detectedAsAnime && !performanceModeEnabled {
                     // Fetch AniList data for correct season title mapping
                     do {
                         let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -1290,6 +1315,19 @@ struct ContinueWatchingCard: View {
                             }
                         }
                     }
+                } else if detectedAsAnime {
+                    await MainActor.run {
+                        self.isAnimeContent = true
+                        self.animeSeasonTitle = nil
+                        self.animeSeasonRomajiTitle = nil
+                        self.enrichedPlaybackContext = item.playbackContext
+                        self.isMetadataReady = true
+                        if self.pendingOpenSheet {
+                            self.pendingOpenSheet = false
+                            self.showingSearchResults = true
+                        }
+                    }
+                    Logger.shared.log("ContinueWatchingCard: Performance Mode active - using TMDB metadata for \(details.name)", type: "TMDB")
                 } else {
                     // Not anime – metadata is ready
                     await MainActor.run {

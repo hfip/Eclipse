@@ -10,14 +10,75 @@ import UIKit
 
 // MARK: - Backup Data Model
 
+struct BackupSearchHistory: Codable {
+    var queries: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case queries
+    }
+
+    init(queries: [String] = []) {
+        self.queries = Self.sanitizedQueries(queries)
+    }
+
+    init(from decoder: Decoder) throws {
+        if let values = try? [String](from: decoder) {
+            queries = Self.sanitizedQueries(values)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        queries = Self.sanitizedQueries(try container.decodeIfPresent([String].self, forKey: .queries) ?? [])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(queries, forKey: .queries)
+    }
+
+    init(jsonValue: Any?) {
+        if let values = jsonValue as? [String] {
+            self.init(queries: values)
+            return
+        }
+
+        if let dictionary = jsonValue as? [String: Any],
+           let values = dictionary["queries"] as? [String] {
+            self.init(queries: values)
+            return
+        }
+
+        self.init()
+    }
+
+    private static func sanitizedQueries(_ values: [String]) -> [String] {
+        var result: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  !result.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+                continue
+            }
+            result.append(trimmed)
+            if result.count == 10 { break }
+        }
+        return result
+    }
+}
+
 struct BackupData: Codable {
     let version: String
     let createdDate: Date
     
     // Settings
     var accentColor: Data?
+    var settingsGradientColor: Data?
+    var readerAccentColor: Data?
     var tmdbLanguage: String
     var selectedAppearance: String
+    var readerSelectedAppearance: String
+    var readerGlobalAppearanceEnabled: Bool
+    var readerSettingsGradientColor: Data?
     var enableSubtitlesByDefault: Bool
     var defaultSubtitleLanguage: String
     var playerSubtitleAppearanceEnabled: Bool
@@ -32,9 +93,14 @@ struct BackupData: Codable {
     var defaultPlaybackSpeed: Double = 1.0
     var holdSpeedPlayer: Double = 2.0
     var externalPlayer: String = "none"
+    var preferDownloadedMedia: Bool = false
     var alwaysLandscape: Bool = false
+    var aniSkipEnabled: Bool = true
+    var introDBEnabled: Bool = true
+    var introDBAppEnabled: Bool = true
     var aniSkipAutoSkip: Bool = false
     var skip85sEnabled: Bool = false
+    var skip85sAlwaysVisible: Bool = false
     var showNextEpisodeButton: Bool = true
     var showEpisodeBrowserButton: Bool = true
     var showNextEpisodePosterButton: Bool = false
@@ -42,6 +108,7 @@ struct BackupData: Codable {
     var playerBrightnessGestureEnabled: Bool = false
     var playerVolumeGestureEnabled: Bool = false
     var playerTwoFingerTapPlayPauseEnabled: Bool = true
+    var playerCenterTapPlayPauseEnabled: Bool = true
     var playerDoubleTapSeekEnabled: Bool = true
     var playerDoubleTapSeekSeconds: Double = 10.0
     var playerOpenSubtitlesEnabled: Bool = false
@@ -52,6 +119,17 @@ struct BackupData: Codable {
     var mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue
     var mpvAppExitPictureInPictureEnabled: Bool = false
     var smartInAppPlayerChoosingEnabled: Bool = false
+    var experimentalFeaturesEnabled: Bool = false
+    var experimentalFeaturesLastChangedAt: Double = 0
+    var experimentalMPVPreloadEnabled: Bool = true
+    var experimentalMPVSmoothTransitionEnabled: Bool = true
+    var experimentalMPVPreloadCellularEnabled: Bool = false
+    var experimentalMPVPreloadWifiLimitMB: Int = 256
+    var experimentalMPVPreloadCellularLimitMB: Int = 32
+    var experimentalMPVShowRemainingTime: Bool = true
+    var experimentalMPVPreciseProgress: Bool = true
+    var experimentalMPVIgnoreSpecialSubtitleStyles: Bool = false
+    var experimentalICloudSyncEnabled: Bool = false
 
     // Subtitle Styling
     var subtitleForegroundColor: Data?
@@ -62,10 +140,19 @@ struct BackupData: Codable {
 
     // UI Preferences
     var showKanzen: Bool = false
+    var hideSplashScreen: Bool?
     var kanzenAutoUpdateModules: Bool = true
     var seasonMenu: Bool = false
     var horizontalEpisodeList: Bool = false
     var useClassicScheduleUI: Bool = false
+    var heroBannerCatalogId: String = "trending"
+    var heroBannerBehavior: String = HeroBannerBehavior.static.rawValue
+    var atmosphereStyle: String = AtmosphereStyle.gradient.rawValue
+    var atmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue
+    var atmosphereSolidColor: Data?
+    var readerAtmosphereStyle: String = AtmosphereStyle.gradient.rawValue
+    var readerAtmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue
+    var readerAtmosphereSolidColor: Data?
     var mediaDetailElementOrder: String = MediaDetailElement.defaultOrderRawValue
     var mediaDetailHiddenElements: String = ""
     var readerDetailElementOrder: String = ReaderDetailElement.defaultOrderRawValue
@@ -75,6 +162,33 @@ struct BackupData: Codable {
 
     // Manga / Reader
     var readingMode: Int = 2
+    var kanzenReaderMode: String = "webtoon"
+    var kanzenReaderModeOverrides: [String: String] = [:]
+    var readerDownsampleImages: Bool = true
+    var readerCropBorders: Bool = false
+    var readerDisableQuickActions: Bool = false
+    var readerDisableDoubleTap: Bool = false
+    var readerLiveText: Bool = false
+    var readerHideBarsOnSwipe: Bool = false
+    var readerBackgroundColor: String = "black"
+    var readerOrientation: String = "device"
+    var readerTapZones: String = "disabled"
+    var readerInvertTapZones: Bool = false
+    var readerAnimatePageTransitions: Bool = true
+    var readerUpscaleImages: Bool = false
+    var readerUpscaleMaxHeight: Int = 2000
+    var readerPagesToPreload: Int = 3
+    var readerPagedPageLayout: String = "single"
+    var readerPagedPageOffset: Bool = false
+    var readerPagedPageOffsetOverrides: [String: Bool] = [:]
+    var readerSplitWideImages: Bool = false
+    var readerReverseSplitOrder: Bool = false
+    var readerVerticalInfiniteScroll: Bool = true
+    var readerPillarbox: Bool = false
+    var readerPillarboxAmount: Double = 15
+    var readerPillarboxOrientation: String = "both"
+    var readerOrientationLockEnabled: Bool = false
+    var readerOrientationLockMask: String = "all"
     var readerReadThresholdPercent: Double = 80
 
     // Novel Reader
@@ -90,7 +204,26 @@ struct BackupData: Codable {
     var autoClearCacheEnabled: Bool = false
     var autoClearCacheThresholdMB: Double = 500
     var highQualityThreshold: Double = 0.9
+    var backgroundHLSPipelineEnabled: Bool = false
+    var readerDownloadsBackgroundEnabled: Bool = true
+    var readerDownloadsWifiOnly: Bool = false
+    var readerDownloadsParallelLimit: Int = 2
+    var autoUpdateServicesEnabled: Bool = true
+    var servicesAutoModeEnabled: Bool = false
+    var servicesAutoSelectEpisodesEnabled: Bool = false
+    var servicesAutoModeSourceIds: [String] = []
+    var servicesAutoModeSourceOrderIds: [String] = []
     var servicesAutoModeQualityPreference: String = AutoModeQualityPreference.defaultPreference.rawValue
+    var githubReleaseAutoCheckEnabled: Bool = true
+    var githubReleaseUpdateAvailable: Bool = false
+    var githubReleaseLatestVersion: String = ""
+    var githubReleaseURL: String = ""
+    var githubReleaseShowAlertPending: Bool = false
+    var githubReleaseLastPromptedVersion: String = ""
+    var filterHorrorContent: Bool = false
+    var selectedSimilarityAlgorithm: String = SimilarityAlgorithm.hybrid.rawValue
+    var performanceModeEnabled: Bool = false
+    var performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:]
     
     // Collections (Library)
     var collections: [BackupCollection] = []
@@ -110,6 +243,9 @@ struct BackupData: Codable {
     // Stremio addons. Nil means the backup predates this field and restore should leave existing addons alone.
     var stremioAddons: [BackupStremioAddon]? = nil
 
+    // Nuvio plugins. Nil means the backup predates this field and restore should leave existing plugins alone.
+    var nuvioPlugins: NuvioStoredPluginsState? = nil
+
     // Manga / Kanzen data
     var mangaCollections: [BackupMangaCollection] = []
     var mangaReadingProgress: [String: MangaProgress] = [:]
@@ -118,25 +254,157 @@ struct BackupData: Codable {
     var aidokuState: BackupAidokuState?
 
     // Recommendations
+    var searchHistory: BackupSearchHistory = BackupSearchHistory()
     var recommendationCache: [TMDBSearchResult] = []
 
     // User Ratings
     var userRatings: [String: Double] = [:]
     var userRatingNotes: [String: String] = [:]
 
+    func redactedForExperimentalCloudSync() -> BackupData {
+        var snapshot = self
+
+        // Keep tracker preferences, but never sync OAuth tokens or connected-account secrets.
+        snapshot.trackerState.accounts = []
+        snapshot.trackerState.lastSyncDate = nil
+
+        snapshot.services = services.compactMap { service in
+            guard let safeURL = Self.cloudSafeURLString(service.url),
+                  !Self.containsCloudUnsafeSecret(service.jsonMetadata),
+                  !Self.containsCloudUnsafeSecret(service.jsScript) else {
+                return nil
+            }
+            return BackupService(
+                id: service.id,
+                url: safeURL,
+                jsonMetadata: service.jsonMetadata,
+                jsScript: service.jsScript,
+                isActive: service.isActive,
+                sortIndex: service.sortIndex
+            )
+        }
+
+        snapshot.stremioAddons = stremioAddons?.compactMap { addon in
+            guard let safeURL = Self.cloudSafeURLString(addon.configuredURL),
+                  !Self.containsCloudUnsafeSecret(addon.manifestJSON) else {
+                return nil
+            }
+            return BackupStremioAddon(
+                id: addon.id,
+                configuredURL: safeURL,
+                manifestJSON: addon.manifestJSON,
+                isActive: addon.isActive,
+                sortIndex: addon.sortIndex
+            )
+        }
+
+        if var plugins = nuvioPlugins {
+            plugins.repositories = plugins.repositories.compactMap { repository in
+                guard let safeURL = Self.cloudSafeURLString(repository.manifestUrl) else { return nil }
+                return NuvioPluginRepositoryItem(
+                    manifestUrl: safeURL,
+                    name: repository.name,
+                    description: repository.description,
+                    version: repository.version,
+                    scraperCount: repository.scraperCount,
+                    lastUpdated: repository.lastUpdated,
+                    isRefreshing: false,
+                    errorMessage: nil
+                )
+            }
+            // Scraper code can embed credentials or device-local assumptions. Repositories are enough to rehydrate safely.
+            plugins.scrapers = []
+            snapshot.nuvioPlugins = plugins
+        }
+
+        snapshot.kanzenModules = kanzenModules.filter {
+            Self.cloudSafeURLString($0.moduleurl) != nil &&
+            !Self.containsCloudUnsafeSecret($0.moduleurl)
+        }
+
+        if var aidokuState = aidokuState {
+            aidokuState.installedSources = aidokuState.installedSources.compactMap { source in
+                let safeSourceListURL = source.sourceListURL.flatMap(Self.cloudSafeURLString)
+                let safePackageURL = source.packageURL.flatMap(Self.cloudSafeURLString)
+                return BackupAidokuInstalledSource(
+                    id: source.id,
+                    name: source.name,
+                    version: source.version,
+                    languages: source.languages,
+                    iconPath: nil,
+                    externalIconURL: source.externalIconURL.flatMap(Self.cloudSafeURLString),
+                    contentRatingRawValue: source.contentRatingRawValue,
+                    sourceListURL: safeSourceListURL,
+                    packageURL: safePackageURL,
+                    isEnabled: source.isEnabled,
+                    order: source.order,
+                    lastUpdated: source.lastUpdated,
+                    lastError: source.lastError,
+                    payloadArchiveData: nil
+                )
+            }
+            snapshot.aidokuState = aidokuState
+        }
+
+        // Recommendation results are cache data, not user state.
+        snapshot.recommendationCache = []
+        return snapshot
+    }
+
+    private static func cloudSafeURLString(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !containsCloudUnsafeSecret(trimmed),
+              var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host,
+              !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        if let queryItems = components.queryItems, !queryItems.isEmpty {
+            let safeItems = queryItems.filter { item in
+                !containsCloudUnsafeSecret(item.name) &&
+                !(item.value.map(containsCloudUnsafeSecret) ?? false)
+            }
+            components.queryItems = safeItems.isEmpty ? nil : safeItems
+        }
+        components.fragment = nil
+        return components.url?.absoluteString
+    }
+
+    private static func containsCloudUnsafeSecret(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        let secretMarkers = [
+            "access_token",
+            "refresh_token",
+            "authorization",
+            "bearer ",
+            "api_key",
+            "apikey",
+            "password",
+            "passwd",
+            "session",
+            "secret",
+            "token="
+        ]
+        return secretMarkers.contains { lowercased.contains($0) }
+    }
+
     enum CodingKeys: String, CodingKey {
         case version, createdDate
-        case accentColor, tmdbLanguage, selectedAppearance, enableSubtitlesByDefault, defaultSubtitleLanguage, playerSubtitleAppearanceEnabled, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime, defaultScheduleMode
-        case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, alwaysLandscape, aniSkipAutoSkip, skip85sEnabled, showNextEpisodeButton, showEpisodeBrowserButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
-        case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled
+        case accentColor, settingsGradientColor, readerAccentColor, tmdbLanguage, selectedAppearance, readerSelectedAppearance, readerGlobalAppearanceEnabled, readerSettingsGradientColor, enableSubtitlesByDefault, defaultSubtitleLanguage, playerSubtitleAppearanceEnabled, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime, defaultScheduleMode
+        case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, preferDownloadedMedia, alwaysLandscape, aniSkipEnabled, introDBEnabled, introDBAppEnabled, aniSkipAutoSkip, skip85sEnabled, skip85sAlwaysVisible, showNextEpisodeButton, showEpisodeBrowserButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
+        case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerCenterTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled, experimentalFeaturesEnabled, experimentalFeaturesLastChangedAt, experimentalMPVPreloadEnabled, experimentalMPVSmoothTransitionEnabled, experimentalMPVPreloadCellularEnabled, experimentalMPVPreloadWifiLimitMB, experimentalMPVPreloadCellularLimitMB, experimentalMPVShowRemainingTime, experimentalMPVPreciseProgress, experimentalMPVIgnoreSpecialSubtitleStyles, experimentalICloudSyncEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
-        case readingMode, readerReadThresholdPercent
+        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
+        case readingMode, kanzenReaderMode, kanzenReaderModeOverrides, readerDownsampleImages, readerCropBorders, readerDisableQuickActions, readerDisableDoubleTap, readerLiveText, readerHideBarsOnSwipe, readerBackgroundColor, readerOrientation, readerTapZones, readerInvertTapZones, readerAnimatePageTransitions, readerUpscaleImages, readerUpscaleMaxHeight, readerPagesToPreload, readerPagedPageLayout, readerPagedPageOffset, readerPagedPageOffsetOverrides, readerSplitWideImages, readerReverseSplitOrder, readerVerticalInfiniteScroll, readerPillarbox, readerPillarboxAmount, readerPillarboxOrientation, readerOrientationLockEnabled, readerOrientationLockMask, readerReadThresholdPercent
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
-        case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, servicesAutoModeQualityPreference
-        case collections, progressData, trackerState, catalogs, services, stremioAddons
+        case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, backgroundHLSPipelineEnabled, readerDownloadsBackgroundEnabled, readerDownloadsWifiOnly, readerDownloadsParallelLimit, autoUpdateServicesEnabled, servicesAutoModeEnabled, servicesAutoSelectEpisodesEnabled, servicesAutoModeSourceIds, servicesAutoModeSourceOrderIds, servicesAutoModeQualityPreference, githubReleaseAutoCheckEnabled, githubReleaseUpdateAvailable, githubReleaseLatestVersion, githubReleaseURL, githubReleaseShowAlertPending, githubReleaseLastPromptedVersion, filterHorrorContent = "filterHorror", selectedSimilarityAlgorithm, performanceModeEnabled, performanceModeFastAnimeCatalogOverrides
+        case collections, progressData, trackerState, catalogs, services, stremioAddons, nuvioPlugins
         case mangaCollections, mangaReadingProgress, mangaCatalogs, kanzenModules, aidokuState
-        case recommendationCache
+        case searchHistory, recommendationCache
         case userRatings, userRatingNotes
     }
 
@@ -146,8 +414,16 @@ struct BackupData: Codable {
         version = try container.decodeIfPresent(String.self, forKey: .version) ?? "1.0"
         createdDate = try container.decode(Date.self, forKey: .createdDate)
         accentColor = try Self.decodeColorData(from: container, forKey: .accentColor)
+        settingsGradientColor = try Self.decodeColorData(from: container, forKey: .settingsGradientColor)
+        readerAccentColor = try Self.decodeColorData(from: container, forKey: .readerAccentColor)
         tmdbLanguage = try container.decodeIfPresent(String.self, forKey: .tmdbLanguage) ?? "en-US"
-        selectedAppearance = try container.decodeIfPresent(String.self, forKey: .selectedAppearance) ?? "system"
+        selectedAppearance = Self.sanitizedAppearance(try container.decodeIfPresent(String.self, forKey: .selectedAppearance))
+        readerSelectedAppearance = Self.sanitizedAppearance(
+            try container.decodeIfPresent(String.self, forKey: .readerSelectedAppearance)
+                ?? selectedAppearance
+        )
+        readerGlobalAppearanceEnabled = try container.decodeIfPresent(Bool.self, forKey: .readerGlobalAppearanceEnabled) ?? true
+        readerSettingsGradientColor = try Self.decodeColorData(from: container, forKey: .readerSettingsGradientColor)
         enableSubtitlesByDefault = try container.decodeIfPresent(Bool.self, forKey: .enableSubtitlesByDefault) ?? false
         defaultSubtitleLanguage = try container.decodeIfPresent(String.self, forKey: .defaultSubtitleLanguage) ?? "eng"
         playerSubtitleAppearanceEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerSubtitleAppearanceEnabled)
@@ -168,9 +444,14 @@ struct BackupData: Codable {
         defaultPlaybackSpeed = try container.decodeIfPresent(Double.self, forKey: .defaultPlaybackSpeed) ?? 1.0
         holdSpeedPlayer = try container.decodeIfPresent(Double.self, forKey: .holdSpeedPlayer) ?? 2.0
         externalPlayer = try container.decodeIfPresent(String.self, forKey: .externalPlayer) ?? "none"
+        preferDownloadedMedia = try container.decodeIfPresent(Bool.self, forKey: .preferDownloadedMedia) ?? false
         alwaysLandscape = try container.decodeIfPresent(Bool.self, forKey: .alwaysLandscape) ?? false
+        aniSkipEnabled = try container.decodeIfPresent(Bool.self, forKey: .aniSkipEnabled) ?? true
+        introDBEnabled = try container.decodeIfPresent(Bool.self, forKey: .introDBEnabled) ?? true
+        introDBAppEnabled = try container.decodeIfPresent(Bool.self, forKey: .introDBAppEnabled) ?? true
         aniSkipAutoSkip = try container.decodeIfPresent(Bool.self, forKey: .aniSkipAutoSkip) ?? false
         skip85sEnabled = try container.decodeIfPresent(Bool.self, forKey: .skip85sEnabled) ?? false
+        skip85sAlwaysVisible = try container.decodeIfPresent(Bool.self, forKey: .skip85sAlwaysVisible) ?? false
         showNextEpisodeButton = try container.decodeIfPresent(Bool.self, forKey: .showNextEpisodeButton) ?? true
         showEpisodeBrowserButton = try container.decodeIfPresent(Bool.self, forKey: .showEpisodeBrowserButton)
             ?? container.decodeIfPresent(Bool.self, forKey: .showVLCEpisodeBrowserButton)
@@ -184,6 +465,7 @@ struct BackupData: Codable {
             ?? container.decodeIfPresent(Bool.self, forKey: .vlcVolumeGestureEnabled)
             ?? false
         playerTwoFingerTapPlayPauseEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerTwoFingerTapPlayPauseEnabled) ?? true
+        playerCenterTapPlayPauseEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerCenterTapPlayPauseEnabled) ?? true
         playerDoubleTapSeekEnabled = try container.decodeIfPresent(Bool.self, forKey: .playerDoubleTapSeekEnabled)
             ?? container.decodeIfPresent(Bool.self, forKey: .vlcDoubleTapSeekEnabled)
             ?? true
@@ -202,6 +484,17 @@ struct BackupData: Codable {
         mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(try container.decodeIfPresent(String.self, forKey: .mpvMetalQualityProfile))
         mpvAppExitPictureInPictureEnabled = try container.decodeIfPresent(Bool.self, forKey: .mpvAppExitPictureInPictureEnabled) ?? false
         smartInAppPlayerChoosingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartInAppPlayerChoosingEnabled) ?? false
+        experimentalFeaturesEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalFeaturesEnabled) ?? false
+        experimentalFeaturesLastChangedAt = try container.decodeIfPresent(Double.self, forKey: .experimentalFeaturesLastChangedAt) ?? 0
+        experimentalMPVPreloadEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreloadEnabled) ?? true
+        experimentalMPVSmoothTransitionEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVSmoothTransitionEnabled) ?? true
+        experimentalMPVPreloadCellularEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreloadCellularEnabled) ?? false
+        experimentalMPVPreloadWifiLimitMB = max(32, min(try container.decodeIfPresent(Int.self, forKey: .experimentalMPVPreloadWifiLimitMB) ?? 256, 2048))
+        experimentalMPVPreloadCellularLimitMB = max(8, min(try container.decodeIfPresent(Int.self, forKey: .experimentalMPVPreloadCellularLimitMB) ?? 32, 256))
+        experimentalMPVShowRemainingTime = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVShowRemainingTime) ?? true
+        experimentalMPVPreciseProgress = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreciseProgress) ?? true
+        experimentalMPVIgnoreSpecialSubtitleStyles = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVIgnoreSpecialSubtitleStyles) ?? false
+        experimentalICloudSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalICloudSyncEnabled) ?? false
 
         // Subtitle styling
         subtitleForegroundColor = try Self.decodeColorData(from: container, forKey: .subtitleForegroundColor)
@@ -212,10 +505,25 @@ struct BackupData: Codable {
 
         // UI preferences
         showKanzen = try container.decodeIfPresent(Bool.self, forKey: .showKanzen) ?? false
+        hideSplashScreen = try container.decodeIfPresent(Bool.self, forKey: .hideSplashScreen)
         kanzenAutoUpdateModules = try container.decodeIfPresent(Bool.self, forKey: .kanzenAutoUpdateModules) ?? true
         seasonMenu = try container.decodeIfPresent(Bool.self, forKey: .seasonMenu) ?? false
         horizontalEpisodeList = try container.decodeIfPresent(Bool.self, forKey: .horizontalEpisodeList) ?? false
         useClassicScheduleUI = try container.decodeIfPresent(Bool.self, forKey: .useClassicScheduleUI) ?? false
+        heroBannerCatalogId = Self.sanitizedNonEmptyString(try container.decodeIfPresent(String.self, forKey: .heroBannerCatalogId), defaultValue: "trending")
+        heroBannerBehavior = Self.sanitizedHeroBannerBehavior(try container.decodeIfPresent(String.self, forKey: .heroBannerBehavior))
+        atmosphereStyle = Self.sanitizedAtmosphereStyle(try container.decodeIfPresent(String.self, forKey: .atmosphereStyle))
+        atmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(try container.decodeIfPresent(String.self, forKey: .atmosphereSolidColorSource))
+        atmosphereSolidColor = try Self.decodeColorData(from: container, forKey: .atmosphereSolidColor)
+        readerAtmosphereStyle = Self.sanitizedAtmosphereStyle(
+            try container.decodeIfPresent(String.self, forKey: .readerAtmosphereStyle)
+                ?? atmosphereStyle
+        )
+        readerAtmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(
+            try container.decodeIfPresent(String.self, forKey: .readerAtmosphereSolidColorSource)
+                ?? atmosphereSolidColorSource
+        )
+        readerAtmosphereSolidColor = try Self.decodeColorData(from: container, forKey: .readerAtmosphereSolidColor)
         mediaDetailElementOrder = Self.sanitizedMediaDetailElementOrder(try container.decodeIfPresent(String.self, forKey: .mediaDetailElementOrder))
         mediaDetailHiddenElements = Self.sanitizedMediaDetailHiddenElements(try container.decodeIfPresent(String.self, forKey: .mediaDetailHiddenElements))
         readerDetailElementOrder = Self.sanitizedReaderDetailElementOrder(try container.decodeIfPresent(String.self, forKey: .readerDetailElementOrder))
@@ -225,6 +533,37 @@ struct BackupData: Codable {
 
         // Manga / Reader
         readingMode = try container.decodeIfPresent(Int.self, forKey: .readingMode) ?? 2
+        if let decodedKanzenReaderMode = try container.decodeIfPresent(String.self, forKey: .kanzenReaderMode) {
+            kanzenReaderMode = Self.sanitizedKanzenReaderMode(decodedKanzenReaderMode)
+        } else {
+            kanzenReaderMode = Self.kanzenReaderModeRawValue(forReadingMode: readingMode)
+        }
+        kanzenReaderModeOverrides = Self.sanitizedKanzenReaderModeOverrides(try container.decodeIfPresent([String: String].self, forKey: .kanzenReaderModeOverrides))
+        readerDownsampleImages = try container.decodeIfPresent(Bool.self, forKey: .readerDownsampleImages) ?? true
+        readerCropBorders = try container.decodeIfPresent(Bool.self, forKey: .readerCropBorders) ?? false
+        readerDisableQuickActions = try container.decodeIfPresent(Bool.self, forKey: .readerDisableQuickActions) ?? false
+        readerDisableDoubleTap = try container.decodeIfPresent(Bool.self, forKey: .readerDisableDoubleTap) ?? false
+        readerLiveText = try container.decodeIfPresent(Bool.self, forKey: .readerLiveText) ?? false
+        readerHideBarsOnSwipe = try container.decodeIfPresent(Bool.self, forKey: .readerHideBarsOnSwipe) ?? false
+        readerBackgroundColor = Self.sanitizedReaderBackgroundColor(try container.decodeIfPresent(String.self, forKey: .readerBackgroundColor))
+        readerOrientation = Self.sanitizedReaderOrientation(try container.decodeIfPresent(String.self, forKey: .readerOrientation))
+        readerTapZones = Self.sanitizedReaderTapZones(try container.decodeIfPresent(String.self, forKey: .readerTapZones))
+        readerInvertTapZones = try container.decodeIfPresent(Bool.self, forKey: .readerInvertTapZones) ?? false
+        readerAnimatePageTransitions = try container.decodeIfPresent(Bool.self, forKey: .readerAnimatePageTransitions) ?? true
+        readerUpscaleImages = try container.decodeIfPresent(Bool.self, forKey: .readerUpscaleImages) ?? false
+        readerUpscaleMaxHeight = Self.sanitizedReaderUpscaleMaxHeight(try container.decodeIfPresent(Int.self, forKey: .readerUpscaleMaxHeight))
+        readerPagesToPreload = Self.sanitizedReaderPagesToPreload(try container.decodeIfPresent(Int.self, forKey: .readerPagesToPreload))
+        readerPagedPageLayout = Self.sanitizedReaderPagedPageLayout(try container.decodeIfPresent(String.self, forKey: .readerPagedPageLayout))
+        readerPagedPageOffset = try container.decodeIfPresent(Bool.self, forKey: .readerPagedPageOffset) ?? false
+        readerPagedPageOffsetOverrides = Self.sanitizedReaderPagedPageOffsetOverrides(try container.decodeIfPresent([String: Bool].self, forKey: .readerPagedPageOffsetOverrides))
+        readerSplitWideImages = try container.decodeIfPresent(Bool.self, forKey: .readerSplitWideImages) ?? false
+        readerReverseSplitOrder = try container.decodeIfPresent(Bool.self, forKey: .readerReverseSplitOrder) ?? false
+        readerVerticalInfiniteScroll = try container.decodeIfPresent(Bool.self, forKey: .readerVerticalInfiniteScroll) ?? true
+        readerPillarbox = try container.decodeIfPresent(Bool.self, forKey: .readerPillarbox) ?? false
+        readerPillarboxAmount = Self.sanitizedReaderPillarboxAmount(try container.decodeIfPresent(Double.self, forKey: .readerPillarboxAmount))
+        readerPillarboxOrientation = Self.sanitizedReaderPillarboxOrientation(try container.decodeIfPresent(String.self, forKey: .readerPillarboxOrientation))
+        readerOrientationLockEnabled = try container.decodeIfPresent(Bool.self, forKey: .readerOrientationLockEnabled) ?? false
+        readerOrientationLockMask = Self.sanitizedReaderOrientationLockMask(try container.decodeIfPresent(String.self, forKey: .readerOrientationLockMask))
         readerReadThresholdPercent = Self.sanitizedReaderReadThresholdPercent(try container.decodeIfPresent(Double.self, forKey: .readerReadThresholdPercent))
 
         // Novel Reader
@@ -240,7 +579,27 @@ struct BackupData: Codable {
         autoClearCacheEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoClearCacheEnabled) ?? false
         autoClearCacheThresholdMB = try container.decodeIfPresent(Double.self, forKey: .autoClearCacheThresholdMB) ?? 500
         highQualityThreshold = try container.decodeIfPresent(Double.self, forKey: .highQualityThreshold) ?? 0.9
+        backgroundHLSPipelineEnabled = try container.decodeIfPresent(Bool.self, forKey: .backgroundHLSPipelineEnabled) ?? false
+        readerDownloadsBackgroundEnabled = try container.decodeIfPresent(Bool.self, forKey: .readerDownloadsBackgroundEnabled) ?? true
+        readerDownloadsWifiOnly = try container.decodeIfPresent(Bool.self, forKey: .readerDownloadsWifiOnly) ?? false
+        readerDownloadsParallelLimit = Self.sanitizedReaderDownloadsParallelLimit(try container.decodeIfPresent(Int.self, forKey: .readerDownloadsParallelLimit))
+        autoUpdateServicesEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoUpdateServicesEnabled) ?? true
+        servicesAutoModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .servicesAutoModeEnabled) ?? false
+        servicesAutoSelectEpisodesEnabled = try container.decodeIfPresent(Bool.self, forKey: .servicesAutoSelectEpisodesEnabled) ?? false
+        servicesAutoModeSourceIds = Self.sanitizedStringList(try container.decodeIfPresent([String].self, forKey: .servicesAutoModeSourceIds))
+        servicesAutoModeSourceOrderIds = Self.sanitizedStringList(try container.decodeIfPresent([String].self, forKey: .servicesAutoModeSourceOrderIds))
         servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(try container.decodeIfPresent(String.self, forKey: .servicesAutoModeQualityPreference))
+        githubReleaseAutoCheckEnabled = try container.decodeIfPresent(Bool.self, forKey: .githubReleaseAutoCheckEnabled) ?? true
+        githubReleaseUpdateAvailable = try container.decodeIfPresent(Bool.self, forKey: .githubReleaseUpdateAvailable) ?? false
+        githubReleaseLatestVersion = try container.decodeIfPresent(String.self, forKey: .githubReleaseLatestVersion) ?? ""
+        githubReleaseURL = try container.decodeIfPresent(String.self, forKey: .githubReleaseURL) ?? ""
+        githubReleaseShowAlertPending = try container.decodeIfPresent(Bool.self, forKey: .githubReleaseShowAlertPending) ?? false
+        githubReleaseLastPromptedVersion = try container.decodeIfPresent(String.self, forKey: .githubReleaseLastPromptedVersion) ?? ""
+        filterHorrorContent = try container.decodeIfPresent(Bool.self, forKey: .filterHorrorContent) ?? false
+        selectedSimilarityAlgorithm = Self.sanitizedSimilarityAlgorithm(try container.decodeIfPresent(String.self, forKey: .selectedSimilarityAlgorithm))
+        performanceModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .performanceModeEnabled) ?? false
+        let decodedPerformanceOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .performanceModeFastAnimeCatalogOverrides) ?? [:]
+        performanceModeFastAnimeCatalogOverrides = decodedPerformanceOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
 
         collections = try container.decodeIfPresent([BackupCollection].self, forKey: .collections) ?? []
         progressData = try container.decodeIfPresent(ProgressData.self, forKey: .progressData) ?? ProgressData()
@@ -248,11 +607,13 @@ struct BackupData: Codable {
         catalogs = try container.decodeIfPresent([Catalog].self, forKey: .catalogs) ?? []
         services = try container.decodeIfPresent([BackupService].self, forKey: .services) ?? []
         stremioAddons = try container.decodeIfPresent([BackupStremioAddon].self, forKey: .stremioAddons)
+        nuvioPlugins = try container.decodeIfPresent(NuvioStoredPluginsState.self, forKey: .nuvioPlugins)
         mangaCollections = try container.decodeIfPresent([BackupMangaCollection].self, forKey: .mangaCollections) ?? []
         mangaReadingProgress = try container.decodeIfPresent([String: MangaProgress].self, forKey: .mangaReadingProgress) ?? [:]
         mangaCatalogs = try container.decodeIfPresent([MangaCatalog].self, forKey: .mangaCatalogs) ?? []
         kanzenModules = try container.decodeIfPresent([BackupKanzenModule].self, forKey: .kanzenModules) ?? []
         aidokuState = try container.decodeIfPresent(BackupAidokuState.self, forKey: .aidokuState)
+        searchHistory = try container.decodeIfPresent(BackupSearchHistory.self, forKey: .searchHistory) ?? BackupSearchHistory()
         recommendationCache = try container.decodeIfPresent([TMDBSearchResult].self, forKey: .recommendationCache) ?? []
         userRatings = Self.decodeUserRatings(from: container)
         userRatingNotes = try container.decodeIfPresent([String: String].self, forKey: .userRatingNotes) ?? [:]
@@ -318,8 +679,13 @@ struct BackupData: Codable {
         try container.encode(version, forKey: .version)
         try container.encode(createdDate, forKey: .createdDate)
         try container.encodeIfPresent(accentColor, forKey: .accentColor)
+        try container.encodeIfPresent(settingsGradientColor, forKey: .settingsGradientColor)
+        try container.encodeIfPresent(readerAccentColor, forKey: .readerAccentColor)
         try container.encode(tmdbLanguage, forKey: .tmdbLanguage)
-        try container.encode(selectedAppearance, forKey: .selectedAppearance)
+        try container.encode(Self.sanitizedAppearance(selectedAppearance), forKey: .selectedAppearance)
+        try container.encode(Self.sanitizedAppearance(readerSelectedAppearance), forKey: .readerSelectedAppearance)
+        try container.encode(readerGlobalAppearanceEnabled, forKey: .readerGlobalAppearanceEnabled)
+        try container.encodeIfPresent(readerSettingsGradientColor, forKey: .readerSettingsGradientColor)
         try container.encode(enableSubtitlesByDefault, forKey: .enableSubtitlesByDefault)
         try container.encode(defaultSubtitleLanguage, forKey: .defaultSubtitleLanguage)
         try container.encode(playerSubtitleAppearanceEnabled, forKey: .playerSubtitleAppearanceEnabled)
@@ -334,9 +700,14 @@ struct BackupData: Codable {
         try container.encode(defaultPlaybackSpeed, forKey: .defaultPlaybackSpeed)
         try container.encode(holdSpeedPlayer, forKey: .holdSpeedPlayer)
         try container.encode(externalPlayer, forKey: .externalPlayer)
+        try container.encode(preferDownloadedMedia, forKey: .preferDownloadedMedia)
         try container.encode(alwaysLandscape, forKey: .alwaysLandscape)
+        try container.encode(aniSkipEnabled, forKey: .aniSkipEnabled)
+        try container.encode(introDBEnabled, forKey: .introDBEnabled)
+        try container.encode(introDBAppEnabled, forKey: .introDBAppEnabled)
         try container.encode(aniSkipAutoSkip, forKey: .aniSkipAutoSkip)
         try container.encode(skip85sEnabled, forKey: .skip85sEnabled)
+        try container.encode(skip85sAlwaysVisible, forKey: .skip85sAlwaysVisible)
         try container.encode(showNextEpisodeButton, forKey: .showNextEpisodeButton)
         try container.encode(showEpisodeBrowserButton, forKey: .showEpisodeBrowserButton)
         try container.encode(showNextEpisodePosterButton, forKey: .showNextEpisodePosterButton)
@@ -344,6 +715,7 @@ struct BackupData: Codable {
         try container.encode(playerBrightnessGestureEnabled, forKey: .playerBrightnessGestureEnabled)
         try container.encode(playerVolumeGestureEnabled, forKey: .playerVolumeGestureEnabled)
         try container.encode(playerTwoFingerTapPlayPauseEnabled, forKey: .playerTwoFingerTapPlayPauseEnabled)
+        try container.encode(playerCenterTapPlayPauseEnabled, forKey: .playerCenterTapPlayPauseEnabled)
         try container.encode(playerDoubleTapSeekEnabled, forKey: .playerDoubleTapSeekEnabled)
         try container.encode(playerDoubleTapSeekSeconds, forKey: .playerDoubleTapSeekSeconds)
         try container.encode(playerOpenSubtitlesEnabled, forKey: .playerOpenSubtitlesEnabled)
@@ -354,6 +726,17 @@ struct BackupData: Codable {
         try container.encode(mpvMetalQualityProfile, forKey: .mpvMetalQualityProfile)
         try container.encode(mpvAppExitPictureInPictureEnabled, forKey: .mpvAppExitPictureInPictureEnabled)
         try container.encode(smartInAppPlayerChoosingEnabled, forKey: .smartInAppPlayerChoosingEnabled)
+        try container.encode(experimentalFeaturesEnabled, forKey: .experimentalFeaturesEnabled)
+        try container.encode(experimentalFeaturesLastChangedAt, forKey: .experimentalFeaturesLastChangedAt)
+        try container.encode(experimentalMPVPreloadEnabled, forKey: .experimentalMPVPreloadEnabled)
+        try container.encode(experimentalMPVSmoothTransitionEnabled, forKey: .experimentalMPVSmoothTransitionEnabled)
+        try container.encode(experimentalMPVPreloadCellularEnabled, forKey: .experimentalMPVPreloadCellularEnabled)
+        try container.encode(max(32, min(experimentalMPVPreloadWifiLimitMB, 2048)), forKey: .experimentalMPVPreloadWifiLimitMB)
+        try container.encode(max(8, min(experimentalMPVPreloadCellularLimitMB, 256)), forKey: .experimentalMPVPreloadCellularLimitMB)
+        try container.encode(experimentalMPVShowRemainingTime, forKey: .experimentalMPVShowRemainingTime)
+        try container.encode(experimentalMPVPreciseProgress, forKey: .experimentalMPVPreciseProgress)
+        try container.encode(experimentalMPVIgnoreSpecialSubtitleStyles, forKey: .experimentalMPVIgnoreSpecialSubtitleStyles)
+        try container.encode(experimentalICloudSyncEnabled, forKey: .experimentalICloudSyncEnabled)
 
         // Subtitle styling
         try container.encodeIfPresent(subtitleForegroundColor, forKey: .subtitleForegroundColor)
@@ -364,19 +747,55 @@ struct BackupData: Codable {
 
         // UI preferences
         try container.encode(showKanzen, forKey: .showKanzen)
+        try container.encodeIfPresent(hideSplashScreen, forKey: .hideSplashScreen)
         try container.encode(kanzenAutoUpdateModules, forKey: .kanzenAutoUpdateModules)
         try container.encode(seasonMenu, forKey: .seasonMenu)
         try container.encode(horizontalEpisodeList, forKey: .horizontalEpisodeList)
         try container.encode(useClassicScheduleUI, forKey: .useClassicScheduleUI)
-        try container.encode(mediaDetailElementOrder, forKey: .mediaDetailElementOrder)
-        try container.encode(mediaDetailHiddenElements, forKey: .mediaDetailHiddenElements)
-        try container.encode(readerDetailElementOrder, forKey: .readerDetailElementOrder)
-        try container.encode(readerDetailHiddenElements, forKey: .readerDetailHiddenElements)
+        try container.encode(heroBannerCatalogId, forKey: .heroBannerCatalogId)
+        try container.encode(Self.sanitizedHeroBannerBehavior(heroBannerBehavior), forKey: .heroBannerBehavior)
+        try container.encode(Self.sanitizedAtmosphereStyle(atmosphereStyle), forKey: .atmosphereStyle)
+        try container.encode(Self.sanitizedAtmosphereSolidColorSource(atmosphereSolidColorSource), forKey: .atmosphereSolidColorSource)
+        try container.encodeIfPresent(atmosphereSolidColor, forKey: .atmosphereSolidColor)
+        try container.encode(Self.sanitizedAtmosphereStyle(readerAtmosphereStyle), forKey: .readerAtmosphereStyle)
+        try container.encode(Self.sanitizedAtmosphereSolidColorSource(readerAtmosphereSolidColorSource), forKey: .readerAtmosphereSolidColorSource)
+        try container.encodeIfPresent(readerAtmosphereSolidColor, forKey: .readerAtmosphereSolidColor)
+        try container.encode(Self.sanitizedMediaDetailElementOrder(mediaDetailElementOrder), forKey: .mediaDetailElementOrder)
+        try container.encode(Self.sanitizedMediaDetailHiddenElements(mediaDetailHiddenElements), forKey: .mediaDetailHiddenElements)
+        try container.encode(Self.sanitizedReaderDetailElementOrder(readerDetailElementOrder), forKey: .readerDetailElementOrder)
+        try container.encode(Self.sanitizedReaderDetailHiddenElements(readerDetailHiddenElements), forKey: .readerDetailHiddenElements)
         try container.encode(mediaColumnsPortrait, forKey: .mediaColumnsPortrait)
         try container.encode(mediaColumnsLandscape, forKey: .mediaColumnsLandscape)
 
         // Manga / Reader
         try container.encode(readingMode, forKey: .readingMode)
+        try container.encode(Self.sanitizedKanzenReaderMode(kanzenReaderMode), forKey: .kanzenReaderMode)
+        try container.encode(Self.sanitizedKanzenReaderModeOverrides(kanzenReaderModeOverrides), forKey: .kanzenReaderModeOverrides)
+        try container.encode(readerDownsampleImages, forKey: .readerDownsampleImages)
+        try container.encode(readerCropBorders, forKey: .readerCropBorders)
+        try container.encode(readerDisableQuickActions, forKey: .readerDisableQuickActions)
+        try container.encode(readerDisableDoubleTap, forKey: .readerDisableDoubleTap)
+        try container.encode(readerLiveText, forKey: .readerLiveText)
+        try container.encode(readerHideBarsOnSwipe, forKey: .readerHideBarsOnSwipe)
+        try container.encode(Self.sanitizedReaderBackgroundColor(readerBackgroundColor), forKey: .readerBackgroundColor)
+        try container.encode(Self.sanitizedReaderOrientation(readerOrientation), forKey: .readerOrientation)
+        try container.encode(Self.sanitizedReaderTapZones(readerTapZones), forKey: .readerTapZones)
+        try container.encode(readerInvertTapZones, forKey: .readerInvertTapZones)
+        try container.encode(readerAnimatePageTransitions, forKey: .readerAnimatePageTransitions)
+        try container.encode(readerUpscaleImages, forKey: .readerUpscaleImages)
+        try container.encode(Self.sanitizedReaderUpscaleMaxHeight(readerUpscaleMaxHeight), forKey: .readerUpscaleMaxHeight)
+        try container.encode(Self.sanitizedReaderPagesToPreload(readerPagesToPreload), forKey: .readerPagesToPreload)
+        try container.encode(Self.sanitizedReaderPagedPageLayout(readerPagedPageLayout), forKey: .readerPagedPageLayout)
+        try container.encode(readerPagedPageOffset, forKey: .readerPagedPageOffset)
+        try container.encode(Self.sanitizedReaderPagedPageOffsetOverrides(readerPagedPageOffsetOverrides), forKey: .readerPagedPageOffsetOverrides)
+        try container.encode(readerSplitWideImages, forKey: .readerSplitWideImages)
+        try container.encode(readerReverseSplitOrder, forKey: .readerReverseSplitOrder)
+        try container.encode(readerVerticalInfiniteScroll, forKey: .readerVerticalInfiniteScroll)
+        try container.encode(readerPillarbox, forKey: .readerPillarbox)
+        try container.encode(Self.sanitizedReaderPillarboxAmount(readerPillarboxAmount), forKey: .readerPillarboxAmount)
+        try container.encode(Self.sanitizedReaderPillarboxOrientation(readerPillarboxOrientation), forKey: .readerPillarboxOrientation)
+        try container.encode(readerOrientationLockEnabled, forKey: .readerOrientationLockEnabled)
+        try container.encode(Self.sanitizedReaderOrientationLockMask(readerOrientationLockMask), forKey: .readerOrientationLockMask)
         try container.encode(readerReadThresholdPercent, forKey: .readerReadThresholdPercent)
 
         // Novel Reader
@@ -392,7 +811,26 @@ struct BackupData: Codable {
         try container.encode(autoClearCacheEnabled, forKey: .autoClearCacheEnabled)
         try container.encode(autoClearCacheThresholdMB, forKey: .autoClearCacheThresholdMB)
         try container.encode(highQualityThreshold, forKey: .highQualityThreshold)
+        try container.encode(backgroundHLSPipelineEnabled, forKey: .backgroundHLSPipelineEnabled)
+        try container.encode(readerDownloadsBackgroundEnabled, forKey: .readerDownloadsBackgroundEnabled)
+        try container.encode(readerDownloadsWifiOnly, forKey: .readerDownloadsWifiOnly)
+        try container.encode(Self.sanitizedReaderDownloadsParallelLimit(readerDownloadsParallelLimit), forKey: .readerDownloadsParallelLimit)
+        try container.encode(autoUpdateServicesEnabled, forKey: .autoUpdateServicesEnabled)
+        try container.encode(servicesAutoModeEnabled, forKey: .servicesAutoModeEnabled)
+        try container.encode(servicesAutoSelectEpisodesEnabled, forKey: .servicesAutoSelectEpisodesEnabled)
+        try container.encode(Self.sanitizedStringList(servicesAutoModeSourceIds), forKey: .servicesAutoModeSourceIds)
+        try container.encode(Self.sanitizedStringList(servicesAutoModeSourceOrderIds), forKey: .servicesAutoModeSourceOrderIds)
         try container.encode(AutoModeQualityPreference.sanitizedRawValue(servicesAutoModeQualityPreference), forKey: .servicesAutoModeQualityPreference)
+        try container.encode(githubReleaseAutoCheckEnabled, forKey: .githubReleaseAutoCheckEnabled)
+        try container.encode(githubReleaseUpdateAvailable, forKey: .githubReleaseUpdateAvailable)
+        try container.encode(githubReleaseLatestVersion, forKey: .githubReleaseLatestVersion)
+        try container.encode(githubReleaseURL, forKey: .githubReleaseURL)
+        try container.encode(githubReleaseShowAlertPending, forKey: .githubReleaseShowAlertPending)
+        try container.encode(githubReleaseLastPromptedVersion, forKey: .githubReleaseLastPromptedVersion)
+        try container.encode(filterHorrorContent, forKey: .filterHorrorContent)
+        try container.encode(Self.sanitizedSimilarityAlgorithm(selectedSimilarityAlgorithm), forKey: .selectedSimilarityAlgorithm)
+        try container.encode(performanceModeEnabled, forKey: .performanceModeEnabled)
+        try container.encode(performanceModeFastAnimeCatalogOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }, forKey: .performanceModeFastAnimeCatalogOverrides)
 
         try container.encode(collections, forKey: .collections)
         try container.encode(progressData, forKey: .progressData)
@@ -400,11 +838,13 @@ struct BackupData: Codable {
         try container.encode(catalogs, forKey: .catalogs)
         try container.encode(services, forKey: .services)
         try container.encodeIfPresent(stremioAddons, forKey: .stremioAddons)
+        try container.encodeIfPresent(nuvioPlugins, forKey: .nuvioPlugins)
         try container.encode(mangaCollections, forKey: .mangaCollections)
         try container.encode(mangaReadingProgress, forKey: .mangaReadingProgress)
         try container.encode(mangaCatalogs, forKey: .mangaCatalogs)
         try container.encode(kanzenModules, forKey: .kanzenModules)
         try container.encodeIfPresent(aidokuState, forKey: .aidokuState)
+        try container.encode(searchHistory, forKey: .searchHistory)
         try container.encode(recommendationCache, forKey: .recommendationCache)
         try container.encode(userRatings, forKey: .userRatings)
         try container.encode(userRatingNotes, forKey: .userRatingNotes)
@@ -414,8 +854,13 @@ struct BackupData: Codable {
         version: String = "1.0",
         createdDate: Date,
         accentColor: Data? = nil,
+        settingsGradientColor: Data? = nil,
+        readerAccentColor: Data? = nil,
         tmdbLanguage: String,
         selectedAppearance: String,
+        readerSelectedAppearance: String = "system",
+        readerGlobalAppearanceEnabled: Bool = true,
+        readerSettingsGradientColor: Data? = nil,
         enableSubtitlesByDefault: Bool,
         defaultSubtitleLanguage: String,
         playerSubtitleAppearanceEnabled: Bool,
@@ -430,9 +875,14 @@ struct BackupData: Codable {
         defaultPlaybackSpeed: Double = 1.0,
         holdSpeedPlayer: Double = 2.0,
         externalPlayer: String = "none",
+        preferDownloadedMedia: Bool = false,
         alwaysLandscape: Bool = false,
+        aniSkipEnabled: Bool = true,
+        introDBEnabled: Bool = true,
+        introDBAppEnabled: Bool = true,
         aniSkipAutoSkip: Bool = false,
         skip85sEnabled: Bool = false,
+        skip85sAlwaysVisible: Bool = false,
         showNextEpisodeButton: Bool = true,
         showEpisodeBrowserButton: Bool = true,
         showNextEpisodePosterButton: Bool = false,
@@ -440,6 +890,7 @@ struct BackupData: Codable {
         playerBrightnessGestureEnabled: Bool = false,
         playerVolumeGestureEnabled: Bool = false,
         playerTwoFingerTapPlayPauseEnabled: Bool = true,
+        playerCenterTapPlayPauseEnabled: Bool = true,
         playerDoubleTapSeekEnabled: Bool = true,
         playerDoubleTapSeekSeconds: Double = 10.0,
         playerOpenSubtitlesEnabled: Bool = false,
@@ -450,6 +901,17 @@ struct BackupData: Codable {
         mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue,
         mpvAppExitPictureInPictureEnabled: Bool = false,
         smartInAppPlayerChoosingEnabled: Bool = false,
+        experimentalFeaturesEnabled: Bool = false,
+        experimentalFeaturesLastChangedAt: Double = 0,
+        experimentalMPVPreloadEnabled: Bool = true,
+        experimentalMPVSmoothTransitionEnabled: Bool = true,
+        experimentalMPVPreloadCellularEnabled: Bool = false,
+        experimentalMPVPreloadWifiLimitMB: Int = 256,
+        experimentalMPVPreloadCellularLimitMB: Int = 32,
+        experimentalMPVShowRemainingTime: Bool = true,
+        experimentalMPVPreciseProgress: Bool = true,
+        experimentalMPVIgnoreSpecialSubtitleStyles: Bool = false,
+        experimentalICloudSyncEnabled: Bool = false,
 
         // Subtitle styling
         subtitleForegroundColor: Data? = nil,
@@ -460,10 +922,19 @@ struct BackupData: Codable {
 
         // UI preferences
         showKanzen: Bool = false,
+        hideSplashScreen: Bool? = nil,
         kanzenAutoUpdateModules: Bool = true,
         seasonMenu: Bool = false,
         horizontalEpisodeList: Bool = false,
         useClassicScheduleUI: Bool = false,
+        heroBannerCatalogId: String = "trending",
+        heroBannerBehavior: String = HeroBannerBehavior.static.rawValue,
+        atmosphereStyle: String = AtmosphereStyle.gradient.rawValue,
+        atmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue,
+        atmosphereSolidColor: Data? = nil,
+        readerAtmosphereStyle: String = AtmosphereStyle.gradient.rawValue,
+        readerAtmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue,
+        readerAtmosphereSolidColor: Data? = nil,
         mediaDetailElementOrder: String = MediaDetailElement.defaultOrderRawValue,
         mediaDetailHiddenElements: String = "",
         readerDetailElementOrder: String = ReaderDetailElement.defaultOrderRawValue,
@@ -473,6 +944,33 @@ struct BackupData: Codable {
 
         // Manga / Reader
         readingMode: Int = 2,
+        kanzenReaderMode: String = "webtoon",
+        kanzenReaderModeOverrides: [String: String] = [:],
+        readerDownsampleImages: Bool = true,
+        readerCropBorders: Bool = false,
+        readerDisableQuickActions: Bool = false,
+        readerDisableDoubleTap: Bool = false,
+        readerLiveText: Bool = false,
+        readerHideBarsOnSwipe: Bool = false,
+        readerBackgroundColor: String = "black",
+        readerOrientation: String = "device",
+        readerTapZones: String = "disabled",
+        readerInvertTapZones: Bool = false,
+        readerAnimatePageTransitions: Bool = true,
+        readerUpscaleImages: Bool = false,
+        readerUpscaleMaxHeight: Int = 2000,
+        readerPagesToPreload: Int = 3,
+        readerPagedPageLayout: String = "single",
+        readerPagedPageOffset: Bool = false,
+        readerPagedPageOffsetOverrides: [String: Bool] = [:],
+        readerSplitWideImages: Bool = false,
+        readerReverseSplitOrder: Bool = false,
+        readerVerticalInfiniteScroll: Bool = true,
+        readerPillarbox: Bool = false,
+        readerPillarboxAmount: Double = 15,
+        readerPillarboxOrientation: String = "both",
+        readerOrientationLockEnabled: Bool = false,
+        readerOrientationLockMask: String = "all",
         readerReadThresholdPercent: Double = 80,
 
         // Novel Reader
@@ -488,7 +986,26 @@ struct BackupData: Codable {
         autoClearCacheEnabled: Bool = false,
         autoClearCacheThresholdMB: Double = 500,
         highQualityThreshold: Double = 0.9,
+        backgroundHLSPipelineEnabled: Bool = false,
+        readerDownloadsBackgroundEnabled: Bool = true,
+        readerDownloadsWifiOnly: Bool = false,
+        readerDownloadsParallelLimit: Int = 2,
+        autoUpdateServicesEnabled: Bool = true,
+        servicesAutoModeEnabled: Bool = false,
+        servicesAutoSelectEpisodesEnabled: Bool = false,
+        servicesAutoModeSourceIds: [String] = [],
+        servicesAutoModeSourceOrderIds: [String] = [],
         servicesAutoModeQualityPreference: String = AutoModeQualityPreference.defaultPreference.rawValue,
+        githubReleaseAutoCheckEnabled: Bool = true,
+        githubReleaseUpdateAvailable: Bool = false,
+        githubReleaseLatestVersion: String = "",
+        githubReleaseURL: String = "",
+        githubReleaseShowAlertPending: Bool = false,
+        githubReleaseLastPromptedVersion: String = "",
+        filterHorrorContent: Bool = false,
+        selectedSimilarityAlgorithm: String = SimilarityAlgorithm.hybrid.rawValue,
+        performanceModeEnabled: Bool = false,
+        performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:],
 
         collections: [BackupCollection] = [],
         progressData: ProgressData = ProgressData(),
@@ -496,11 +1013,13 @@ struct BackupData: Codable {
         catalogs: [Catalog] = [],
         services: [BackupService] = [],
         stremioAddons: [BackupStremioAddon]? = nil,
+        nuvioPlugins: NuvioStoredPluginsState? = nil,
         mangaCollections: [BackupMangaCollection] = [],
         mangaReadingProgress: [String: MangaProgress] = [:],
         mangaCatalogs: [MangaCatalog] = [],
         kanzenModules: [BackupKanzenModule] = [],
         aidokuState: BackupAidokuState? = nil,
+        searchHistory: BackupSearchHistory = BackupSearchHistory(),
         recommendationCache: [TMDBSearchResult] = [],
         userRatings: [String: Double] = [:],
         userRatingNotes: [String: String] = [:]
@@ -508,8 +1027,13 @@ struct BackupData: Codable {
         self.version = version
         self.createdDate = createdDate
         self.accentColor = accentColor
+        self.settingsGradientColor = settingsGradientColor
+        self.readerAccentColor = readerAccentColor
         self.tmdbLanguage = tmdbLanguage
-        self.selectedAppearance = selectedAppearance
+        self.selectedAppearance = Self.sanitizedAppearance(selectedAppearance)
+        self.readerSelectedAppearance = Self.sanitizedAppearance(readerSelectedAppearance)
+        self.readerGlobalAppearanceEnabled = readerGlobalAppearanceEnabled
+        self.readerSettingsGradientColor = readerSettingsGradientColor
         self.enableSubtitlesByDefault = enableSubtitlesByDefault
         self.defaultSubtitleLanguage = defaultSubtitleLanguage
         self.playerSubtitleAppearanceEnabled = playerSubtitleAppearanceEnabled
@@ -523,9 +1047,14 @@ struct BackupData: Codable {
         self.defaultPlaybackSpeed = defaultPlaybackSpeed
         self.holdSpeedPlayer = holdSpeedPlayer
         self.externalPlayer = externalPlayer
+        self.preferDownloadedMedia = preferDownloadedMedia
         self.alwaysLandscape = alwaysLandscape
+        self.aniSkipEnabled = aniSkipEnabled
+        self.introDBEnabled = introDBEnabled
+        self.introDBAppEnabled = introDBAppEnabled
         self.aniSkipAutoSkip = aniSkipAutoSkip
         self.skip85sEnabled = skip85sEnabled
+        self.skip85sAlwaysVisible = skip85sAlwaysVisible
         self.showNextEpisodeButton = showNextEpisodeButton
         self.showEpisodeBrowserButton = showEpisodeBrowserButton
         self.showNextEpisodePosterButton = showNextEpisodePosterButton
@@ -533,6 +1062,7 @@ struct BackupData: Codable {
         self.playerBrightnessGestureEnabled = playerBrightnessGestureEnabled
         self.playerVolumeGestureEnabled = playerVolumeGestureEnabled
         self.playerTwoFingerTapPlayPauseEnabled = playerTwoFingerTapPlayPauseEnabled
+        self.playerCenterTapPlayPauseEnabled = playerCenterTapPlayPauseEnabled
         self.playerDoubleTapSeekEnabled = playerDoubleTapSeekEnabled
         self.playerDoubleTapSeekSeconds = playerDoubleTapSeekSeconds
         self.playerOpenSubtitlesEnabled = playerOpenSubtitlesEnabled
@@ -543,6 +1073,17 @@ struct BackupData: Codable {
         self.mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(mpvMetalQualityProfile)
         self.mpvAppExitPictureInPictureEnabled = mpvAppExitPictureInPictureEnabled
         self.smartInAppPlayerChoosingEnabled = smartInAppPlayerChoosingEnabled
+        self.experimentalFeaturesEnabled = experimentalFeaturesEnabled
+        self.experimentalFeaturesLastChangedAt = experimentalFeaturesLastChangedAt
+        self.experimentalMPVPreloadEnabled = experimentalMPVPreloadEnabled
+        self.experimentalMPVSmoothTransitionEnabled = experimentalMPVSmoothTransitionEnabled
+        self.experimentalMPVPreloadCellularEnabled = experimentalMPVPreloadCellularEnabled
+        self.experimentalMPVPreloadWifiLimitMB = max(32, min(experimentalMPVPreloadWifiLimitMB, 2048))
+        self.experimentalMPVPreloadCellularLimitMB = max(8, min(experimentalMPVPreloadCellularLimitMB, 256))
+        self.experimentalMPVShowRemainingTime = experimentalMPVShowRemainingTime
+        self.experimentalMPVPreciseProgress = experimentalMPVPreciseProgress
+        self.experimentalMPVIgnoreSpecialSubtitleStyles = experimentalMPVIgnoreSpecialSubtitleStyles
+        self.experimentalICloudSyncEnabled = experimentalICloudSyncEnabled
 
         self.subtitleForegroundColor = subtitleForegroundColor
         self.subtitleStrokeColor = subtitleStrokeColor
@@ -551,10 +1092,19 @@ struct BackupData: Codable {
         self.subtitleVerticalOffset = subtitleVerticalOffset
 
         self.showKanzen = showKanzen
+        self.hideSplashScreen = hideSplashScreen
         self.kanzenAutoUpdateModules = kanzenAutoUpdateModules
         self.seasonMenu = seasonMenu
         self.horizontalEpisodeList = horizontalEpisodeList
         self.useClassicScheduleUI = useClassicScheduleUI
+        self.heroBannerCatalogId = Self.sanitizedNonEmptyString(heroBannerCatalogId, defaultValue: "trending")
+        self.heroBannerBehavior = Self.sanitizedHeroBannerBehavior(heroBannerBehavior)
+        self.atmosphereStyle = Self.sanitizedAtmosphereStyle(atmosphereStyle)
+        self.atmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(atmosphereSolidColorSource)
+        self.atmosphereSolidColor = atmosphereSolidColor
+        self.readerAtmosphereStyle = Self.sanitizedAtmosphereStyle(readerAtmosphereStyle)
+        self.readerAtmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(readerAtmosphereSolidColorSource)
+        self.readerAtmosphereSolidColor = readerAtmosphereSolidColor
         self.mediaDetailElementOrder = Self.sanitizedMediaDetailElementOrder(mediaDetailElementOrder)
         self.mediaDetailHiddenElements = Self.sanitizedMediaDetailHiddenElements(mediaDetailHiddenElements)
         self.readerDetailElementOrder = Self.sanitizedReaderDetailElementOrder(readerDetailElementOrder)
@@ -563,6 +1113,33 @@ struct BackupData: Codable {
         self.mediaColumnsLandscape = mediaColumnsLandscape
 
         self.readingMode = readingMode
+        self.kanzenReaderMode = Self.sanitizedKanzenReaderMode(kanzenReaderMode)
+        self.kanzenReaderModeOverrides = Self.sanitizedKanzenReaderModeOverrides(kanzenReaderModeOverrides)
+        self.readerDownsampleImages = readerDownsampleImages
+        self.readerCropBorders = readerCropBorders
+        self.readerDisableQuickActions = readerDisableQuickActions
+        self.readerDisableDoubleTap = readerDisableDoubleTap
+        self.readerLiveText = readerLiveText
+        self.readerHideBarsOnSwipe = readerHideBarsOnSwipe
+        self.readerBackgroundColor = Self.sanitizedReaderBackgroundColor(readerBackgroundColor)
+        self.readerOrientation = Self.sanitizedReaderOrientation(readerOrientation)
+        self.readerTapZones = Self.sanitizedReaderTapZones(readerTapZones)
+        self.readerInvertTapZones = readerInvertTapZones
+        self.readerAnimatePageTransitions = readerAnimatePageTransitions
+        self.readerUpscaleImages = readerUpscaleImages
+        self.readerUpscaleMaxHeight = Self.sanitizedReaderUpscaleMaxHeight(readerUpscaleMaxHeight)
+        self.readerPagesToPreload = Self.sanitizedReaderPagesToPreload(readerPagesToPreload)
+        self.readerPagedPageLayout = Self.sanitizedReaderPagedPageLayout(readerPagedPageLayout)
+        self.readerPagedPageOffset = readerPagedPageOffset
+        self.readerPagedPageOffsetOverrides = Self.sanitizedReaderPagedPageOffsetOverrides(readerPagedPageOffsetOverrides)
+        self.readerSplitWideImages = readerSplitWideImages
+        self.readerReverseSplitOrder = readerReverseSplitOrder
+        self.readerVerticalInfiniteScroll = readerVerticalInfiniteScroll
+        self.readerPillarbox = readerPillarbox
+        self.readerPillarboxAmount = Self.sanitizedReaderPillarboxAmount(readerPillarboxAmount)
+        self.readerPillarboxOrientation = Self.sanitizedReaderPillarboxOrientation(readerPillarboxOrientation)
+        self.readerOrientationLockEnabled = readerOrientationLockEnabled
+        self.readerOrientationLockMask = Self.sanitizedReaderOrientationLockMask(readerOrientationLockMask)
         self.readerReadThresholdPercent = Self.sanitizedReaderReadThresholdPercent(readerReadThresholdPercent)
 
         self.readerFontSize = readerFontSize
@@ -576,7 +1153,26 @@ struct BackupData: Codable {
         self.autoClearCacheEnabled = autoClearCacheEnabled
         self.autoClearCacheThresholdMB = autoClearCacheThresholdMB
         self.highQualityThreshold = highQualityThreshold
+        self.backgroundHLSPipelineEnabled = backgroundHLSPipelineEnabled
+        self.readerDownloadsBackgroundEnabled = readerDownloadsBackgroundEnabled
+        self.readerDownloadsWifiOnly = readerDownloadsWifiOnly
+        self.readerDownloadsParallelLimit = Self.sanitizedReaderDownloadsParallelLimit(readerDownloadsParallelLimit)
+        self.autoUpdateServicesEnabled = autoUpdateServicesEnabled
+        self.servicesAutoModeEnabled = servicesAutoModeEnabled
+        self.servicesAutoSelectEpisodesEnabled = servicesAutoSelectEpisodesEnabled
+        self.servicesAutoModeSourceIds = Self.sanitizedStringList(servicesAutoModeSourceIds)
+        self.servicesAutoModeSourceOrderIds = Self.sanitizedStringList(servicesAutoModeSourceOrderIds)
         self.servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(servicesAutoModeQualityPreference)
+        self.githubReleaseAutoCheckEnabled = githubReleaseAutoCheckEnabled
+        self.githubReleaseUpdateAvailable = githubReleaseUpdateAvailable
+        self.githubReleaseLatestVersion = githubReleaseLatestVersion
+        self.githubReleaseURL = githubReleaseURL
+        self.githubReleaseShowAlertPending = githubReleaseShowAlertPending
+        self.githubReleaseLastPromptedVersion = githubReleaseLastPromptedVersion
+        self.filterHorrorContent = filterHorrorContent
+        self.selectedSimilarityAlgorithm = Self.sanitizedSimilarityAlgorithm(selectedSimilarityAlgorithm)
+        self.performanceModeEnabled = performanceModeEnabled
+        self.performanceModeFastAnimeCatalogOverrides = performanceModeFastAnimeCatalogOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
 
         self.collections = collections
         self.progressData = progressData
@@ -584,11 +1180,13 @@ struct BackupData: Codable {
         self.catalogs = catalogs
         self.services = services
         self.stremioAddons = stremioAddons
+        self.nuvioPlugins = nuvioPlugins
         self.mangaCollections = mangaCollections
         self.mangaReadingProgress = mangaReadingProgress
         self.mangaCatalogs = mangaCatalogs
         self.kanzenModules = kanzenModules
         self.aidokuState = aidokuState
+        self.searchHistory = searchHistory
         self.recommendationCache = recommendationCache
         self.userRatings = userRatings
         self.userRatingNotes = userRatingNotes
@@ -653,6 +1251,192 @@ struct BackupData: Codable {
     static func sanitizedReaderReadThresholdPercent(_ value: Double?) -> Double {
         guard let value, value.isFinite else { return 80 }
         return max(50, min(value, 100))
+    }
+
+    static func sanitizedNonEmptyString(_ value: String?, defaultValue: String) -> String {
+        guard let value else { return defaultValue }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultValue : trimmed
+    }
+
+    static func sanitizedAppearance(_ value: String?) -> String {
+        guard let value,
+              let appearance = Appearance(rawValue: value) else {
+            return Appearance.system.rawValue
+        }
+        return appearance.rawValue
+    }
+
+    static func sanitizedHeroBannerBehavior(_ value: String?) -> String {
+        guard let value,
+              let behavior = HeroBannerBehavior(rawValue: value) else {
+            return HeroBannerBehavior.static.rawValue
+        }
+        return behavior.rawValue
+    }
+
+    static func sanitizedAtmosphereStyle(_ value: String?) -> String {
+        guard let value,
+              let style = AtmosphereStyle(rawValue: value) else {
+            return AtmosphereStyle.gradient.rawValue
+        }
+        return style.rawValue
+    }
+
+    static func sanitizedAtmosphereSolidColorSource(_ value: String?) -> String {
+        guard let value,
+              let source = AtmosphereSolidColorSource(rawValue: value) else {
+            return AtmosphereSolidColorSource.dominant.rawValue
+        }
+        return source.rawValue
+    }
+
+    static func defaultKanzenReaderModeRawValue() -> String {
+#if !os(tvOS)
+        return KanzenReaderMode.currentDefault().rawValue
+#else
+        return "webtoon"
+#endif
+    }
+
+    static func sanitizedKanzenReaderMode(_ value: String?) -> String {
+#if !os(tvOS)
+        guard let value,
+              let mode = KanzenReaderMode(rawValue: value) else {
+            return defaultKanzenReaderModeRawValue()
+        }
+        return mode.rawValue
+#else
+        let allowed = Set(["ltr", "rtl", "webtoon"])
+        guard let value, allowed.contains(value) else { return "webtoon" }
+        return value
+#endif
+    }
+
+    static func readingModeRawValue(forKanzenReaderMode value: String) -> Int {
+        switch sanitizedKanzenReaderMode(value) {
+        case "ltr": return ReadingMode.LTR.rawValue
+        case "rtl": return ReadingMode.RTL.rawValue
+        case "vertical": return ReadingMode.VERTICAL.rawValue
+        default: return ReadingMode.WEBTOON.rawValue
+        }
+    }
+
+    static func kanzenReaderModeRawValue(forReadingMode value: Int) -> String {
+        switch ReadingMode(rawValue: value) ?? .WEBTOON {
+        case .LTR: return "ltr"
+        case .RTL: return "rtl"
+        case .VERTICAL: return "vertical"
+        case .WEBTOON: return "webtoon"
+        }
+    }
+
+    static func sanitizedKanzenReaderModeOverrides(_ values: [String: String]?) -> [String: String] {
+        guard let values else { return [:] }
+        return values.reduce(into: [String: String]()) { result, item in
+            let key = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { return }
+            result[key] = sanitizedKanzenReaderMode(item.value)
+        }
+    }
+
+    static func sanitizedReaderOrientation(_ value: String?) -> String {
+        guard let value else { return "device" }
+        let allowed = Set(["device", "portrait", "landscape", "all"])
+        return allowed.contains(value) ? value : "device"
+    }
+
+    static func sanitizedReaderTapZones(_ value: String?) -> String {
+        guard let value else { return "disabled" }
+        let allowed = Set(["auto", "left-right", "l-shaped", "kindle", "edge", "disabled"])
+        return allowed.contains(value) ? value : "disabled"
+    }
+
+    static func sanitizedReaderUpscaleMaxHeight(_ value: Int?) -> Int {
+        guard let value else { return 2000 }
+        return max(800, min(value, 6000))
+    }
+
+    static func sanitizedReaderPagedPageOffsetOverrides(_ values: [String: Bool]?) -> [String: Bool] {
+        guard let values else { return [:] }
+        return values.reduce(into: [String: Bool]()) { result, item in
+            let key = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { return }
+            result[key] = item.value
+        }
+    }
+
+    static func sanitizedReaderBackgroundColor(_ value: String?) -> String {
+        guard let value else { return "black" }
+        let allowed = Set(["black", "white", "system", "auto"])
+        return allowed.contains(value) ? value : "black"
+    }
+
+    static func sanitizedReaderPagesToPreload(_ value: Int?) -> Int {
+        guard let value else { return 3 }
+        return max(1, min(value, 10))
+    }
+
+    static func sanitizedReaderPagedPageLayout(_ value: String?) -> String {
+        guard let value else { return "single" }
+        let allowed = Set(["single", "double", "auto"])
+        return allowed.contains(value) ? value : "single"
+    }
+
+    static func sanitizedReaderPillarboxAmount(_ value: Double?) -> Double {
+        guard let value, value.isFinite else { return 15 }
+        return max(5, min(value, 95))
+    }
+
+    static func sanitizedReaderPillarboxOrientation(_ value: String?) -> String {
+        guard let value else { return "both" }
+        let allowed = Set(["both", "portrait", "landscape"])
+        return allowed.contains(value) ? value : "both"
+    }
+
+    static func sanitizedReaderOrientationLockMask(_ value: String?) -> String {
+        guard let value else { return "all" }
+        let allowed = Set(["portrait", "portraitUpsideDown", "landscapeLeft", "landscapeRight", "landscape", "all"])
+        return allowed.contains(value) ? value : "all"
+    }
+
+    static func sanitizedReaderDownloadsParallelLimit(_ value: Int?) -> Int {
+        guard let value else { return 2 }
+        return max(1, min(value, 4))
+    }
+
+    static func sanitizedStringList(_ values: [String]?) -> [String] {
+        var result: [String] = []
+        for value in values ?? [] {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !result.contains(trimmed) else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
+
+    static func sanitizedSimilarityAlgorithm(_ value: String?) -> String {
+        guard let value,
+              let algorithm = SimilarityAlgorithm(rawValue: value) else {
+            return SimilarityAlgorithm.hybrid.rawValue
+        }
+        return algorithm.rawValue
+    }
+
+    static func optionalInt(from value: Any?, defaultValue: Int) -> Int {
+        if let int = value as? Int { return int }
+        if let double = value as? Double { return Int(double) }
+        return defaultValue
+    }
+
+    static func optionalDouble(from value: Any?, defaultValue: Double) -> Double {
+        if let double = value as? Double { return double }
+        if let int = value as? Int { return Double(int) }
+        return defaultValue
+    }
+
+    static func stringList(from value: Any?) -> [String] {
+        value as? [String] ?? []
     }
 
 }
@@ -821,6 +1605,32 @@ class BackupManager {
             return nil
         }
     }
+
+    func createExperimentalCloudSnapshotData() -> Data? {
+        let snapshot = gatherBackupData().redactedForExperimentalCloudSync()
+
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            return try encoder.encode(snapshot)
+        } catch {
+            Logger.shared.log("Failed to create experimental iCloud snapshot: \(error.localizedDescription)", type: "iCloud")
+            return nil
+        }
+    }
+
+    func restoreExperimentalCloudSnapshot(from data: Data) -> Bool {
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let snapshot = try decoder.decode(BackupData.self, from: data).redactedForExperimentalCloudSync()
+            return applyBackupData(snapshot)
+        } catch {
+            Logger.shared.log("Failed to restore experimental iCloud snapshot: \(error.localizedDescription)", type: "iCloud")
+            return false
+        }
+    }
     
     /// Gathers all user data for backup
     private func gatherBackupData() -> BackupData {
@@ -831,9 +1641,14 @@ class BackupManager {
         if let colorData = userDefaults.data(forKey: "accentColor") {
             accentColorData = colorData
         }
+        let settingsGradientColor = userDefaults.data(forKey: "eclipseThemeGradientColor")
+        let readerAccentColor = userDefaults.data(forKey: "readerAccentColor")
+        let readerSettingsGradientColor = userDefaults.data(forKey: "readerThemeGradientColor")
         
         // Get settings
-        let selectedAppearance = userDefaults.string(forKey: "selectedAppearance") ?? "system"
+        let selectedAppearance = BackupData.sanitizedAppearance(userDefaults.string(forKey: "selectedAppearance"))
+        let readerSelectedAppearance = BackupData.sanitizedAppearance(userDefaults.string(forKey: "readerSelectedAppearance") ?? selectedAppearance)
+        let readerGlobalAppearanceEnabled = userDefaults.object(forKey: "readerGlobalAppearanceEnabled") == nil ? true : userDefaults.bool(forKey: "readerGlobalAppearanceEnabled")
         let enableSubtitlesByDefault = userDefaults.bool(forKey: "enableSubtitlesByDefault")
         let defaultSubtitleLanguage = userDefaults.string(forKey: "defaultSubtitleLanguage") ?? "eng"
         let playerSubtitleAppearanceEnabled: Bool
@@ -856,9 +1671,14 @@ class BackupManager {
         let savedHoldSpeed = userDefaults.double(forKey: "holdSpeedPlayer")
         let holdSpeedPlayer = savedHoldSpeed > 0 ? savedHoldSpeed : 2.0
         let externalPlayer = userDefaults.string(forKey: "externalPlayer") ?? "none"
+        let preferDownloadedMedia = userDefaults.bool(forKey: "preferDownloadedMedia")
         let alwaysLandscape = userDefaults.bool(forKey: "alwaysLandscape")
+        let aniSkipEnabled = userDefaults.object(forKey: "aniSkipEnabled") == nil ? true : userDefaults.bool(forKey: "aniSkipEnabled")
+        let introDBEnabled = userDefaults.object(forKey: "introDBEnabled") == nil ? true : userDefaults.bool(forKey: "introDBEnabled")
+        let introDBAppEnabled = userDefaults.object(forKey: "introDBAppEnabled") == nil ? true : userDefaults.bool(forKey: "introDBAppEnabled")
         let aniSkipAutoSkip = userDefaults.bool(forKey: "aniSkipAutoSkip")
         let skip85sEnabled = userDefaults.bool(forKey: "skip85sEnabled")
+        let skip85sAlwaysVisible = userDefaults.bool(forKey: "skip85sAlwaysVisible")
         let showNextEpisodeButton = userDefaults.object(forKey: "showNextEpisodeButton") == nil ? true : userDefaults.bool(forKey: "showNextEpisodeButton")
         let showEpisodeBrowserButton = userDefaults.object(forKey: "showEpisodeBrowserButton") == nil
             ? (userDefaults.object(forKey: "showVLCEpisodeBrowserButton") as? Bool ?? true)
@@ -878,6 +1698,7 @@ class BackupManager {
         } else {
             playerTwoFingerTapPlayPauseEnabled = userDefaults.bool(forKey: "playerTwoFingerTapPlayPauseEnabled")
         }
+        let playerCenterTapPlayPauseEnabled = userDefaults.object(forKey: "playerCenterTapPlayPauseEnabled") == nil ? true : userDefaults.bool(forKey: "playerCenterTapPlayPauseEnabled")
         let playerDoubleTapSeekEnabled = userDefaults.object(forKey: "playerDoubleTapSeekEnabled") == nil
             ? (userDefaults.object(forKey: "vlcDoubleTapSeekEnabled") as? Bool ?? true)
             : userDefaults.bool(forKey: "playerDoubleTapSeekEnabled")
@@ -897,6 +1718,18 @@ class BackupManager {
         let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(userDefaults.string(forKey: "mpvMetalQualityProfile"))
         let mpvAppExitPictureInPictureEnabled = userDefaults.bool(forKey: "mpvAppExitPictureInPictureEnabled")
         let smartInAppPlayerChoosingEnabled = false
+        ExperimentalFeatureState.registerDefaults(defaults: userDefaults)
+        let experimentalFeaturesEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.enabledKey)
+        let experimentalFeaturesLastChangedAt = userDefaults.double(forKey: ExperimentalFeatureState.lastChangedAtKey)
+        let experimentalMPVPreloadEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey)
+        let experimentalMPVSmoothTransitionEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey)
+        let experimentalMPVPreloadCellularEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
+        let experimentalMPVPreloadWifiLimitMB = max(32, min(userDefaults.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey), 2048))
+        let experimentalMPVPreloadCellularLimitMB = max(8, min(userDefaults.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey), 256))
+        let experimentalMPVShowRemainingTime = userDefaults.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
+        let experimentalMPVPreciseProgress = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
+        let experimentalMPVIgnoreSpecialSubtitleStyles = userDefaults.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
+        let experimentalICloudSyncEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.iCloudSyncEnabledKey)
 
         // Subtitle styling
         let subtitleForegroundColor = userDefaults.data(forKey: "subtitles_foregroundColor")
@@ -916,10 +1749,19 @@ class BackupManager {
 
         // UI preferences
         let showKanzen = userDefaults.bool(forKey: "showKanzen")
+        let hideSplashScreen = userDefaults.bool(forKey: "hideSplashScreen")
         let kanzenAutoUpdateModules = ModuleManager.isAutoUpdateEnabled
         let seasonMenu = userDefaults.bool(forKey: "seasonMenu")
         let horizontalEpisodeList = userDefaults.bool(forKey: "horizontalEpisodeList")
         let useClassicScheduleUI = userDefaults.bool(forKey: "useClassicScheduleUI")
+        let heroBannerCatalogId = BackupData.sanitizedNonEmptyString(userDefaults.string(forKey: "heroBannerCatalogId"), defaultValue: "trending")
+        let heroBannerBehavior = BackupData.sanitizedHeroBannerBehavior(userDefaults.string(forKey: "heroBannerBehavior"))
+        let atmosphereStyle = BackupData.sanitizedAtmosphereStyle(userDefaults.string(forKey: "atmosphereStyle"))
+        let atmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(userDefaults.string(forKey: "atmosphereSolidColorSource"))
+        let atmosphereSolidColor = userDefaults.data(forKey: "atmosphereSolidColor")
+        let readerAtmosphereStyle = BackupData.sanitizedAtmosphereStyle(userDefaults.string(forKey: "readerAtmosphereStyle") ?? atmosphereStyle)
+        let readerAtmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(userDefaults.string(forKey: "readerAtmosphereSolidColorSource") ?? atmosphereSolidColorSource)
+        let readerAtmosphereSolidColor = userDefaults.data(forKey: "readerAtmosphereSolidColor")
         let mediaDetailElementOrder = BackupData.sanitizedMediaDetailElementOrder(userDefaults.string(forKey: MediaDetailElement.orderStorageKey))
         let mediaDetailHiddenElements = MediaDetailElement.rawValue(for: MediaDetailElement.hiddenElements(defaults: userDefaults))
         let readerDetailElementOrder = BackupData.sanitizedReaderDetailElementOrder(userDefaults.string(forKey: ReaderDetailElement.orderStorageKey))
@@ -929,6 +1771,46 @@ class BackupManager {
 
         // Manga / Reader
         let readingMode = userDefaults.object(forKey: "readingMode") != nil ? userDefaults.integer(forKey: "readingMode") : ReadingMode.WEBTOON.rawValue
+        let kanzenReaderMode = BackupData.sanitizedKanzenReaderMode(userDefaults.string(forKey: "kanzenReaderMode") ?? BackupData.defaultKanzenReaderModeRawValue())
+        let userDefaultsSnapshot = userDefaults.dictionaryRepresentation()
+        let kanzenReaderModeOverrides = BackupData.sanitizedKanzenReaderModeOverrides(
+            userDefaultsSnapshot.reduce(into: [String: String]()) { result, item in
+                guard item.key.hasPrefix("kanzenReaderMode."),
+                      let value = item.value as? String else { return }
+                result[String(item.key.dropFirst("kanzenReaderMode.".count))] = value
+            }
+        )
+        let readerDownsampleImages = userDefaults.object(forKey: "Reader.downsampleImages") == nil ? true : userDefaults.bool(forKey: "Reader.downsampleImages")
+        let readerCropBorders = userDefaults.bool(forKey: "Reader.cropBorders")
+        let readerDisableQuickActions = userDefaults.bool(forKey: "Reader.disableQuickActions")
+        let readerDisableDoubleTap = userDefaults.bool(forKey: "Reader.disableDoubleTap")
+        let readerLiveText = userDefaults.bool(forKey: "Reader.liveText")
+        let readerHideBarsOnSwipe = userDefaults.bool(forKey: "Reader.hideBarsOnSwipe")
+        let readerBackgroundColor = BackupData.sanitizedReaderBackgroundColor(userDefaults.string(forKey: "Reader.backgroundColor"))
+        let readerOrientation = BackupData.sanitizedReaderOrientation(userDefaults.string(forKey: "Reader.orientation"))
+        let readerTapZones = BackupData.sanitizedReaderTapZones(userDefaults.string(forKey: "Reader.tapZones"))
+        let readerInvertTapZones = userDefaults.bool(forKey: "Reader.invertTapZones")
+        let readerAnimatePageTransitions = userDefaults.object(forKey: "Reader.animatePageTransitions") == nil ? true : userDefaults.bool(forKey: "Reader.animatePageTransitions")
+        let readerUpscaleImages = userDefaults.bool(forKey: "Reader.upscaleImages")
+        let readerUpscaleMaxHeight = BackupData.sanitizedReaderUpscaleMaxHeight(BackupData.optionalInt(from: userDefaults.object(forKey: "Reader.upscaleMaxHeight"), defaultValue: 2000))
+        let readerPagesToPreload = BackupData.sanitizedReaderPagesToPreload(BackupData.optionalInt(from: userDefaults.object(forKey: "Reader.pagesToPreload"), defaultValue: 3))
+        let readerPagedPageLayout = BackupData.sanitizedReaderPagedPageLayout(userDefaults.string(forKey: "Reader.pagedPageLayout"))
+        let readerPagedPageOffset = userDefaults.bool(forKey: "Reader.pagedPageOffset")
+        let readerPagedPageOffsetOverrides = BackupData.sanitizedReaderPagedPageOffsetOverrides(
+            userDefaultsSnapshot.reduce(into: [String: Bool]()) { result, item in
+                guard item.key.hasPrefix("Reader.pagedPageOffset."),
+                      let value = item.value as? Bool else { return }
+                result[String(item.key.dropFirst("Reader.pagedPageOffset.".count))] = value
+            }
+        )
+        let readerSplitWideImages = userDefaults.bool(forKey: "Reader.splitWideImages")
+        let readerReverseSplitOrder = userDefaults.bool(forKey: "Reader.reverseSplitOrder")
+        let readerVerticalInfiniteScroll = userDefaults.object(forKey: "Reader.verticalInfiniteScroll") == nil ? true : userDefaults.bool(forKey: "Reader.verticalInfiniteScroll")
+        let readerPillarbox = userDefaults.bool(forKey: "Reader.pillarbox")
+        let readerPillarboxAmount = BackupData.sanitizedReaderPillarboxAmount(BackupData.optionalDouble(from: userDefaults.object(forKey: "Reader.pillarboxAmount"), defaultValue: 15))
+        let readerPillarboxOrientation = BackupData.sanitizedReaderPillarboxOrientation(userDefaults.string(forKey: "Reader.pillarboxOrientation"))
+        let readerOrientationLockEnabled = userDefaults.bool(forKey: "readerOrientationLockEnabled")
+        let readerOrientationLockMask = BackupData.sanitizedReaderOrientationLockMask(userDefaults.string(forKey: "readerOrientationLockMask"))
         let readerReadThresholdPercent = BackupData.sanitizedReaderReadThresholdPercent(userDefaults.object(forKey: "readerReadThresholdPercent") as? Double)
 
         // Novel Reader
@@ -949,7 +1831,33 @@ class BackupManager {
         let autoClearCacheThresholdMB = savedCacheThreshold > 0 ? savedCacheThreshold : 500
         let savedQualityThreshold = userDefaults.object(forKey: "highQualityThreshold") as? Double ?? 0.9
         let highQualityThreshold = savedQualityThreshold
+        let backgroundHLSPipelineEnabled = userDefaults.bool(forKey: "backgroundHLSPipelineEnabled")
+        let readerDownloadsBackgroundEnabled = userDefaults.object(forKey: "readerDownloadsBackgroundEnabled") == nil ? true : userDefaults.bool(forKey: "readerDownloadsBackgroundEnabled")
+        let readerDownloadsWifiOnly = userDefaults.bool(forKey: "readerDownloadsWifiOnly")
+        let readerDownloadsParallelLimit = BackupData.sanitizedReaderDownloadsParallelLimit(BackupData.optionalInt(from: userDefaults.object(forKey: "readerDownloadsParallelLimit"), defaultValue: 2))
+        let autoUpdateServicesEnabled = userDefaults.object(forKey: "autoUpdateServicesEnabled") == nil ? true : userDefaults.bool(forKey: "autoUpdateServicesEnabled")
+        let servicesAutoModeEnabled = userDefaults.bool(forKey: "servicesAutoModeEnabled")
+        let servicesAutoSelectEpisodesEnabled = userDefaults.bool(forKey: "servicesAutoSelectEpisodesEnabled")
+        let servicesAutoModeSourceIds = BackupData.sanitizedStringList(userDefaults.stringArray(forKey: "servicesAutoModeSourceIds"))
+        let servicesAutoModeSourceOrderIds = BackupData.sanitizedStringList(userDefaults.stringArray(forKey: "servicesAutoModeSourceOrderIds"))
         let servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(userDefaults.string(forKey: AutoModeQualityPreference.storageKey))
+        let githubReleaseAutoCheckEnabled = userDefaults.object(forKey: "githubReleaseAutoCheckEnabled") == nil ? true : userDefaults.bool(forKey: "githubReleaseAutoCheckEnabled")
+        let githubReleaseUpdateAvailable = userDefaults.bool(forKey: "githubReleaseUpdateAvailable")
+        let githubReleaseLatestVersion = userDefaults.string(forKey: "githubReleaseLatestVersion") ?? ""
+        let githubReleaseURL = userDefaults.string(forKey: "githubReleaseURL") ?? ""
+        let githubReleaseShowAlertPending = userDefaults.bool(forKey: "githubReleaseShowAlertPending")
+        let githubReleaseLastPromptedVersion = userDefaults.string(forKey: "githubReleaseLastPromptedVersion") ?? ""
+        let filterHorrorContent = userDefaults.bool(forKey: "filterHorror")
+        let selectedSimilarityAlgorithm = BackupData.sanitizedSimilarityAlgorithm(userDefaults.string(forKey: "selectedSimilarityAlgorithm"))
+        let performanceModeEnabled = PerformanceModeSettings.isEnabled
+        let performanceModeFastAnimeCatalogOverrides = PerformanceModeSettings.fastAnimeCatalogOverrides
+        let searchHistory: BackupSearchHistory
+        if let historyData = userDefaults.data(forKey: "searchHistory"),
+           let decoded = try? JSONDecoder().decode([String].self, from: historyData) {
+            searchHistory = BackupSearchHistory(queries: decoded)
+        } else {
+            searchHistory = BackupSearchHistory()
+        }
         
         // Get library collections
         let libraryManager = LibraryManager.shared
@@ -1000,6 +1908,8 @@ class BackupManager {
             )
         }
 
+        let nuvioPlugins = NuvioPluginManager.persistedBackupState()
+
         // Get manga library collections
         let mangaLibraryManager = MangaLibraryManager.shared
         let mangaCollections = mangaLibraryManager.collections.map { collection in
@@ -1041,8 +1951,13 @@ class BackupManager {
         let backup = BackupData(
             createdDate: Date(),
             accentColor: accentColorData,
+            settingsGradientColor: settingsGradientColor,
+            readerAccentColor: readerAccentColor,
             tmdbLanguage: tmdbLanguage,
             selectedAppearance: selectedAppearance,
+            readerSelectedAppearance: readerSelectedAppearance,
+            readerGlobalAppearanceEnabled: readerGlobalAppearanceEnabled,
+            readerSettingsGradientColor: readerSettingsGradientColor,
             enableSubtitlesByDefault: enableSubtitlesByDefault,
             defaultSubtitleLanguage: defaultSubtitleLanguage,
             playerSubtitleAppearanceEnabled: playerSubtitleAppearanceEnabled,
@@ -1056,9 +1971,14 @@ class BackupManager {
             defaultPlaybackSpeed: defaultPlaybackSpeed,
             holdSpeedPlayer: holdSpeedPlayer,
             externalPlayer: externalPlayer,
+            preferDownloadedMedia: preferDownloadedMedia,
             alwaysLandscape: alwaysLandscape,
+            aniSkipEnabled: aniSkipEnabled,
+            introDBEnabled: introDBEnabled,
+            introDBAppEnabled: introDBAppEnabled,
             aniSkipAutoSkip: aniSkipAutoSkip,
             skip85sEnabled: skip85sEnabled,
+            skip85sAlwaysVisible: skip85sAlwaysVisible,
             showNextEpisodeButton: showNextEpisodeButton,
             showEpisodeBrowserButton: showEpisodeBrowserButton,
             showNextEpisodePosterButton: showNextEpisodePosterButton,
@@ -1066,6 +1986,7 @@ class BackupManager {
             playerBrightnessGestureEnabled: playerBrightnessGestureEnabled,
             playerVolumeGestureEnabled: playerVolumeGestureEnabled,
             playerTwoFingerTapPlayPauseEnabled: playerTwoFingerTapPlayPauseEnabled,
+            playerCenterTapPlayPauseEnabled: playerCenterTapPlayPauseEnabled,
             playerDoubleTapSeekEnabled: playerDoubleTapSeekEnabled,
             playerDoubleTapSeekSeconds: playerDoubleTapSeekSeconds,
             playerOpenSubtitlesEnabled: playerOpenSubtitlesEnabled,
@@ -1076,6 +1997,17 @@ class BackupManager {
             mpvMetalQualityProfile: mpvMetalQualityProfile,
             mpvAppExitPictureInPictureEnabled: mpvAppExitPictureInPictureEnabled,
             smartInAppPlayerChoosingEnabled: smartInAppPlayerChoosingEnabled,
+            experimentalFeaturesEnabled: experimentalFeaturesEnabled,
+            experimentalFeaturesLastChangedAt: experimentalFeaturesLastChangedAt,
+            experimentalMPVPreloadEnabled: experimentalMPVPreloadEnabled,
+            experimentalMPVSmoothTransitionEnabled: experimentalMPVSmoothTransitionEnabled,
+            experimentalMPVPreloadCellularEnabled: experimentalMPVPreloadCellularEnabled,
+            experimentalMPVPreloadWifiLimitMB: experimentalMPVPreloadWifiLimitMB,
+            experimentalMPVPreloadCellularLimitMB: experimentalMPVPreloadCellularLimitMB,
+            experimentalMPVShowRemainingTime: experimentalMPVShowRemainingTime,
+            experimentalMPVPreciseProgress: experimentalMPVPreciseProgress,
+            experimentalMPVIgnoreSpecialSubtitleStyles: experimentalMPVIgnoreSpecialSubtitleStyles,
+            experimentalICloudSyncEnabled: experimentalICloudSyncEnabled,
 
             subtitleForegroundColor: subtitleForegroundColor,
             subtitleStrokeColor: subtitleStrokeColor,
@@ -1084,10 +2016,19 @@ class BackupManager {
             subtitleVerticalOffset: subtitleVerticalOffset,
 
             showKanzen: showKanzen,
+            hideSplashScreen: hideSplashScreen,
             kanzenAutoUpdateModules: kanzenAutoUpdateModules,
             seasonMenu: seasonMenu,
             horizontalEpisodeList: horizontalEpisodeList,
             useClassicScheduleUI: useClassicScheduleUI,
+            heroBannerCatalogId: heroBannerCatalogId,
+            heroBannerBehavior: heroBannerBehavior,
+            atmosphereStyle: atmosphereStyle,
+            atmosphereSolidColorSource: atmosphereSolidColorSource,
+            atmosphereSolidColor: atmosphereSolidColor,
+            readerAtmosphereStyle: readerAtmosphereStyle,
+            readerAtmosphereSolidColorSource: readerAtmosphereSolidColorSource,
+            readerAtmosphereSolidColor: readerAtmosphereSolidColor,
             mediaDetailElementOrder: mediaDetailElementOrder,
             mediaDetailHiddenElements: mediaDetailHiddenElements,
             readerDetailElementOrder: readerDetailElementOrder,
@@ -1096,6 +2037,33 @@ class BackupManager {
             mediaColumnsLandscape: mediaColumnsLandscape,
 
             readingMode: readingMode,
+            kanzenReaderMode: kanzenReaderMode,
+            kanzenReaderModeOverrides: kanzenReaderModeOverrides,
+            readerDownsampleImages: readerDownsampleImages,
+            readerCropBorders: readerCropBorders,
+            readerDisableQuickActions: readerDisableQuickActions,
+            readerDisableDoubleTap: readerDisableDoubleTap,
+            readerLiveText: readerLiveText,
+            readerHideBarsOnSwipe: readerHideBarsOnSwipe,
+            readerBackgroundColor: readerBackgroundColor,
+            readerOrientation: readerOrientation,
+            readerTapZones: readerTapZones,
+            readerInvertTapZones: readerInvertTapZones,
+            readerAnimatePageTransitions: readerAnimatePageTransitions,
+            readerUpscaleImages: readerUpscaleImages,
+            readerUpscaleMaxHeight: readerUpscaleMaxHeight,
+            readerPagesToPreload: readerPagesToPreload,
+            readerPagedPageLayout: readerPagedPageLayout,
+            readerPagedPageOffset: readerPagedPageOffset,
+            readerPagedPageOffsetOverrides: readerPagedPageOffsetOverrides,
+            readerSplitWideImages: readerSplitWideImages,
+            readerReverseSplitOrder: readerReverseSplitOrder,
+            readerVerticalInfiniteScroll: readerVerticalInfiniteScroll,
+            readerPillarbox: readerPillarbox,
+            readerPillarboxAmount: readerPillarboxAmount,
+            readerPillarboxOrientation: readerPillarboxOrientation,
+            readerOrientationLockEnabled: readerOrientationLockEnabled,
+            readerOrientationLockMask: readerOrientationLockMask,
             readerReadThresholdPercent: readerReadThresholdPercent,
 
             readerFontSize: readerFontSize,
@@ -1109,7 +2077,26 @@ class BackupManager {
             autoClearCacheEnabled: autoClearCacheEnabled,
             autoClearCacheThresholdMB: autoClearCacheThresholdMB,
             highQualityThreshold: highQualityThreshold,
+            backgroundHLSPipelineEnabled: backgroundHLSPipelineEnabled,
+            readerDownloadsBackgroundEnabled: readerDownloadsBackgroundEnabled,
+            readerDownloadsWifiOnly: readerDownloadsWifiOnly,
+            readerDownloadsParallelLimit: readerDownloadsParallelLimit,
+            autoUpdateServicesEnabled: autoUpdateServicesEnabled,
+            servicesAutoModeEnabled: servicesAutoModeEnabled,
+            servicesAutoSelectEpisodesEnabled: servicesAutoSelectEpisodesEnabled,
+            servicesAutoModeSourceIds: servicesAutoModeSourceIds,
+            servicesAutoModeSourceOrderIds: servicesAutoModeSourceOrderIds,
             servicesAutoModeQualityPreference: servicesAutoModeQualityPreference,
+            githubReleaseAutoCheckEnabled: githubReleaseAutoCheckEnabled,
+            githubReleaseUpdateAvailable: githubReleaseUpdateAvailable,
+            githubReleaseLatestVersion: githubReleaseLatestVersion,
+            githubReleaseURL: githubReleaseURL,
+            githubReleaseShowAlertPending: githubReleaseShowAlertPending,
+            githubReleaseLastPromptedVersion: githubReleaseLastPromptedVersion,
+            filterHorrorContent: filterHorrorContent,
+            selectedSimilarityAlgorithm: selectedSimilarityAlgorithm,
+            performanceModeEnabled: performanceModeEnabled,
+            performanceModeFastAnimeCatalogOverrides: performanceModeFastAnimeCatalogOverrides,
 
             collections: backupCollections,
             progressData: progressData,
@@ -1117,11 +2104,13 @@ class BackupManager {
             catalogs: catalogs,
             services: services,
             stremioAddons: stremioAddons,
+            nuvioPlugins: nuvioPlugins,
             mangaCollections: mangaCollections,
             mangaReadingProgress: mangaReadingProgress,
             mangaCatalogs: mangaCatalogs,
             kanzenModules: kanzenModules,
             aidokuState: aidokuState,
+            searchHistory: searchHistory,
             recommendationCache: RecommendationEngine.shared.getRecommendationCache(),
             userRatings: UserRatingManager.shared.getRatingsForBackup(),
             userRatingNotes: UserRatingManager.shared.getNotesForBackup()
@@ -1184,8 +2173,13 @@ class BackupManager {
         // Extract optional fields with defaults
         let version = json["version"] as? String ?? "1.0"
         let accentColor = BackupData.backupColorData(from: json["accentColor"])
+        let settingsGradientColor = BackupData.backupColorData(from: json["settingsGradientColor"])
+        let readerAccentColor = BackupData.backupColorData(from: json["readerAccentColor"])
+        let readerSettingsGradientColor = BackupData.backupColorData(from: json["readerSettingsGradientColor"])
         let tmdbLanguage = json["tmdbLanguage"] as? String ?? "en-US"
-        let selectedAppearance = json["selectedAppearance"] as? String ?? "system"
+        let selectedAppearance = BackupData.sanitizedAppearance(json["selectedAppearance"] as? String)
+        let readerSelectedAppearance = BackupData.sanitizedAppearance(json["readerSelectedAppearance"] as? String ?? selectedAppearance)
+        let readerGlobalAppearanceEnabled = json["readerGlobalAppearanceEnabled"] as? Bool ?? true
         let enableSubtitlesByDefault = json["enableSubtitlesByDefault"] as? Bool ?? false
         let defaultSubtitleLanguage = json["defaultSubtitleLanguage"] as? String ?? "eng"
         let playerSubtitleAppearanceEnabled = json["playerSubtitleAppearanceEnabled"] as? Bool
@@ -1201,9 +2195,14 @@ class BackupManager {
         let defaultPlaybackSpeed = json["defaultPlaybackSpeed"] as? Double ?? 1.0
         let holdSpeedPlayer = json["holdSpeedPlayer"] as? Double ?? 2.0
         let externalPlayer = json["externalPlayer"] as? String ?? "none"
+        let preferDownloadedMedia = json["preferDownloadedMedia"] as? Bool ?? false
         let alwaysLandscape = json["alwaysLandscape"] as? Bool ?? false
+        let aniSkipEnabled = json["aniSkipEnabled"] as? Bool ?? true
+        let introDBEnabled = json["introDBEnabled"] as? Bool ?? true
+        let introDBAppEnabled = json["introDBAppEnabled"] as? Bool ?? true
         let aniSkipAutoSkip = json["aniSkipAutoSkip"] as? Bool ?? false
         let skip85sEnabled = json["skip85sEnabled"] as? Bool ?? false
+        let skip85sAlwaysVisible = json["skip85sAlwaysVisible"] as? Bool ?? false
         let showNextEpisodeButton = json["showNextEpisodeButton"] as? Bool ?? true
         let showEpisodeBrowserButton = json["showEpisodeBrowserButton"] as? Bool ?? json["showVLCEpisodeBrowserButton"] as? Bool ?? true
         let showNextEpisodePosterButton = json["showNextEpisodePosterButton"] as? Bool ?? false
@@ -1211,6 +2210,7 @@ class BackupManager {
         let playerBrightnessGestureEnabled = json["playerBrightnessGestureEnabled"] as? Bool ?? json["vlcBrightnessGestureEnabled"] as? Bool ?? false
         let playerVolumeGestureEnabled = json["playerVolumeGestureEnabled"] as? Bool ?? json["vlcVolumeGestureEnabled"] as? Bool ?? false
         let playerTwoFingerTapPlayPauseEnabled = json["playerTwoFingerTapPlayPauseEnabled"] as? Bool ?? true
+        let playerCenterTapPlayPauseEnabled = json["playerCenterTapPlayPauseEnabled"] as? Bool ?? true
         let playerDoubleTapSeekEnabled = json["playerDoubleTapSeekEnabled"] as? Bool ?? json["vlcDoubleTapSeekEnabled"] as? Bool ?? true
         let playerDoubleTapSeekSeconds = json["playerDoubleTapSeekSeconds"] as? Double ?? json["vlcDoubleTapSeekSeconds"] as? Double ?? 10.0
         let playerOpenSubtitlesEnabled = json["playerOpenSubtitlesEnabled"] as? Bool ?? json["vlcOpenSubtitlesEnabled"] as? Bool ?? false
@@ -1222,6 +2222,17 @@ class BackupManager {
         let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(json["mpvMetalQualityProfile"] as? String)
         let mpvAppExitPictureInPictureEnabled = json["mpvAppExitPictureInPictureEnabled"] as? Bool ?? false
         let smartInAppPlayerChoosingEnabled = false
+        let experimentalFeaturesEnabled = json["experimentalFeaturesEnabled"] as? Bool ?? false
+        let experimentalFeaturesLastChangedAt = json["experimentalFeaturesLastChangedAt"] as? Double ?? 0
+        let experimentalMPVPreloadEnabled = json["experimentalMPVPreloadEnabled"] as? Bool ?? true
+        let experimentalMPVSmoothTransitionEnabled = json["experimentalMPVSmoothTransitionEnabled"] as? Bool ?? true
+        let experimentalMPVPreloadCellularEnabled = json["experimentalMPVPreloadCellularEnabled"] as? Bool ?? false
+        let experimentalMPVPreloadWifiLimitMB = max(32, min(BackupData.optionalInt(from: json["experimentalMPVPreloadWifiLimitMB"], defaultValue: 256), 2048))
+        let experimentalMPVPreloadCellularLimitMB = max(8, min(BackupData.optionalInt(from: json["experimentalMPVPreloadCellularLimitMB"], defaultValue: 32), 256))
+        let experimentalMPVShowRemainingTime = json["experimentalMPVShowRemainingTime"] as? Bool ?? true
+        let experimentalMPVPreciseProgress = json["experimentalMPVPreciseProgress"] as? Bool ?? true
+        let experimentalMPVIgnoreSpecialSubtitleStyles = json["experimentalMPVIgnoreSpecialSubtitleStyles"] as? Bool ?? false
+        let experimentalICloudSyncEnabled = json["experimentalICloudSyncEnabled"] as? Bool ?? false
 
         // Subtitle styling
         let subtitleForegroundColor = BackupData.backupColorData(from: json["subtitleForegroundColor"])
@@ -1232,10 +2243,19 @@ class BackupManager {
 
         // UI preferences
         let showKanzen = json["showKanzen"] as? Bool ?? false
+        let hideSplashScreen = json["hideSplashScreen"] as? Bool
         let kanzenAutoUpdateModules = json["kanzenAutoUpdateModules"] as? Bool ?? true
         let seasonMenu = json["seasonMenu"] as? Bool ?? false
         let horizontalEpisodeList = json["horizontalEpisodeList"] as? Bool ?? false
         let useClassicScheduleUI = json["useClassicScheduleUI"] as? Bool ?? false
+        let heroBannerCatalogId = BackupData.sanitizedNonEmptyString(json["heroBannerCatalogId"] as? String, defaultValue: "trending")
+        let heroBannerBehavior = BackupData.sanitizedHeroBannerBehavior(json["heroBannerBehavior"] as? String)
+        let atmosphereStyle = BackupData.sanitizedAtmosphereStyle(json["atmosphereStyle"] as? String)
+        let atmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(json["atmosphereSolidColorSource"] as? String)
+        let atmosphereSolidColor = BackupData.backupColorData(from: json["atmosphereSolidColor"])
+        let readerAtmosphereStyle = BackupData.sanitizedAtmosphereStyle(json["readerAtmosphereStyle"] as? String ?? atmosphereStyle)
+        let readerAtmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(json["readerAtmosphereSolidColorSource"] as? String ?? atmosphereSolidColorSource)
+        let readerAtmosphereSolidColor = BackupData.backupColorData(from: json["readerAtmosphereSolidColor"])
         let mediaDetailElementOrder = BackupData.sanitizedMediaDetailElementOrder(json["mediaDetailElementOrder"] as? String)
         let mediaDetailHiddenElements = BackupData.sanitizedMediaDetailHiddenElements(json["mediaDetailHiddenElements"] as? String)
         let readerDetailElementOrder = BackupData.sanitizedReaderDetailElementOrder(json["readerDetailElementOrder"] as? String)
@@ -1244,7 +2264,35 @@ class BackupManager {
         let mediaColumnsLandscape = json["mediaColumnsLandscape"] as? Int ?? 5
 
         // Manga / Reader
-        let readingMode = json["readingMode"] as? Int ?? 2
+        let readingMode = BackupData.optionalInt(from: json["readingMode"], defaultValue: 2)
+        let kanzenReaderMode = (json["kanzenReaderMode"] as? String).map(BackupData.sanitizedKanzenReaderMode)
+            ?? BackupData.kanzenReaderModeRawValue(forReadingMode: readingMode)
+        let kanzenReaderModeOverrides = BackupData.sanitizedKanzenReaderModeOverrides(json["kanzenReaderModeOverrides"] as? [String: String])
+        let readerDownsampleImages = json["readerDownsampleImages"] as? Bool ?? true
+        let readerCropBorders = json["readerCropBorders"] as? Bool ?? false
+        let readerDisableQuickActions = json["readerDisableQuickActions"] as? Bool ?? false
+        let readerDisableDoubleTap = json["readerDisableDoubleTap"] as? Bool ?? false
+        let readerLiveText = json["readerLiveText"] as? Bool ?? false
+        let readerHideBarsOnSwipe = json["readerHideBarsOnSwipe"] as? Bool ?? false
+        let readerBackgroundColor = BackupData.sanitizedReaderBackgroundColor(json["readerBackgroundColor"] as? String)
+        let readerOrientation = BackupData.sanitizedReaderOrientation(json["readerOrientation"] as? String)
+        let readerTapZones = BackupData.sanitizedReaderTapZones(json["readerTapZones"] as? String)
+        let readerInvertTapZones = json["readerInvertTapZones"] as? Bool ?? false
+        let readerAnimatePageTransitions = json["readerAnimatePageTransitions"] as? Bool ?? true
+        let readerUpscaleImages = json["readerUpscaleImages"] as? Bool ?? false
+        let readerUpscaleMaxHeight = BackupData.sanitizedReaderUpscaleMaxHeight(BackupData.optionalInt(from: json["readerUpscaleMaxHeight"], defaultValue: 2000))
+        let readerPagesToPreload = BackupData.sanitizedReaderPagesToPreload(BackupData.optionalInt(from: json["readerPagesToPreload"], defaultValue: 3))
+        let readerPagedPageLayout = BackupData.sanitizedReaderPagedPageLayout(json["readerPagedPageLayout"] as? String)
+        let readerPagedPageOffset = json["readerPagedPageOffset"] as? Bool ?? false
+        let readerPagedPageOffsetOverrides = BackupData.sanitizedReaderPagedPageOffsetOverrides(json["readerPagedPageOffsetOverrides"] as? [String: Bool])
+        let readerSplitWideImages = json["readerSplitWideImages"] as? Bool ?? false
+        let readerReverseSplitOrder = json["readerReverseSplitOrder"] as? Bool ?? false
+        let readerVerticalInfiniteScroll = json["readerVerticalInfiniteScroll"] as? Bool ?? true
+        let readerPillarbox = json["readerPillarbox"] as? Bool ?? false
+        let readerPillarboxAmount = BackupData.sanitizedReaderPillarboxAmount(BackupData.optionalDouble(from: json["readerPillarboxAmount"], defaultValue: 15))
+        let readerPillarboxOrientation = BackupData.sanitizedReaderPillarboxOrientation(json["readerPillarboxOrientation"] as? String)
+        let readerOrientationLockEnabled = json["readerOrientationLockEnabled"] as? Bool ?? false
+        let readerOrientationLockMask = BackupData.sanitizedReaderOrientationLockMask(json["readerOrientationLockMask"] as? String)
         let readerReadThresholdPercent = BackupData.sanitizedReaderReadThresholdPercent(json["readerReadThresholdPercent"] as? Double)
 
         // Novel Reader
@@ -1260,7 +2308,27 @@ class BackupManager {
         let autoClearCacheEnabled = json["autoClearCacheEnabled"] as? Bool ?? false
         let autoClearCacheThresholdMB = json["autoClearCacheThresholdMB"] as? Double ?? 500
         let highQualityThreshold = json["highQualityThreshold"] as? Double ?? 0.9
+        let backgroundHLSPipelineEnabled = json["backgroundHLSPipelineEnabled"] as? Bool ?? false
+        let readerDownloadsBackgroundEnabled = json["readerDownloadsBackgroundEnabled"] as? Bool ?? true
+        let readerDownloadsWifiOnly = json["readerDownloadsWifiOnly"] as? Bool ?? false
+        let readerDownloadsParallelLimit = BackupData.sanitizedReaderDownloadsParallelLimit(BackupData.optionalInt(from: json["readerDownloadsParallelLimit"], defaultValue: 2))
+        let autoUpdateServicesEnabled = json["autoUpdateServicesEnabled"] as? Bool ?? true
+        let servicesAutoModeEnabled = json["servicesAutoModeEnabled"] as? Bool ?? false
+        let servicesAutoSelectEpisodesEnabled = json["servicesAutoSelectEpisodesEnabled"] as? Bool ?? false
+        let servicesAutoModeSourceIds = BackupData.sanitizedStringList(BackupData.stringList(from: json["servicesAutoModeSourceIds"]))
+        let servicesAutoModeSourceOrderIds = BackupData.sanitizedStringList(BackupData.stringList(from: json["servicesAutoModeSourceOrderIds"]))
         let servicesAutoModeQualityPreference = AutoModeQualityPreference.sanitizedRawValue(json["servicesAutoModeQualityPreference"] as? String)
+        let githubReleaseAutoCheckEnabled = json["githubReleaseAutoCheckEnabled"] as? Bool ?? true
+        let githubReleaseUpdateAvailable = json["githubReleaseUpdateAvailable"] as? Bool ?? false
+        let githubReleaseLatestVersion = json["githubReleaseLatestVersion"] as? String ?? ""
+        let githubReleaseURL = json["githubReleaseURL"] as? String ?? ""
+        let githubReleaseShowAlertPending = json["githubReleaseShowAlertPending"] as? Bool ?? false
+        let githubReleaseLastPromptedVersion = json["githubReleaseLastPromptedVersion"] as? String ?? ""
+        let filterHorrorContent = json["filterHorror"] as? Bool ?? false
+        let selectedSimilarityAlgorithm = BackupData.sanitizedSimilarityAlgorithm(json["selectedSimilarityAlgorithm"] as? String)
+        let performanceModeEnabled = json["performanceModeEnabled"] as? Bool ?? false
+        let rawPerformanceModeOverrides = json["performanceModeFastAnimeCatalogOverrides"] as? [String: Bool] ?? [:]
+        let performanceModeFastAnimeCatalogOverrides = rawPerformanceModeOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
         
         // Try to decode complex objects individually
         var collections: [BackupCollection] = []
@@ -1333,6 +2401,13 @@ class BackupManager {
             stremioAddons = decodedAddons
         }
 
+        var nuvioPlugins: NuvioStoredPluginsState? = nil
+        if let pluginData = json["nuvioPlugins"] as? [String: Any],
+           let pluginJSON = try? JSONSerialization.data(withJSONObject: pluginData),
+           let decodedPlugins = try? JSONDecoder().decode(NuvioStoredPluginsState.self, from: pluginJSON) {
+            nuvioPlugins = decodedPlugins
+        }
+
         // Manga data
         var mangaCollections: [BackupMangaCollection] = []
         if let mangaColData = json["mangaCollections"] as? [[String: Any]] {
@@ -1381,6 +2456,8 @@ class BackupManager {
             aidokuState = decoded
         }
 
+        let searchHistory = BackupSearchHistory(jsonValue: json["searchHistory"])
+
         var recommendationCache: [TMDBSearchResult] = []
         if let recsData = json["recommendationCache"] as? [[String: Any]] {
             for dict in recsData {
@@ -1405,8 +2482,13 @@ class BackupManager {
             version: version,
             createdDate: createdDate,
             accentColor: accentColor,
+            settingsGradientColor: settingsGradientColor,
+            readerAccentColor: readerAccentColor,
             tmdbLanguage: tmdbLanguage,
             selectedAppearance: selectedAppearance,
+            readerSelectedAppearance: readerSelectedAppearance,
+            readerGlobalAppearanceEnabled: readerGlobalAppearanceEnabled,
+            readerSettingsGradientColor: readerSettingsGradientColor,
             enableSubtitlesByDefault: enableSubtitlesByDefault,
             defaultSubtitleLanguage: defaultSubtitleLanguage,
             playerSubtitleAppearanceEnabled: playerSubtitleAppearanceEnabled,
@@ -1418,9 +2500,14 @@ class BackupManager {
             defaultPlaybackSpeed: defaultPlaybackSpeed,
             holdSpeedPlayer: holdSpeedPlayer,
             externalPlayer: externalPlayer,
+            preferDownloadedMedia: preferDownloadedMedia,
             alwaysLandscape: alwaysLandscape,
+            aniSkipEnabled: aniSkipEnabled,
+            introDBEnabled: introDBEnabled,
+            introDBAppEnabled: introDBAppEnabled,
             aniSkipAutoSkip: aniSkipAutoSkip,
             skip85sEnabled: skip85sEnabled,
+            skip85sAlwaysVisible: skip85sAlwaysVisible,
             showNextEpisodeButton: showNextEpisodeButton,
             showEpisodeBrowserButton: showEpisodeBrowserButton,
             showNextEpisodePosterButton: showNextEpisodePosterButton,
@@ -1428,6 +2515,7 @@ class BackupManager {
             playerBrightnessGestureEnabled: playerBrightnessGestureEnabled,
             playerVolumeGestureEnabled: playerVolumeGestureEnabled,
             playerTwoFingerTapPlayPauseEnabled: playerTwoFingerTapPlayPauseEnabled,
+            playerCenterTapPlayPauseEnabled: playerCenterTapPlayPauseEnabled,
             playerDoubleTapSeekEnabled: playerDoubleTapSeekEnabled,
             playerDoubleTapSeekSeconds: playerDoubleTapSeekSeconds,
             playerOpenSubtitlesEnabled: playerOpenSubtitlesEnabled,
@@ -1438,16 +2526,36 @@ class BackupManager {
             mpvMetalQualityProfile: mpvMetalQualityProfile,
             mpvAppExitPictureInPictureEnabled: mpvAppExitPictureInPictureEnabled,
             smartInAppPlayerChoosingEnabled: smartInAppPlayerChoosingEnabled,
+            experimentalFeaturesEnabled: experimentalFeaturesEnabled,
+            experimentalFeaturesLastChangedAt: experimentalFeaturesLastChangedAt,
+            experimentalMPVPreloadEnabled: experimentalMPVPreloadEnabled,
+            experimentalMPVSmoothTransitionEnabled: experimentalMPVSmoothTransitionEnabled,
+            experimentalMPVPreloadCellularEnabled: experimentalMPVPreloadCellularEnabled,
+            experimentalMPVPreloadWifiLimitMB: experimentalMPVPreloadWifiLimitMB,
+            experimentalMPVPreloadCellularLimitMB: experimentalMPVPreloadCellularLimitMB,
+            experimentalMPVShowRemainingTime: experimentalMPVShowRemainingTime,
+            experimentalMPVPreciseProgress: experimentalMPVPreciseProgress,
+            experimentalMPVIgnoreSpecialSubtitleStyles: experimentalMPVIgnoreSpecialSubtitleStyles,
+            experimentalICloudSyncEnabled: experimentalICloudSyncEnabled,
             subtitleForegroundColor: subtitleForegroundColor,
             subtitleStrokeColor: subtitleStrokeColor,
             subtitleStrokeWidth: subtitleStrokeWidth,
             subtitleFontSize: subtitleFontSize,
             subtitleVerticalOffset: subtitleVerticalOffset,
             showKanzen: showKanzen,
+            hideSplashScreen: hideSplashScreen,
             kanzenAutoUpdateModules: kanzenAutoUpdateModules,
             seasonMenu: seasonMenu,
             horizontalEpisodeList: horizontalEpisodeList,
             useClassicScheduleUI: useClassicScheduleUI,
+            heroBannerCatalogId: heroBannerCatalogId,
+            heroBannerBehavior: heroBannerBehavior,
+            atmosphereStyle: atmosphereStyle,
+            atmosphereSolidColorSource: atmosphereSolidColorSource,
+            atmosphereSolidColor: atmosphereSolidColor,
+            readerAtmosphereStyle: readerAtmosphereStyle,
+            readerAtmosphereSolidColorSource: readerAtmosphereSolidColorSource,
+            readerAtmosphereSolidColor: readerAtmosphereSolidColor,
             mediaDetailElementOrder: mediaDetailElementOrder,
             mediaDetailHiddenElements: mediaDetailHiddenElements,
             readerDetailElementOrder: readerDetailElementOrder,
@@ -1455,6 +2563,33 @@ class BackupManager {
             mediaColumnsPortrait: mediaColumnsPortrait,
             mediaColumnsLandscape: mediaColumnsLandscape,
             readingMode: readingMode,
+            kanzenReaderMode: kanzenReaderMode,
+            kanzenReaderModeOverrides: kanzenReaderModeOverrides,
+            readerDownsampleImages: readerDownsampleImages,
+            readerCropBorders: readerCropBorders,
+            readerDisableQuickActions: readerDisableQuickActions,
+            readerDisableDoubleTap: readerDisableDoubleTap,
+            readerLiveText: readerLiveText,
+            readerHideBarsOnSwipe: readerHideBarsOnSwipe,
+            readerBackgroundColor: readerBackgroundColor,
+            readerOrientation: readerOrientation,
+            readerTapZones: readerTapZones,
+            readerInvertTapZones: readerInvertTapZones,
+            readerAnimatePageTransitions: readerAnimatePageTransitions,
+            readerUpscaleImages: readerUpscaleImages,
+            readerUpscaleMaxHeight: readerUpscaleMaxHeight,
+            readerPagesToPreload: readerPagesToPreload,
+            readerPagedPageLayout: readerPagedPageLayout,
+            readerPagedPageOffset: readerPagedPageOffset,
+            readerPagedPageOffsetOverrides: readerPagedPageOffsetOverrides,
+            readerSplitWideImages: readerSplitWideImages,
+            readerReverseSplitOrder: readerReverseSplitOrder,
+            readerVerticalInfiniteScroll: readerVerticalInfiniteScroll,
+            readerPillarbox: readerPillarbox,
+            readerPillarboxAmount: readerPillarboxAmount,
+            readerPillarboxOrientation: readerPillarboxOrientation,
+            readerOrientationLockEnabled: readerOrientationLockEnabled,
+            readerOrientationLockMask: readerOrientationLockMask,
             readerReadThresholdPercent: readerReadThresholdPercent,
             readerFontSize: readerFontSize,
             readerFontFamily: readerFontFamily,
@@ -1466,18 +2601,39 @@ class BackupManager {
             autoClearCacheEnabled: autoClearCacheEnabled,
             autoClearCacheThresholdMB: autoClearCacheThresholdMB,
             highQualityThreshold: highQualityThreshold,
+            backgroundHLSPipelineEnabled: backgroundHLSPipelineEnabled,
+            readerDownloadsBackgroundEnabled: readerDownloadsBackgroundEnabled,
+            readerDownloadsWifiOnly: readerDownloadsWifiOnly,
+            readerDownloadsParallelLimit: readerDownloadsParallelLimit,
+            autoUpdateServicesEnabled: autoUpdateServicesEnabled,
+            servicesAutoModeEnabled: servicesAutoModeEnabled,
+            servicesAutoSelectEpisodesEnabled: servicesAutoSelectEpisodesEnabled,
+            servicesAutoModeSourceIds: servicesAutoModeSourceIds,
+            servicesAutoModeSourceOrderIds: servicesAutoModeSourceOrderIds,
             servicesAutoModeQualityPreference: servicesAutoModeQualityPreference,
+            githubReleaseAutoCheckEnabled: githubReleaseAutoCheckEnabled,
+            githubReleaseUpdateAvailable: githubReleaseUpdateAvailable,
+            githubReleaseLatestVersion: githubReleaseLatestVersion,
+            githubReleaseURL: githubReleaseURL,
+            githubReleaseShowAlertPending: githubReleaseShowAlertPending,
+            githubReleaseLastPromptedVersion: githubReleaseLastPromptedVersion,
+            filterHorrorContent: filterHorrorContent,
+            selectedSimilarityAlgorithm: selectedSimilarityAlgorithm,
+            performanceModeEnabled: performanceModeEnabled,
+            performanceModeFastAnimeCatalogOverrides: performanceModeFastAnimeCatalogOverrides,
             collections: collections,
             progressData: progressData,
             trackerState: trackerState,
             catalogs: catalogs,
             services: services,
             stremioAddons: stremioAddons,
+            nuvioPlugins: nuvioPlugins,
             mangaCollections: mangaCollections,
             mangaReadingProgress: mangaReadingProgress,
             mangaCatalogs: mangaCatalogs,
             kanzenModules: kanzenModules,
             aidokuState: aidokuState,
+            searchHistory: searchHistory,
             recommendationCache: recommendationCache,
             userRatings: userRatings,
             userRatingNotes: userRatingNotes
@@ -1498,8 +2654,19 @@ class BackupManager {
         if let accentColorData = backup.accentColor {
             userDefaults.set(accentColorData, forKey: "accentColor")
         }
+        if let settingsGradientColor = backup.settingsGradientColor {
+            userDefaults.set(settingsGradientColor, forKey: "eclipseThemeGradientColor")
+        }
+        if let readerAccentColor = backup.readerAccentColor {
+            userDefaults.set(readerAccentColor, forKey: "readerAccentColor")
+        }
+        if let readerSettingsGradientColor = backup.readerSettingsGradientColor {
+            userDefaults.set(readerSettingsGradientColor, forKey: "readerThemeGradientColor")
+        }
         userDefaults.set(backup.tmdbLanguage, forKey: "tmdbLanguage")
-        userDefaults.set(backup.selectedAppearance, forKey: "selectedAppearance")
+        userDefaults.set(BackupData.sanitizedAppearance(backup.selectedAppearance), forKey: "selectedAppearance")
+        userDefaults.set(BackupData.sanitizedAppearance(backup.readerSelectedAppearance), forKey: "readerSelectedAppearance")
+        userDefaults.set(backup.readerGlobalAppearanceEnabled, forKey: "readerGlobalAppearanceEnabled")
         userDefaults.set(backup.enableSubtitlesByDefault, forKey: "enableSubtitlesByDefault")
         userDefaults.set(backup.defaultSubtitleLanguage, forKey: "defaultSubtitleLanguage")
         userDefaults.set(backup.playerSubtitleAppearanceEnabled, forKey: "playerSubtitleAppearanceEnabled")
@@ -1514,9 +2681,14 @@ class BackupManager {
         userDefaults.set(backup.defaultPlaybackSpeed, forKey: "defaultPlaybackSpeed")
         userDefaults.set(backup.holdSpeedPlayer, forKey: "holdSpeedPlayer")
         userDefaults.set(backup.externalPlayer, forKey: "externalPlayer")
+        userDefaults.set(backup.preferDownloadedMedia, forKey: "preferDownloadedMedia")
         userDefaults.set(backup.alwaysLandscape, forKey: "alwaysLandscape")
+        userDefaults.set(backup.aniSkipEnabled, forKey: "aniSkipEnabled")
+        userDefaults.set(backup.introDBEnabled, forKey: "introDBEnabled")
+        userDefaults.set(backup.introDBAppEnabled, forKey: "introDBAppEnabled")
         userDefaults.set(backup.aniSkipAutoSkip, forKey: "aniSkipAutoSkip")
         userDefaults.set(backup.skip85sEnabled, forKey: "skip85sEnabled")
+        userDefaults.set(backup.skip85sAlwaysVisible, forKey: "skip85sAlwaysVisible")
         userDefaults.set(backup.showNextEpisodeButton, forKey: "showNextEpisodeButton")
         userDefaults.set(backup.showEpisodeBrowserButton, forKey: "showEpisodeBrowserButton")
         userDefaults.set(backup.showNextEpisodePosterButton, forKey: "showNextEpisodePosterButton")
@@ -1524,16 +2696,28 @@ class BackupManager {
         userDefaults.set(backup.playerBrightnessGestureEnabled, forKey: "playerBrightnessGestureEnabled")
         userDefaults.set(backup.playerVolumeGestureEnabled, forKey: "playerVolumeGestureEnabled")
         userDefaults.set(backup.playerTwoFingerTapPlayPauseEnabled, forKey: "playerTwoFingerTapPlayPauseEnabled")
+        userDefaults.set(backup.playerCenterTapPlayPauseEnabled, forKey: "playerCenterTapPlayPauseEnabled")
         userDefaults.set(backup.playerDoubleTapSeekEnabled, forKey: "playerDoubleTapSeekEnabled")
         userDefaults.set(backup.playerDoubleTapSeekSeconds, forKey: "playerDoubleTapSeekSeconds")
         userDefaults.set(backup.playerOpenSubtitlesEnabled, forKey: "playerOpenSubtitlesEnabled")
         userDefaults.set(backup.playerOpenSubtitlesAutoFallbackEnabled, forKey: "playerOpenSubtitlesAutoFallbackEnabled")
-        userDefaults.set(false, forKey: "playerPerformanceOverlayEnabled")
+        userDefaults.set(backup.playerPerformanceOverlayEnabled, forKey: "playerPerformanceOverlayEnabled")
         userDefaults.set(backup.mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS")
         userDefaults.set(BackupData.sanitizedMPVRenderBackend(backup.mpvRenderBackend), forKey: "mpvRenderBackend")
         userDefaults.set(BackupData.sanitizedMPVMetalQualityProfile(backup.mpvMetalQualityProfile), forKey: "mpvMetalQualityProfile")
         userDefaults.set(backup.mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled")
-        userDefaults.set(false, forKey: "smartInAppPlayerChoosingEnabled")
+        userDefaults.set(backup.smartInAppPlayerChoosingEnabled, forKey: "smartInAppPlayerChoosingEnabled")
+        userDefaults.set(backup.experimentalFeaturesEnabled, forKey: ExperimentalFeatureState.enabledKey)
+        userDefaults.set(backup.experimentalFeaturesLastChangedAt, forKey: ExperimentalFeatureState.lastChangedAtKey)
+        userDefaults.set(backup.experimentalMPVPreloadEnabled, forKey: ExperimentalFeatureState.mpvPreloadEnabledKey)
+        userDefaults.set(backup.experimentalMPVSmoothTransitionEnabled, forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey)
+        userDefaults.set(backup.experimentalMPVPreloadCellularEnabled, forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
+        userDefaults.set(max(32, min(backup.experimentalMPVPreloadWifiLimitMB, 2048)), forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
+        userDefaults.set(max(8, min(backup.experimentalMPVPreloadCellularLimitMB, 256)), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
+        userDefaults.set(backup.experimentalMPVShowRemainingTime, forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
+        userDefaults.set(backup.experimentalMPVPreciseProgress, forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
+        userDefaults.set(backup.experimentalMPVIgnoreSpecialSubtitleStyles, forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
+        userDefaults.set(backup.experimentalICloudSyncEnabled && ExperimentalCloudSyncAvailability.current.isAvailable, forKey: ExperimentalFeatureState.iCloudSyncEnabledKey)
 
         // Subtitle styling
         if let fgColor = backup.subtitleForegroundColor {
@@ -1548,10 +2732,25 @@ class BackupManager {
 
         // UI preferences
         userDefaults.set(backup.showKanzen, forKey: "showKanzen")
+        if let hideSplashScreen = backup.hideSplashScreen {
+            userDefaults.set(hideSplashScreen, forKey: "hideSplashScreen")
+        }
         userDefaults.set(backup.kanzenAutoUpdateModules, forKey: "kanzenAutoUpdateModules")
         userDefaults.set(backup.seasonMenu, forKey: "seasonMenu")
         userDefaults.set(backup.horizontalEpisodeList, forKey: "horizontalEpisodeList")
         userDefaults.set(backup.useClassicScheduleUI, forKey: "useClassicScheduleUI")
+        userDefaults.set(BackupData.sanitizedNonEmptyString(backup.heroBannerCatalogId, defaultValue: "trending"), forKey: "heroBannerCatalogId")
+        userDefaults.set(BackupData.sanitizedHeroBannerBehavior(backup.heroBannerBehavior), forKey: "heroBannerBehavior")
+        userDefaults.set(BackupData.sanitizedAtmosphereStyle(backup.atmosphereStyle), forKey: "atmosphereStyle")
+        userDefaults.set(BackupData.sanitizedAtmosphereSolidColorSource(backup.atmosphereSolidColorSource), forKey: "atmosphereSolidColorSource")
+        if let atmosphereSolidColor = backup.atmosphereSolidColor {
+            userDefaults.set(atmosphereSolidColor, forKey: "atmosphereSolidColor")
+        }
+        userDefaults.set(BackupData.sanitizedAtmosphereStyle(backup.readerAtmosphereStyle), forKey: "readerAtmosphereStyle")
+        userDefaults.set(BackupData.sanitizedAtmosphereSolidColorSource(backup.readerAtmosphereSolidColorSource), forKey: "readerAtmosphereSolidColorSource")
+        if let readerAtmosphereSolidColor = backup.readerAtmosphereSolidColor {
+            userDefaults.set(readerAtmosphereSolidColor, forKey: "readerAtmosphereSolidColor")
+        }
         let restoredMediaDetailHiddenElements = BackupData.sanitizedMediaDetailHiddenElements(backup.mediaDetailHiddenElements)
         userDefaults.set(BackupData.sanitizedMediaDetailElementOrder(backup.mediaDetailElementOrder), forKey: MediaDetailElement.orderStorageKey)
         userDefaults.set(restoredMediaDetailHiddenElements, forKey: MediaDetailElement.hiddenStorageKey)
@@ -1563,6 +2762,38 @@ class BackupManager {
 
         // Manga / Reader
         userDefaults.set(backup.readingMode, forKey: "readingMode")
+        let restoredKanzenReaderMode = BackupData.sanitizedKanzenReaderMode(backup.kanzenReaderMode)
+        userDefaults.set(restoredKanzenReaderMode, forKey: "kanzenReaderMode")
+        BackupData.sanitizedKanzenReaderModeOverrides(backup.kanzenReaderModeOverrides).forEach { key, value in
+            userDefaults.set(value, forKey: "kanzenReaderMode.\(key)")
+        }
+        userDefaults.set(backup.readerDownsampleImages, forKey: "Reader.downsampleImages")
+        userDefaults.set(backup.readerCropBorders, forKey: "Reader.cropBorders")
+        userDefaults.set(backup.readerDisableQuickActions, forKey: "Reader.disableQuickActions")
+        userDefaults.set(backup.readerDisableDoubleTap, forKey: "Reader.disableDoubleTap")
+        userDefaults.set(backup.readerLiveText, forKey: "Reader.liveText")
+        userDefaults.set(backup.readerHideBarsOnSwipe, forKey: "Reader.hideBarsOnSwipe")
+        userDefaults.set(BackupData.sanitizedReaderBackgroundColor(backup.readerBackgroundColor), forKey: "Reader.backgroundColor")
+        userDefaults.set(BackupData.sanitizedReaderOrientation(backup.readerOrientation), forKey: "Reader.orientation")
+        userDefaults.set(BackupData.sanitizedReaderTapZones(backup.readerTapZones), forKey: "Reader.tapZones")
+        userDefaults.set(backup.readerInvertTapZones, forKey: "Reader.invertTapZones")
+        userDefaults.set(backup.readerAnimatePageTransitions, forKey: "Reader.animatePageTransitions")
+        userDefaults.set(backup.readerUpscaleImages, forKey: "Reader.upscaleImages")
+        userDefaults.set(BackupData.sanitizedReaderUpscaleMaxHeight(backup.readerUpscaleMaxHeight), forKey: "Reader.upscaleMaxHeight")
+        userDefaults.set(BackupData.sanitizedReaderPagesToPreload(backup.readerPagesToPreload), forKey: "Reader.pagesToPreload")
+        userDefaults.set(BackupData.sanitizedReaderPagedPageLayout(backup.readerPagedPageLayout), forKey: "Reader.pagedPageLayout")
+        userDefaults.set(backup.readerPagedPageOffset, forKey: "Reader.pagedPageOffset")
+        BackupData.sanitizedReaderPagedPageOffsetOverrides(backup.readerPagedPageOffsetOverrides).forEach { key, value in
+            userDefaults.set(value, forKey: "Reader.pagedPageOffset.\(key)")
+        }
+        userDefaults.set(backup.readerSplitWideImages, forKey: "Reader.splitWideImages")
+        userDefaults.set(backup.readerReverseSplitOrder, forKey: "Reader.reverseSplitOrder")
+        userDefaults.set(backup.readerVerticalInfiniteScroll, forKey: "Reader.verticalInfiniteScroll")
+        userDefaults.set(backup.readerPillarbox, forKey: "Reader.pillarbox")
+        userDefaults.set(BackupData.sanitizedReaderPillarboxAmount(backup.readerPillarboxAmount), forKey: "Reader.pillarboxAmount")
+        userDefaults.set(BackupData.sanitizedReaderPillarboxOrientation(backup.readerPillarboxOrientation), forKey: "Reader.pillarboxOrientation")
+        userDefaults.set(backup.readerOrientationLockEnabled, forKey: "readerOrientationLockEnabled")
+        userDefaults.set(BackupData.sanitizedReaderOrientationLockMask(backup.readerOrientationLockMask), forKey: "readerOrientationLockMask")
         userDefaults.set(BackupData.sanitizedReaderReadThresholdPercent(backup.readerReadThresholdPercent), forKey: "readerReadThresholdPercent")
 
         // Novel Reader
@@ -1578,12 +2809,43 @@ class BackupManager {
         userDefaults.set(backup.autoClearCacheEnabled, forKey: "autoClearCacheEnabled")
         userDefaults.set(backup.autoClearCacheThresholdMB, forKey: "autoClearCacheThresholdMB")
         userDefaults.set(backup.highQualityThreshold, forKey: "highQualityThreshold")
+        userDefaults.set(backup.backgroundHLSPipelineEnabled, forKey: "backgroundHLSPipelineEnabled")
+        userDefaults.set(backup.readerDownloadsBackgroundEnabled, forKey: "readerDownloadsBackgroundEnabled")
+        userDefaults.set(backup.readerDownloadsWifiOnly, forKey: "readerDownloadsWifiOnly")
+        userDefaults.set(BackupData.sanitizedReaderDownloadsParallelLimit(backup.readerDownloadsParallelLimit), forKey: "readerDownloadsParallelLimit")
+        userDefaults.set(backup.autoUpdateServicesEnabled, forKey: "autoUpdateServicesEnabled")
+        userDefaults.set(backup.servicesAutoModeEnabled, forKey: "servicesAutoModeEnabled")
+        userDefaults.set(backup.servicesAutoSelectEpisodesEnabled, forKey: "servicesAutoSelectEpisodesEnabled")
+        let restoredAutoModeSourceIds = BackupData.sanitizedStringList(backup.servicesAutoModeSourceIds)
+        let restoredAutoModeSourceIdSet = Set(restoredAutoModeSourceIds)
+        let orderedAutoModeSourceIds = BackupData.sanitizedStringList(backup.servicesAutoModeSourceOrderIds)
+            .filter { restoredAutoModeSourceIdSet.contains($0) }
+        let restoredAutoModeSourceOrderIds = orderedAutoModeSourceIds + restoredAutoModeSourceIds.filter { !orderedAutoModeSourceIds.contains($0) }
+        userDefaults.set(restoredAutoModeSourceIds, forKey: "servicesAutoModeSourceIds")
+        userDefaults.set(restoredAutoModeSourceOrderIds, forKey: "servicesAutoModeSourceOrderIds")
         userDefaults.set(AutoModeQualityPreference.sanitizedRawValue(backup.servicesAutoModeQualityPreference), forKey: AutoModeQualityPreference.storageKey)
+        userDefaults.set(backup.githubReleaseAutoCheckEnabled, forKey: "githubReleaseAutoCheckEnabled")
+        userDefaults.set(backup.githubReleaseUpdateAvailable, forKey: "githubReleaseUpdateAvailable")
+        userDefaults.set(backup.githubReleaseLatestVersion, forKey: "githubReleaseLatestVersion")
+        userDefaults.set(backup.githubReleaseURL, forKey: "githubReleaseURL")
+        userDefaults.set(backup.githubReleaseShowAlertPending, forKey: "githubReleaseShowAlertPending")
+        userDefaults.set(backup.githubReleaseLastPromptedVersion, forKey: "githubReleaseLastPromptedVersion")
+        userDefaults.set(backup.filterHorrorContent, forKey: "filterHorror")
+        userDefaults.set(BackupData.sanitizedSimilarityAlgorithm(backup.selectedSimilarityAlgorithm), forKey: "selectedSimilarityAlgorithm")
+        userDefaults.set(backup.performanceModeEnabled, forKey: PerformanceModeSettings.enabledKey)
+        PerformanceModeSettings.fastAnimeCatalogOverrides = backup.performanceModeFastAnimeCatalogOverrides
+        if let searchHistoryData = try? JSONEncoder().encode(backup.searchHistory.queries) {
+            userDefaults.set(searchHistoryData, forKey: "searchHistory")
+        }
+        TMDBContentFilter.shared.filterHorror = backup.filterHorrorContent
+        AlgorithmManager.shared.selectedAlgorithm = SimilarityAlgorithm(rawValue: BackupData.sanitizedSimilarityAlgorithm(backup.selectedSimilarityAlgorithm)) ?? .hybrid
         
         // Reload Settings singleton to pick up changes
         let settings = Settings.shared
+        let theme = EclipseTheme.shared
         DispatchQueue.main.async {
             settings.objectWillChange.send()
+            theme.objectWillChange.send()
         }
         
         // Restore collections
@@ -1608,6 +2870,7 @@ class BackupManager {
         
         // Restore catalogs (merge to preserve new defaults like widget catalogs)
         let catalogManager = CatalogManager.shared
+        catalogManager.setPerformanceModeEnabled(backup.performanceModeEnabled)
         if !backup.catalogs.isEmpty {
             var merged = backup.catalogs
             let existingIds = Set(merged.map { $0.id })
@@ -1665,6 +2928,12 @@ class BackupManager {
             Task { @MainActor in
                 StremioAddonManager.shared.loadAddons()
             }
+        }
+
+        // Restore Nuvio plugins only when the backup explicitly contains this field.
+        // Older backups did not know about plugins, so they must not wipe current plugin repositories.
+        if let nuvioPlugins = backup.nuvioPlugins {
+            NuvioPluginManager.restorePersistedBackupState(nuvioPlugins)
         }
 
         // Restore manga library collections

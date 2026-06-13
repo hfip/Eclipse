@@ -171,6 +171,38 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
     }
 
+    @Published var experimentalMPVPreloadEnabled: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVPreloadEnabled, forKey: ExperimentalFeatureState.mpvPreloadEnabledKey) }
+    }
+
+    @Published var experimentalMPVSmoothTransitionEnabled: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVSmoothTransitionEnabled, forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) }
+    }
+
+    @Published var experimentalMPVPreloadCellularEnabled: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVPreloadCellularEnabled, forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey) }
+    }
+
+    @Published var experimentalMPVPreloadWifiLimitMB: Int {
+        didSet { UserDefaults.standard.set(max(32, min(experimentalMPVPreloadWifiLimitMB, 2048)), forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey) }
+    }
+
+    @Published var experimentalMPVPreloadCellularLimitMB: Int {
+        didSet { UserDefaults.standard.set(max(8, min(experimentalMPVPreloadCellularLimitMB, 256)), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey) }
+    }
+
+    @Published var experimentalMPVShowRemainingTime: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVShowRemainingTime, forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey) }
+    }
+
+    @Published var experimentalMPVPreciseProgress: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVPreciseProgress, forKey: ExperimentalFeatureState.mpvPreciseProgressKey) }
+    }
+
+    @Published var experimentalMPVIgnoreSpecialSubtitleStyles: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVIgnoreSpecialSubtitleStyles, forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey) }
+    }
+
     private static func migratedBool(genericKey: String, legacyKey: String, defaultValue: Bool) -> Bool {
         if UserDefaults.standard.object(forKey: genericKey) == nil {
             let value = UserDefaults.standard.object(forKey: legacyKey) as? Bool ?? defaultValue
@@ -288,6 +320,18 @@ final class PlayerSettingsStore: ObservableObject {
         let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
         self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
         self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
+
+        ExperimentalFeatureState.registerDefaults()
+        self.experimentalMPVPreloadEnabled = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey)
+        self.experimentalMPVSmoothTransitionEnabled = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey)
+        self.experimentalMPVPreloadCellularEnabled = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
+        let wifiLimit = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
+        self.experimentalMPVPreloadWifiLimitMB = wifiLimit > 0 ? wifiLimit : 256
+        let cellularLimit = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
+        self.experimentalMPVPreloadCellularLimitMB = cellularLimit > 0 ? cellularLimit : 32
+        self.experimentalMPVShowRemainingTime = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
+        self.experimentalMPVPreciseProgress = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
+        self.experimentalMPVIgnoreSpecialSubtitleStyles = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
     }
 }
 
@@ -838,6 +882,13 @@ struct PlayerSettingsView: View {
                         Label("Skip Segments", systemImage: "forward.fill")
                     }
 
+                    if ExperimentalFeatureState.isEnabledAtLaunch, store.inAppPlayer == .mpv, store.externalPlayer == .none {
+                        experimentalMPVDisclosure
+                    } else if ExperimentalFeatureState.isEnabledAtLaunch {
+                        Label("Experimental features require MPV as the default in-app player.", systemImage: "lock.fill")
+                            .foregroundColor(.secondary)
+                    }
+
                     DisclosureGroup {
                         settingsToggleRow(
                             title: "Episode Browser Button",
@@ -893,6 +944,11 @@ struct PlayerSettingsView: View {
                         Label("Next Episode", systemImage: "forward.end.fill")
                     }
                 }
+            } else if ExperimentalFeatureState.isEnabledAtLaunch {
+                Section(header: Text("Experimental Player Features"), footer: Text("Select MPV as the in-app player and keep external player set to Default to use experimental playback features.")) {
+                    Label("Requires MPV", systemImage: "lock.fill")
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .navigationTitle("Media Player")
@@ -943,6 +999,82 @@ struct PlayerSettingsView: View {
 
             Toggle("", isOn: binding)
                 .tint(accentColorManager.currentAccentColor)
+        }
+    }
+
+    private var experimentalMPVDisclosure: some View {
+        DisclosureGroup {
+            settingsToggleRow(
+                title: "Partial Preload",
+                detail: "Cache a bounded starter segment for compatible HTTP streams after playback is selected.",
+                binding: $store.experimentalMPVPreloadEnabled
+            )
+
+            settingsToggleRow(
+                title: "Smooth Next Episode",
+                detail: "Stage the next episode request near the end of MPV playback and fall back to the current flow when unavailable.",
+                binding: $store.experimentalMPVSmoothTransitionEnabled
+            )
+
+            settingsToggleRow(
+                title: "Allow Cellular Preload",
+                detail: "Keep off for sideloaded or metered setups unless you explicitly want small starter preloads on cellular.",
+                binding: $store.experimentalMPVPreloadCellularEnabled
+            )
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wi-Fi Cache Limit")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text("\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV starter preload cache.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Stepper("", value: $store.experimentalMPVPreloadWifiLimitMB, in: 32...2048, step: 32)
+                    .frame(width: 100)
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cellular Cache Limit")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text("\(store.experimentalMPVPreloadCellularLimitMB) MB for MPV starter preload cache.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Stepper("", value: $store.experimentalMPVPreloadCellularLimitMB, in: 8...256, step: 8)
+                    .frame(width: 100)
+            }
+
+            settingsToggleRow(
+                title: "Show Remaining Time",
+                detail: "Use remaining time in experimental MPV player controls where supported.",
+                binding: $store.experimentalMPVShowRemainingTime
+            )
+
+            settingsToggleRow(
+                title: "Precise Progress Adjustment",
+                detail: "Use finer slider updates for MPV progress adjustments.",
+                binding: $store.experimentalMPVPreciseProgress
+            )
+
+            settingsToggleRow(
+                title: "Ignore Special Subtitle Styles",
+                detail: "Prefer app subtitle styling over embedded ASS effects when MPV exposes compatible tracks.",
+                binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles
+            )
+        } label: {
+            Label("Experimental MPV", systemImage: "sparkles")
         }
     }
 

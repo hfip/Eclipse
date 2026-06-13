@@ -45,9 +45,9 @@ final class HomeViewModel: ObservableObject {
         hasCompletedInitialLoad = false
         
         activeLoadTask = Task {
-            let enabledCatalogSnapshot = await MainActor.run {
+            let (enabledCatalogSnapshot, performanceModeEnabled) = await MainActor.run {
                 StremioAddonManager.shared.loadAddons()
-                return catalogManager.getEnabledCatalogs()
+                return (catalogManager.getEnabledCatalogs(), catalogManager.performanceModeEnabled)
             }
             let enabledCatalogIds = Set(enabledCatalogSnapshot.map(\.id))
             let needsTopRatedTVShows = enabledCatalogIds.contains("topRatedTVShows") || enabledCatalogIds.contains("bestTVShows")
@@ -114,10 +114,19 @@ final class HomeViewModel: ObservableObject {
                 enabledCatalogIds: enabledCatalogIds,
                 needsTopRatedAnime: needsTopRatedAnime
             )
-            let animeCatalogs = await self.loadAnimeCatalogs(
-                tmdbService: tmdbService,
-                requiredKinds: requiredAnimeCatalogs
-            )
+            let animeCatalogs: [AniListService.AniListCatalogKind: [TMDBSearchResult]]
+            if performanceModeEnabled {
+                animeCatalogs = await self.loadFastAnimeCatalogs(
+                    tmdbService: tmdbService,
+                    contentFilter: contentFilter,
+                    requiredKinds: requiredAnimeCatalogs
+                )
+            } else {
+                animeCatalogs = await self.loadAnimeCatalogs(
+                    tmdbService: tmdbService,
+                    requiredKinds: requiredAnimeCatalogs
+                )
+            }
             guard !Task.isCancelled else { return }
             let trendingAnime = animeCatalogs[.trending] ?? []
             let popularAnime = animeCatalogs[.popular] ?? []
@@ -186,6 +195,21 @@ final class HomeViewModel: ObservableObject {
             if !stremioCatalogs.isEmpty {
                 await MainActor.run {
                     self.catalogResults.merge(stremioCatalogs) { _, stremio in stremio }
+                    self.hasLoadedContent = true
+                    self.errorMessage = nil
+                    self.applyHeroBannerSelection()
+                }
+            }
+
+            let traktCatalogs = await self.loadTraktCatalogs(
+                enabledCatalogs: enabledCatalogSnapshot,
+                tmdbService: tmdbService,
+                contentFilter: contentFilter
+            )
+            guard !Task.isCancelled else { return }
+            if !traktCatalogs.isEmpty {
+                await MainActor.run {
+                    self.catalogResults.merge(traktCatalogs) { _, trakt in trakt }
                     self.hasLoadedContent = true
                     self.errorMessage = nil
                     self.applyHeroBannerSelection()
@@ -262,6 +286,48 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    private func loadFastAnimeCatalogs(
+        tmdbService: TMDBService,
+        contentFilter: TMDBContentFilter,
+        requiredKinds: Set<AniListService.AniListCatalogKind>
+    ) async -> [AniListService.AniListCatalogKind: [TMDBSearchResult]] {
+        guard !requiredKinds.isEmpty else { return [:] }
+
+        var loaded: [AniListService.AniListCatalogKind: [TMDBSearchResult]] = [:]
+        for kind in requiredKinds {
+            guard let fastKind = fastAnimeCatalogKind(for: kind) else { continue }
+            let items: [TMDBSearchResult] = await loadHomeCatalog("fastAnime:\(kind)") {
+                try await tmdbService.getFastAnimeCatalog(kind: fastKind, limit: 20)
+            }
+            let filtered = contentFilter.filterSearchResults(items)
+            if !filtered.isEmpty {
+                loaded[kind] = filtered
+            }
+        }
+
+        let loadedSummary = loaded
+            .map { "\(String(describing: $0.key))=\($0.value.count)" }
+            .sorted()
+            .joined(separator: ",")
+        Logger.shared.log("HomeViewModel: performance anime catalogs loaded \(loadedSummary.isEmpty ? "none" : loadedSummary)", type: "TMDB")
+        return loaded
+    }
+
+    private func fastAnimeCatalogKind(for kind: AniListService.AniListCatalogKind) -> TMDBService.FastAnimeCatalogKind? {
+        switch kind {
+        case .trending:
+            return .trending
+        case .popular:
+            return .popular
+        case .topRated:
+            return .topRated
+        case .airing:
+            return .airing
+        case .upcoming:
+            return .upcoming
+        }
+    }
+
     private func loadStremioCatalogs(
         enabledCatalogs: [Catalog],
         tmdbService: TMDBService,
@@ -289,6 +355,36 @@ final class HomeViewModel: ObservableObject {
             .sorted()
             .joined(separator: ",")
         Logger.shared.log("HomeViewModel: Stremio catalogs loaded \(summary.isEmpty ? "none" : summary)", type: "Stremio")
+        return loaded
+    }
+
+    private func loadTraktCatalogs(
+        enabledCatalogs: [Catalog],
+        tmdbService: TMDBService,
+        contentFilter: TMDBContentFilter
+    ) async -> [String: [TMDBSearchResult]] {
+        let catalogs = enabledCatalogs.filter { $0.source == .trakt }
+        guard !catalogs.isEmpty else { return [:] }
+
+        var loaded: [String: [TMDBSearchResult]] = [:]
+        for catalog in catalogs {
+            if Task.isCancelled { break }
+            let items = await TrackerManager.shared.fetchTraktPublicListCatalogItems(
+                for: catalog,
+                tmdbService: tmdbService,
+                limit: 15
+            )
+            let filtered = contentFilter.filterSearchResults(items)
+            if !filtered.isEmpty {
+                loaded[catalog.id] = filtered
+            }
+        }
+
+        let summary = loaded
+            .map { "\($0.key)=\($0.value.count)" }
+            .sorted()
+            .joined(separator: ",")
+        Logger.shared.log("HomeViewModel: Trakt public catalogs loaded \(summary.isEmpty ? "none" : summary)", type: "Tracker")
         return loaded
     }
 

@@ -6,16 +6,38 @@
 //
 
 import SwiftUI
+import Foundation
 import Kingfisher
 
 struct TrackersSettingsView: View {
+    private struct TraktListSortOption: Identifiable {
+        let id: String
+        let name: String
+    }
+
     @StateObject private var trackerManager = TrackerManager.shared
+    @StateObject private var catalogManager = CatalogManager.shared
     @State private var showImportConfirmation = false
     @State private var showMALImportConfirmation = false
     @State private var showTraktImportConfirmation = false
     @State private var showSyncTools = false
+    @State private var traktListInput = ""
+    @State private var traktListName = ""
+    @State private var traktListMediaType = "shows"
+    @State private var traktListSortBy = "rank"
+    @State private var traktListSortHow = "asc"
+    @State private var traktListError: String?
 
     @State private var scrollOffset: CGFloat = 0
+
+    private let traktListSortOptions: [TraktListSortOption] = [
+        TraktListSortOption(id: "rank", name: "List Rank"),
+        TraktListSortOption(id: "added", name: "Recently Added"),
+        TraktListSortOption(id: "title", name: "Title"),
+        TraktListSortOption(id: "released", name: "Release Date"),
+        TraktListSortOption(id: "popularity", name: "Popularity"),
+        TraktListSortOption(id: "votes", name: "Votes")
+    ]
 
     var body: some View {
         ScrollView {
@@ -128,6 +150,12 @@ struct TrackersSettingsView: View {
                         .padding()
                         .background(Color.gray.opacity(0.2))
                         .cornerRadius(12)
+
+                        traktFeatureSettingsSection
+
+                        if trackerManager.trackerState.traktPublicCatalogsEnabled {
+                            traktPublicCatalogsSection
+                        }
 
                         traktImportSection
                     }
@@ -350,6 +378,239 @@ struct TrackersSettingsView: View {
         .padding()
         .background(Color.gray.opacity(0.1))
         .cornerRadius(12)
+    }
+
+    @ViewBuilder
+    private var traktFeatureSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Trakt Features")
+                .font(.headline)
+                .foregroundColor(.white)
+
+            traktToggleRow(
+                title: "Public List Catalogs",
+                subtitle: "Add Trakt public lists to the Home catalog system.",
+                isOn: Binding(
+                    get: { trackerManager.trackerState.traktPublicCatalogsEnabled },
+                    set: { trackerManager.setTraktPublicCatalogsEnabled($0) }
+                )
+            )
+
+            traktToggleRow(
+                title: "Detail Reviews",
+                subtitle: "Show non-spoiler Trakt comments and reviews on media detail pages.",
+                isOn: Binding(
+                    get: { trackerManager.trackerState.traktCommentsEnabled },
+                    set: { trackerManager.setTraktCommentsEnabled($0) }
+                )
+            )
+
+            traktToggleRow(
+                title: "Detail Related",
+                subtitle: "Show Trakt related recommendations on media detail pages.",
+                isOn: Binding(
+                    get: { trackerManager.trackerState.traktRelatedEnabled },
+                    set: { trackerManager.setTraktRelatedEnabled($0) }
+                )
+            )
+        }
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
+    }
+
+    @ViewBuilder
+    private var traktPublicCatalogsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Trakt Public Catalogs")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    Text("Added lists appear in Catalogs for ordering and per-row toggles.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+            }
+
+            if !catalogManager.traktPublicListCatalogs.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(catalogManager.traktPublicListCatalogs) { catalog in
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(catalog.name)
+                                    .font(.subheadline)
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+
+                                if let listIdentifier = catalog.traktListDisplayIdentifier {
+                                    let mediaType = Catalog.normalizedTraktListMediaType(catalog.traktListMediaType) == "movies" ? "Movies" : "Shows"
+                                    Text("List \(listIdentifier) - \(mediaType)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
+                            Spacer()
+
+                            Button(role: .destructive) {
+                                catalogManager.removeTraktPublicListCatalog(id: catalog.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                                    .frame(width: 32, height: 32)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(Color.white.opacity(0.06))
+                        .cornerRadius(10)
+                    }
+                }
+            }
+
+            VStack(spacing: 10) {
+                TextField("Trakt list URL or ID", text: $traktListInput)
+                    .textFieldStyle(.roundedBorder)
+
+                TextField("Catalog name (optional)", text: $traktListName)
+                    .textFieldStyle(.roundedBorder)
+
+                HStack {
+                    Picker("Type", selection: $traktListMediaType) {
+                        Text("Shows").tag("shows")
+                        Text("Movies").tag("movies")
+                    }
+                    .pickerStyle(.menu)
+
+                    Spacer()
+
+                    Picker("Sort", selection: $traktListSortBy) {
+                        ForEach(traktListSortOptions) { option in
+                            Text(option.name).tag(option.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                HStack {
+                    Picker("Direction", selection: $traktListSortHow) {
+                        Text("Ascending").tag("asc")
+                        Text("Descending").tag("desc")
+                    }
+                    .pickerStyle(.segmented)
+
+                    Button(action: addTraktPublicCatalog) {
+                        Label("Add", systemImage: "plus")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.blue)
+                            .cornerRadius(8)
+                    }
+                }
+
+                if let traktListError {
+                    Text(traktListError)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
+    }
+
+    @ViewBuilder
+    private func traktToggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+        }
+    }
+
+    private func addTraktPublicCatalog() {
+        guard let parsedList = parseTraktList(from: traktListInput) else {
+            traktListError = "Enter a Trakt public list URL, username/list slug URL, or numeric list ID."
+            return
+        }
+
+        catalogManager.addTraktPublicListCatalog(
+            name: traktListName,
+            listId: parsedList.id,
+            listUser: parsedList.user,
+            listSlug: parsedList.slug,
+            mediaType: traktListMediaType,
+            sortBy: traktListSortBy,
+            sortHow: traktListSortHow
+        )
+        traktListInput = ""
+        traktListName = ""
+        traktListError = nil
+    }
+
+    private func parseTraktList(from input: String) -> ParsedTraktList? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let components = URLComponents(string: trimmed),
+           let parsed = parseTraktUserSlugPath(components.path) {
+            return parsed
+        }
+
+        if let parsed = parseTraktUserSlugPath(trimmed) {
+            return parsed
+        }
+
+        let numericId = trimmed
+            .split(whereSeparator: { !$0.isNumber })
+            .compactMap { Int($0) }
+            .last
+        return numericId.map { ParsedTraktList(id: $0, user: nil, slug: nil) }
+    }
+
+    private func parseTraktUserSlugPath(_ path: String) -> ParsedTraktList? {
+        let parts = path
+            .split(separator: "/")
+            .map(String.init)
+
+        guard let usersIndex = parts.firstIndex(where: { $0.lowercased() == "users" }),
+              usersIndex + 3 < parts.count,
+              parts[usersIndex + 2].lowercased() == "lists" else {
+            return nil
+        }
+
+        let user = parts[usersIndex + 1]
+        let slug = parts[usersIndex + 3]
+        guard !user.isEmpty, !slug.isEmpty else { return nil }
+        return ParsedTraktList(id: nil, user: user, slug: slug)
+    }
+
+    private struct ParsedTraktList {
+        let id: Int?
+        let user: String?
+        let slug: String?
     }
 
     @ViewBuilder

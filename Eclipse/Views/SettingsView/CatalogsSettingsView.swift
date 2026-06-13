@@ -26,6 +26,12 @@ struct CatalogsSettingsView: View {
                                 Text(sourceText(for: catalogManager.catalogs[index]))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+
+                                if catalogManager.isCatalogLockedByPerformanceMode(catalogManager.catalogs[index]) {
+                                    Image(systemName: "lock.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
                                 
                                 if catalogManager.catalogs[index].displayStyle != .standard {
                                     Text("\u{00B7} \(catalogManager.catalogs[index].displayStyle.rawValue.capitalized)")
@@ -38,7 +44,7 @@ struct CatalogsSettingsView: View {
                         Spacer()
                         
                         Toggle("", isOn: Binding(
-                            get: { catalogManager.catalogs[index].isEnabled },
+                            get: { catalogManager.isCatalogEffectivelyEnabled(catalogManager.catalogs[index]) },
                             set: { _ in catalogManager.toggleCatalog(id: catalogManager.catalogs[index].id) }
                         ))
                         .tint(accentColorManager.currentAccentColor)
@@ -58,10 +64,18 @@ struct CatalogsSettingsView: View {
     }
 
     private func sourceText(for catalog: Catalog) -> String {
+        if catalogManager.isCatalogLockedByPerformanceMode(catalog) {
+            return "Source: Performance Mode - AniList locked"
+        }
         if catalog.source == .stremio,
            let addonName = catalog.stremioAddonName,
            !addonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Source: Stremio · \(addonName)"
+        }
+        if catalog.source == .trakt,
+           let listIdentifier = catalog.traktListDisplayIdentifier {
+            let mediaType = Catalog.normalizedTraktListMediaType(catalog.traktListMediaType) == "movies" ? "Movies" : "Shows"
+            return "Source: Trakt - List \(listIdentifier) - \(mediaType)"
         }
         return "Source: \(catalog.source.rawValue)"
     }

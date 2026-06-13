@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import dev.soupy.eclipse.android.core.model.BackupData
 import dev.soupy.eclipse.android.core.model.BackupDocument
+import dev.soupy.eclipse.android.core.model.SearchHistorySnapshot
 import dev.soupy.eclipse.android.core.model.ServiceBackup
 import dev.soupy.eclipse.android.core.model.StremioAddonBackup
 import dev.soupy.eclipse.android.core.model.hasBackupData
@@ -11,6 +12,7 @@ import dev.soupy.eclipse.android.core.network.EclipseJson
 import dev.soupy.eclipse.android.core.storage.BackupFileStore
 import dev.soupy.eclipse.android.core.storage.LoggerStore
 import dev.soupy.eclipse.android.core.storage.MangaStore
+import dev.soupy.eclipse.android.core.storage.SearchHistoryStore
 import dev.soupy.eclipse.android.core.storage.ServiceDao
 import dev.soupy.eclipse.android.core.storage.ServiceEntity
 import dev.soupy.eclipse.android.core.storage.SettingsStore
@@ -34,6 +36,7 @@ class BackupRepository(
     private val backupFileStore: BackupFileStore,
     private val settingsStore: SettingsStore,
     private val mangaStore: MangaStore,
+    private val searchHistoryStore: SearchHistoryStore,
     private val sourceHealthRepository: SourceHealthRepository,
     private val loggerStore: LoggerStore,
     private val serviceDao: ServiceDao,
@@ -79,6 +82,7 @@ class BackupRepository(
         val services = serviceDao.observeAll().first()
         val addons = stremioAddonDao.observeAll().first()
         val manga = mangaStore.read()
+        val searchHistory = searchHistoryStore.read()
         val sourceHealth = sourceHealthRepository.exportSnapshot()
         val appLogs = loggerStore.read()
         val exportedProgress = progressRepository.exportForBackup(
@@ -142,6 +146,7 @@ class BackupRepository(
                 alwaysLandscape = settings.alwaysLandscape,
                 aniSkipEnabled = settings.aniSkipEnabled,
                 introDBEnabled = settings.introDbEnabled,
+                introDBAppEnabled = settings.introDbAppEnabled,
                 aniSkipAutoSkip = settings.aniSkipAutoSkip,
                 skip85sEnabled = settings.skip85sEnabled,
                 skip85sAlwaysVisible = settings.skip85sAlwaysVisible,
@@ -191,6 +196,8 @@ class BackupRepository(
                 githubReleaseUpdateAvailable = settings.githubReleaseUpdateAvailable,
                 githubReleaseLatestVersion = settings.githubReleaseLatestVersion,
                 githubReleaseURL = settings.githubReleaseUrl,
+                githubReleaseShowAlertPending = settings.githubReleaseShowAlertPending,
+                githubReleaseLastPromptedVersion = settings.githubReleaseLastPromptedVersion,
                 seasonMenu = settings.seasonMenu,
                 horizontalEpisodeList = settings.horizontalEpisodeList,
                 mediaDetailElementOrder = settings.mediaDetailElementOrder,
@@ -233,6 +240,7 @@ class BackupRepository(
                 readerDownloads = exportedReaderDownloads,
                 sourceHealth = sourceHealth.takeIf { it.hasUserData } ?: payload?.sourceHealth,
                 appLogs = appLogs.takeIf { it.hasUserData } ?: payload?.appLogs,
+                searchHistory = searchHistory.normalized(),
                 recommendationCache = exportedRecommendationCache,
                 userRatings = exportedRatings,
                 userRatingNotes = exportedRatingNotes,
@@ -252,6 +260,7 @@ class BackupRepository(
         kanzenRepository.restoreFromBackup(payload.kanzenModules).getOrThrow()
         mangaStore.write(payload.toMangaLibrarySnapshot())
         readerCacheRepository.restoreDownloads(payload.readerDownloads).getOrThrow()
+        searchHistoryStore.write(payload.searchHistory.normalized())
         payload.sourceHealth?.let { sourceHealthRepository.restoreSnapshot(it) }
         payload.appLogs?.let { loggerStore.write(it) }
         val importedServices = syncServices(payload.services)
@@ -429,6 +438,7 @@ private fun BackupDocument.toStatus(
         if (payload.readerDownloads.isNotEmpty()) add("reader downloads")
         if (payload.sourceHealth?.hasUserData == true) add("source health")
         if (payload.appLogs?.hasUserData == true) add("logs")
+        if (payload.searchHistory.queries.isNotEmpty()) add("search history")
         if (payload.recommendationCache.hasBackupData() || payload.userRatings.isNotEmpty()) add("personalization")
     }
     val preservationText = if (preservedSections.isEmpty()) {
@@ -455,3 +465,8 @@ private fun String.slugified(): String = trim()
     .replace(Regex("[^a-z0-9]+"), "-")
     .trim('-')
     .ifBlank { "service-${System.currentTimeMillis()}" }
+
+private fun SearchHistorySnapshot.normalized(): SearchHistorySnapshot =
+    queries.fold(SearchHistorySnapshot()) { snapshot, query ->
+        snapshot.remember(query)
+    }

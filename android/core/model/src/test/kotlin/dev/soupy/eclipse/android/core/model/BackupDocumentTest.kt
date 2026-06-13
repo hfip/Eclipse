@@ -55,6 +55,7 @@ class BackupDocumentTest {
               "alwaysLandscape": true,
               "aniSkipEnabled": false,
               "introDBEnabled": false,
+              "introDBAppEnabled": false,
               "skip85sAlwaysVisible": true,
               "playerHeaderProxyEnabled": true,
               "vlcHeaderProxyEnabled": false,
@@ -90,6 +91,8 @@ class BackupDocumentTest {
               "servicesAutoModeSourceIds": ["service:first", "stremio:https://addon.example"],
               "servicesAutoModeSourceOrderIds": ["stremio:https://addon.example", "service:first"],
               "servicesAutoModeQualityPreference": "1080p",
+              "githubReleaseShowAlertPending": true,
+              "githubReleaseLastPromptedVersion": "v1.2.3",
               "mediaDetailElementOrder": "actions,overview,details,cast,ratingNotes,episodes",
               "mediaDetailHiddenElements": "cast",
               "readerDetailElementOrder": "chapters,overview,tags,ratingNotes",
@@ -244,6 +247,9 @@ class BackupDocumentTest {
                   }
                 ]
               },
+              "searchHistory": {
+                "queries": ["Dune", "Alien", "alien", "  "]
+              },
               "recommendationCache": [
                 {
                   "id": 99,
@@ -277,6 +283,7 @@ class BackupDocumentTest {
         assertEquals(true, document.payload.alwaysLandscape)
         assertEquals(false, document.payload.aniSkipEnabled)
         assertEquals(false, document.payload.introDBEnabled)
+        assertEquals(false, document.payload.introDBAppEnabled)
         assertEquals(true, document.payload.skip85sAlwaysVisible)
         assertEquals(false, document.payload.vlcHeaderProxyEnabled)
         assertEquals(true, document.payload.resolvedPlayerHeaderProxyEnabled)
@@ -309,6 +316,8 @@ class BackupDocumentTest {
         assertEquals(listOf("service:first", "stremio:https://addon.example"), document.payload.autoModeSourceIds)
         assertEquals(listOf("stremio:https://addon.example", "service:first"), document.payload.autoModeSourceOrderIds)
         assertEquals("1080p", document.payload.servicesAutoModeQualityPreference)
+        assertEquals(true, document.payload.githubReleaseShowAlertPending)
+        assertEquals("v1.2.3", document.payload.githubReleaseLastPromptedVersion)
         assertEquals("actions,overview,details,cast,ratingNotes,episodes", document.payload.mediaDetailElementOrder)
         assertEquals("cast", document.payload.mediaDetailHiddenElements)
         assertEquals("chapters,overview,tags,ratingNotes", document.payload.readerDetailElementOrder)
@@ -340,6 +349,7 @@ class BackupDocumentTest {
         assertEquals(1770000002000, sourceHealth.lastDailyCheckAt)
         val appLogs = assertNotNull(document.payload.appLogs)
         assertEquals("ServiceRuntime", appLogs.entries.single().tag)
+        assertEquals(listOf("Dune", "Alien", "alien", "  "), document.payload.searchHistory.queries)
         assertEquals(7.5, document.payload.userRatings.getValue("99"))
         assertEquals("rewatch with friends", document.payload.userRatingNotes.getValue("99"))
         assertTrue("futureIosOnlySection" in document.unknownKeys)
@@ -350,6 +360,9 @@ class BackupDocumentTest {
         assertTrue(encoded.contains("readerDownloads"))
         assertTrue(encoded.contains("sourceHealth"))
         assertTrue(encoded.contains("appLogs"))
+        assertTrue(encoded.contains("searchHistory"))
+        assertTrue(encoded.contains("introDBAppEnabled"))
+        assertTrue(encoded.contains("githubReleaseLastPromptedVersion"))
         assertTrue(encoded.contains("heroBannerCatalogId"))
         assertTrue(encoded.contains("atmosphereSolidColor"))
         assertTrue(encoded.contains("showEpisodeBrowserButton"))

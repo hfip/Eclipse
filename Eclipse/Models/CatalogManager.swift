@@ -12,6 +12,7 @@ class CatalogManager: ObservableObject {
     static let shared = CatalogManager()
     
     @Published var catalogs: [Catalog] = []
+    @Published var performanceModeEnabled: Bool = PerformanceModeSettings.isEnabled
     
     private let userDefaults = UserDefaults.standard
     private let catalogsKey = "enabledCatalogs"
@@ -84,22 +85,113 @@ class CatalogManager: ObservableObject {
     }
     
     func toggleCatalog(id: String) {
+        if performanceModeEnabled,
+           let catalog = catalogs.first(where: { $0.id == id }),
+           PerformanceModeSettings.isAnimeCatalog(catalog) {
+            let current = isCatalogEffectivelyEnabled(catalog)
+            setFastAnimeCatalogEnabled(id: id, isEnabled: !current)
+            return
+        }
+
         if let index = catalogs.firstIndex(where: { $0.id == id }) {
             catalogs[index].isEnabled.toggle()
             saveCatalogs()
         }
     }
+
+    func setPerformanceModeEnabled(_ enabled: Bool) {
+        guard performanceModeEnabled != enabled else { return }
+        PerformanceModeSettings.isEnabled = enabled
+        performanceModeEnabled = enabled
+    }
+
+    func isCatalogLockedByPerformanceMode(_ catalog: Catalog) -> Bool {
+        performanceModeEnabled && PerformanceModeSettings.isAnimeCatalog(catalog)
+    }
+
+    func isCatalogEffectivelyEnabled(_ catalog: Catalog) -> Bool {
+        guard performanceModeEnabled, PerformanceModeSettings.isAnimeCatalog(catalog) else {
+            return catalog.isEnabled
+        }
+        return PerformanceModeSettings.fastAnimeCatalogEnabled(id: catalog.id, fallback: catalog.isEnabled)
+    }
+
+    func setFastAnimeCatalogEnabled(id: String, isEnabled: Bool) {
+        guard let catalog = catalogs.first(where: { $0.id == id }),
+              PerformanceModeSettings.isAnimeCatalog(catalog) else {
+            return
+        }
+        PerformanceModeSettings.setFastAnimeCatalogEnabled(id: id, isEnabled: isEnabled)
+        catalogs = catalogs
+    }
+
+    var traktPublicListCatalogs: [Catalog] {
+        catalogs
+            .filter { $0.source == .trakt && $0.traktListEndpointPath != nil }
+            .sorted { $0.order < $1.order }
+    }
+
+    func addTraktPublicListCatalog(
+        name rawName: String?,
+        listId: Int?,
+        listUser: String?,
+        listSlug: String?,
+        mediaType: String,
+        sortBy: String,
+        sortHow: String
+    ) {
+        let normalizedUser = listUser?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSlug = listSlug?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (listId ?? 0) > 0 || (normalizedUser?.isEmpty == false && normalizedSlug?.isEmpty == false) else { return }
+        let normalizedMediaType = Catalog.normalizedTraktListMediaType(mediaType)
+        let catalogId = Catalog.traktPublicListCatalogId(
+            listId: listId,
+            listUser: normalizedUser,
+            listSlug: normalizedSlug,
+            mediaType: normalizedMediaType
+        )
+        let trimmedName = rawName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let listLabel = listId.map { "\($0)" } ?? normalizedSlug ?? "Custom"
+        let fallbackName = normalizedMediaType == "movies"
+            ? "Trakt List \(listLabel) Movies"
+            : "Trakt List \(listLabel) Shows"
+        let nextOrder = (catalogs.map(\.order).max() ?? -1) + 1
+        let catalog = Catalog(
+            id: catalogId,
+            name: trimmedName.isEmpty ? fallbackName : trimmedName,
+            source: .trakt,
+            isEnabled: true,
+            order: nextOrder,
+            traktListId: listId,
+            traktListUser: normalizedUser,
+            traktListSlug: normalizedSlug,
+            traktListMediaType: normalizedMediaType,
+            traktListSortBy: sortBy,
+            traktListSortHow: sortHow
+        )
+
+        if let index = catalogs.firstIndex(where: { $0.id == catalogId }) {
+            let existing = catalogs[index]
+            catalogs[index] = catalog.updatingUserState(isEnabled: existing.isEnabled, order: existing.order)
+        } else {
+            catalogs.append(catalog)
+        }
+        normalizeOrdersAndSave(sortFirst: true)
+    }
+
+    func removeTraktPublicListCatalog(id: String) {
+        guard catalogs.contains(where: { $0.id == id && $0.source == .trakt }) else { return }
+        catalogs.removeAll { $0.id == id && $0.source == .trakt }
+        normalizeOrdersAndSave(sortFirst: true)
+    }
     
     func moveCatalog(from: IndexSet, to: Int) {
         catalogs.move(fromOffsets: from, toOffset: to)
-        for (index, _) in catalogs.enumerated() {
-            catalogs[index].order = index
-        }
-        saveCatalogs()
+        normalizeOrdersAndSave(sortFirst: false)
     }
     
     func getEnabledCatalogs() -> [Catalog] {
-        catalogs.filter { $0.isEnabled }.sorted { $0.order < $1.order }
+        catalogs.filter { isCatalogEffectivelyEnabled($0) }.sorted { $0.order < $1.order }
     }
 
     func syncStremioAddonCatalogs(from addons: [StremioAddon]) {
@@ -163,6 +255,16 @@ class CatalogManager: ObservableObject {
         saveCatalogs()
     }
 
+    private func normalizeOrdersAndSave(sortFirst: Bool) {
+        let orderedCatalogs = sortFirst ? catalogs.sorted { $0.order < $1.order } : catalogs
+        catalogs = orderedCatalogs.enumerated().map { index, catalog in
+            var updated = catalog
+            updated.order = index
+            return updated
+        }
+        saveCatalogs()
+    }
+
     private static func stremioCatalogDisplayName(addon: StremioAddon, stremioCatalog: StremioCatalog) -> String {
         let rawName = stremioCatalog.name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let catalogName = rawName?.isEmpty == false ? rawName! : stremioCatalog.type.capitalized
@@ -172,6 +274,61 @@ class CatalogManager: ObservableObject {
             return catalogName
         }
         return "\(addonName) - \(catalogName)"
+    }
+}
+
+enum PerformanceModeSettings {
+    static let enabledKey = "performanceModeEnabled"
+    static let fastAnimeCatalogOverridesKey = "performanceModeFastAnimeCatalogOverrides"
+
+    static let animeCatalogIds: Set<String> = [
+        "trendingAnime",
+        "popularAnime",
+        "topRatedAnime",
+        "airingAnime",
+        "upcomingAnime",
+        "bestAnime"
+    ]
+
+    private static let defaults = UserDefaults.standard
+
+    static var isEnabled: Bool {
+        get { defaults.bool(forKey: enabledKey) }
+        set { defaults.set(newValue, forKey: enabledKey) }
+    }
+
+    static var fastAnimeCatalogOverrides: [String: Bool] {
+        get {
+            guard let data = defaults.data(forKey: fastAnimeCatalogOverridesKey),
+                  let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) else {
+                return [:]
+            }
+            return decoded.filter { animeCatalogIds.contains($0.key) }
+        }
+        set {
+            let sanitized = newValue.filter { animeCatalogIds.contains($0.key) }
+            guard let data = try? JSONEncoder().encode(sanitized) else { return }
+            defaults.set(data, forKey: fastAnimeCatalogOverridesKey)
+        }
+    }
+
+    static func isAnimeCatalog(_ catalog: Catalog) -> Bool {
+        catalog.source == .anilist && animeCatalogIds.contains(catalog.id)
+    }
+
+    static func fastAnimeCatalogEnabled(id: String, fallback: Bool) -> Bool {
+        fastAnimeCatalogOverrides[id] ?? fallback
+    }
+
+    static func setFastAnimeCatalogEnabled(id: String, isEnabled: Bool) {
+        guard animeCatalogIds.contains(id) else { return }
+        var overrides = fastAnimeCatalogOverrides
+        overrides[id] = isEnabled
+        fastAnimeCatalogOverrides = overrides
+    }
+
+    static func detailCacheKey(for stableIdentity: String) -> String {
+        isEnabled ? "\(stableIdentity):performanceMode" : stableIdentity
     }
 }
 
@@ -187,10 +344,17 @@ struct Catalog: Identifiable, Codable {
     var stremioCatalogId: String?
     var stremioCatalogType: String?
     var stremioMediaType: String?
+    var traktListId: Int?
+    var traktListUser: String?
+    var traktListSlug: String?
+    var traktListMediaType: String?
+    var traktListSortBy: String?
+    var traktListSortHow: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, source, isEnabled, order, displayStyle
         case stremioAddonId, stremioAddonName, stremioCatalogId, stremioCatalogType, stremioMediaType
+        case traktListId, traktListUser, traktListSlug, traktListMediaType, traktListSortBy, traktListSortHow
     }
     
     enum CatalogSource: String, Codable {
@@ -198,6 +362,7 @@ struct Catalog: Identifiable, Codable {
         case anilist = "AniList"
         case local = "Local"
         case stremio = "Stremio"
+        case trakt = "Trakt"
     }
     
     enum CatalogDisplayStyle: String, Codable {
@@ -220,7 +385,13 @@ struct Catalog: Identifiable, Codable {
         stremioAddonName: String? = nil,
         stremioCatalogId: String? = nil,
         stremioCatalogType: String? = nil,
-        stremioMediaType: String? = nil
+        stremioMediaType: String? = nil,
+        traktListId: Int? = nil,
+        traktListUser: String? = nil,
+        traktListSlug: String? = nil,
+        traktListMediaType: String? = nil,
+        traktListSortBy: String? = nil,
+        traktListSortHow: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -233,6 +404,12 @@ struct Catalog: Identifiable, Codable {
         self.stremioCatalogId = stremioCatalogId
         self.stremioCatalogType = stremioCatalogType
         self.stremioMediaType = stremioMediaType
+        self.traktListId = traktListId
+        self.traktListUser = traktListUser
+        self.traktListSlug = traktListSlug
+        self.traktListMediaType = traktListMediaType
+        self.traktListSortBy = traktListSortBy
+        self.traktListSortHow = traktListSortHow
     }
     
     init(from decoder: Decoder) throws {
@@ -248,10 +425,62 @@ struct Catalog: Identifiable, Codable {
         stremioCatalogId = try container.decodeIfPresent(String.self, forKey: .stremioCatalogId)
         stremioCatalogType = try container.decodeIfPresent(String.self, forKey: .stremioCatalogType)
         stremioMediaType = try container.decodeIfPresent(String.self, forKey: .stremioMediaType)
+        traktListId = try container.decodeIfPresent(Int.self, forKey: .traktListId)
+        traktListUser = try container.decodeIfPresent(String.self, forKey: .traktListUser)
+        traktListSlug = try container.decodeIfPresent(String.self, forKey: .traktListSlug)
+        traktListMediaType = try container.decodeIfPresent(String.self, forKey: .traktListMediaType)
+        traktListSortBy = try container.decodeIfPresent(String.self, forKey: .traktListSortBy)
+        traktListSortHow = try container.decodeIfPresent(String.self, forKey: .traktListSortHow)
     }
 
     static func stremioCatalogId(addon: StremioAddon, stremioCatalog: StremioCatalog) -> String {
         "stremio:\(addon.id.uuidString):\(stremioCatalog.type):\(stremioCatalog.id)"
+    }
+
+    static func traktPublicListCatalogId(listId: Int?, listUser: String?, listSlug: String?, mediaType: String) -> String {
+        let normalizedMediaType = normalizedTraktListMediaType(mediaType)
+        if let listId, listId > 0 {
+            return "trakt:list:\(normalizedMediaType):\(listId)"
+        }
+
+        let user = listUser?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown"
+        let slug = listSlug?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown"
+        return "trakt:list:\(normalizedMediaType):\(user):\(slug)"
+    }
+
+    static func normalizedTraktListMediaType(_ mediaType: String?) -> String {
+        let value = mediaType?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value == "movies" || value == "movie" ? "movies" : "shows"
+    }
+
+    var traktListEndpointPath: String? {
+        if let traktListId, traktListId > 0 {
+            return "lists/\(traktListId)"
+        }
+
+        guard let user = traktListUser?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let slug = traktListSlug?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !user.isEmpty,
+              !slug.isEmpty,
+              let encodedUser = user.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let encodedSlug = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
+            return nil
+        }
+
+        return "users/\(encodedUser)/lists/\(encodedSlug)"
+    }
+
+    var traktListDisplayIdentifier: String? {
+        if let traktListId, traktListId > 0 {
+            return "\(traktListId)"
+        }
+        guard let user = traktListUser?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let slug = traktListSlug?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !user.isEmpty,
+              !slug.isEmpty else {
+            return nil
+        }
+        return "\(user)/\(slug)"
     }
 
     func updatingUserState(isEnabled: Bool, order: Int) -> Catalog {
@@ -266,7 +495,13 @@ struct Catalog: Identifiable, Codable {
             stremioAddonName: stremioAddonName,
             stremioCatalogId: stremioCatalogId,
             stremioCatalogType: stremioCatalogType,
-            stremioMediaType: stremioMediaType
+            stremioMediaType: stremioMediaType,
+            traktListId: traktListId,
+            traktListUser: traktListUser,
+            traktListSlug: traktListSlug,
+            traktListMediaType: traktListMediaType,
+            traktListSortBy: traktListSortBy,
+            traktListSortHow: traktListSortHow
         )
     }
 }

@@ -6,6 +6,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>EclipseDistributionChannel</key>
+	<string>$(ECLIPSE_DISTRIBUTION_CHANNEL)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -32,6 +34,8 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Eclipse can save reader images you choose from the reader quick actions.</string>
 	<key>TMDBAPIKey</key>
 	<string>$(TMDB_API_KEY)</string>
 	<key>AniListClientID</key>

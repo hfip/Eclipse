@@ -5,6 +5,9 @@
 //  Created by Dawud Osman on 17/11/2025.
 //
 import SwiftUI
+#if canImport(Network)
+import Network
+#endif
 // helper Class & Enums
 enum Appearance: String, CaseIterable, Identifiable {
     case system, light, dark
@@ -18,6 +21,8 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
     case details
     case cast
     case ratingNotes
+    case traktComments
+    case traktRelated
     case episodes
 
     var id: String { rawValue }
@@ -32,6 +37,8 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
         .details,
         .cast,
         .ratingNotes,
+        .traktComments,
+        .traktRelated,
         .episodes
     ]
 
@@ -47,6 +54,10 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
             return "Cast"
         case .ratingNotes:
             return "Rating & Notes"
+        case .traktComments:
+            return "Trakt Reviews"
+        case .traktRelated:
+            return "Trakt Related"
         case .episodes:
             return "Episodes"
         }
@@ -64,6 +75,10 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
             return "Principal cast list."
         case .ratingNotes:
             return "Your star rating, notes, and tracker sync shortcuts."
+        case .traktComments:
+            return "Community reviews and comments from Trakt."
+        case .traktRelated:
+            return "Related titles recommended by Trakt."
         case .episodes:
             return "Seasons, specials, and episode list for series."
         }
@@ -303,13 +318,13 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Keeps Metal sample-buffer playback at full frame quality and only changes pacing if iOS reports serious thermal pressure."
+            return "Keeps MoltenVK inline playback full quality and lets Eclipse lower PiP pacing if iOS reports serious thermal pressure."
         case .balanced:
-            return "Keeps full-size sample buffers with standard frame pacing."
+            return "Keeps inline Metal full quality with standard PiP frame pacing."
         case .lowHeat:
-            return "Keeps full-size sample buffers and lowers only PiP frame pacing to reduce heat."
+            return "Keeps inline Metal full quality and lowers PiP frame pacing to reduce heat."
         case .sharp:
-            return "Keeps full-size sample buffers for the cleanest image at higher power cost."
+            return "Keeps inline Metal and PiP bridge quality as high as possible at higher power cost."
         }
     }
 
@@ -317,21 +332,21 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
 }
 
 struct MPVRenderBackendSupport {
-    static let bundledMPVKitVersion = "0.41.0"
-    static let bundledMPVKitRevision = "3257830892c6b8cf44e0007aca2a4cef8064bc90"
+    static let bundledMPVKitVersion = "0.41.0-eclipse-metal.1"
+    static let bundledMPVKitRevision = "6b33a15f6d943d33505e26b66acc715870336c74"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
-    static let metalRendererEnabled = false
+    static let metalRendererEnabled = true
 
-    #if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP
-    static let forkExposesMetalSampleBufferPictureInPicture = true
+    #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER
+    static let moltenVKInlineRendererAvailable = true
     #else
-    static let forkExposesMetalSampleBufferPictureInPicture = false
+    static let moltenVKInlineRendererAvailable = false
     #endif
 
-    #if ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-    static let eclipseImplementsMetalSampleBufferPictureInPicture = true
+    #if ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+    static let sampleBufferPictureInPictureBridgeAvailable = true
     #else
-    static let eclipseImplementsMetalSampleBufferPictureInPicture = false
+    static let sampleBufferPictureInPictureBridgeAvailable = false
     #endif
 
     #if ECLIPSE_MPVKIT_METAL_BITMAP_SUBTITLES_VALIDATED
@@ -347,14 +362,14 @@ struct MPVRenderBackendSupport {
     static let metalLiveQualityReconfigurationAvailable = false
     #endif
 
-    static var metalSampleBufferPictureInPictureAvailable: Bool {
+    static var moltenVKMetalBackendAvailable: Bool {
         bundledMPVKitSupportsMoltenVKInlineRendering
-            && forkExposesMetalSampleBufferPictureInPicture
-            && eclipseImplementsMetalSampleBufferPictureInPicture
+            && moltenVKInlineRendererAvailable
+            && sampleBufferPictureInPictureBridgeAvailable
     }
 
     static var metalIsFullySupported: Bool {
-        metalRendererEnabled && metalSampleBufferPictureInPictureAvailable
+        metalRendererEnabled && moltenVKMetalBackendAvailable
     }
 
     static var diagnosticsSummary: String {
@@ -362,8 +377,8 @@ struct MPVRenderBackendSupport {
             "mpvKit=\(bundledMPVKitVersion)",
             "revision=\(bundledMPVKitRevision)",
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
-            "forkMetalSampleBufferPiP=\(forkExposesMetalSampleBufferPictureInPicture)",
-            "eclipseMetalPiP=\(eclipseImplementsMetalSampleBufferPictureInPicture)",
+            "inlineRenderer=\(moltenVKInlineRendererAvailable)",
+            "pipBridge=\(sampleBufferPictureInPictureBridgeAvailable)",
             "metalRendererEnabled=\(metalRendererEnabled)",
             "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
             "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
@@ -373,22 +388,22 @@ struct MPVRenderBackendSupport {
 
     static var settingsDescription: String {
         if metalIsFullySupported {
-            return "Applies to the next player session. Metal sample-buffer playback is experimental in this build; switch back to OpenGL if a stream misbehaves."
+            return "Applies to the next player session. Metal uses MPV MoltenVK inline playback with a sample-buffer bridge for PiP; OpenGL remains the fallback."
         }
         if !metalRendererEnabled {
             return "Applies to the next player session. OpenGL is active in this build."
         }
-        return "Applies to the next player session. OpenGL is active in this build; Metal is remembered but falls back until the MPVKit fork exposes full sample-buffer PiP."
+        return "Applies to the next player session. Metal is remembered but falls back to OpenGL until the MoltenVK inline renderer and PiP bridge are available."
     }
 
     static var settingsStatusLine: String {
         if metalIsFullySupported {
-            return "Metal backend: experimental sample-buffer PiP available"
+            return "Metal backend: MoltenVK inline renderer with sample-buffer PiP"
         }
         if !metalRendererEnabled {
             return "Metal backend: hidden in this build"
         }
-        return "Metal backend: waiting for MPVKit fork sample-buffer PiP"
+        return "Metal backend: waiting for MoltenVK inline renderer and PiP bridge"
     }
 
     static func effectiveBackend(requested: MPVRenderBackend, hasMetalDevice: Bool) -> MPVRenderBackend {
@@ -401,13 +416,391 @@ struct MPVRenderBackendSupport {
         guard requested == .metal else { return nil }
         guard metalRendererEnabled else { return "Metal renderer hidden in this build" }
         guard hasMetalDevice else { return "Metal device unavailable" }
-        guard forkExposesMetalSampleBufferPictureInPicture else {
-            return "MPVKit \(bundledMPVKitVersion) bundled in this build does not expose Metal sample-buffer PiP frames"
+        guard moltenVKInlineRendererAvailable else {
+            return "MPVKit \(bundledMPVKitVersion) bundled in this build does not expose the MoltenVK inline renderer path"
         }
-        guard eclipseImplementsMetalSampleBufferPictureInPicture else {
-            return "Eclipse Metal sample-buffer PiP adapter is not enabled in this build"
+        guard sampleBufferPictureInPictureBridgeAvailable else {
+            return "Eclipse sample-buffer PiP bridge is not enabled in this build"
         }
         return nil
+    }
+}
+
+enum ExperimentalFeatureState {
+    static let enabledKey = "experimentalFeaturesEnabled"
+    static let lastChangedAtKey = "experimentalFeaturesLastChangedAt"
+
+    static let mpvPreloadEnabledKey = "experimentalMPVPreloadEnabled"
+    static let mpvSmoothTransitionEnabledKey = "experimentalMPVSmoothTransitionEnabled"
+    static let mpvPreloadCellularEnabledKey = "experimentalMPVPreloadCellularEnabled"
+    static let mpvPreloadWifiLimitMBKey = "experimentalMPVPreloadWifiLimitMB"
+    static let mpvPreloadCellularLimitMBKey = "experimentalMPVPreloadCellularLimitMB"
+    static let mpvShowRemainingTimeKey = "experimentalMPVShowRemainingTime"
+    static let mpvPreciseProgressKey = "experimentalMPVPreciseProgress"
+    static let mpvIgnoreSpecialSubtitleStylesKey = "experimentalMPVIgnoreSpecialSubtitleStyles"
+    static let iCloudSyncEnabledKey = "experimentalICloudSyncEnabled"
+
+    private(set) static var isEnabledAtLaunch: Bool = UserDefaults.standard.bool(forKey: enabledKey)
+
+    static func configureLaunchState(defaults: UserDefaults = .standard) {
+        registerDefaults(defaults: defaults)
+        isEnabledAtLaunch = defaults.bool(forKey: enabledKey)
+    }
+
+    static func registerDefaults(defaults: UserDefaults = .standard) {
+        defaults.register(defaults: [
+            enabledKey: false,
+            mpvPreloadEnabledKey: true,
+            mpvSmoothTransitionEnabledKey: true,
+            mpvPreloadCellularEnabledKey: false,
+            mpvPreloadWifiLimitMBKey: 256,
+            mpvPreloadCellularLimitMBKey: 32,
+            mpvShowRemainingTimeKey: true,
+            mpvPreciseProgressKey: true,
+            mpvIgnoreSpecialSubtitleStylesKey: false,
+            iCloudSyncEnabledKey: false
+        ])
+    }
+
+    static var currentStoredValue: Bool {
+        UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    static func setStoredValue(_ enabled: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: enabledKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: lastChangedAtKey)
+    }
+
+    static var isMPVPlaybackDefault: Bool {
+        let inApp = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
+        let external = UserDefaults.standard.string(forKey: "externalPlayer") ?? ""
+        let usesInternalPlayer = external.isEmpty || external == "none" || external == "Default"
+        return inApp == "mpv" && usesInternalPlayer
+    }
+
+    static var canUseExperimentalMPVPlayback: Bool {
+        isEnabledAtLaunch && isMPVPlaybackDefault
+    }
+}
+
+struct ExperimentalCloudSyncAvailability {
+    let isAvailable: Bool
+    let statusTitle: String
+    let statusMessage: String
+
+    static var current: ExperimentalCloudSyncAvailability {
+#if os(iOS)
+        if FileManager.default.ubiquityIdentityToken != nil {
+            return ExperimentalCloudSyncAvailability(
+                isAvailable: true,
+                statusTitle: "iCloud Available",
+                statusMessage: "This build has access to the signed-in iCloud account. Eclipse will sync only personal state and safe source definitions when enabled."
+            )
+        }
+#endif
+        return ExperimentalCloudSyncAvailability(
+            isAvailable: false,
+            statusTitle: "Unavailable in This Build",
+            statusMessage: "iCloud requires the app entitlement. Sideloaded builds stay local-only; TestFlight builds can enable this once the entitlement is present."
+        )
+    }
+}
+
+@MainActor
+final class ExperimentalCloudSyncManager: ObservableObject {
+    static let shared = ExperimentalCloudSyncManager()
+
+    @Published private(set) var isSyncing = false
+    @Published private(set) var lastStatusMessage: String = ""
+    @Published private(set) var lastSyncDate: Date?
+
+    private static let snapshotFileName = "EclipseExperimentalSync.json"
+    private var lastAutomaticSync: Date?
+
+    private init() {}
+
+    func syncOnActivationIfNeeded(reason: String) {
+        guard ExperimentalFeatureState.isEnabledAtLaunch,
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.iCloudSyncEnabledKey) else {
+            return
+        }
+
+        if let lastAutomaticSync,
+           Date().timeIntervalSince(lastAutomaticSync) < 300 {
+            return
+        }
+
+        lastAutomaticSync = Date()
+        pushLocalSnapshot(reason: reason)
+    }
+
+    func pushLocalSnapshot(reason: String = "manual") {
+        runSyncTask(statusPrefix: "Synced") {
+            try Self.writeLocalSnapshot(reason: reason)
+        }
+    }
+
+    func restoreRemoteSnapshot() {
+        runSyncTask(statusPrefix: "Restored") {
+            try Self.restoreRemoteSnapshot()
+        }
+    }
+
+    private func runSyncTask(statusPrefix: String, operation: @escaping () throws -> Date) {
+        guard !isSyncing else { return }
+        guard ExperimentalFeatureState.isEnabledAtLaunch,
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.iCloudSyncEnabledKey) else {
+            lastStatusMessage = "Enable experimental iCloud sync first."
+            return
+        }
+        guard ExperimentalCloudSyncAvailability.current.isAvailable else {
+            lastStatusMessage = ExperimentalCloudSyncAvailability.current.statusMessage
+            return
+        }
+
+        isSyncing = true
+        Task {
+            do {
+                let date = try operation()
+                self.lastSyncDate = date
+                self.lastStatusMessage = "\(statusPrefix) \(Self.relativeSyncTime(for: date))"
+                self.isSyncing = false
+            } catch {
+                self.lastStatusMessage = error.localizedDescription
+                self.isSyncing = false
+            }
+        }
+    }
+
+    private static func writeLocalSnapshot(reason: String) throws -> Date {
+#if os(iOS)
+        let url = try snapshotURL()
+        guard let data = BackupManager.shared.createExperimentalCloudSnapshotData() else {
+            throw SyncError.snapshotEncodingFailed
+        }
+        try data.write(to: url, options: .atomic)
+        Logger.shared.log("Experimental iCloud snapshot pushed reason=\(reason) bytes=\(data.count)", type: "iCloud")
+        return Date()
+#else
+        throw SyncError.unavailable
+#endif
+    }
+
+    private static func restoreRemoteSnapshot() throws -> Date {
+#if os(iOS)
+        let url = try snapshotURL()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw SyncError.noSnapshot
+        }
+        let data = try Data(contentsOf: url)
+        guard BackupManager.shared.restoreExperimentalCloudSnapshot(from: data) else {
+            throw SyncError.snapshotRestoreFailed
+        }
+        Logger.shared.log("Experimental iCloud snapshot restored bytes=\(data.count)", type: "iCloud")
+        return Date()
+#else
+        throw SyncError.unavailable
+#endif
+    }
+
+#if os(iOS)
+    private static func snapshotURL() throws -> URL {
+        guard let container = FileManager.default.url(forUbiquityContainerIdentifier: nil) else {
+            throw SyncError.unavailable
+        }
+
+        let documents = container.appendingPathComponent("Documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        return documents.appendingPathComponent(snapshotFileName)
+    }
+#endif
+
+    private static func relativeSyncTime(for date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private enum SyncError: LocalizedError {
+        case unavailable
+        case noSnapshot
+        case snapshotEncodingFailed
+        case snapshotRestoreFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "iCloud is unavailable for this build or account."
+            case .noSnapshot:
+                return "No iCloud snapshot was found."
+            case .snapshotEncodingFailed:
+                return "Could not prepare a safe iCloud snapshot."
+            case .snapshotRestoreFailed:
+                return "Could not restore the iCloud snapshot."
+            }
+        }
+    }
+}
+
+final class ExperimentalMPVPreloadManager {
+    static let shared = ExperimentalMPVPreloadManager()
+
+    private let fileManager = FileManager.default
+    private let maxStarterBytes = 8 * 1024 * 1024
+    private var activeKeys = Set<String>()
+    private let lock = NSLock()
+#if canImport(Network)
+    private let pathMonitor = NWPathMonitor()
+    private let pathQueue = DispatchQueue(label: "dev.soupy.eclipse.experimental-mpv-preload.path")
+    private var currentPath: NWPath?
+#endif
+
+    var cacheDirectory: URL {
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("ExperimentalMPVPreload", isDirectory: true)
+    }
+
+    private init() {
+#if canImport(Network)
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            self?.currentPath = path
+        }
+        pathMonitor.start(queue: pathQueue)
+#endif
+    }
+
+    var cacheSizeBytes: Int64 {
+        directorySize(at: cacheDirectory)
+    }
+
+    func clearCache() {
+        try? fileManager.removeItem(at: cacheDirectory)
+        lock.lock()
+        activeKeys.removeAll()
+        lock.unlock()
+    }
+
+    func noteNextEpisodeCandidate(showId: Int, seasonNumber: Int, episodeNumber: Int) {
+        guard ExperimentalFeatureState.canUseExperimentalMPVPlayback,
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
+            return
+        }
+        Logger.shared.log(
+            "Experimental MPV smooth transition staged candidate show=\(showId) S\(seasonNumber)E\(episodeNumber)",
+            type: "MPV"
+        )
+    }
+
+    func prewarm(url: URL, headers: [String: String]?, label: String) {
+        guard ExperimentalFeatureState.canUseExperimentalMPVPlayback,
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey),
+              shouldPreload(url: url) else {
+            return
+        }
+
+        let key = cacheKey(for: url)
+        lock.lock()
+        if activeKeys.contains(key) {
+            lock.unlock()
+            return
+        }
+        activeKeys.insert(key)
+        lock.unlock()
+
+        Task.detached(priority: .utility) { [weak self] in
+            defer {
+                self?.lock.lock()
+                self?.activeKeys.remove(key)
+                self?.lock.unlock()
+            }
+            await self?.writeStarterCache(url: url, headers: headers, key: key, label: label)
+        }
+    }
+
+    private func shouldPreload(url: URL) -> Bool {
+        guard url.scheme == "http" || url.scheme == "https" else { return false }
+        guard ProcessInfo.processInfo.isLowPowerModeEnabled == false else { return false }
+        guard ProcessInfo.processInfo.thermalState != .serious,
+              ProcessInfo.processInfo.thermalState != .critical else { return false }
+        guard freeDiskBytes() > 750 * 1024 * 1024 else { return false }
+        guard respectsCurrentNetworkPolicy() else { return false }
+        guard cacheSizeBytes < currentCacheLimitBytes() else { return false }
+
+        let path = url.pathExtension.lowercased()
+        return path == "m3u8" || path == "mp4" || path == "mkv" || path == "mov" || path.isEmpty
+    }
+
+    private func respectsCurrentNetworkPolicy() -> Bool {
+#if canImport(Network)
+        if currentPath?.usesInterfaceType(.cellular) == true {
+            return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
+        }
+#endif
+        return true
+    }
+
+    private func currentCacheLimitBytes() -> Int64 {
+#if canImport(Network)
+        if currentPath?.usesInterfaceType(.cellular) == true {
+            let mb = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
+            return Int64(max(8, mb)) * 1024 * 1024
+        }
+#endif
+        let mb = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
+        return Int64(max(32, mb)) * 1024 * 1024
+    }
+
+    private func writeStarterCache(url: URL, headers: [String: String]?, key: String, label: String) async {
+        do {
+            try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 18)
+            headers?.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+            if url.pathExtension.lowercased() != "m3u8" {
+                request.setValue("bytes=0-\(maxStarterBytes - 1)", forHTTPHeaderField: "Range")
+            }
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  !data.isEmpty else {
+                return
+            }
+
+            let trimmed = data.count > maxStarterBytes ? data.prefix(maxStarterBytes) : data[...]
+            let target = cacheDirectory.appendingPathComponent(key).appendingPathExtension("starter")
+            try Data(trimmed).write(to: target, options: .atomic)
+            Logger.shared.log("Experimental MPV preload cached \(data.count) bytes for \(label)", type: "MPV")
+        } catch {
+            Logger.shared.log("Experimental MPV preload skipped for \(label): \(error.localizedDescription)", type: "MPV")
+        }
+    }
+
+    private func cacheKey(for url: URL) -> String {
+        let raw = url.absoluteString.data(using: .utf8) ?? Data()
+        return raw.map { String(format: "%02x", $0) }.joined().prefix(96).description
+    }
+
+    private func directorySize(at url: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true,
+                  let fileSize = values.fileSize else {
+                continue
+            }
+            total += Int64(fileSize)
+        }
+        return total
+    }
+
+    private func freeDiskBytes() -> Int64 {
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let values = try? caches.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage ?? 0
     }
 }
 

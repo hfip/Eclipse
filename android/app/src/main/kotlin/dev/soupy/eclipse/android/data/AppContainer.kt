@@ -206,6 +206,7 @@ class EclipseAppContainer(
         backupFileStore = backupFileStore,
         settingsStore = settingsStore,
         mangaStore = mangaStore,
+        searchHistoryStore = searchHistoryStore,
         sourceHealthRepository = sourceHealthRepository,
         loggerStore = loggerStore,
         serviceDao = database.serviceDao(),

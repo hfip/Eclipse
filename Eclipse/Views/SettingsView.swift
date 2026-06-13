@@ -14,11 +14,15 @@ struct SettingsView: View {
     @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
     @AppStorage("githubReleaseURL") private var githubReleaseURL = ""
     @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
+    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = false
 
     @StateObject private var algorithmManager = AlgorithmManager.shared
+    @StateObject private var catalogManager = CatalogManager.shared
     @AppStorage("showKanzen") private var showKanzen: Bool = false
+    @AppStorage("hideSplashScreen") private var hideSplashScreen = false
     @State private var scrollOffset: CGFloat = 0
     @State private var isCheckingGitHubRelease = false
+    @State private var showExperimentalRestartAlert = false
 
     private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Eclipse")!
@@ -28,6 +32,28 @@ struct SettingsView: View {
 
     private var defaultScheduleMode: ScheduleMode {
         ScheduleMode.sanitized(defaultScheduleModeRaw)
+    }
+
+    private var supportsGitHubReleaseUpdates: Bool {
+        GitHubReleaseChecker.isGitHubReleaseUpdatesAvailable
+    }
+
+    private var performanceModeBinding: Binding<Bool> {
+        Binding(
+            get: { catalogManager.performanceModeEnabled },
+            set: { catalogManager.setPerformanceModeEnabled($0) }
+        )
+    }
+
+    private var experimentalFeaturesBinding: Binding<Bool> {
+        Binding(
+            get: { experimentalFeaturesEnabled },
+            set: { newValue in
+                ExperimentalFeatureState.setStoredValue(newValue)
+                experimentalFeaturesEnabled = newValue
+                showExperimentalRestartAlert = true
+            }
+        )
     }
     
     let languages = [
@@ -137,6 +163,28 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         
                         GlassDivider()
+
+                        GlassSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Performance Mode") {
+                            Toggle("", isOn: performanceModeBinding)
+                        }
+
+                        GlassDivider()
+
+                        GlassSettingsRow(icon: "moon.fill", iconColor: .indigo, title: "Hide Splash Screen") {
+                            Toggle("", isOn: $hideSplashScreen)
+                                .labelsHidden()
+                                .tint(.indigo)
+                        }
+
+                        GlassDivider()
+
+                        GlassSettingsRow(icon: "sparkles", iconColor: .purple, title: "Enable experimental features") {
+                            Toggle("", isOn: experimentalFeaturesBinding)
+                                .labelsHidden()
+                                .tint(.purple)
+                        }
+
+                        GlassDivider()
                         
                         NavigationLink(destination: AlgorithmSelectionView()) {
                             GlassSettingsRow(icon: "magnifyingglass", iconColor: .cyan, title: "Matching Algorithm") {
@@ -197,6 +245,13 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                         
                         GlassDivider()
+
+                        NavigationLink(destination: NuvioPluginsView()) {
+                            GlassSettingsRow(icon: "puzzlepiece.extension", iconColor: .mint, title: "Plugins")
+                        }
+                        .buttonStyle(.plain)
+
+                        GlassDivider()
                         
                         NavigationLink(destination: TrackersSettingsView()) {
                             GlassSettingsRow(icon: "chart.bar.fill", iconColor: .pink, title: "Trackers")
@@ -219,6 +274,19 @@ struct SettingsView: View {
                             GlassSettingsRow(icon: "arrow.triangle.2.circlepath", iconColor: .teal, title: "Backup & Restore")
                         }
                         .buttonStyle(.plain)
+
+                        if ExperimentalFeatureState.isEnabledAtLaunch {
+                            GlassDivider()
+
+                            NavigationLink(destination: ExperimentalCloudSyncView()) {
+                                GlassSettingsRow(icon: "icloud", iconColor: .blue, title: "iCloud Sync") {
+                                    Text(ExperimentalCloudSyncAvailability.current.isAvailable ? "Available" : "Unavailable")
+                                        .font(.subheadline)
+                                        .foregroundColor(.white.opacity(0.5))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                         
                         GlassDivider()
                         
@@ -265,46 +333,48 @@ struct SettingsView: View {
                 }
 
                 // MARK: - Updates
-                GlassSection(header: "Updates") {
-                    VStack(spacing: 0) {
-                        GlassSettingsRow(icon: "arrow.triangle.2.circlepath", iconColor: .mint, title: "Auto-check GitHub Releases") {
-                            Toggle("", isOn: $autoCheckGitHubReleases)
-                                .labelsHidden()
-                                .tint(.mint)
-                        }
-
-                        GlassDivider()
-
-                        Button {
-                            performManualGitHubReleaseCheck()
-                        } label: {
-                            GlassSettingsRow(icon: "arrow.clockwise", iconColor: .cyan, title: "Check for Updates") {
-                                if isCheckingGitHubRelease {
-                                    ProgressView()
-                                        .progressViewStyle(.circular)
-                                        .tint(.white.opacity(0.6))
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.3))
-                                }
+                if supportsGitHubReleaseUpdates {
+                    GlassSection(header: "Updates") {
+                        VStack(spacing: 0) {
+                            GlassSettingsRow(icon: "arrow.triangle.2.circlepath", iconColor: .mint, title: "Auto-check GitHub Releases") {
+                                Toggle("", isOn: $autoCheckGitHubReleases)
+                                    .labelsHidden()
+                                    .tint(.mint)
                             }
-                        }
-                        .disabled(isCheckingGitHubRelease)
-                        .buttonStyle(.plain)
 
-                        if githubReleaseUpdateAvailable {
                             GlassDivider()
 
-                            if let releaseURL = URL(string: githubReleaseURL), !githubReleaseURL.isEmpty {
-                                Link(destination: releaseURL) {
-                                    GlassSettingsRow(icon: "arrow.down.circle.fill", iconColor: .green, title: "Open Latest Release") {
-                                        Text(githubReleaseLatestVersion.isEmpty ? "Update Available" : githubReleaseLatestVersion)
-                                            .font(.subheadline)
-                                            .foregroundColor(.green.opacity(0.9))
+                            Button {
+                                performManualGitHubReleaseCheck()
+                            } label: {
+                                GlassSettingsRow(icon: "arrow.clockwise", iconColor: .cyan, title: "Check for Updates") {
+                                    if isCheckingGitHubRelease {
+                                        ProgressView()
+                                            .progressViewStyle(.circular)
+                                            .tint(.white.opacity(0.6))
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(.white.opacity(0.3))
                                     }
                                 }
-                                .buttonStyle(.plain)
+                            }
+                            .disabled(isCheckingGitHubRelease)
+                            .buttonStyle(.plain)
+
+                            if githubReleaseUpdateAvailable {
+                                GlassDivider()
+
+                                if let releaseURL = URL(string: githubReleaseURL), !githubReleaseURL.isEmpty {
+                                    Link(destination: releaseURL) {
+                                        GlassSettingsRow(icon: "arrow.down.circle.fill", iconColor: .green, title: "Open Latest Release") {
+                                            Text(githubReleaseLatestVersion.isEmpty ? "Update Available" : githubReleaseLatestVersion)
+                                                .font(.subheadline)
+                                                .foregroundColor(.green.opacity(0.9))
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                         }
                     }
@@ -316,7 +386,7 @@ struct SettingsView: View {
                         .font(.footnote)
                         .foregroundColor(.white.opacity(0.3))
 
-                    if githubReleaseUpdateAvailable {
+                    if supportsGitHubReleaseUpdates && githubReleaseUpdateAvailable {
                         Text(githubReleaseLatestVersion.isEmpty ? "Update available on GitHub" : "Update available: \(githubReleaseLatestVersion)")
                             .font(.footnote)
                             .foregroundColor(.green.opacity(0.85))
@@ -340,6 +410,11 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .background(SettingsGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         .eclipseDarkToolbar()
+        .alert("Restart Required", isPresented: $showExperimentalRestartAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Experimental features are applied only at app launch. Restart Eclipse to switch the active interface.")
+        }
         #endif
     }
     
@@ -358,6 +433,8 @@ struct SettingsView: View {
             NavigationLink(destination: TMDBFiltersView()) {
                 Text("Content Filters")
             }
+            Toggle("Performance Mode", isOn: performanceModeBinding)
+            Toggle("Hide Splash Screen", isOn: $hideSplashScreen)
         } header: {
             Text("TMDB Settings")
         }
@@ -381,32 +458,40 @@ struct SettingsView: View {
             NavigationLink(destination: ScheduleSettingsView()) { Text("Schedule") }
             NavigationLink(destination: CatalogsSettingsView()) { Text("Catalogs") }
             NavigationLink(destination: ServicesView()) { Text("Services") }
+            NavigationLink(destination: NuvioPluginsView()) { Text("Plugins") }
             NavigationLink(destination: TrackersSettingsView()) { Text("Trackers") }
         }
         
         Section {
             NavigationLink(destination: StorageView()) { Text("Storage") }
+#if os(iOS)
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                NavigationLink(destination: ExperimentalCloudSyncView()) { Text("iCloud Sync") }
+            }
+#endif
             NavigationLink(destination: BackupManagementView()) { Text("Backup & Restore") }
             NavigationLink(destination: LoggerView()) { Text("Logger") }
         } header: {
             Text("Data")
         }
 
-        Section {
-            Toggle("Auto-check GitHub Releases", isOn: $autoCheckGitHubReleases)
+        if supportsGitHubReleaseUpdates {
+            Section {
+                Toggle("Auto-check GitHub Releases", isOn: $autoCheckGitHubReleases)
 
-            Button(isCheckingGitHubRelease ? "Checking..." : "Check for Updates") {
-                performManualGitHubReleaseCheck()
-            }
-            .disabled(isCheckingGitHubRelease)
+                Button(isCheckingGitHubRelease ? "Checking..." : "Check for Updates") {
+                    performManualGitHubReleaseCheck()
+                }
+                .disabled(isCheckingGitHubRelease)
 
-            if githubReleaseUpdateAvailable,
-               let releaseURL = URL(string: githubReleaseURL),
-               !githubReleaseURL.isEmpty {
-                Link("Open Latest Release (\(githubReleaseLatestVersion.isEmpty ? "Update Available" : githubReleaseLatestVersion))", destination: releaseURL)
+                if githubReleaseUpdateAvailable,
+                   let releaseURL = URL(string: githubReleaseURL),
+                   !githubReleaseURL.isEmpty {
+                    Link("Open Latest Release (\(githubReleaseLatestVersion.isEmpty ? "Update Available" : githubReleaseLatestVersion))", destination: releaseURL)
+                }
+            } header: {
+                Text("App Updates")
             }
-        } header: {
-            Text("App Updates")
         }
         
         Section {
@@ -429,7 +514,7 @@ struct SettingsView: View {
     }
 
     private func performManualGitHubReleaseCheck() {
-        guard !isCheckingGitHubRelease else { return }
+        guard supportsGitHubReleaseUpdates, !isCheckingGitHubRelease else { return }
         Task {
             await MainActor.run {
                 isCheckingGitHubRelease = true
@@ -513,6 +598,96 @@ struct LegalNoticeView: View {
         }
         .navigationTitle("Legal & Source")
         .eclipseSettingsStyle()
+    }
+}
+
+struct ExperimentalCloudSyncView: View {
+    @AppStorage(ExperimentalFeatureState.iCloudSyncEnabledKey) private var iCloudSyncEnabled = false
+    @StateObject private var cloudSyncManager = ExperimentalCloudSyncManager.shared
+
+    private var availability: ExperimentalCloudSyncAvailability {
+        ExperimentalCloudSyncAvailability.current
+    }
+
+    var body: some View {
+        List {
+            Section {
+                HStack(spacing: 14) {
+                    Image(systemName: availability.isAvailable ? "checkmark.circle.fill" : "slash.circle")
+                        .font(.title2)
+                        .foregroundColor(availability.isAvailable ? .green : .orange)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(availability.statusTitle)
+                            .font(.headline)
+                        Text(availability.statusMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section {
+                Toggle("Sync with iCloud", isOn: $iCloudSyncEnabled)
+                    .disabled(!availability.isAvailable)
+
+                if !availability.isAvailable {
+                    Text("This build will keep settings, libraries, progress, and source definitions local.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Button {
+                    cloudSyncManager.pushLocalSnapshot(reason: "manual")
+                } label: {
+                    if cloudSyncManager.isSyncing {
+                        ProgressView()
+                    } else {
+                        Label("Sync Now", systemImage: "icloud.and.arrow.up")
+                    }
+                }
+                .disabled(!availability.isAvailable || !iCloudSyncEnabled || cloudSyncManager.isSyncing)
+
+                Button {
+                    cloudSyncManager.restoreRemoteSnapshot()
+                } label: {
+                    Label("Restore from iCloud", systemImage: "icloud.and.arrow.down")
+                }
+                .disabled(!availability.isAvailable || !iCloudSyncEnabled || cloudSyncManager.isSyncing)
+
+                if !cloudSyncManager.lastStatusMessage.isEmpty {
+                    Text(cloudSyncManager.lastStatusMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } header: {
+                Text("Experimental")
+            } footer: {
+                Text("Downloaded media, preload caches, images, logs, temporary files, and unsafe tokens are excluded.")
+            }
+
+            Section("Included Data") {
+                Label("Settings", systemImage: "gearshape")
+                Label("Libraries and collections", systemImage: "books.vertical")
+                Label("Watch and read progress", systemImage: "play.rectangle")
+                Label("Catalogs and safe source definitions", systemImage: "server.rack")
+                Label("Tracker preferences", systemImage: "chart.bar")
+            }
+        }
+        .navigationTitle("iCloud Sync")
+        .eclipseSettingsStyle()
+        .onAppear {
+            if !availability.isAvailable, iCloudSyncEnabled {
+                iCloudSyncEnabled = false
+            }
+        }
+        .onChange(of: iCloudSyncEnabled) { enabled in
+            if enabled {
+                cloudSyncManager.pushLocalSnapshot(reason: "enabled")
+            }
+        }
     }
 }
 

@@ -69,6 +69,9 @@ struct TrackerState: Codable {
     var autoSyncReaderRatings: Bool = false
     var mergeTraktContinueWatching: Bool = false
     var liveTraktScrobbling: Bool = true
+    var traktPublicCatalogsEnabled: Bool = false
+    var traktCommentsEnabled: Bool = false
+    var traktRelatedEnabled: Bool = false
     var lastSyncDate: Date?
 
     enum CodingKeys: String, CodingKey {
@@ -78,6 +81,9 @@ struct TrackerState: Codable {
         case autoSyncReaderRatings
         case mergeTraktContinueWatching
         case liveTraktScrobbling
+        case traktPublicCatalogsEnabled
+        case traktCommentsEnabled
+        case traktRelatedEnabled
         case lastSyncDate
     }
 
@@ -91,6 +97,9 @@ struct TrackerState: Codable {
         autoSyncReaderRatings = try container.decodeIfPresent(Bool.self, forKey: .autoSyncReaderRatings) ?? false
         mergeTraktContinueWatching = try container.decodeIfPresent(Bool.self, forKey: .mergeTraktContinueWatching) ?? false
         liveTraktScrobbling = try container.decodeIfPresent(Bool.self, forKey: .liveTraktScrobbling) ?? true
+        traktPublicCatalogsEnabled = try container.decodeIfPresent(Bool.self, forKey: .traktPublicCatalogsEnabled) ?? false
+        traktCommentsEnabled = try container.decodeIfPresent(Bool.self, forKey: .traktCommentsEnabled) ?? false
+        traktRelatedEnabled = try container.decodeIfPresent(Bool.self, forKey: .traktRelatedEnabled) ?? false
         lastSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastSyncDate)
     }
 
@@ -117,6 +126,15 @@ enum TraktScrobbleAction: String {
     case start
     case pause
     case stop
+}
+
+struct TraktCommentReview: Identifiable, Codable, Equatable {
+    let id: Int
+    let authorName: String
+    let comment: String
+    let likes: Int
+    let createdAt: String?
+    let isReview: Bool
 }
 
 // AniList Models
@@ -249,6 +267,10 @@ struct TraktAuthResponse: Codable {
 struct TraktUser: Codable {
     let username: String
     let ids: TraktIds
+}
+
+struct TraktUserSettingsResponse: Codable {
+    let user: TraktUser
 }
 
 struct TraktIds: Codable {

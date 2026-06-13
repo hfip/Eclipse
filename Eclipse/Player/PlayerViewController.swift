@@ -27,6 +27,7 @@ import MediaPlayer
 enum PlaybackSourceKind: String {
     case service
     case stremio
+    case plugin
 }
 
 struct PlaybackLaunchContext {
@@ -216,10 +217,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var nextOverlayMenuHandlerID = 1
     private var overlayMenuKind: String?
     private lazy var usesOverlayPlayerMenusForSession: Bool = {
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(
             requested: Settings.shared.mpvRenderBackend,
-            hasMetalDevice: MPVKitMetalRenderer.isAvailable
+            hasMetalDevice: MPVMoltenVKRenderer.isAvailable
         )
         return effectiveBackend == .metal
 #else
@@ -708,16 +709,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     private lazy var renderer: PlayerRenderer = {
         let requestedBackend = Settings.shared.mpvRenderBackend
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable)
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVMoltenVKRenderer.isAvailable)
         if effectiveBackend == .metal {
             let qualityProfile = metalSampleBufferQualityProfile()
-            Logger.shared.log("[PlayerVC.MPV] using Metal sample-buffer renderer \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
-            let r = MPVKitMetalRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
+            Logger.shared.log("[PlayerVC.MPV] using MoltenVK Metal renderer with sample-buffer PiP bridge \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            let r = MPVMoltenVKRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
             r.delegate = self
             return r
         }
-        if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVKitMetalRenderer.isAvailable) {
+        if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVMoltenVKRenderer.isAvailable) {
             Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
         }
 #else
@@ -735,14 +736,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return renderer as? MPVNativeRenderer
     }
 
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-    private var metalMPVRenderer: MPVKitMetalRenderer? {
-        return renderer as? MPVKitMetalRenderer
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+    private var metalMPVRenderer: MPVMoltenVKRenderer? {
+        return renderer as? MPVMoltenVKRenderer
     }
 #endif
 
     private var isMPVRenderer: Bool {
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         return mpvRenderer != nil || metalMPVRenderer != nil
 #else
         return mpvRenderer != nil
@@ -750,8 +751,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private var mpvRendererName: String {
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if metalMPVRenderer != nil { return "metal-sample-buffer" }
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        if metalMPVRenderer != nil { return "moltenvk" }
 #endif
         if mpvRenderer != nil { return "opengl" }
         return "none"
@@ -761,7 +762,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return nil
     }
 
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
     private func metalSampleBufferQualityProfile() -> MPVMetalSampleBufferQualityProfile {
         let requestedProfile = Settings.shared.mpvMetalQualityProfile
         let classification = smartPlayerMediaClassification()
@@ -1161,6 +1162,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var isEpisodeBrowserVisible = false
     private var nextEpisodePreview: PlayerEpisodeBrowserItem?
     private var nextEpisodePreviewKey: String?
+    private var experimentalStagedNextEpisodeKey: String?
     private var nextEpisodePreviewTask: Task<Void, Never>?
     private var nextEpisodePreviewUnavailableKeys: Set<String> = []
     private var nextEpisodeArtworkTask: URLSessionDataTask?
@@ -1592,18 +1594,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererGetSubtitleTrackDescriptors() -> [SubtitleTrackDescriptor] {
-        if let mpvRenderer {
-            return mpvRenderer.getSubtitleTracksDetailed().map {
+        let detailedTracks = renderer.getSubtitleTracksDetailed()
+        if !detailedTracks.isEmpty {
+            return detailedTracks.map {
                 SubtitleTrackDescriptor(id: $0.0, name: $0.1, codec: $0.2, isExternalNativeTrack: $0.3)
             }
         }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if let metalMPVRenderer {
-            return metalMPVRenderer.getSubtitleTracksDetailed().map {
-                SubtitleTrackDescriptor(id: $0.0, name: $0.1, codec: $0.2, isExternalNativeTrack: $0.3)
-            }
-        }
-#endif
 
         return rendererGetSubtitleTracks().map {
             SubtitleTrackDescriptor(id: $0.0, name: $0.1, codec: "", isExternalNativeTrack: false)
@@ -1716,15 +1712,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func canStartMPVSampleBufferPictureInPicture() -> Bool {
-        if let mpv = mpvRenderer {
-            return mpv.canStartSampleBufferPictureInPicture()
-        }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if let metal = metalMPVRenderer {
-            return metal.canStartSampleBufferPictureInPicture()
-        }
-#endif
-        return true
+        renderer.canStartSampleBufferPictureInPicture()
     }
 
     private func rendererIsPictureInPictureActive() -> Bool {
@@ -1741,41 +1729,25 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func rendererPreparePictureInPictureStart() {
         logPictureInPicture("renderer prepare call renderer=\(mpvRendererName) hasMPVRenderer=\(isMPVRenderer)")
-        mpvRenderer?.prepareForPictureInPictureStart()
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        metalMPVRenderer?.prepareForPictureInPictureStart()
-#endif
+        renderer.prepareForPictureInPictureStart()
     }
 
     private func rendererFinishPictureInPicture() {
-        mpvRenderer?.finishPictureInPicture()
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        metalMPVRenderer?.finishPictureInPicture()
-#endif
+        renderer.finishPictureInPicture()
     }
 
     private func rendererPrimePictureInPictureFrames(reason: String) {
         logPictureInPicture("renderer prime call reason=\(reason) renderer=\(mpvRendererName) hasMPVRenderer=\(isMPVRenderer)")
-        mpvRenderer?.primePictureInPictureFrames(reason: reason)
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        metalMPVRenderer?.primePictureInPictureFrames(reason: reason)
-#endif
+        renderer.primePictureInPictureFrames(reason: reason)
     }
 
     private func rendererActivatePictureInPictureLayer() {
         logPictureInPicture("renderer activate layer call renderer=\(mpvRendererName) hasMPVRenderer=\(isMPVRenderer)")
-        mpvRenderer?.activatePictureInPictureLayer()
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        metalMPVRenderer?.activatePictureInPictureLayer()
-#endif
+        renderer.activatePictureInPictureLayer()
     }
 
     private func rendererIsPictureInPicturePrimed() -> Bool {
-        if mpvRenderer?.isPictureInPicturePrimed() == true { return true }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if metalMPVRenderer?.isPictureInPicturePrimed() == true { return true }
-#endif
-        return false
+        renderer.isPictureInPicturePrimed()
     }
 
     @discardableResult
@@ -1812,22 +1784,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererResumeForegroundRendering(reason: String) {
-        mpvRenderer?.resumeForegroundRendering(reason: reason)
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        metalMPVRenderer?.resumeForegroundRendering(reason: reason)
-#endif
+        renderer.resumeForegroundRendering(reason: reason)
     }
 
     private func rendererPictureInPictureDebugSnapshot() -> String {
-        if let snapshot = mpvRenderer?.pictureInPictureDebugSnapshot() {
-            return snapshot
-        }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        if let snapshot = metalMPVRenderer?.pictureInPictureDebugSnapshot() {
-            return snapshot
-        }
-#endif
-        return "mpvRenderer=nil"
+        renderer.pictureInPictureDebugSnapshot()
     }
 
     private func subtitlePictureInPictureDebugSnapshot() -> String {
@@ -2334,7 +2295,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var pendingSeekTime: Double?
     private var defaultPlaybackSpeedApplied = false
     private var performanceOverlayTimer: Timer?
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
     private var metalThermalQualityTimer: Timer?
     private var lastMetalThermalNoticeAt: CFTimeInterval = 0
 #endif
@@ -2385,6 +2346,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             NotificationCenter.default.addObserver(self, selector: #selector(handleUserDefaultsDidChange), name: UserDefaults.didChangeNotification, object: nil)
         }
         
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
         do {
             try rendererStart()
             logSharedPlayerControl("renderer.start succeeded")
@@ -2413,7 +2377,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         updateProgressHostingController()
         updateSpeedMenu()
         updatePerformanceOverlayVisibility()
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
         startMetalThermalQualityMonitoringIfNeeded()
 #endif
         
@@ -2422,7 +2386,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidReceiveMemoryWarning), name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
         NotificationCenter.default.addObserver(self, selector: #selector(metalThermalStateDidChange), name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
 #endif
         NotificationCenter.default.addObserver(self, selector: #selector(sceneWillDeactivate), name: UIScene.willDeactivateNotification, object: nil)
@@ -2514,7 +2478,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         audioMenuDebounceTimer?.invalidate()
         subtitleMenuDebounceTimer?.invalidate()
         performanceOverlayTimer?.invalidate()
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
         metalThermalQualityTimer?.invalidate()
 #endif
         playerNoticeDismissWorkItem?.cancel()
@@ -2526,7 +2490,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if let mpv = mpvRenderer {
             mpv.delegate = nil
         }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         if let metal = metalMPVRenderer {
             metal.delegate = nil
         }
@@ -2651,6 +2615,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         logVLCUI("load resume prepared pendingSeek=\(secondsText(pendingSeekTime)) progressCached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) launchContext=\(String(describing: playbackLaunchContext))", type: "Progress")
         rendererPrepareInitialSeek(to: pendingSeekTime)
         let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
+        if isMPVRenderer && ExperimentalFeatureState.canUseExperimentalMPVPlayback {
+            ExperimentalMPVPreloadManager.shared.prewarm(
+                url: playbackRequest.url,
+                headers: playbackRequest.headers ?? headers,
+                label: mediaInfoLabel
+            )
+        }
         if !isVLCPlayer {
             preparePlaybackStartupMonitoring(for: playbackRequest.url, headers: playbackRequest.headers ?? headers ?? [:])
         } else {
@@ -2910,19 +2881,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             displayLayer.opacity = 0.0
             displayLayer.zPosition = -1
             videoContainer.layer.addSublayer(displayLayer)
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-            if metalMPVRenderer != nil {
-                displayLayer.isHidden = false
-                displayLayer.opacity = 1.0
-                displayLayer.zPosition = 0
-                logMPV("setupLayout using AVSampleBufferDisplayLayer for Metal sample-buffer renderer")
-            }
-#endif
         }
         
         // Add native rendering view FIRST (before all UI elements) so it renders behind controls.
-        if let mpv = mpvRenderer {
-            let mpvView = mpv.getRenderingView()
+        if isMPVRenderer {
+            let mpvView = renderer.getRenderingView()
             mpvRenderingView = mpvView
             videoContainer.addSubview(mpvView)
             mpvView.translatesAutoresizingMaskIntoConstraints = false
@@ -4270,6 +4233,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         progressModel.skipSegments = []
         nextEpisodePreview = nil
         nextEpisodePreviewKey = nil
+        experimentalStagedNextEpisodeKey = nil
         nextEpisodePreviewUnavailableKeys.removeAll()
         nextEpisodePreviewTask?.cancel()
         nextEpisodePreviewTask = nil
@@ -4301,10 +4265,19 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if usesOverlayPlayerMenus {
             Logger.shared.log("[PlayerVC.Menu] opening lightweight overlay reason=\(reason) renderer=\(mpvRendererName)", type: "MPV")
         }
-        mpvRenderer?.beginForegroundUIStallRecovery(reason: reason)
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
-        metalMPVRenderer?.beginForegroundUIStallRecovery(reason: reason)
-#endif
+        renderer.beginForegroundUIStallRecovery(reason: reason)
+        let openedAt = CACurrentMediaTime()
+        let baselinePosition = cachedPosition
+        let baselineDuration = cachedDuration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self, !self.isClosing else { return }
+            let elapsed = CACurrentMediaTime() - openedAt
+            let positionDelta = self.cachedPosition - baselinePosition
+            Logger.shared.log(
+                "[PlayerVC.Menu] playback continuity reason=\(reason) renderer=\(self.mpvRendererName) elapsed=\(String(format: "%.2f", elapsed))s positionDelta=\(String(format: "%.2f", positionDelta)) duration=\(String(format: "%.2f", baselineDuration))->\(String(format: "%.2f", self.cachedDuration)) paused=\(self.rendererIsPausedState()) loading=\(self.isRendererLoading)",
+                type: "MPV"
+            )
+        }
     }
 
     private func makeOverlayAction(
@@ -4878,6 +4851,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     /// AniSkip fetch with anime ID resolution, then conversion to the MAL ID the API expects.
     private func fetchAniSkipSegments(tmdbId: Int, seasonNumber: Int, episodeNumber: Int, showTitle: String?, duration: Double) async -> [SkipSegment] {
+        let performanceModeEnabled = PerformanceModeSettings.isEnabled
+
         // Step 0: Prefer the playback context because it is tied to the selected anime season.
         var animeProviderId = episodePlaybackContext?.anilistMediaId
         if let id = animeProviderId {
@@ -4901,7 +4876,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         // Step 3: Full AniList resolution via sequel chain
-        if animeProviderId == nil, let title = showTitle {
+        if animeProviderId == nil, !performanceModeEnabled, let title = showTitle {
             Logger.shared.log("SkipData: AniSkip step 3 – resolving via AniListService for '\(title)'", type: "Skip")
             do {
                 let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -4920,7 +4895,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         // Step 4: Last resort – simple title search
-        if animeProviderId == nil {
+        if animeProviderId == nil, !performanceModeEnabled {
             animeProviderId = await trackerManager.getAniListMediaId(tmdbId: tmdbId)
         }
 
@@ -4934,7 +4909,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             malId = abs(finalId)
             Logger.shared.log("SkipData: AniSkip using MAL fallback mediaId=\(malId)", type: "Skip")
         } else {
-            guard let resolvedMALId = await trackerManager.resolveMyAnimeListAnimeId(fromAniListId: finalId) else {
+            let resolvedMALId: Int?
+            if performanceModeEnabled {
+                resolvedMALId = trackerManager.cachedMyAnimeListAnimeId(fromAniListId: finalId)
+            } else {
+                resolvedMALId = await trackerManager.resolveMyAnimeListAnimeId(fromAniListId: finalId)
+            }
+            guard let resolvedMALId else {
                 Logger.shared.log("SkipData: AniSkip could not resolve MAL ID for AniList \(finalId)", type: "Skip")
                 return []
             }
@@ -5270,7 +5251,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func updateNextEpisodeState(position: Double, duration: Double) {
         guard duration > 0 else { return }
-        guard case .episode(_, let seasonNumber, let episodeNumber, _, _, _) = mediaInfo else { return }
+        guard case .episode(let showId, let seasonNumber, let episodeNumber, _, _, _) = mediaInfo else { return }
 
         let enabled: Bool
         if UserDefaults.standard.object(forKey: "showNextEpisodeButton") == nil {
@@ -5289,6 +5270,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let progress = position / duration
         let previewKey = nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
+        stageExperimentalNextEpisodeIfNeeded(
+            showId: showId,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber,
+            progress: progress,
+            threshold: threshold
+        )
         if progress >= threshold, !nextEpisodeButtonShown {
             resolveNextEpisodePreviewIfNeeded(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
             if nextEpisodePreviewUnavailableKeys.contains(previewKey) {
@@ -5405,6 +5393,35 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut]) {
             self.nextEpisodeButton.alpha = 1.0
         }
+    }
+
+    private func stageExperimentalNextEpisodeIfNeeded(
+        showId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        progress: Double,
+        threshold: Double
+    ) {
+        guard isMPVRenderer,
+              ExperimentalFeatureState.canUseExperimentalMPVPlayback,
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
+            return
+        }
+
+        let stageThreshold = max(0.50, threshold - 0.08)
+        guard progress >= stageThreshold else { return }
+
+        let key = nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
+        guard experimentalStagedNextEpisodeKey != key else { return }
+        experimentalStagedNextEpisodeKey = key
+
+        let nextEpisodeNumber = episodeNumber + 1
+        ExperimentalMPVPreloadManager.shared.noteNextEpisodeCandidate(
+            showId: showId,
+            seasonNumber: seasonNumber,
+            episodeNumber: nextEpisodeNumber
+        )
+        resolveNextEpisodePreviewIfNeeded(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
     }
 
     private func hideNextEpisodeButton() {
@@ -7134,6 +7151,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func updateProgressHostingController() {
         struct ProgressHostView: View {
             @ObservedObject var model: ProgressModel
+            let showRemainingTime: Bool
+            let preciseAdjustment: Bool
             var onEditingChanged: (Bool) -> Void
             var body: some View {
                 MusicProgressSlider(
@@ -7145,6 +7164,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     emptyColor: .white.opacity(0.3),
                     height: 33,
                     durationKnown: model.durationIsKnown,
+                    showRemainingTime: showRemainingTime,
+                    preciseAdjustment: preciseAdjustment,
                     segments: model.skipSegments,
                     onEditingChanged: onEditingChanged
                 )
@@ -7154,16 +7175,28 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if progressHostingController != nil {
             return
         }
+
+        let experimentalMPVControlsActive = isMPVRenderer && ExperimentalFeatureState.canUseExperimentalMPVPlayback
+        let showRemainingTime = !ExperimentalFeatureState.isEnabledAtLaunch
+            || !isMPVRenderer
+            || (experimentalMPVControlsActive && UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey))
+        let preciseAdjustment = experimentalMPVControlsActive
+            && UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         
-        let host = UIHostingController(rootView: AnyView(ProgressHostView(model: progressModel, onEditingChanged: { [weak self] editing in
-            guard let self = self else { return }
-            self.isSeeking = editing
-            self.controlsHideWorkItem?.cancel()
-            if !editing {
-                self.rendererSeek(to: max(0, self.progressModel.position))
-                self.showControlsTemporarily()
+        let host = UIHostingController(rootView: AnyView(ProgressHostView(
+            model: progressModel,
+            showRemainingTime: showRemainingTime,
+            preciseAdjustment: preciseAdjustment,
+            onEditingChanged: { [weak self] editing in
+                guard let self = self else { return }
+                self.isSeeking = editing
+                self.controlsHideWorkItem?.cancel()
+                if !editing {
+                    self.rendererSeek(to: max(0, self.progressModel.position))
+                    self.showControlsTemporarily()
+                }
             }
-        })))
+        )))
 
         addChild(host)
         host.view.translatesAutoresizingMaskIntoConstraints = false
@@ -7646,7 +7679,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if let mpv = self.mpvRenderer {
                 mpv.delegate = nil
             }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
             if let metal = self.metalMPVRenderer {
                 metal.delegate = nil
             }
@@ -8184,16 +8217,18 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
             var specialContexts: [SpecialEpisodeListContext] = []
 
             if seed.isAnime {
-                animeData = try? await AniListService.shared.fetchAnimeDetailsWithEpisodes(
-                    title: seed.showTitle,
-                    tmdbShowId: seed.showId,
-                    tmdbService: tmdbService,
-                    tmdbShowPoster: showPosterURL,
-                    token: nil
-                )
-                if let animeData {
-                    let mappings = animeData.seasons.map { (seasonNumber: $0.seasonNumber, anilistId: $0.anilistId) }
-                    TrackerManager.shared.registerAniListAnimeData(tmdbId: seed.showId, seasons: mappings)
+                if !PerformanceModeSettings.isEnabled {
+                    animeData = try? await AniListService.shared.fetchAnimeDetailsWithEpisodes(
+                        title: seed.showTitle,
+                        tmdbShowId: seed.showId,
+                        tmdbService: tmdbService,
+                        tmdbShowPoster: showPosterURL,
+                        token: nil
+                    )
+                    if let animeData {
+                        let mappings = animeData.seasons.map { (seasonNumber: $0.seasonNumber, anilistId: $0.anilistId) }
+                        TrackerManager.shared.registerAniListAnimeData(tmdbId: seed.showId, seasons: mappings)
+                    }
                 }
 
                 let specialEntries = await AniListService.shared.fetchSpecialSearchEntries(
@@ -8306,7 +8341,8 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
             seed.currentPlaybackContext?.kitsuMediaId.map(String.init) ?? "nil",
             seed.currentPlaybackContext?.isSpecial == true ? "special" : "regular"
         ].joined(separator: ":")
-        return "\(seed.showId)|S\(seed.currentSeasonNumber)|E\(seed.currentEpisodeNumber)|anime=\(seed.isAnime)|\(contextKey)"
+        let modeKey = PerformanceModeSettings.isEnabled ? "performance" : "standard"
+        return "\(seed.showId)|S\(seed.currentSeasonNumber)|E\(seed.currentEpisodeNumber)|anime=\(seed.isAnime)|mode=\(modeKey)|\(contextKey)"
     }
 
     private static func cachedLoad(for key: String) -> CachedEpisodeBrowserLoad? {
@@ -9375,9 +9411,9 @@ extension PlayerViewController: PiPControllerDelegate {
             logPictureInPicture("VLC app-exit PiP skipped source=scene-will-deactivate: disabled")
             return
         }
-#if ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP && ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         if metalMPVRenderer != nil {
-            logPictureInPicture("scene-will-deactivate pending Metal sample-buffer PiP until background confirmation")
+            logPictureInPicture("scene-will-deactivate pending MoltenVK sample-buffer PiP bridge until background confirmation")
             primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate-metal")
             scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate-metal", delay: 0.35)
             return

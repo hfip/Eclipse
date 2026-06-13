@@ -174,6 +174,10 @@ final class TrackerManager: NSObject, ObservableObject {
     private var traktContinueWatchingCache: (accountUserId: String, fetchedAt: Date, items: [ContinueWatchingItem])?
     private let traktContinueWatchingCacheQueue = DispatchQueue(label: "app.eclipse.soupy.traktContinueWatchingCache")
     private let traktContinueWatchingCacheTTL: TimeInterval = 90
+    private var traktCommentsCache: [String: (fetchedAt: Date, items: [TraktCommentReview])] = [:]
+    private var traktRelatedCache: [String: (fetchedAt: Date, items: [TMDBSearchResult])] = [:]
+    private let traktFeatureCacheQueue = DispatchQueue(label: "app.eclipse.soupy.traktFeatureCache")
+    private let traktFeatureCacheTTL: TimeInterval = 10 * 60
     private var traktScrobbleLastActionByKey: [String: TraktScrobbleAction] = [:]
     private var traktScrobbleLastStampByKey: [String: (action: TraktScrobbleAction, progress: Double, sentAt: Date)] = [:]
     private var traktScrobblePendingByKey: [String: (action: TraktScrobbleAction, progress: Double, queuedAt: Date)] = [:]
@@ -214,6 +218,7 @@ final class TrackerManager: NSObject, ObservableObject {
         return trimmed.isEmpty || trimmed.contains("$(") ? "luna://mal-callback" : trimmed
     }
     private var pendingMALCodeVerifier: String?
+    private var pendingTraktOAuthState: String?
 
     private var traktClientId: String {
         bundledCredential("TraktClientID")
@@ -275,6 +280,27 @@ final class TrackerManager: NSObject, ObservableObject {
         trackerState.liveTraktScrobbling = enabled
         if !enabled {
             resetTraktScrobbleState()
+        }
+        saveTrackerState()
+    }
+
+    func setTraktPublicCatalogsEnabled(_ enabled: Bool) {
+        trackerState.traktPublicCatalogsEnabled = enabled
+        saveTrackerState()
+    }
+
+    func setTraktCommentsEnabled(_ enabled: Bool) {
+        trackerState.traktCommentsEnabled = enabled
+        if !enabled {
+            invalidateTraktFeatureCaches(comments: true, related: false)
+        }
+        saveTrackerState()
+    }
+
+    func setTraktRelatedEnabled(_ enabled: Bool) {
+        trackerState.traktRelatedEnabled = enabled
+        if !enabled {
+            invalidateTraktFeatureCaches(comments: false, related: true)
         }
         saveTrackerState()
     }
@@ -361,6 +387,17 @@ final class TrackerManager: NSObject, ObservableObject {
                 try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
                 try Task.checkCancellation()
                 lastError = NSError(domain: "TrackerRateLimit", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Rate limited by tracker"])
+                continue
+            }
+
+            if provider == .trakt,
+               (500...599).contains(httpResponse.statusCode),
+               attempt < maxRetries - 1 {
+                let retryDelay: TimeInterval = (502...504).contains(httpResponse.statusCode) ? 5.0 : Double(attempt + 1) * 1.5
+                Logger.shared.log("Retrying Trakt request after server error \(httpResponse.statusCode) in \(String(format: "%.1f", retryDelay))s", type: "Tracker")
+                try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
+                try Task.checkCancellation()
+                lastError = NSError(domain: "TrackerServer", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Trakt server error \(httpResponse.statusCode)"])
                 continue
             }
 
@@ -937,25 +974,38 @@ final class TrackerManager: NSObject, ObservableObject {
 
     // MARK: - Trakt Authentication
 
-    func getTraktAuthURL() -> URL? {
+    private static func makeOAuthState() -> String {
+        UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    }
+
+    func getTraktAuthURL(state: String? = nil) -> URL? {
         guard !traktClientId.isEmpty, !traktClientSecret.isEmpty else {
             authError = "Add TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET to Build.local.xcconfig before connecting Trakt."
             return nil
         }
 
         var components = URLComponents(string: "https://trakt.tv/oauth/authorize")
-        components?.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "client_id", value: traktClientId),
             URLQueryItem(name: "redirect_uri", value: traktRedirectUri),
             URLQueryItem(name: "response_type", value: "code")
         ]
+        if let state, !state.isEmpty {
+            queryItems.append(URLQueryItem(name: "state", value: state))
+        }
+        components?.queryItems = queryItems
         let url = components?.url
         Logger.shared.log("Trakt auth URL: \(url?.absoluteString ?? "nil")", type: "Tracker")
         return url
     }
 
     func startTraktAuth() {
-        guard let url = getTraktAuthURL() else { return }
+        let oauthState = Self.makeOAuthState()
+        pendingTraktOAuthState = oauthState
+        guard let url = getTraktAuthURL(state: oauthState) else {
+            pendingTraktOAuthState = nil
+            return
+        }
         authError = nil
         isAuthenticating = true
 
@@ -969,6 +1019,7 @@ final class TrackerManager: NSObject, ObservableObject {
             guard let self = self else { return }
 
             if let error = error {
+                self.pendingTraktOAuthState = nil
                 DispatchQueue.main.async {
                     self.authError = error.localizedDescription
                     self.isAuthenticating = false
@@ -978,6 +1029,7 @@ final class TrackerManager: NSObject, ObservableObject {
             }
 
             guard let callbackURL = callbackURL else {
+                self.pendingTraktOAuthState = nil
                 Logger.shared.log("Trakt callback URL is nil", type: "Error")
                 DispatchQueue.main.async {
                     self.authError = "Trakt callback URL is nil"
@@ -990,9 +1042,22 @@ final class TrackerManager: NSObject, ObservableObject {
 
             guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: true),
                   let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+                self.pendingTraktOAuthState = nil
                 Logger.shared.log("Failed to extract code from Trakt callback. URL: \(callbackURL.absoluteString)", type: "Error")
                 DispatchQueue.main.async {
                     self.authError = "Invalid Trakt callback - failed to extract code"
+                    self.isAuthenticating = false
+                }
+                return
+            }
+
+            let callbackState = components.queryItems?.first(where: { $0.name == "state" })?.value
+            if let expectedState = self.pendingTraktOAuthState,
+               callbackState != expectedState {
+                self.pendingTraktOAuthState = nil
+                Logger.shared.log("Rejected Trakt callback with invalid OAuth state.", type: "Error")
+                DispatchQueue.main.async {
+                    self.authError = "Invalid Trakt callback state. Please try connecting again."
                     self.isAuthenticating = false
                 }
                 return
@@ -1029,12 +1094,14 @@ final class TrackerManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.trackerState.addOrUpdateAccount(account)
                     self.saveTrackerState()
+                    self.pendingTraktOAuthState = nil
                     self.isAuthenticating = false
                     self.authError = nil
                     Logger.shared.log("Trakt account saved", type: "Tracker")
                 }
             } catch {
                 await MainActor.run {
+                    self.pendingTraktOAuthState = nil
                     self.authError = "Trakt auth failed: \(error.localizedDescription)"
                     self.isAuthenticating = false
                     Logger.shared.log("Trakt auth error: \(error.localizedDescription)", type: "Error")
@@ -1153,7 +1220,7 @@ final class TrackerManager: NSObject, ObservableObject {
             throw NSError(domain: "TraktAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "TRAKT_CLIENT_ID is not configured."])
         }
 
-        let url = URL(string: "https://api.trakt.tv/users/me")!
+        let url = URL(string: "https://api.trakt.tv/users/settings")!
         var request = URLRequest(url: url)
         request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1172,8 +1239,17 @@ final class TrackerManager: NSObject, ObservableObject {
             Logger.shared.log("Trakt user response: \(responseString)", type: "Tracker")
         }
 
+        guard (200...299).contains(statusCode) else {
+            let bodyPreview = responseBodyPreview(from: data)
+            throw NSError(
+                domain: "TraktAuth",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Trakt user request failed with status \(statusCode): \(bodyPreview)"]
+            )
+        }
+
         do {
-            return try JSONDecoder().decode(TraktUser.self, from: data)
+            return try JSONDecoder().decode(TraktUserSettingsResponse.self, from: data).user
         } catch {
             Logger.shared.log("Failed to decode Trakt user response: \(error.localizedDescription)", type: "Error")
             throw error
@@ -1231,6 +1307,10 @@ final class TrackerManager: NSObject, ObservableObject {
 
     func resolveMyAnimeListAnimeId(fromAniListId aniListId: Int) async -> Int? {
         await getMyAnimeListId(fromAniListId: aniListId, mediaType: "ANIME")
+    }
+
+    func cachedMyAnimeListAnimeId(fromAniListId aniListId: Int) -> Int? {
+        cachedMyAnimeListId(fromAniListId: aniListId, mediaType: "ANIME")
     }
 
     func syncMangaProgress(title: String, chapterNumber: Int, totalChapters: Int? = nil, format: String? = nil, routeKey: String? = nil, knownAniListId: Int? = nil, knownMALId: Int? = nil) {
@@ -2152,6 +2232,7 @@ final class TrackerManager: NSObject, ObservableObject {
 
     private struct TraktIDs: Decodable {
         let trakt: Int?
+        let imdb: String?
         let tmdb: Int?
     }
 
@@ -2171,7 +2252,37 @@ final class TrackerManager: NSObject, ObservableObject {
         let ids: TraktIDs
     }
 
+    private struct TraktPublicListItem: Decodable {
+        let movie: TraktMovie?
+        let show: TraktShow?
+    }
+
+    private struct TraktCommentResponse: Decodable {
+        let comment: TraktComment
+        let user: TraktUser?
+    }
+
+    private struct TraktComment: Decodable {
+        let id: Int
+        let comment: String
+        let spoiler: Bool?
+        let review: Bool?
+        let likes: Int?
+        let createdAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, comment, spoiler, review, likes
+            case createdAt = "created_at"
+        }
+    }
+
+    private struct TraktUser: Decodable {
+        let username: String?
+        let name: String?
+    }
+
     private struct TraktEpisode: Decodable {
+        let title: String?
         let season: Int
         let number: Int
         let ids: TraktIDs?
@@ -2222,8 +2333,8 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     private struct TraktMoviePlaybackResponse: Decodable {
-        let progress: Double
-        let pausedAt: String
+        let progress: Double?
+        let pausedAt: String?
         let id: Int
         let movie: TraktMovie
 
@@ -2232,6 +2343,22 @@ final class TrackerManager: NSObject, ObservableObject {
             case pausedAt = "paused_at"
             case id
             case movie
+        }
+    }
+
+    private struct TraktEpisodePlaybackResponse: Decodable {
+        let progress: Double?
+        let pausedAt: String?
+        let id: Int
+        let show: TraktShow
+        let episode: TraktEpisode
+
+        enum CodingKeys: String, CodingKey {
+            case progress
+            case pausedAt = "paused_at"
+            case id
+            case show
+            case episode
         }
     }
 
@@ -2365,8 +2492,9 @@ final class TrackerManager: NSObject, ObservableObject {
             }
 
             async let upNextData = fetchTraktPlaybackData(path: "sync/progress/up_next", account: refreshedAccount)
+            async let episodeData = fetchTraktPlaybackData(path: "sync/playback/episodes", account: refreshedAccount)
             async let movieData = fetchTraktPlaybackData(path: "sync/playback/movies", account: refreshedAccount)
-            let (upNextPlaybackData, moviePlaybackData) = try await (upNextData, movieData)
+            let (upNextPlaybackData, episodePlaybackData, moviePlaybackData) = try await (upNextData, episodeData, movieData)
 
             let shows: [ContinueWatchingItem] = try JSONDecoder().decode([TraktUpNextResponse].self, from: upNextPlaybackData).compactMap { item -> ContinueWatchingItem? in
                 guard let tmdbId = item.show.ids.tmdb,
@@ -2390,29 +2518,51 @@ final class TrackerManager: NSObject, ObservableObject {
                     traktPlaybackId: nil
                 )
             }
+            let episodes: [ContinueWatchingItem] = try JSONDecoder().decode([TraktEpisodePlaybackResponse].self, from: episodePlaybackData).compactMap { playback -> ContinueWatchingItem? in
+                guard let tmdbId = playback.show.ids.tmdb,
+                      let normalized = normalizedTraktPlaybackProgress(playback.progress) else { return nil }
+                return ContinueWatchingItem(
+                    id: "trakt_episode_\(playback.id)",
+                    tmdbId: tmdbId,
+                    isMovie: false,
+                    title: playback.show.title,
+                    posterURL: nil,
+                    progress: normalized.fraction,
+                    lastUpdated: playback.pausedAt.flatMap(traktDate(from:)) ?? Date.distantPast,
+                    seasonNumber: playback.episode.season,
+                    episodeNumber: playback.episode.number,
+                    currentTime: normalized.fraction,
+                    totalDuration: 1,
+                    playbackContext: nil,
+                    isAnime: false,
+                    statusText: "\(Int(normalized.percent.rounded()))% watched",
+                    isWatchNext: false,
+                    traktPlaybackId: playback.id
+                )
+            }
             let movies: [ContinueWatchingItem] = try JSONDecoder().decode([TraktMoviePlaybackResponse].self, from: moviePlaybackData).compactMap { playback -> ContinueWatchingItem? in
-                guard let tmdbId = playback.movie.ids.tmdb else { return nil }
-                let normalizedProgress = min(max(playback.progress / 100.0, 0), 1)
+                guard let tmdbId = playback.movie.ids.tmdb,
+                      let normalized = normalizedTraktPlaybackProgress(playback.progress) else { return nil }
                 return ContinueWatchingItem(
                     id: "trakt_movie_\(playback.id)",
                     tmdbId: tmdbId,
                     isMovie: true,
                     title: playback.movie.title,
                     posterURL: nil,
-                    progress: normalizedProgress,
-                    lastUpdated: traktDate(from: playback.pausedAt) ?? Date.distantPast,
+                    progress: normalized.fraction,
+                    lastUpdated: playback.pausedAt.flatMap(traktDate(from:)) ?? Date.distantPast,
                     seasonNumber: nil,
                     episodeNumber: nil,
-                    currentTime: normalizedProgress,
+                    currentTime: normalized.fraction,
                     totalDuration: 1,
                     playbackContext: nil,
                     isAnime: false,
-                    statusText: "\(Int(playback.progress.rounded()))% watched",
+                    statusText: "\(Int(normalized.percent.rounded()))% watched",
                     isWatchNext: false,
                     traktPlaybackId: playback.id
                 )
             }
-            let items = shows + movies
+            let items = episodes + shows + movies
             storeTraktContinueWatchingItems(items, for: refreshedAccount)
             return items
         } catch {
@@ -2442,6 +2592,171 @@ final class TrackerManager: NSObject, ObservableObject {
     private func invalidateTraktContinueWatchingCache() {
         traktContinueWatchingCacheQueue.sync {
             traktContinueWatchingCache = nil
+        }
+    }
+
+    func fetchTraktPublicListCatalogItems(
+        for catalog: Catalog,
+        tmdbService: TMDBService,
+        limit: Int = 30
+    ) async -> [TMDBSearchResult] {
+        guard trackerState.traktPublicCatalogsEnabled,
+              catalog.source == .trakt,
+              let listPath = catalog.traktListEndpointPath,
+              trackerState.getAccount(for: .trakt) != nil else {
+            return []
+        }
+
+        let mediaType = Catalog.normalizedTraktListMediaType(catalog.traktListMediaType)
+        let sortBy = sanitizedTraktListSortBy(catalog.traktListSortBy)
+        let sortHow = sanitizedTraktListSortHow(catalog.traktListSortHow)
+        let itemType = mediaType == "movies" ? "movies" : "shows"
+        let path = "\(listPath)/items/\(itemType)?extended=full&sort_by=\(sortBy)&sort_how=\(sortHow)&page=1&limit=\(max(limit * 2, 30))"
+
+        do {
+            let data = try await fetchTraktData(path: path, account: trackerState.getAccount(for: .trakt))
+            let items = try JSONDecoder().decode([TraktPublicListItem].self, from: data)
+            var resolved: [TMDBSearchResult] = []
+            var seen = Set<String>()
+
+            for item in items {
+                guard resolved.count < limit else { break }
+                let result: TMDBSearchResult?
+                if mediaType == "movies", let movie = item.movie {
+                    result = await resolveTraktMediaToTMDB(
+                        tmdbId: movie.ids.tmdb,
+                        imdbId: movie.ids.imdb,
+                        isMovie: true,
+                        tmdbService: tmdbService
+                    )
+                } else if let show = item.show {
+                    result = await resolveTraktMediaToTMDB(
+                        tmdbId: show.ids.tmdb,
+                        imdbId: show.ids.imdb,
+                        isMovie: false,
+                        tmdbService: tmdbService
+                    )
+                } else {
+                    result = nil
+                }
+
+                guard let result, seen.insert(result.stableIdentity).inserted else { continue }
+                resolved.append(result)
+            }
+
+            Logger.shared.log("Trakt public list catalog \(catalog.id) loaded \(resolved.count) TMDB items", type: "Tracker")
+            return resolved
+        } catch {
+            Logger.shared.log("Failed to load Trakt public list catalog \(catalog.id): \(error.localizedDescription)", type: "Error")
+            return []
+        }
+    }
+
+    func fetchTraktComments(tmdbId: Int, isMovie: Bool) async -> [TraktCommentReview] {
+        guard trackerState.traktCommentsEnabled,
+              let account = trackerState.getAccount(for: .trakt) else {
+            return []
+        }
+
+        let cacheKey = "\(isMovie ? "movie" : "show")|\(tmdbId)"
+        if let cached = cachedTraktComments(key: cacheKey) {
+            return cached
+        }
+
+        let mediaType: TraktMediaType = isMovie ? .movie : .show
+        guard let traktId = await getTraktIdFromTmdbId(tmdbId, mediaType: mediaType) else {
+            return []
+        }
+
+        let endpoint = isMovie ? "movies" : "shows"
+        do {
+            let data = try await fetchTraktData(
+                path: "\(endpoint)/\(traktId)/comments/likes?page=1&limit=25",
+                account: account
+            )
+            let decoded = try JSONDecoder().decode([TraktCommentResponse].self, from: data)
+            let comments = decoded.compactMap { response -> TraktCommentReview? in
+                guard response.comment.spoiler != true,
+                      !response.comment.comment.lowercased().contains("[spoiler]"),
+                      let cleanComment = cleanTraktComment(response.comment.comment) else {
+                    return nil
+                }
+                let author = response.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let username = response.user?.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return TraktCommentReview(
+                    id: response.comment.id,
+                    authorName: author?.isEmpty == false ? author! : (username?.isEmpty == false ? username! : "Trakt User"),
+                    comment: cleanComment,
+                    likes: response.comment.likes ?? 0,
+                    createdAt: response.comment.createdAt,
+                    isReview: response.comment.review ?? false
+                )
+            }
+
+            storeTraktComments(comments, key: cacheKey)
+            return comments
+        } catch {
+            Logger.shared.log("Failed to load Trakt comments for \(cacheKey): \(error.localizedDescription)", type: "Error")
+            return []
+        }
+    }
+
+    func fetchTraktRelated(tmdbId: Int, isMovie: Bool, tmdbService: TMDBService) async -> [TMDBSearchResult] {
+        guard trackerState.traktRelatedEnabled,
+              let account = trackerState.getAccount(for: .trakt) else {
+            return []
+        }
+
+        let cacheKey = "\(isMovie ? "movie" : "show")|\(tmdbId)"
+        if let cached = cachedTraktRelated(key: cacheKey) {
+            return cached
+        }
+
+        let mediaType: TraktMediaType = isMovie ? .movie : .show
+        guard let traktId = await getTraktIdFromTmdbId(tmdbId, mediaType: mediaType) else {
+            return []
+        }
+
+        let endpoint = isMovie ? "movies" : "shows"
+        do {
+            let data = try await fetchTraktData(path: "\(endpoint)/\(traktId)/related?extended=full", account: account)
+            var resolved: [TMDBSearchResult] = []
+            var seen = Set<String>()
+
+            if isMovie {
+                let movies = try JSONDecoder().decode([TraktMovie].self, from: data)
+                for movie in movies {
+                    guard let result = await resolveTraktMediaToTMDB(
+                        tmdbId: movie.ids.tmdb,
+                        imdbId: movie.ids.imdb,
+                        isMovie: true,
+                        tmdbService: tmdbService
+                    ), seen.insert(result.stableIdentity).inserted else {
+                        continue
+                    }
+                    resolved.append(result)
+                }
+            } else {
+                let shows = try JSONDecoder().decode([TraktShow].self, from: data)
+                for show in shows {
+                    guard let result = await resolveTraktMediaToTMDB(
+                        tmdbId: show.ids.tmdb,
+                        imdbId: show.ids.imdb,
+                        isMovie: false,
+                        tmdbService: tmdbService
+                    ), seen.insert(result.stableIdentity).inserted else {
+                        continue
+                    }
+                    resolved.append(result)
+                }
+            }
+
+            let filtered = TMDBContentFilter.shared.filterSearchResults(resolved)
+            storeTraktRelated(filtered, key: cacheKey)
+            return filtered
+        } catch {
+            Logger.shared.log("Failed to load Trakt related for \(cacheKey): \(error.localizedDescription)", type: "Error")
+            return []
         }
     }
 
@@ -2482,6 +2797,172 @@ final class TrackerManager: NSObject, ObservableObject {
             guard count >= limit else { return pages }
             page += 1
         }
+    }
+
+    private func fetchTraktData(path: String, account: TrackerAccount? = nil, allowsRefreshRetry: Bool = true) async throws -> Data {
+        guard !traktClientId.isEmpty else {
+            throw NSError(domain: "Trakt", code: -1, userInfo: [NSLocalizedDescriptionKey: "TRAKT_CLIENT_ID is not configured."])
+        }
+
+        let refreshedAccount: TrackerAccount?
+        if let account {
+            refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+        } else {
+            refreshedAccount = nil
+        }
+
+        let url = URL(string: "https://api.trakt.tv/\(path)")!
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(traktClientId, forHTTPHeaderField: "trakt-api-key")
+        request.setValue("2", forHTTPHeaderField: "trakt-api-version")
+        if let refreshedAccount {
+            request.setValue("Bearer \(refreshedAccount.accessToken)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await sendTrackerRequest(request, provider: .trakt, reportRateLimitStatus: false)
+        if response.statusCode == 401, let account = refreshedAccount, allowsRefreshRetry {
+            let forcedRefresh = try await refreshedTraktAccountIfNeeded(account, force: true)
+            return try await fetchTraktData(path: path, account: forcedRefresh, allowsRefreshRetry: false)
+        }
+        guard (200...299).contains(response.statusCode) else {
+            let bodyPreview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+            throw NSError(domain: "Trakt", code: response.statusCode, userInfo: [NSLocalizedDescriptionKey: "Trakt \(path) returned status \(response.statusCode): \(bodyPreview)"])
+        }
+        return data
+    }
+
+    private func resolveTraktMediaToTMDB(
+        tmdbId: Int?,
+        imdbId: String?,
+        isMovie: Bool,
+        tmdbService: TMDBService
+    ) async -> TMDBSearchResult? {
+        if let tmdbId {
+            if isMovie, let detail = try? await tmdbService.getMovieDetails(id: tmdbId) {
+                return movieDetailSearchResult(detail)
+            }
+            if !isMovie, let detail = try? await tmdbService.getTVShowDetails(id: tmdbId) {
+                return tvDetailSearchResult(detail)
+            }
+        }
+
+        if let imdbId,
+           let fallback = try? await tmdbService.findByIMDbId(imdbId, preferredMediaType: isMovie ? "movie" : "tv") {
+            return fallback
+        }
+
+        return nil
+    }
+
+    private func movieDetailSearchResult(_ detail: TMDBMovieDetail) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: detail.id,
+            mediaType: "movie",
+            title: detail.title,
+            name: nil,
+            overview: detail.overview,
+            posterPath: detail.posterPath,
+            backdropPath: detail.backdropPath,
+            releaseDate: detail.releaseDate,
+            firstAirDate: nil,
+            voteAverage: detail.voteAverage,
+            popularity: detail.popularity,
+            adult: detail.adult,
+            genreIds: detail.genres.map(\.id),
+            originalLanguage: detail.originalLanguage,
+            originCountry: nil,
+            voteCount: detail.voteCount
+        )
+    }
+
+    private func tvDetailSearchResult(_ detail: TMDBTVShowDetail) -> TMDBSearchResult {
+        TMDBSearchResult(
+            id: detail.id,
+            mediaType: "tv",
+            title: nil,
+            name: detail.name,
+            overview: detail.overview,
+            posterPath: detail.posterPath,
+            backdropPath: detail.backdropPath,
+            releaseDate: nil,
+            firstAirDate: detail.firstAirDate,
+            voteAverage: detail.voteAverage,
+            popularity: detail.popularity,
+            adult: detail.adult,
+            genreIds: detail.genres.map(\.id),
+            originalLanguage: detail.originalLanguage,
+            originCountry: detail.originCountry,
+            voteCount: detail.voteCount
+        )
+    }
+
+    private func cachedTraktComments(key: String) -> [TraktCommentReview]? {
+        let now = Date()
+        return traktFeatureCacheQueue.sync {
+            guard let cache = traktCommentsCache[key],
+                  now.timeIntervalSince(cache.fetchedAt) < traktFeatureCacheTTL else {
+                return nil
+            }
+            return cache.items
+        }
+    }
+
+    private func storeTraktComments(_ items: [TraktCommentReview], key: String) {
+        traktFeatureCacheQueue.sync {
+            traktCommentsCache[key] = (Date(), items)
+        }
+    }
+
+    private func cachedTraktRelated(key: String) -> [TMDBSearchResult]? {
+        let now = Date()
+        return traktFeatureCacheQueue.sync {
+            guard let cache = traktRelatedCache[key],
+                  now.timeIntervalSince(cache.fetchedAt) < traktFeatureCacheTTL else {
+                return nil
+            }
+            return cache.items
+        }
+    }
+
+    private func storeTraktRelated(_ items: [TMDBSearchResult], key: String) {
+        traktFeatureCacheQueue.sync {
+            traktRelatedCache[key] = (Date(), items)
+        }
+    }
+
+    private func invalidateTraktFeatureCaches(comments: Bool, related: Bool) {
+        traktFeatureCacheQueue.sync {
+            if comments {
+                traktCommentsCache = [:]
+            }
+            if related {
+                traktRelatedCache = [:]
+            }
+        }
+    }
+
+    private func sanitizedTraktListSortBy(_ value: String?) -> String {
+        let allowed: Set<String> = ["rank", "added", "title", "released", "runtime", "popularity", "percentage", "votes"]
+        let normalized = value?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return allowed.contains(normalized) ? normalized : "rank"
+    }
+
+    private func sanitizedTraktListSortHow(_ value: String?) -> String {
+        let normalized = value?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized == "desc" ? "desc" : "asc"
+    }
+
+    private func cleanTraktComment(_ raw: String) -> String? {
+        var text = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "[/spoiler]", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "[spoiler]", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.contains("\n\n\n") {
+            text = text.replacingOccurrences(of: "\n\n\n", with: "\n\n")
+        }
+        return text.isEmpty ? nil : text
     }
 
     func removeTraktContinueWatchingItem(_ playbackId: Int, completion: (() -> Void)? = nil) {
@@ -2822,6 +3303,14 @@ final class TrackerManager: NSObject, ObservableObject {
         let percent = progress <= 1.0 ? progress * 100.0 : progress
         let clamped = min(max(percent, 0), 100)
         return (clamped * 10).rounded() / 10
+    }
+
+    private func normalizedTraktPlaybackProgress(_ progress: Double?) -> (percent: Double, fraction: Double)? {
+        guard let progress, progress.isFinite else { return nil }
+        let percent = progress <= 1.0 ? progress * 100.0 : progress
+        let clamped = min(max(percent, 0), 100)
+        guard clamped > 0 else { return nil }
+        return (clamped, clamped / 100.0)
     }
 
     private func postTraktJSON(

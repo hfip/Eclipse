@@ -7,8 +7,15 @@
 
 import SwiftUI
 
+private struct StorageBreakdownItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let sizeBytes: Int64
+}
+
 struct StorageView: View {
     @State private var cacheSizeBytes: Int64 = 0
+    @State private var storageBreakdown: [StorageBreakdownItem] = []
     @State private var isLoading: Bool = true
     @State private var isClearing: Bool = false
     @State private var showConfirmClear: Bool = false
@@ -39,7 +46,7 @@ struct StorageView: View {
                     if isClearing {
                         HStack {
                             ProgressView()
-                            Text("Clearing Cache…")
+                            Text("Clearing Cache...")
                         }
                     } else {
                         Text("Clear Cache")
@@ -48,6 +55,34 @@ struct StorageView: View {
                 .disabled(isClearing || (isLoading && cacheSizeBytes == 0))
             }
             .background(EclipseScrollTracker())
+
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                Section(
+                    header: Text("EXPERIMENTAL BREAKDOWN"),
+                    footer: Text(ExperimentalFeatureState.canUseExperimentalMPVPlayback ? "MPV preload files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV preload cache actions require MPV as the default in-app player.")
+                ) {
+                    ForEach(storageBreakdown) { item in
+                        HStack {
+                            Text(item.title)
+                            Spacer()
+                            if isLoading {
+                                ProgressView()
+                            } else {
+                                Text(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        ExperimentalMPVPreloadManager.shared.clearCache()
+                        refreshCacheSize()
+                    } label: {
+                        Text("Clear MPV Preload Cache")
+                    }
+                    .disabled(!ExperimentalFeatureState.canUseExperimentalMPVPlayback || isLoading || isClearing)
+                }
+            }
             
             Section(header: Text("AUTO-CLEAR CACHE"), footer: Text("Automatically clear cache when it exceeds the specified size.")) {
                 Toggle("Enable Auto-Clear", isOn: $autoClearCacheEnabled)
@@ -119,8 +154,10 @@ struct StorageView: View {
         isLoading = true
         DispatchQueue.global(qos: .userInitiated).async {
             let size = calculateDirectorySize(at: cachesDirectory())
+            let breakdown = calculateStorageBreakdown()
             DispatchQueue.main.async {
                 self.cacheSizeBytes = size
+                self.storageBreakdown = breakdown
                 self.isLoading = false
                 
                 // Check if auto-clear should be triggered
@@ -165,7 +202,9 @@ struct StorageView: View {
                 URLCache.shared.removeAllCachedResponses()
                 
                 let size = calculateDirectorySize(at: dir)
+                let breakdown = calculateStorageBreakdown()
                 DispatchQueue.main.async {
+                    self.storageBreakdown = breakdown
                     completion(size)
                 }
             } catch {
@@ -203,6 +242,73 @@ struct StorageView: View {
     
     private func cachesDirectory() -> URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    }
+
+    private func documentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    private func calculateStorageBreakdown() -> [StorageBreakdownItem] {
+        let documents = documentsDirectory()
+        let caches = cachesDirectory()
+        let downloads = DownloadManager.shared.downloadsDirectory
+        let mpvPreload = ExperimentalMPVPreloadManager.shared.cacheDirectory
+
+        return [
+            StorageBreakdownItem(title: "Document Directory", sizeBytes: calculateDirectorySize(at: documents)),
+            StorageBreakdownItem(title: "Image Cache", sizeBytes: calculateNamedCacheSize(in: caches, matching: ["kingfisher", "imagecache", "image-cache"])),
+            StorageBreakdownItem(title: "MPV Preload Cache", sizeBytes: ExperimentalMPVPreloadManager.shared.cacheSizeBytes),
+            StorageBreakdownItem(title: "Downloads / Video Storage", sizeBytes: calculateDirectorySize(at: downloads)),
+            StorageBreakdownItem(title: "Subtitle Cache", sizeBytes: calculateFileSize(in: [documents, caches, downloads], extensions: ["srt", "vtt", "ass", "ssa"])),
+            StorageBreakdownItem(title: "Service / Plugin / Source Cache", sizeBytes: calculateNamedCacheSize(in: caches, matching: ["service", "plugin", "source", "stremio", "nuvio"])),
+            StorageBreakdownItem(title: "Reader Cache", sizeBytes: calculateNamedCacheSize(in: caches, matching: ["kanzen", "aidoku", "reader", "manga"]))
+        ].map { item in
+            if item.title == "Document Directory" {
+                let adjusted = max(0, item.sizeBytes - calculateDirectorySize(at: downloads))
+                return StorageBreakdownItem(title: item.title, sizeBytes: adjusted)
+            }
+            if item.title == "Image Cache", item.sizeBytes == 0 {
+                let adjusted = max(0, calculateDirectorySize(at: caches) - calculateDirectorySize(at: mpvPreload))
+                return StorageBreakdownItem(title: item.title, sizeBytes: adjusted)
+            }
+            return item
+        }
+    }
+
+    private func calculateNamedCacheSize(in directory: URL, matching tokens: [String]) -> Int64 {
+        let fileManager = FileManager.default
+        guard let items = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+            return 0
+        }
+
+        return items.reduce(Int64(0)) { total, url in
+            let name = url.lastPathComponent.lowercased()
+            guard tokens.contains(where: { name.contains($0) }) else { return total }
+            return total + calculateDirectorySize(at: url)
+        }
+    }
+
+    private func calculateFileSize(in directories: [URL], extensions: Set<String>) -> Int64 {
+        let fileManager = FileManager.default
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        var total: Int64 = 0
+
+        for directory in directories {
+            guard let enumerator = fileManager.enumerator(at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
+                continue
+            }
+            for case let fileURL as URL in enumerator {
+                guard extensions.contains(fileURL.pathExtension.lowercased()),
+                      let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+                      values.isRegularFile == true,
+                      let fileSize = values.fileSize else {
+                    continue
+                }
+                total += Int64(fileSize)
+            }
+        }
+
+        return total
     }
 }
 

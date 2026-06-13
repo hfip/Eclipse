@@ -22,6 +22,11 @@
 		5E2222212F60000000AE2221 /* StremioClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E2222202F60000000AE2220 /* StremioClient.swift */; };
 		5E3333312F60000000AE3331 /* StremioAddonStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E3333302F60000000AE3330 /* StremioAddonStore.swift */; };
 		5E4444412F60000000AE4441 /* StremioAddonManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E4444402F60000000AE4440 /* StremioAddonManager.swift */; };
+		BEEF00202FE2000000BEEF20 /* NuvioPluginModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00102FE2000000BEEF10 /* NuvioPluginModels.swift */; };
+		BEEF00212FE2000000BEEF21 /* NuvioPluginManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00112FE2000000BEEF11 /* NuvioPluginManager.swift */; };
+		BEEF00222FE2000000BEEF22 /* NuvioPluginRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00122FE2000000BEEF12 /* NuvioPluginRuntime.swift */; };
+		BEEF00232FE2000000BEEF23 /* NuvioPluginsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00132FE2000000BEEF13 /* NuvioPluginsView.swift */; };
+		BEEF00322FE2000000BEEF32 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = BEEF00312FE2000000BEEF31 /* SwiftSoup */; };
 		129CC90C2EBA920C00D2D84B /* Bundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129CC90B2EBA920A00D2D84B /* Bundle.swift */; };
 		12DA48B02EE2140D000ADDF0 /* DownloadProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DA48AF2EE21409000ADDF0 /* DownloadProgressView.swift */; };
 		12DF1FC22F040D6700E80375 /* AdaptiveConfirmationDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DF1FC12F040D6500E80375 /* AdaptiveConfirmationDialog.swift */; };
@@ -210,6 +215,10 @@
 		5E2222202F60000000AE2220 /* StremioClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StremioClient.swift; sourceTree = "<group>"; };
 		5E3333302F60000000AE3330 /* StremioAddonStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StremioAddonStore.swift; sourceTree = "<group>"; };
 		5E4444402F60000000AE4440 /* StremioAddonManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StremioAddonManager.swift; sourceTree = "<group>"; };
+		BEEF00102FE2000000BEEF10 /* NuvioPluginModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioPluginModels.swift; sourceTree = "<group>"; };
+		BEEF00112FE2000000BEEF11 /* NuvioPluginManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioPluginManager.swift; sourceTree = "<group>"; };
+		BEEF00122FE2000000BEEF12 /* NuvioPluginRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioPluginRuntime.swift; sourceTree = "<group>"; };
+		BEEF00132FE2000000BEEF13 /* NuvioPluginsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioPluginsView.swift; sourceTree = "<group>"; };
 		1240112B2EFF3B8B00CEC6EB /* Eclipse.local.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Eclipse.local.entitlements; sourceTree = "<group>"; };
 		129CC9062EBA1D4600D2D84B /* Build.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Build.xcconfig; sourceTree = "<group>"; };
 		129CC9082EBA1F8400D2D84B /* Build.local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Build.local.xcconfig; sourceTree = "<group>"; };
@@ -381,6 +390,7 @@
 				AD0000072FD9000000AD0007 /* ZIPFoundation in Frameworks */,
 				AD0000332FDA000000AD0033 /* Nuke in Frameworks */,
 				AD0000432FDB000000AD0043 /* AsyncDisplayKit in Frameworks */,
+				BEEF00322FE2000000BEEF32 /* SwiftSoup in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -890,6 +900,9 @@
 				5E2222202F60000000AE2220 /* StremioClient.swift */,
 				5E3333302F60000000AE3330 /* StremioAddonStore.swift */,
 				5E4444402F60000000AE4440 /* StremioAddonManager.swift */,
+				BEEF00102FE2000000BEEF10 /* NuvioPluginModels.swift */,
+				BEEF00112FE2000000BEEF11 /* NuvioPluginManager.swift */,
+				BEEF00122FE2000000BEEF12 /* NuvioPluginRuntime.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -905,6 +918,7 @@
 				13F5B5962E730CDB00565E75 /* TMDBFiltersView.swift */,
 				13F072792E4B2D9000EF90EB /* ServicesView.swift */,
 				5E2222202F70000000AE2220 /* StremioConfigureView.swift */,
+				BEEF00132FE2000000BEEF13 /* NuvioPluginsView.swift */,
 				13F518422EBCE42B00DEF778 /* StorageView.swift */,
 				13F0727E2E4B2D9000EF90EB /* LoggerView.swift */,
 				AD0000112FD9000000AD0011 /* ReaderLoggerView.swift */,
@@ -990,6 +1004,7 @@
 				AD0000232FD9000000AD0023 /* ZIPFoundation */,
 				AD0000322FDA000000AD0032 /* Nuke */,
 				AD0000422FDB000000AD0042 /* AsyncDisplayKit */,
+				BEEF00312FE2000000BEEF31 /* SwiftSoup */,
 			);
 			productName = Eclipse;
 			productReference = 13F0725B2E4B2D3300EF90EB /* Eclipse.app */;
@@ -1029,6 +1044,7 @@
 				AD0000212FD9000000AD0021 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				AD0000312FDA000000AD0031 /* XCRemoteSwiftPackageReference "Nuke" */,
 				AD0000412FDB000000AD0041 /* XCRemoteSwiftPackageReference "Texture" */,
+				BEEF00302FE2000000BEEF30 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
 			);
 			productRefGroup = 13F0725C2E4B2D3300EF90EB /* Products */;
 			projectDirPath = "";
@@ -1208,6 +1224,10 @@
 				5E2222212F60000000AE2221 /* StremioClient.swift in Sources */,
 				5E3333312F60000000AE3331 /* StremioAddonStore.swift in Sources */,
 				5E4444412F60000000AE4441 /* StremioAddonManager.swift in Sources */,
+				BEEF00202FE2000000BEEF20 /* NuvioPluginModels.swift in Sources */,
+				BEEF00212FE2000000BEEF21 /* NuvioPluginManager.swift in Sources */,
+				BEEF00222FE2000000BEEF22 /* NuvioPluginRuntime.swift in Sources */,
+				BEEF00232FE2000000BEEF23 /* NuvioPluginsView.swift in Sources */,
 				13E1EDD52ED9E65F00087629 /* readingMode.swift in Sources */,
 				13E1EDED2ED9E66000087629 /* contentView.swift in Sources */,
 				13F187AC2E6F38CE00747F7E /* LibraryManager.swift in Sources */,
@@ -1416,7 +1436,7 @@
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1472,7 +1492,7 @@
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECLIPSE_MPVKIT_FORK_EXPOSES_METAL_SAMPLE_BUFFER_PIP ECLIPSE_MPVKIT_METAL_SAMPLE_BUFFER_PIP_IMPLEMENTED ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1508,7 +1528,7 @@
 			repositoryURL = "https://github.com/Soupy-dev/MPVKit";
 			requirement = {
 				kind = revision;
-				revision = 3257830892c6b8cf44e0007aca2a4cef8064bc90;
+				revision = 6b33a15f6d943d33505e26b66acc715870336c74;
 			};
 		};
 		13A46CFB2EF5943400423BC6 /* XCRemoteSwiftPackageReference "FakeWebKit" */ = {
@@ -1575,6 +1595,14 @@
 				minimumVersion = 3.1.1;
 			};
 		};
+		BEEF00302FE2000000BEEF30 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scinfu/SwiftSoup.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.11.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1626,6 +1654,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AD0000412FDB000000AD0041 /* XCRemoteSwiftPackageReference "Texture" */;
 			productName = AsyncDisplayKit;
+		};
+		BEEF00312FE2000000BEEF31 /* SwiftSoup */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BEEF00302FE2000000BEEF30 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoup;
 		};
 /* End XCSwiftPackageProductDependency section */
 

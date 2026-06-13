@@ -29,6 +29,10 @@ enum SourceHealth {
     static func stremioId(_ addon: StremioAddon) -> String {
         "stremio:\(addon.id.uuidString)"
     }
+
+    static func pluginId(_ source: NuvioPluginSource) -> String {
+        source.id
+    }
 }
 
 enum AutoModeQualityPreference: String, CaseIterable, Identifiable {

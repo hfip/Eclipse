@@ -702,6 +702,7 @@ var nextControllers: [UIViewController]?
 enum KanzenReaderMode: String, CaseIterable, Identifiable {
     case ltr
     case rtl
+    case vertical
     case webtoon
 
     var id: String { rawValue }
@@ -710,6 +711,7 @@ enum KanzenReaderMode: String, CaseIterable, Identifiable {
         switch self {
         case .ltr: return "Left to Right"
         case .rtl: return "Right to Left"
+        case .vertical: return "Vertical"
         case .webtoon: return "Continuous Scroll"
         }
     }
@@ -718,11 +720,26 @@ enum KanzenReaderMode: String, CaseIterable, Identifiable {
         switch self {
         case .ltr: return .LTR
         case .rtl: return .RTL
+        case .vertical: return .VERTICAL
         case .webtoon: return .WEBTOON
         }
     }
 
-    static func currentDefault() -> KanzenReaderMode {
+    static func storageKey(scopeKey: String?) -> String {
+        if let scopeKey, !scopeKey.isEmpty {
+            return "kanzenReaderMode.\(scopeKey)"
+        }
+        return "kanzenReaderMode"
+    }
+
+    static func currentDefault(scopeKey: String? = nil) -> KanzenReaderMode {
+        let scopedKey = storageKey(scopeKey: scopeKey)
+        if scopedKey != "kanzenReaderMode",
+           let scoped = UserDefaults.standard.object(forKey: scopedKey) as? String,
+           let mode = KanzenReaderMode(rawValue: scoped) {
+            return mode
+        }
+
         let migrated = UserDefaults.standard.object(forKey: "kanzenReaderMode") as? String
         if let migrated, let mode = KanzenReaderMode(rawValue: migrated) {
             return mode
@@ -734,7 +751,8 @@ enum KanzenReaderMode: String, CaseIterable, Identifiable {
         switch mode {
         case .LTR: resolved = .ltr
         case .RTL: resolved = .rtl
-        case .WEBTOON, .VERTICAL: resolved = .webtoon
+        case .VERTICAL: resolved = .vertical
+        case .WEBTOON: resolved = .webtoon
         }
         UserDefaults.standard.set(resolved.rawValue, forKey: "kanzenReaderMode")
         return resolved
@@ -779,7 +797,18 @@ final class KanzenReaderSession {
 
     var pages: [KanzenReaderPage] = []
     var currentPage: Int = 0
-    var mode: KanzenReaderMode = KanzenReaderMode.currentDefault()
+    var mode: KanzenReaderMode = .webtoon
+
+    var readerSettingsScopeKey: String? {
+        if let stableKey = mangaRoute?.stableKey, !stableKey.isEmpty {
+            return stableKey
+        }
+        return mangaId == 0 ? nil : "\(mangaId)"
+    }
+
+    var readerModeStorageKey: String {
+        KanzenReaderMode.storageKey(scopeKey: readerSettingsScopeKey)
+    }
 
     init(
         kanzen: KanzenEngine,
@@ -816,6 +845,7 @@ final class KanzenReaderSession {
         self.trackerAniListId = trackerAniListId
         self.trackerMALId = trackerMALId
         self.loader = KanzenReaderPageLoader(kanzen: kanzen, route: mangaRoute)
+        self.mode = KanzenReaderMode.currentDefault(scopeKey: readerSettingsScopeKey)
     }
 
     var canMovePreviousChapter: Bool {

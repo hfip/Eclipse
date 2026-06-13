@@ -103,6 +103,9 @@ struct TMDBSearchResult: Codable, Identifiable {
     let popularity: Double
     let adult: Bool?
     let genreIds: [Int]?
+    let originalLanguage: String?
+    let originCountry: [String]?
+    let voteCount: Int?
     
     enum CodingKeys: String, CodingKey {
         case id, overview, popularity, adult
@@ -114,6 +117,45 @@ struct TMDBSearchResult: Codable, Identifiable {
         case firstAirDate = "first_air_date"
         case voteAverage = "vote_average"
         case genreIds = "genre_ids"
+        case originalLanguage = "original_language"
+        case originCountry = "origin_country"
+        case voteCount = "vote_count"
+    }
+
+    init(
+        id: Int,
+        mediaType: String,
+        title: String?,
+        name: String?,
+        overview: String?,
+        posterPath: String?,
+        backdropPath: String?,
+        releaseDate: String?,
+        firstAirDate: String?,
+        voteAverage: Double?,
+        popularity: Double,
+        adult: Bool?,
+        genreIds: [Int]?,
+        originalLanguage: String? = nil,
+        originCountry: [String]? = nil,
+        voteCount: Int? = nil
+    ) {
+        self.id = id
+        self.mediaType = mediaType
+        self.title = title
+        self.name = name
+        self.overview = overview
+        self.posterPath = posterPath
+        self.backdropPath = backdropPath
+        self.releaseDate = releaseDate
+        self.firstAirDate = firstAirDate
+        self.voteAverage = voteAverage
+        self.popularity = popularity
+        self.adult = adult
+        self.genreIds = genreIds
+        self.originalLanguage = originalLanguage
+        self.originCountry = originCountry
+        self.voteCount = voteCount
     }
     
     var displayTitle: String {
@@ -283,6 +325,9 @@ struct TMDBTVShow: Codable, Identifiable {
     let voteAverage: Double
     let popularity: Double
     let genreIds: [Int]?
+    let originalLanguage: String?
+    let originCountry: [String]?
+    let voteCount: Int?
     
     enum CodingKeys: String, CodingKey {
         case id, name, overview, popularity
@@ -291,6 +336,9 @@ struct TMDBTVShow: Codable, Identifiable {
         case firstAirDate = "first_air_date"
         case voteAverage = "vote_average"
         case genreIds = "genre_ids"
+        case originalLanguage = "original_language"
+        case originCountry = "origin_country"
+        case voteCount = "vote_count"
     }
     
     var fullPosterURL: String? {
@@ -317,7 +365,10 @@ struct TMDBTVShow: Codable, Identifiable {
             voteAverage: voteAverage,
             popularity: popularity,
             adult: nil,
-            genreIds: genreIds
+            genreIds: genreIds,
+            originalLanguage: originalLanguage,
+            originCountry: originCountry,
+            voteCount: voteCount
         )
     }
 }
@@ -743,6 +794,53 @@ struct TMDBImage: Codable {
     
     var fullURL: String {
         return "\(TMDBService.tmdbImageBaseURL)\(filePath)"
+    }
+}
+
+// MARK: - Videos Response
+struct TMDBVideosResponse: Codable {
+    let id: Int
+    let results: [TMDBVideo]
+}
+
+struct TMDBVideo: Codable, Identifiable {
+    let id: String
+    let iso6391: String?
+    let iso31661: String?
+    let name: String
+    let key: String
+    let site: String
+    let size: Int?
+    let type: String
+    let official: Bool?
+    let publishedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, key, site, size, type, official
+        case iso6391 = "iso_639_1"
+        case iso31661 = "iso_3166_1"
+        case publishedAt = "published_at"
+    }
+
+    var isTrailerLike: Bool {
+        let normalizedType = type.lowercased()
+        return normalizedType == "trailer" || normalizedType == "teaser" || normalizedType.contains("clip")
+    }
+
+    var playbackURL: URL? {
+        switch site.lowercased() {
+        case "youtube":
+            return URL(string: "https://www.youtube.com/watch?v=\(key)")
+        case "vimeo":
+            return URL(string: "https://vimeo.com/\(key)")
+        default:
+            return nil
+        }
+    }
+
+    var thumbnailURL: URL? {
+        guard site.lowercased() == "youtube" else { return nil }
+        return URL(string: "https://img.youtube.com/vi/\(key)/hqdefault.jpg")
     }
 }
 

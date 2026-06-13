@@ -35,10 +35,12 @@ struct SoraApp: App {
     @StateObject private var theme = EclipseTheme.shared
     @StateObject private var moduleManager = ModuleManager.shared
     @StateObject private var favouriteManager = FavouriteManager.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var startupReady = false
     @State private var startupFallbackScheduled = false
     @State private var showSplash = true
+    @AppStorage("hideSplashScreen") private var hideSplashScreen = false
     private let startupFallbackDelay: TimeInterval = 20
 
 #if !os(tvOS)
@@ -49,6 +51,7 @@ struct SoraApp: App {
     init() {
         CrashReportManager.shared.start()
         GitHubReleaseChecker.registerDefaults()
+        ExperimentalFeatureState.configureLaunchState()
 #if !os(tvOS)
         ReaderImagePipelineConfigurator.configureIfNeeded()
 #endif
@@ -75,22 +78,39 @@ struct SoraApp: App {
                     .onAppear { scheduleStartupFallback() }
 #else
                 if showKanzen {
-                    KanzenMenu(onStartupReady: markStartupReady)
-                        .environmentObject(settings)
-                        .environmentObject(theme)
-                        .environmentObject(moduleManager)
-                        .environmentObject(favouriteManager)
-                        .environment(\.managedObjectContext, favouriteManager.container.viewContext)
-                        .accentColor(settings.effectiveAccentColor)
-                        .onAppear { scheduleStartupFallback() }
+                    if ExperimentalFeatureState.isEnabledAtLaunch {
+                        ExperimentalKanzenMenu(onStartupReady: markStartupReady)
+                            .environmentObject(settings)
+                            .environmentObject(theme)
+                            .environmentObject(moduleManager)
+                            .environmentObject(favouriteManager)
+                            .environment(\.managedObjectContext, favouriteManager.container.viewContext)
+                            .accentColor(settings.effectiveAccentColor)
+                            .onAppear { scheduleStartupFallback() }
+                    } else {
+                        KanzenMenu(onStartupReady: markStartupReady)
+                            .environmentObject(settings)
+                            .environmentObject(theme)
+                            .environmentObject(moduleManager)
+                            .environmentObject(favouriteManager)
+                            .environment(\.managedObjectContext, favouriteManager.container.viewContext)
+                            .accentColor(settings.effectiveAccentColor)
+                            .onAppear { scheduleStartupFallback() }
+                    }
                 } else {
-                    ContentView(onStartupReady: markStartupReady)
-                        .environmentObject(theme)
-                        .onAppear { scheduleStartupFallback() }
+                    if ExperimentalFeatureState.isEnabledAtLaunch {
+                        ExperimentalContentView(onStartupReady: markStartupReady)
+                            .environmentObject(theme)
+                            .onAppear { scheduleStartupFallback() }
+                    } else {
+                        ContentView(onStartupReady: markStartupReady)
+                            .environmentObject(theme)
+                            .onAppear { scheduleStartupFallback() }
+                    }
                 }
 #endif
 
-                if showSplash {
+                if showSplash && !hideSplashScreen {
                     SplashScreenView(isFinished: $startupReady) {
                         showSplash = false
                     }
@@ -98,6 +118,16 @@ struct SoraApp: App {
                         .zIndex(1)
                 }
             }
+#if os(iOS)
+            .onAppear {
+                ExperimentalCloudSyncManager.shared.syncOnActivationIfNeeded(reason: "launch")
+            }
+            .onChange(of: scenePhase) { newPhase in
+                if newPhase == .active {
+                    ExperimentalCloudSyncManager.shared.syncOnActivationIfNeeded(reason: "active")
+                }
+            }
+#endif
         }
     }
 

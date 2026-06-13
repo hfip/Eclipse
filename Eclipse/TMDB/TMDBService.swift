@@ -689,6 +689,181 @@ class TMDBService: ObservableObject {
             throw TMDBError.networkError(error)
         }
     }
+
+    enum FastAnimeCatalogKind: String {
+        case trending
+        case popular
+        case topRated
+        case airing
+        case upcoming
+    }
+
+    // MARK: - Fast Anime Catalogs (TMDB-native Performance Mode)
+    func getFastAnimeCatalog(kind: FastAnimeCatalogKind, limit: Int = 20) async throws -> [TMDBSearchResult] {
+        let results: [TMDBSearchResult]
+        switch kind {
+        case .trending:
+            results = try await getFastTrendingAnime(limit: limit)
+        case .popular:
+            results = try await getFastAnimeDiscoverCatalog(sortBy: "popularity.desc", limit: limit)
+        case .topRated:
+            results = try await getFastAnimeDiscoverCatalog(
+                sortBy: "vote_average.desc",
+                limit: limit,
+                extraQueryItems: [URLQueryItem(name: "vote_count.gte", value: "100")]
+            )
+        case .airing:
+            let today = fastAnimeDateString(Date())
+            let start = fastAnimeDateString(Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date())
+            let end = fastAnimeDateString(Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date())
+            results = try await getFastAnimeDiscoverCatalog(
+                sortBy: "popularity.desc",
+                limit: limit,
+                extraQueryItems: [
+                    URLQueryItem(name: "air_date.gte", value: start),
+                    URLQueryItem(name: "air_date.lte", value: end),
+                    URLQueryItem(name: "with_status", value: "0")
+                ]
+            ).filter { result in
+                guard let firstAirDate = fastAnimeDate(from: result.firstAirDate) else { return true }
+                guard let todayDate = fastAnimeDate(from: today) else { return true }
+                return firstAirDate <= todayDate
+            }
+        case .upcoming:
+            let tomorrow = fastAnimeDateString(Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date())
+            results = try await getFastAnimeDiscoverCatalog(
+                sortBy: "popularity.desc",
+                limit: limit * 2,
+                extraQueryItems: [URLQueryItem(name: "first_air_date.gte", value: tomorrow)]
+            ).filter { result in
+                guard let firstAirDate = fastAnimeDate(from: result.firstAirDate),
+                      let tomorrowDate = fastAnimeDate(from: tomorrow) else {
+                    return false
+                }
+                return firstAirDate >= tomorrowDate
+            }
+        }
+
+        return Array(deduplicatedFastAnimeResults(results).prefix(limit))
+    }
+
+    private func getFastTrendingAnime(limit: Int) async throws -> [TMDBSearchResult] {
+        let trending = try await getTrending(mediaType: "tv", timeWindow: "week")
+            .filter { self.isFastAnimeSearchResult($0) }
+        guard trending.count < min(limit, 10) else {
+            return Array(deduplicatedFastAnimeResults(trending).prefix(limit))
+        }
+
+        let fallback = try await getFastAnimeDiscoverCatalog(sortBy: "popularity.desc", limit: limit)
+        return Array(deduplicatedFastAnimeResults(trending + fallback).prefix(limit))
+    }
+
+    private func getFastAnimeDiscoverCatalog(
+        sortBy: String,
+        limit: Int,
+        extraQueryItems: [URLQueryItem] = []
+    ) async throws -> [TMDBSearchResult] {
+        var combined: [TMDBSearchResult] = []
+        for country in Self.fastAnimeOriginCountries {
+            let shows = try await discoverFastAnimeShows(
+                originCountry: country,
+                sortBy: sortBy,
+                page: 1,
+                extraQueryItems: extraQueryItems
+            )
+            combined.append(contentsOf: shows.filter { self.isFastAnimeTVShow($0) }.map(\.asSearchResult))
+        }
+        return Array(deduplicatedFastAnimeResults(combined).prefix(limit))
+    }
+
+    private func discoverFastAnimeShows(
+        originCountry: String,
+        sortBy: String,
+        page: Int,
+        extraQueryItems: [URLQueryItem]
+    ) async throws -> [TMDBTVShow] {
+        var queryItems = [
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "with_genres", value: "16"),
+            URLQueryItem(name: "with_origin_country", value: originCountry),
+            URLQueryItem(name: "sort_by", value: sortBy),
+            URLQueryItem(name: "include_adult", value: "false")
+        ]
+        queryItems.append(contentsOf: extraQueryItems)
+        let url = try tmdbURL(path: "/discover/tv", queryItems: queryItems)
+        let (data, _) = try await throttledData(from: url)
+        let response = try decodeTMDBListResponse(TMDBTVSearchResponse.self, from: data, endpoint: url.path)
+        return response.results
+    }
+
+    private static let fastAnimeOriginCountries = ["JP", "CN", "KR", "TW"]
+    private static let fastAnimeOriginalLanguages: Set<String> = ["ja", "zh", "ko"]
+
+    private func isFastAnimeTVShow(_ show: TMDBTVShow) -> Bool {
+        guard show.genreIds?.contains(16) == true else { return false }
+        if let originCountry = show.originCountry, !originCountry.isEmpty {
+            return originCountry.contains { Self.fastAnimeOriginCountries.contains($0) }
+        }
+        if let originalLanguage = show.originalLanguage?.lowercased(), !originalLanguage.isEmpty {
+            return Self.fastAnimeOriginalLanguages.contains(originalLanguage)
+        }
+        return true
+    }
+
+    private func isFastAnimeSearchResult(_ result: TMDBSearchResult) -> Bool {
+        guard result.mediaType == "tv",
+              result.genreIds?.contains(16) == true else {
+            return false
+        }
+        if let originCountry = result.originCountry, !originCountry.isEmpty {
+            return originCountry.contains { Self.fastAnimeOriginCountries.contains($0) }
+        }
+        if let originalLanguage = result.originalLanguage?.lowercased(), !originalLanguage.isEmpty {
+            return Self.fastAnimeOriginalLanguages.contains(originalLanguage)
+        }
+        return false
+    }
+
+    private func deduplicatedFastAnimeResults(_ results: [TMDBSearchResult]) -> [TMDBSearchResult] {
+        var seen = Set<Int>()
+        return results.filter { result in
+            guard !result.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            return seen.insert(result.id).inserted
+        }
+    }
+
+    private func tmdbURL(path: String, queryItems: [URLQueryItem]) throws -> URL {
+        guard var components = URLComponents(string: "\(baseURL)\(path)") else {
+            throw TMDBError.invalidURL
+        }
+        components.queryItems = [
+            URLQueryItem(name: "api_key", value: apiKey),
+            URLQueryItem(name: "language", value: currentLanguage)
+        ] + queryItems
+        guard let url = components.url else {
+            throw TMDBError.invalidURL
+        }
+        return url
+    }
+
+    private func fastAnimeDateString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func fastAnimeDate(from value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: value)
+    }
     
     // MARK: - Helper function to get romaji title
     func getRomajiTitle(for mediaType: String, id: Int) async -> String? {
@@ -809,6 +984,60 @@ class TMDBService: ObservableObject {
             let response = try JSONDecoder().decode(TMDBImagesResponse.self, from: data)
             detailCache.set(key: cacheKey, value: response)
             return response
+        } catch {
+            throw TMDBError.networkError(error)
+        }
+    }
+
+    func getMovieVideos(id: Int) async throws -> [TMDBVideo] {
+        let cacheKey = "movieVideos_\(id)_\(currentLanguage)"
+        if let cached: [TMDBVideo] = detailCache.get(key: cacheKey) {
+            return cached
+        }
+
+        let urlString = "\(baseURL)/movie/\(id)/videos?api_key=\(apiKey)&language=\(currentLanguage)"
+        guard let url = URL(string: urlString) else { throw TMDBError.invalidURL }
+        do {
+            let (data, _) = try await throttledData(from: url)
+            let response = try JSONDecoder().decode(TMDBVideosResponse.self, from: data)
+            let sorted = response.results.sorted { lhs, rhs in
+                if (lhs.official ?? false) != (rhs.official ?? false) {
+                    return (lhs.official ?? false) && !(rhs.official ?? false)
+                }
+                if lhs.type.lowercased() != rhs.type.lowercased() {
+                    return lhs.type.lowercased() == "trailer"
+                }
+                return (lhs.publishedAt ?? "") > (rhs.publishedAt ?? "")
+            }
+            detailCache.set(key: cacheKey, value: sorted)
+            return sorted
+        } catch {
+            throw TMDBError.networkError(error)
+        }
+    }
+
+    func getTVShowVideos(id: Int) async throws -> [TMDBVideo] {
+        let cacheKey = "tvVideos_\(id)_\(currentLanguage)"
+        if let cached: [TMDBVideo] = detailCache.get(key: cacheKey) {
+            return cached
+        }
+
+        let urlString = "\(baseURL)/tv/\(id)/videos?api_key=\(apiKey)&language=\(currentLanguage)"
+        guard let url = URL(string: urlString) else { throw TMDBError.invalidURL }
+        do {
+            let (data, _) = try await throttledData(from: url)
+            let response = try JSONDecoder().decode(TMDBVideosResponse.self, from: data)
+            let sorted = response.results.sorted { lhs, rhs in
+                if (lhs.official ?? false) != (rhs.official ?? false) {
+                    return (lhs.official ?? false) && !(rhs.official ?? false)
+                }
+                if lhs.type.lowercased() != rhs.type.lowercased() {
+                    return lhs.type.lowercased() == "trailer"
+                }
+                return (lhs.publishedAt ?? "") > (rhs.publishedAt ?? "")
+            }
+            detailCache.set(key: cacheKey, value: sorted)
+            return sorted
         } catch {
             throw TMDBError.networkError(error)
         }

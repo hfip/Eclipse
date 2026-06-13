@@ -125,6 +125,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
+    @StateObject private var pluginManager = NuvioPluginManager.shared
     @ObservedObject private var downloadManager = DownloadManager.shared
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList: Bool = false
     @AppStorage("preferDownloadedMedia") private var preferDownloadedMedia: Bool = false
@@ -141,7 +142,9 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     }
 
     private var hasActiveSources: Bool {
-        !serviceManager.activeServices.isEmpty || !stremioManager.activeAddons.isEmpty
+        !serviceManager.activeServices.isEmpty ||
+        !stremioManager.activeAddons.isEmpty ||
+        !pluginManager.activeSources(for: "tv").isEmpty
     }
 
     private var activeSeasonDetail: TMDBSeasonDetail? {
@@ -216,6 +219,22 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         }
 
         guard isAnime else { return nil }
+
+        if PerformanceModeSettings.isEnabled {
+            return EpisodePlaybackContext(
+                localSeasonNumber: episode.seasonNumber,
+                localEpisodeNumber: episode.episodeNumber,
+                anilistMediaId: nil,
+                kitsuMediaId: nil,
+                tmdbSeasonNumber: episode.seasonNumber,
+                tmdbEpisodeNumber: episode.episodeNumber,
+                tmdbEpisodeOffset: nil,
+                animeAbsoluteEpisodeNumber: nil,
+                animeSeasonEpisodeCount: nil,
+                isSpecial: false,
+                titleOnlySearch: false
+            )
+        }
 
         let aniEpisode = animeEpisodes?.first {
             $0.seasonNumber == episode.seasonNumber && $0.number == episode.episodeNumber

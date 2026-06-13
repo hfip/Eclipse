@@ -87,6 +87,7 @@ struct MediaDetailView: View {
     let searchResult: TMDBSearchResult
     
     @StateObject private var tmdbService = TMDBService.shared
+    @StateObject private var trackerManager = TrackerManager.shared
     @State private var movieDetail: TMDBMovieDetail?
     @State private var tvShowDetail: TMDBTVShowWithSeasons?
     @State private var selectedSeason: TMDBSeason?
@@ -118,14 +119,25 @@ struct MediaDetailView: View {
     @State private var playSheetRequestId = UUID()
     
     @State private var castMembers: [TMDBCastMember] = []
+    @State private var detailStills: [TMDBImage] = []
+    @State private var detailTrailers: [TMDBVideo] = []
+    @State private var experimentalRelatedItems: [TMDBSearchResult] = []
+    @State private var isLoadingExperimentalExtras = false
+    @State private var traktComments: [TraktCommentReview] = []
+    @State private var traktRelatedItems: [TMDBSearchResult] = []
+    @State private var isLoadingTraktComments = false
+    @State private var isLoadingTraktRelated = false
     @State private var hasLoadedContent = false
     @State private var detailLoadTask: Task<Void, Never>?
     @State private var specialsLoadTask: Task<Void, Never>?
+    @State private var traktFeatureLoadTask: Task<Void, Never>?
+    @State private var experimentalExtrasLoadTask: Task<Void, Never>?
     @State private var specialsLoadGeneration = 0
     @State private var detailContentRefreshTick = 0
     
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
+    @StateObject private var pluginManager = NuvioPluginManager.shared
     @ObservedObject private var downloadManager = DownloadManager.shared
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var theme = EclipseTheme.shared
@@ -146,7 +158,9 @@ struct MediaDetailView: View {
     }
 
     private var hasActiveSources: Bool {
-        !serviceManager.activeServices.isEmpty || !stremioManager.activeAddons.isEmpty
+        !serviceManager.activeServices.isEmpty ||
+        !stremioManager.activeAddons.isEmpty ||
+        !pluginManager.activeSources(for: searchResult.isMovie ? "movie" : "tv").isEmpty
     }
 
     private var preferDownloadedMedia: Bool {
@@ -273,6 +287,8 @@ struct MediaDetailView: View {
                 loadMediaDetails()
             } else {
                 Logger.shared.log("MediaDetailView onAppear using existing loaded state: id=\(searchResult.id) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
+                startTraktFeatureLoad()
+                startExperimentalExtrasLoadIfNeeded()
             }
             updateBookmarkStatus()
         }
@@ -289,7 +305,27 @@ struct MediaDetailView: View {
                 specialsLoadTask.cancel()
                 self.specialsLoadTask = nil
             }
+            if let traktFeatureLoadTask {
+                Logger.shared.log("MediaDetail Trakt feature load task cancelled on disappear: id=\(searchResult.id)", type: "Tracker")
+                traktFeatureLoadTask.cancel()
+                self.traktFeatureLoadTask = nil
+            }
+            if let experimentalExtrasLoadTask {
+                Logger.shared.log("MediaDetail experimental extras task cancelled on disappear: id=\(searchResult.id)", type: "TMDB")
+                experimentalExtrasLoadTask.cancel()
+                self.experimentalExtrasLoadTask = nil
+            }
             specialsLoadGeneration += 1
+        }
+        .onChange(of: trackerManager.trackerState.traktCommentsEnabled) { _ in
+            if hasLoadedContent {
+                startTraktFeatureLoad()
+            }
+        }
+        .onChange(of: trackerManager.trackerState.traktRelatedEnabled) { _ in
+            if hasLoadedContent {
+                startTraktFeatureLoad()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestNextEpisode)) { notification in
             Logger.shared.log("MediaDetailView nextEpisode notification received: id=\(searchResult.id) userInfo=\(notification.userInfo ?? [:])", type: "CrashProbe")
@@ -601,6 +637,10 @@ struct MediaDetailView: View {
                 ForEach(visibleMediaDetailElements) { element in
                     mediaDetailElementView(element)
                 }
+
+                if ExperimentalFeatureState.isEnabledAtLaunch {
+                    experimentalExtrasSection
+                }
                 
                 Spacer(minLength: 50)
             }
@@ -821,6 +861,10 @@ struct MediaDetailView: View {
             }
         case .ratingNotes:
             StarRatingView(mediaId: searchResult.id, isAnime: isAnimeShow)
+        case .traktComments:
+            traktCommentsSection
+        case .traktRelated:
+            traktRelatedSection
         case .episodes:
             episodesSection
         }
@@ -838,6 +882,22 @@ struct MediaDetailView: View {
 
     private func playbackContextForSearchSheet(_ episode: TMDBEpisode?) -> EpisodePlaybackContext? {
         guard isAnimeShow, let episode else { return nil }
+
+        if PerformanceModeSettings.isEnabled {
+            return EpisodePlaybackContext(
+                localSeasonNumber: episode.seasonNumber,
+                localEpisodeNumber: episode.episodeNumber,
+                anilistMediaId: nil,
+                kitsuMediaId: nil,
+                tmdbSeasonNumber: episode.seasonNumber,
+                tmdbEpisodeNumber: episode.episodeNumber,
+                tmdbEpisodeOffset: nil,
+                animeAbsoluteEpisodeNumber: nil,
+                animeSeasonEpisodeCount: nil,
+                isSpecial: false,
+                titleOnlySearch: false
+            )
+        }
 
         let aniEpisode = anilistEpisodes?.first {
             $0.seasonNumber == episode.seasonNumber && $0.number == episode.episodeNumber
@@ -893,6 +953,258 @@ struct MediaDetailView: View {
             updateBookmarkStatus()
         }
         Logger.shared.log("MediaDetailView toggleBookmark complete: id=\(searchResult.id) isBookmarked=\(isBookmarked)", type: "CrashProbe")
+    }
+
+    @ViewBuilder
+    private var experimentalExtrasSection: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            experimentalStillsSection
+            experimentalTrailersSection
+            experimentalParentsGuideSection
+
+            if !experimentalRelatedItems.isEmpty {
+                MediaSection(title: "Related", items: Array(experimentalRelatedItems.prefix(15)))
+            } else if !isLoadingExperimentalExtras {
+                experimentalEmptyCard(title: "Related", message: "No related titles available")
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private var experimentalStillsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            experimentalSectionTitle("Stills", isLoading: isLoadingExperimentalExtras && detailStills.isEmpty)
+
+            if detailStills.isEmpty && !isLoadingExperimentalExtras {
+                experimentalEmptyCard(title: nil, message: "No stills available")
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(Array(detailStills.prefix(10).enumerated()), id: \.offset) { _, still in
+                            KFImage(URL(string: still.fullURL))
+                                .placeholder {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(Color.white.opacity(0.08))
+                                }
+                                .resizable()
+                                .aspectRatio(16/9, contentMode: .fill)
+                                .frame(width: isIPad ? 330 : 250, height: isIPad ? 186 : 142)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                )
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var experimentalTrailersSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            experimentalSectionTitle("Trailers", isLoading: isLoadingExperimentalExtras && detailTrailers.isEmpty)
+
+            if detailTrailers.isEmpty && !isLoadingExperimentalExtras {
+                experimentalEmptyCard(title: nil, message: "No trailers available")
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(Array(detailTrailers.prefix(8).enumerated()), id: \.offset) { _, trailer in
+                            if let destination = trailer.playbackURL {
+                                Link(destination: destination) {
+                                    experimentalTrailerCard(trailer)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                experimentalTrailerCard(trailer)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+        }
+    }
+
+    private func experimentalTrailerCard(_ trailer: TMDBVideo) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                if let thumbnailURL = trailer.thumbnailURL {
+                    KFImage(thumbnailURL)
+                        .placeholder {
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.08))
+                        }
+                        .resizable()
+                        .aspectRatio(16/9, contentMode: .fill)
+                } else {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                }
+
+                Circle()
+                    .fill(Color.black.opacity(0.48))
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        Image(systemName: "play.fill")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .offset(x: 1)
+                    )
+            }
+            .frame(width: isIPad ? 330 : 250, height: isIPad ? 186 : 142)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+
+            Text(trailer.name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .frame(width: isIPad ? 330 : 250, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var experimentalParentsGuideSection: some View {
+        if let advisory = experimentalRatingAdvisory {
+            VStack(alignment: .leading, spacing: 12) {
+                experimentalSectionTitle("Parents Guide", isLoading: false)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.red.opacity(0.86))
+                            .frame(width: 5, height: 44)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(advisory.title)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text(advisory.detail)
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.62))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    if !advisory.descriptors.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(advisory.descriptors, id: \.self) { descriptor in
+                                    Text(descriptor)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(.white.opacity(0.78))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.white.opacity(0.10))
+                                        .clipShape(Capsule())
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+                .padding(.horizontal)
+            }
+        } else if !isLoadingExperimentalExtras {
+            experimentalEmptyCard(title: "Parents Guide", message: "No rating advisory available")
+        }
+    }
+
+    private func experimentalSectionTitle(_ title: String, isLoading: Bool) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+
+            if isLoading {
+                ProgressView()
+                    .scaleEffect(0.75)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal)
+    }
+
+    private func experimentalEmptyCard(title: String?, message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let title {
+                Text(title)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            }
+
+            HStack(spacing: 12) {
+                Image(systemName: "rectangle.slash")
+                    .font(.title3)
+                    .foregroundColor(.white.opacity(0.5))
+
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.62))
+
+                Spacer()
+            }
+            .padding(16)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .padding(.horizontal)
+    }
+
+    private struct ExperimentalRatingAdvisory {
+        let title: String
+        let detail: String
+        let descriptors: [String]
+    }
+
+    private var experimentalRatingAdvisory: ExperimentalRatingAdvisory? {
+        if searchResult.isMovie {
+            let results = movieDetail?.releaseDates?.results ?? []
+            let preferred = results.first(where: { $0.iso31661 == "US" }) ?? results.first
+            guard let release = preferred?.releaseDates.first(where: { !$0.certification.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                return nil
+            }
+            let region = preferred?.iso31661 ?? "Unknown"
+            let note = release.note?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ExperimentalRatingAdvisory(
+                title: "Rated \(release.certification)",
+                detail: note?.isEmpty == false ? "\(region): \(note!)" : "\(region) certification from TMDB",
+                descriptors: []
+            )
+        }
+
+        let ratings = tvShowDetail?.contentRatings?.results ?? []
+        let preferred = ratings.first(where: { $0.iso31661 == "US" }) ?? ratings.first
+        guard let rating = preferred?.rating.trimmingCharacters(in: .whitespacesAndNewlines), !rating.isEmpty else {
+            return nil
+        }
+        return ExperimentalRatingAdvisory(
+            title: "Rated \(rating)",
+            detail: "\(preferred?.iso31661 ?? "Unknown") content rating from TMDB",
+            descriptors: preferred?.descriptors ?? []
+        )
     }
     
     // MARK: - Cast Section
@@ -954,6 +1266,103 @@ struct MediaDetailView: View {
                     .font(.title2)
                     .foregroundColor(.white.opacity(0.3))
             )
+    }
+
+    @ViewBuilder
+    private var traktCommentsSection: some View {
+        if trackerManager.trackerState.traktCommentsEnabled && (isLoadingTraktComments || !traktComments.isEmpty) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Text("Trakt Reviews")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+
+                    if isLoadingTraktComments {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal)
+
+                if !traktComments.isEmpty {
+                    VStack(spacing: 10) {
+                        ForEach(traktComments.prefix(5)) { item in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(item.authorName)
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+
+                                    if item.isReview {
+                                        Text("Review")
+                                            .font(.caption2)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.white.opacity(0.75))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3)
+                                            .background(Color.white.opacity(0.12))
+                                            .clipShape(Capsule())
+                                    }
+
+                                    Spacer()
+
+                                    Label("\(item.likes)", systemImage: "heart.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.55))
+                                }
+
+                                Text(item.comment)
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.82))
+                                    .lineLimit(6)
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                if let createdAt = formattedTraktDate(item.createdAt) {
+                                    Text(createdAt)
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.45))
+                                }
+                            }
+                            .padding(14)
+                            .background(Color.white.opacity(0.08))
+                            .cornerRadius(10)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var traktRelatedSection: some View {
+        if trackerManager.trackerState.traktRelatedEnabled && (isLoadingTraktRelated || !traktRelatedItems.isEmpty) {
+            if !traktRelatedItems.isEmpty {
+                MediaSection(title: "Related on Trakt", items: Array(traktRelatedItems.prefix(15)))
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Text("Related on Trakt")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+
+                        ProgressView()
+                            .scaleEffect(0.75)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.top, 8)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1122,7 +1531,7 @@ struct MediaDetailView: View {
                 self.specialsLoadTask = nil
                 if !entries.isEmpty {
                     MediaDetailCacheStore.shared.updateSpecialEntries(
-                        key: self.searchResult.stableIdentity,
+                        key: PerformanceModeSettings.detailCacheKey(for: self.searchResult.stableIdentity),
                         entries: entries
                     )
                 }
@@ -1669,6 +2078,143 @@ struct MediaDetailView: View {
         }
         return nil
     }
+
+    private func startTraktFeatureLoad() {
+        traktFeatureLoadTask?.cancel()
+
+        let hasTraktAccount = trackerManager.trackerState.getAccount(for: .trakt) != nil
+        let shouldLoadComments = trackerManager.trackerState.traktCommentsEnabled && hasTraktAccount
+        let shouldLoadRelated = trackerManager.trackerState.traktRelatedEnabled && hasTraktAccount
+
+        guard shouldLoadComments || shouldLoadRelated else {
+            traktComments = []
+            traktRelatedItems = []
+            isLoadingTraktComments = false
+            isLoadingTraktRelated = false
+            return
+        }
+
+        if shouldLoadComments {
+            isLoadingTraktComments = traktComments.isEmpty
+        } else {
+            traktComments = []
+            isLoadingTraktComments = false
+        }
+
+        if shouldLoadRelated {
+            isLoadingTraktRelated = traktRelatedItems.isEmpty
+        } else {
+            traktRelatedItems = []
+            isLoadingTraktRelated = false
+        }
+
+        let tmdbId = searchResult.id
+        let isMovie = searchResult.isMovie
+        traktFeatureLoadTask = Task {
+            let loadedComments: [TraktCommentReview]
+            if shouldLoadComments {
+                loadedComments = await TrackerManager.shared.fetchTraktComments(tmdbId: tmdbId, isMovie: isMovie)
+            } else {
+                loadedComments = []
+            }
+
+            let loadedRelated: [TMDBSearchResult]
+            if shouldLoadRelated {
+                loadedRelated = await TrackerManager.shared.fetchTraktRelated(tmdbId: tmdbId, isMovie: isMovie, tmdbService: tmdbService)
+            } else {
+                loadedRelated = []
+            }
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if shouldLoadComments {
+                    self.traktComments = loadedComments
+                }
+                if shouldLoadRelated {
+                    self.traktRelatedItems = loadedRelated
+                }
+                self.isLoadingTraktComments = false
+                self.isLoadingTraktRelated = false
+                self.refreshDetailContentLayout(reason: "trakt-features")
+            }
+        }
+    }
+
+    private func startExperimentalExtrasLoadIfNeeded() {
+        experimentalExtrasLoadTask?.cancel()
+
+        guard ExperimentalFeatureState.isEnabledAtLaunch else {
+            detailStills = []
+            detailTrailers = []
+            experimentalRelatedItems = []
+            isLoadingExperimentalExtras = false
+            return
+        }
+
+        let tmdbId = searchResult.id
+        let isMovie = searchResult.isMovie
+        isLoadingExperimentalExtras = detailStills.isEmpty && detailTrailers.isEmpty && experimentalRelatedItems.isEmpty
+
+        experimentalExtrasLoadTask = Task {
+            let images: TMDBImagesResponse?
+            let trailers: [TMDBVideo]
+            let related: [TMDBSearchResult]
+
+            if isMovie {
+                async let imagesResult: TMDBImagesResponse? = try? tmdbService.getMovieImages(id: tmdbId, preferredLanguage: selectedLanguage)
+                async let videosResult: [TMDBVideo]? = try? tmdbService.getMovieVideos(id: tmdbId)
+                async let recommendationsResult: [TMDBMovie]? = try? tmdbService.getMovieRecommendations(id: tmdbId)
+
+                images = await imagesResult
+                let loadedVideos = (await videosResult) ?? []
+                let loadedRecommendations = (await recommendationsResult) ?? []
+                trailers = loadedVideos.filter { $0.isTrailerLike && $0.playbackURL != nil }
+                related = loadedRecommendations.map(\.asSearchResult)
+            } else {
+                async let imagesResult: TMDBImagesResponse? = try? tmdbService.getTVShowImages(id: tmdbId, preferredLanguage: selectedLanguage)
+                async let videosResult: [TMDBVideo]? = try? tmdbService.getTVShowVideos(id: tmdbId)
+                async let recommendationsResult: [TMDBTVShow]? = try? tmdbService.getTVRecommendations(id: tmdbId)
+
+                images = await imagesResult
+                let loadedVideos = (await videosResult) ?? []
+                let loadedRecommendations = (await recommendationsResult) ?? []
+                trailers = loadedVideos.filter { $0.isTrailerLike && $0.playbackURL != nil }
+                related = loadedRecommendations.map(\.asSearchResult)
+            }
+
+            let stills = (images?.backdrops ?? [])
+                .sorted {
+                    let lhsVotes = $0.voteCount ?? 0
+                    let rhsVotes = $1.voteCount ?? 0
+                    if lhsVotes != rhsVotes { return lhsVotes > rhsVotes }
+                    return ($0.voteAverage ?? 0) > ($1.voteAverage ?? 0)
+                }
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard !Task.isCancelled, self.searchResult.id == tmdbId else { return }
+                self.detailStills = stills
+                self.detailTrailers = trailers
+                self.experimentalRelatedItems = related
+                self.isLoadingExperimentalExtras = false
+                self.experimentalExtrasLoadTask = nil
+                self.refreshDetailContentLayout(reason: "experimental-extras")
+            }
+        }
+    }
+
+    private func formattedTraktDate(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let date else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
     
     private func loadMediaDetails() {
         if let existingTask = detailLoadTask {
@@ -1681,8 +2227,18 @@ struct MediaDetailView: View {
             specialsLoadTask.cancel()
             self.specialsLoadTask = nil
         }
+        if let traktFeatureLoadTask {
+            Logger.shared.log("MediaDetail cancelling stale Trakt feature task before reload: id=\(searchResult.id)", type: "Tracker")
+            traktFeatureLoadTask.cancel()
+            self.traktFeatureLoadTask = nil
+        }
+        if let experimentalExtrasLoadTask {
+            Logger.shared.log("MediaDetail cancelling stale experimental extras task before reload: id=\(searchResult.id)", type: "TMDB")
+            experimentalExtrasLoadTask.cancel()
+            self.experimentalExtrasLoadTask = nil
+        }
         specialsLoadGeneration += 1
-        let detailCacheKey = searchResult.stableIdentity
+        let detailCacheKey = PerformanceModeSettings.detailCacheKey(for: searchResult.stableIdentity)
         Logger.shared.log("MediaDetail load start: id=\(searchResult.id) type=\(searchResult.mediaType) title=\(searchResult.displayTitle)", type: "CrashProbe")
         Logger.shared.log("MediaDetail cache lookup begin: key=\(detailCacheKey)", type: "CrashProbe")
 
@@ -1722,6 +2278,8 @@ struct MediaDetailView: View {
                 } else {
                     self.isLoadingAnimeSpecials = false
                 }
+                self.startTraktFeatureLoad()
+                self.startExperimentalExtrasLoadIfNeeded()
             }
             return
         }
@@ -1737,6 +2295,14 @@ struct MediaDetailView: View {
         animeSeasonKitsuIds = [:]
         animeSpecialEntries = []
         isLoadingAnimeSpecials = false
+        traktComments = []
+        traktRelatedItems = []
+        detailStills = []
+        detailTrailers = []
+        experimentalRelatedItems = []
+        isLoadingTraktComments = false
+        isLoadingTraktRelated = false
+        isLoadingExperimentalExtras = false
         selectedSpecialEpisodeContext = nil
         Logger.shared.log("MediaDetail scheduling async task: id=\(searchResult.id)", type: "CrashProbe")
         
@@ -1808,6 +2374,8 @@ struct MediaDetailView: View {
                             timestamp: Date()
                         ))
                         Logger.shared.log("Movie detail apply state complete: tmdbId=\(searchResult.id) cast=\(self.castMembers.count) logo=\(self.logoURL != nil)", type: "CrashProbe")
+                        self.startTraktFeatureLoad()
+                        self.startExperimentalExtrasLoadIfNeeded()
                     }
                 } else {
                     Logger.shared.log("TV detail fetch begin: tmdbId=\(searchResult.id)", type: "CrashProbe")
@@ -1850,11 +2418,12 @@ struct MediaDetailView: View {
                     let isAsianAnimation = detail.originCountry?.contains(where: { asianAnimationCountries.contains($0) }) ?? false
                     let isAnimation = detail.genres.contains { $0.id == 16 }
                     let detectedAsAnime = isAsianAnimation && isAnimation
+                    let performanceModeEnabled = PerformanceModeSettings.isEnabled
                     Logger.shared.log("MediaDetailView: \(detail.name) — isAsianAnimation=\(isAsianAnimation) isAnimation=\(isAnimation) detectedAsAnime=\(detectedAsAnime) originCountry=\(detail.originCountry ?? []) genres=\(detail.genres.map { $0.id })", type: "AniList")
                     
                     // Fetch AniList hybrid seasons/episodes if anime
                     var animeData: AniListAnimeWithSeasons? = nil
-                    if detectedAsAnime {
+                    if detectedAsAnime && !performanceModeEnabled {
                         do {
                             Logger.shared.log("MediaDetailView: Starting AniList fetch for \(detail.name) (tmdbId=\(detail.id))", type: "AniList")
                             animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -1874,12 +2443,18 @@ struct MediaDetailView: View {
                         } catch {
                             Logger.shared.log("MediaDetailView: FAILED AniList fetch for \(detail.name): \(error.localizedDescription)", type: "Error")
                         }
+                    } else if detectedAsAnime {
+                        Logger.shared.log("MediaDetailView: Performance Mode active - using TMDB seasons for \(detail.name)", type: "TMDB")
                     } else {
-                        Logger.shared.log("MediaDetailView: Skipping AniList fetch — not detected as anime", type: "AniList")
+                        Logger.shared.log("MediaDetailView: Skipping AniList fetch - not detected as anime", type: "AniList")
                     }
                     
                     let resolvedAnimeRating: AnimeMetadataRating?
-                    if detectedAsAnime {
+                    if detectedAsAnime && performanceModeEnabled {
+                        resolvedAnimeRating = detail.voteAverage > 0
+                            ? AnimeMetadataRating(value: detail.voteAverage, source: .tmdb)
+                            : nil
+                    } else if detectedAsAnime {
                         resolvedAnimeRating = await AniListService.shared.preferredAnimeRating(
                             title: detail.name,
                             tmdbShowId: detail.id,
@@ -2056,6 +2631,8 @@ struct MediaDetailView: View {
                             self.isLoadingAnimeSpecials = false
                             self.selectedSpecialEpisodeContext = nil
                         }
+                        self.startTraktFeatureLoad()
+                        self.startExperimentalExtrasLoadIfNeeded()
                     }
                     Logger.shared.log("TV detail fetch complete: tmdbId=\(searchResult.id)", type: "CrashProbe")
                 }

@@ -9,10 +9,18 @@ import SwiftUI
 import UIKit
 import QuartzCore
 import ImageIO
+import CoreImage
 import Nuke
 import AsyncDisplayKit
 import AidokuRunner
 import ZIPFoundation
+#if canImport(CoreML) && canImport(Vision)
+import CoreML
+import Vision
+#endif
+#if canImport(VisionKit)
+import VisionKit
+#endif
 
 private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor {
     switch UserDefaults.standard.string(forKey: "Reader.backgroundColor") {
@@ -25,6 +33,13 @@ private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor
     default:
         return .black
     }
+}
+
+private func kanzenReaderAnimatesPageTransitions() -> Bool {
+    if UserDefaults.standard.object(forKey: "Reader.animatePageTransitions") == nil {
+        return true
+    }
+    return UserDefaults.standard.bool(forKey: "Reader.animatePageTransitions")
 }
 
 struct WebtoonView: UIViewControllerRepresentable {
@@ -1468,12 +1483,13 @@ enum ReaderWebtoonImagePipeline {
             return cached
         }
 
-        let image = try await loadImageUncached(
+        let rawImage = try await loadImageUncached(
             for: page,
             targetSize: targetSize,
             scale: scale,
             taskSink: taskSink
         )
+        let image = await postProcess(rawImage, targetSize: targetSize, scale: scale)
         decodedImageCache.setObject(image, forKey: cacheKey as NSString, cost: cacheCost(for: image))
         return image
     }
@@ -1529,14 +1545,11 @@ enum ReaderWebtoonImagePipeline {
     }
 
     private static func decodedCacheKey(for page: PageData, targetSize: CGSize, scale: CGFloat) -> String {
-        "\(page.cacheKey)-w\(Int(max(targetSize.width, 1) * scale))-ds\(shouldDownsample ? 1 : 0)"
+        "\(page.cacheKey)-w\(Int(max(targetSize.width, 1) * scale))-\(KanzenReaderImageProcessingSettings.cacheSignature)"
     }
 
     private static var shouldDownsample: Bool {
-        if UserDefaults.standard.object(forKey: "Reader.downsampleImages") == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: "Reader.downsampleImages")
+        KanzenReaderImageProcessingSettings.shouldDownsample
     }
 
     private static func processors(for targetSize: CGSize, scale: CGFloat) -> [ImageProcessing] {
@@ -1637,7 +1650,7 @@ enum ReaderWebtoonImagePipeline {
         scale: CGFloat
     ) async throws -> UIImage {
         let cacheRequest = ImageRequest(
-            id: "\(pageKey)-processed-\(Int(max(targetSize.width, 1) * scale))",
+            id: "\(pageKey)-processed-source-\(Int(max(targetSize.width, 1) * scale))",
             data: { Data() },
             userInfo: [:]
         )
@@ -1673,17 +1686,8 @@ enum ReaderWebtoonImagePipeline {
         )
 
         let output = processed ?? inputImage
-        let downsampled: UIImage
-        if shouldDownsample {
-            downsampled = ReaderWebtoonDownsampleProcessor(
-                width: max(targetSize.width, 1),
-                scaleFactor: scale
-            ).process(output) ?? output
-        } else {
-            downsampled = output
-        }
-        ImagePipeline.shared.cache.storeCachedImage(ImageContainer(image: downsampled), for: cacheRequest)
-        return downsampled
+        ImagePipeline.shared.cache.storeCachedImage(ImageContainer(image: output), for: cacheRequest)
+        return output
     }
 
     private static func loadAidokuZipImage(
@@ -1789,11 +1793,247 @@ enum ReaderWebtoonImagePipeline {
         }
         return UIImage(cgImage: cgImage, scale: scale, orientation: .up)
     }
+
+    private static func postProcess(_ image: UIImage, targetSize: CGSize, scale: CGFloat) async -> UIImage {
+        let settings = KanzenReaderImageProcessingSettings.current
+        var output = image
+
+        if settings.cropBorders {
+            output = KanzenReaderImageProcessor.cropBorders(output) ?? output
+        }
+
+        if settings.shouldDownsample {
+            output = ReaderWebtoonDownsampleProcessor(
+                width: max(targetSize.width, 1),
+                scaleFactor: scale
+            ).process(output) ?? output
+        } else if settings.upscaleImages {
+            output = await KanzenReaderUpscaler.upscale(output, maxHeight: settings.upscaleMaxHeight) ?? output
+        }
+
+        return output
+    }
 }
 
 private enum ReaderWebtoonImageError: Error {
     case invalidPage
     case decodeFailed
+}
+
+private struct KanzenReaderImageProcessingSettings {
+    let shouldDownsample: Bool
+    let cropBorders: Bool
+    let upscaleImages: Bool
+    let upscaleMaxHeight: Int
+    let modelName: String
+
+    static var current: KanzenReaderImageProcessingSettings {
+        let defaults = UserDefaults.standard
+        let shouldDownsample = defaults.object(forKey: "Reader.downsampleImages") == nil ? true : defaults.bool(forKey: "Reader.downsampleImages")
+        let maxHeight = defaults.object(forKey: "Reader.upscaleMaxHeight") as? Int ?? 2000
+        return KanzenReaderImageProcessingSettings(
+            shouldDownsample: shouldDownsample,
+            cropBorders: defaults.bool(forKey: "Reader.cropBorders"),
+            upscaleImages: defaults.bool(forKey: "Reader.upscaleImages") && !shouldDownsample,
+            upscaleMaxHeight: min(max(maxHeight, 800), 6000),
+            modelName: KanzenReaderUpscaleModelStore.storedModelName
+        )
+    }
+
+    static var shouldDownsample: Bool {
+        current.shouldDownsample
+    }
+
+    static var cacheSignature: String {
+        let settings = current
+        return "ds\(settings.shouldDownsample ? 1 : 0)-crop\(settings.cropBorders ? 1 : 0)-up\(settings.upscaleImages ? 1 : 0)-h\(settings.upscaleMaxHeight)-m\(settings.modelName.hashValue)"
+    }
+}
+
+private enum KanzenReaderImageProcessor {
+    static func cropBorders(_ image: UIImage) -> UIImage? {
+        guard let cgImage = normalizedCGImage(for: image) else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 8, height > 8 else { return nil }
+
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        func pixel(atX x: Int, y: Int) -> (r: Int, g: Int, b: Int, a: Int) {
+            let offset = y * bytesPerRow + x * bytesPerPixel
+            return (Int(pixels[offset]), Int(pixels[offset + 1]), Int(pixels[offset + 2]), Int(pixels[offset + 3]))
+        }
+
+        let borderStepX = max(1, width / 40)
+        let borderStepY = max(1, height / 40)
+        var samples: [(r: Int, g: Int, b: Int, a: Int)] = []
+        for x in stride(from: 0, to: width, by: borderStepX) {
+            samples.append(pixel(atX: x, y: 0))
+            samples.append(pixel(atX: x, y: height - 1))
+        }
+        for y in stride(from: 0, to: height, by: borderStepY) {
+            samples.append(pixel(atX: 0, y: y))
+            samples.append(pixel(atX: width - 1, y: y))
+        }
+        guard !samples.isEmpty else { return nil }
+        let borderColor = samples.reduce((r: 0, g: 0, b: 0, a: 0)) { partial, sample in
+            (partial.r + sample.r, partial.g + sample.g, partial.b + sample.b, partial.a + sample.a)
+        }
+        let count = max(samples.count, 1)
+        let average = (
+            r: borderColor.r / count,
+            g: borderColor.g / count,
+            b: borderColor.b / count,
+            a: borderColor.a / count
+        )
+
+        func isBorderPixel(_ sample: (r: Int, g: Int, b: Int, a: Int)) -> Bool {
+            if sample.a <= 10 { return true }
+            let distance = abs(sample.r - average.r) + abs(sample.g - average.g) + abs(sample.b - average.b)
+            let nearWhite = sample.r >= 245 && sample.g >= 245 && sample.b >= 245
+            let nearBlack = sample.r <= 10 && sample.g <= 10 && sample.b <= 10
+            return distance <= 42 || nearWhite || nearBlack
+        }
+
+        func rowLooksLikeBorder(_ y: Int) -> Bool {
+            let step = max(1, width / 180)
+            var matches = 0
+            var total = 0
+            for x in stride(from: 0, to: width, by: step) {
+                total += 1
+                if isBorderPixel(pixel(atX: x, y: y)) {
+                    matches += 1
+                }
+            }
+            return total > 0 && Double(matches) / Double(total) >= 0.94
+        }
+
+        func columnLooksLikeBorder(_ x: Int, from top: Int, through bottom: Int) -> Bool {
+            let step = max(1, height / 180)
+            var matches = 0
+            var total = 0
+            for y in stride(from: top, through: bottom, by: step) {
+                total += 1
+                if isBorderPixel(pixel(atX: x, y: y)) {
+                    matches += 1
+                }
+            }
+            return total > 0 && Double(matches) / Double(total) >= 0.94
+        }
+
+        let maxVerticalCrop = Int(Double(height) * 0.35)
+        let maxHorizontalCrop = Int(Double(width) * 0.35)
+        var top = 0
+        while top < maxVerticalCrop, rowLooksLikeBorder(top) {
+            top += 1
+        }
+
+        var bottom = height - 1
+        while height - 1 - bottom < maxVerticalCrop, bottom > top, rowLooksLikeBorder(bottom) {
+            bottom -= 1
+        }
+
+        var left = 0
+        while left < maxHorizontalCrop, columnLooksLikeBorder(left, from: top, through: bottom) {
+            left += 1
+        }
+
+        var right = width - 1
+        while width - 1 - right < maxHorizontalCrop, right > left, columnLooksLikeBorder(right, from: top, through: bottom) {
+            right -= 1
+        }
+
+        let cropWidth = right - left + 1
+        let cropHeight = bottom - top + 1
+        guard cropWidth > 0, cropHeight > 0 else { return nil }
+        let croppedArea = Double(cropWidth * cropHeight)
+        let originalArea = Double(width * height)
+        guard croppedArea / originalArea >= 0.45 else { return nil }
+        guard left > 1 || top > 1 || width - 1 - right > 1 || height - 1 - bottom > 1 else { return nil }
+
+        guard let cropped = cgImage.cropping(to: CGRect(x: left, y: top, width: cropWidth, height: cropHeight)) else {
+            return nil
+        }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
+    }
+
+    private static func normalizedCGImage(for image: UIImage) -> CGImage? {
+        if let cgImage = image.cgImage, image.imageOrientation == .up {
+            return cgImage
+        }
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = image.scale
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }.cgImage
+    }
+}
+
+private enum KanzenReaderUpscaler {
+    static func upscale(_ image: UIImage, maxHeight: Int) async -> UIImage? {
+        guard UserDefaults.standard.bool(forKey: "Reader.upscaleImages"),
+              FileManager.default.fileExists(atPath: KanzenReaderUpscaleModelStore.storedModelURL.path),
+              let cgImage = image.cgImage else {
+            return nil
+        }
+        let pixelHeight = max(cgImage.height, 1)
+        guard pixelHeight < maxHeight else { return image }
+
+#if canImport(CoreML) && canImport(Vision)
+        if #available(iOS 15.0, *) {
+            return await Task.detached(priority: .userInitiated) {
+                do {
+                    let compiledURL = try MLModel.compileModel(at: KanzenReaderUpscaleModelStore.storedModelURL)
+                    let mlModel = try MLModel(contentsOf: compiledURL)
+                    let visionModel = try VNCoreMLModel(for: mlModel)
+                    let request = VNCoreMLRequest(model: visionModel)
+                    request.imageCropAndScaleOption = .scaleFit
+                    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                    try handler.perform([request])
+
+                    if let observation = request.results?.first as? VNPixelBufferObservation {
+                        return image(from: observation.pixelBuffer, scale: image.scale)
+                    }
+
+                    if let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
+                       let pixelBuffer = observation.featureValue.imageBufferValue {
+                        return image(from: pixelBuffer, scale: image.scale)
+                    }
+                } catch {
+                    ReaderLogger.shared.log("Reader upscaling skipped: \(error.localizedDescription)", type: "ReaderSettings")
+                }
+                return nil
+            }.value
+        }
+#endif
+        return nil
+    }
+
+#if canImport(CoreML) && canImport(Vision)
+    private static func image(from pixelBuffer: CVPixelBuffer, scale: CGFloat) -> UIImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let context = CIContext(options: nil)
+        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: scale, orientation: .up)
+    }
+#endif
 }
 
 private struct ReaderWebtoonDownsampleProcessor: ImageProcessing {
@@ -1837,7 +2077,7 @@ private struct ReaderWebtoonDownsampleProcessor: ImageProcessing {
     }
 }
 
-// MARK: - Aidoku-Style Kanzen Runtime
+// MARK: - Kanzen Reader Runtime
 
 protocol KanzenReaderHeightQueryable {
     func kanzenReaderHeight(for width: CGFloat) -> CGFloat
@@ -1872,8 +2112,15 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
         layout.fallbackHeightProvider = { [weak self] indexPath, width in
             self?.estimatedHeight(for: indexPath.item, width: width) ?? width * KanzenWebtoonPageNode.defaultRatio
         }
-        layout.pillarboxInsetProvider = { width in
+        layout.pillarboxInsetProvider = { [weak self] width in
             guard UserDefaults.standard.bool(forKey: "Reader.pillarbox") else { return 0 }
+            let orientation = UserDefaults.standard.string(forKey: "Reader.pillarboxOrientation") ?? "both"
+            if orientation != "both" {
+                let bounds = self?.view.bounds ?? UIScreen.main.bounds
+                let isLandscape = bounds.width > bounds.height
+                if orientation == "portrait", isLandscape { return 0 }
+                if orientation == "landscape", !isLandscape { return 0 }
+            }
             let amount = UserDefaults.standard.object(forKey: "Reader.pillarboxAmount") as? Double ?? 15
             let fraction = CGFloat(min(max(amount, 0), 90)) / 100
             return floor(width * fraction * 0.5)
@@ -1960,16 +2207,37 @@ final class KanzenWebtoonReaderViewController: UIViewController, KanzenReaderChi
     }
 
     func moveLeft() {
-        moveToPage(max(lastReportedPage - 1, 0), animated: true)
+        moveToPage(max(lastReportedPage - 1, 0), animated: kanzenReaderAnimatesPageTransitions())
     }
 
     func moveRight() {
-        moveToPage(min(max(lastReportedPage + 1, 0), max(pages.count - 1, 0)), animated: true)
+        moveToPage(min(max(lastReportedPage + 1, 0), max(pages.count - 1, 0)), animated: kanzenReaderAnimatesPageTransitions())
     }
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard gesture.state == .ended else { return }
+        let point = gesture.location(in: view)
+        if let action = KanzenTapZone.action(at: point, in: view.bounds, kind: .webtoon) {
+            performTapZoneAction(action)
+            return
+        }
         readerDelegate?.readerChildDidRequestOverlayToggle()
+    }
+
+    private func performTapZoneAction(_ action: KanzenTapZone.RegionType) {
+        let resolved: KanzenTapZone.RegionType
+        if UserDefaults.standard.bool(forKey: "Reader.invertTapZones") {
+            resolved = action == .left ? .right : .left
+        } else {
+            resolved = action
+        }
+
+        switch resolved {
+        case .left:
+            moveLeft()
+        case .right:
+            moveRight()
+        }
     }
 
     private func scrollViewDidMirrorScroll() {
@@ -2413,7 +2681,7 @@ final class KanzenVerticalContentOffsetPreservingLayout: UICollectionViewLayout 
     }
 }
 
-final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable {
+final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable, UIContextMenuInteractionDelegate {
     static let defaultRatio: CGFloat = 1.435
 
     private enum State {
@@ -2438,6 +2706,7 @@ final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable {
     private var didStart = false
     private var loadTask: Task<Void, Never>?
     private var imageTask: ImageTask?
+    private var analysisTask: Task<Void, Never>?
 
     init(page: KanzenReaderPage, targetSize: CGSize, scale: CGFloat, estimatedRatio: CGFloat) {
         self.page = page
@@ -2473,6 +2742,20 @@ final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable {
     override func didEnterDisplayState() {
         super.didEnterDisplayState()
         loadIfNeeded()
+        if case .image = state {
+            configureLiveText(for: imageNode.image)
+        }
+    }
+
+    override func didExitDisplayState() {
+        super.didExitDisplayState()
+        analysisTask?.cancel()
+    }
+
+    override func didLoad() {
+        super.didLoad()
+        imageNode.view.isUserInteractionEnabled = true
+        imageNode.view.addInteraction(UIContextMenuInteraction(delegate: self))
     }
 
     override func layoutSpecThatFits(_ constrainedSize: ASSizeRange) -> ASLayoutSpec {
@@ -2538,6 +2821,7 @@ final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable {
                 )
                 await MainActor.run {
                     self.imageNode.image = image
+                    self.configureLiveText(for: image)
                     self.ratio = image.size.width > 0 ? image.size.height / image.size.width : self.estimatedRatio
                     self.state = .image
                     self.onHeightChanged?(self.page, image.size, self.page.index)
@@ -2556,18 +2840,111 @@ final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable {
     private func cancel() {
         imageTask?.cancel()
         loadTask?.cancel()
+        analysisTask?.cancel()
         imageTask = nil
         loadTask = nil
+        analysisTask = nil
     }
 
     @objc private func retryTapped() {
         cancel()
         imageNode.image = nil
+        configureLiveText(for: nil)
         state = .loading
         didStart = false
         setNeedsLayout()
         loadIfNeeded()
     }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard !UserDefaults.standard.bool(forKey: "Reader.disableQuickActions"),
+              let image = imageNode.image else {
+            return nil
+        }
+
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            let share = UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                self?.share(image)
+            }
+            let save = UIAction(title: "Save Image", image: UIImage(systemName: "square.and.arrow.down")) { _ in
+                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+            }
+            let reload = UIAction(title: "Reload Page", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in
+                self?.retryTapped()
+            }
+            return UIMenu(title: "", children: [share, save, reload])
+        }
+    }
+
+    private func share(_ image: UIImage) {
+        let controller = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        controller.popoverPresentationController?.sourceView = imageNode.view
+        controller.popoverPresentationController?.sourceRect = imageNode.view.bounds
+        owningViewController?.present(controller, animated: true)
+    }
+
+    private var owningViewController: UIViewController? {
+        var responder: UIResponder? = imageNode.view
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                return viewController
+            }
+            responder = current.next
+        }
+        return nil
+    }
+
+    private func configureLiveText(for image: UIImage?) {
+        analysisTask?.cancel()
+#if canImport(VisionKit)
+        guard #available(iOS 16.0, *),
+              UserDefaults.standard.bool(forKey: "Reader.liveText"),
+              let image else {
+            if #available(iOS 16.0, *) {
+                removeImageAnalysisInteraction()
+            }
+            return
+        }
+
+        let interaction = imageAnalysisInteraction()
+        interaction.analysis = nil
+        analysisTask = Task { [weak self, image] in
+            do {
+                let analyzer = ImageAnalyzer()
+                let configuration = ImageAnalyzer.Configuration([.text])
+                let analysis = try await analyzer.analyze(image, configuration: configuration)
+                await MainActor.run {
+                    guard let currentImage = self?.imageNode.image, currentImage === image else { return }
+                    interaction.analysis = analysis
+                    interaction.preferredInteractionTypes = .automatic
+                }
+            } catch {
+                ReaderLogger.shared.log("Reader Live Text skipped: \(error.localizedDescription)", type: "ReaderSettings")
+            }
+        }
+#else
+        _ = image
+#endif
+    }
+
+#if canImport(VisionKit)
+    @available(iOS 16.0, *)
+    private func imageAnalysisInteraction() -> ImageAnalysisInteraction {
+        if let existing = imageNode.view.interactions.compactMap({ $0 as? ImageAnalysisInteraction }).first {
+            return existing
+        }
+        let interaction = ImageAnalysisInteraction()
+        imageNode.view.addInteraction(interaction)
+        return interaction
+    }
+
+    @available(iOS 16.0, *)
+    private func removeImageAnalysisInteraction() {
+        imageNode.view.interactions.compactMap { $0 as? ImageAnalysisInteraction }.forEach {
+            imageNode.view.removeInteraction($0)
+        }
+    }
+#endif
 
     private static func labelText(_ value: String) -> NSAttributedString {
         NSAttributedString(
@@ -2588,23 +2965,31 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
     weak var readerDelegate: KanzenReaderChildDelegate?
 
     private let mode: KanzenReaderMode
+    private let pageOffsetKey: String?
+    private var sourcePages: [KanzenReaderPage] = []
     private var pages: [KanzenReaderPage] = []
     private var units: [KanzenPagedUnit] = []
     private var controllers: [KanzenReaderPageUnitViewController] = []
     private var currentUnitIndex = 0
+    private var splitTask: Task<Void, Never>?
     private lazy var pageViewController = UIPageViewController(
         transitionStyle: .scroll,
-        navigationOrientation: .horizontal,
+        navigationOrientation: mode == .vertical ? .vertical : .horizontal,
         options: nil
     )
 
-    init(mode: KanzenReaderMode) {
+    init(mode: KanzenReaderMode, pageOffsetKey: String?) {
         self.mode = mode
+        self.pageOffsetKey = pageOffsetKey
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        splitTask?.cancel()
     }
 
     override func viewDidLoad() {
@@ -2623,7 +3008,7 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         ])
         pageViewController.didMove(toParent: self)
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
     }
@@ -2633,11 +3018,42 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         coordinator.animate(alongsideTransition: nil) { [weak self] _ in
             guard let self, UserDefaults.standard.string(forKey: "Reader.pagedPageLayout") == "auto" else { return }
             let page = self.controllers[safe: self.currentUnitIndex]?.unit.firstPageIndex ?? 0
-            self.setPages(self.pages, startPage: page)
+            self.renderPages(self.sourcePages, startPage: page)
         }
     }
 
     func setPages(_ pages: [KanzenReaderPage], startPage: Int) {
+        sourcePages = pages
+        renderPages(pages, startPage: startPage)
+    }
+
+    private func renderPages(_ pages: [KanzenReaderPage], startPage: Int) {
+        splitTask?.cancel()
+        installPages(pages, startPage: startPage)
+
+        guard UserDefaults.standard.bool(forKey: "Reader.splitWideImages"), !pages.isEmpty else { return }
+        let target = CGSize(
+            width: max(view.bounds.width, UIScreen.main.bounds.width, 1),
+            height: max(view.bounds.height, UIScreen.main.bounds.height, 1)
+        )
+        let scale = view.window?.screen.scale ?? UIScreen.main.scale
+        let reverse = UserDefaults.standard.bool(forKey: "Reader.reverseSplitOrder")
+        splitTask = Task { [weak self, pages, startPage, target, scale, reverse] in
+            let result = await Self.splitWidePagesIfNeeded(
+                pages,
+                startPage: startPage,
+                targetSize: target,
+                scale: scale,
+                reverseOrder: reverse
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.installPages(result.pages, startPage: result.startPage)
+            }
+        }
+    }
+
+    private func installPages(_ pages: [KanzenReaderPage], startPage: Int) {
         self.pages = pages
         self.units = makeUnits(from: pages)
         self.controllers = units.map { KanzenReaderPageUnitViewController(unit: $0) }
@@ -2651,7 +3067,7 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         applyCanvasColor()
         if reloadCurrentPages {
             let page = controllers[safe: currentUnitIndex]?.unit.firstPageIndex ?? 0
-            setPages(pages, startPage: page)
+            renderPages(sourcePages, startPage: page)
         } else {
             controllers[safe: currentUnitIndex]?.applyReaderSettings()
         }
@@ -2662,7 +3078,7 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
               nextIndex < controllers.count else { return }
         let direction: UIPageViewController.NavigationDirection = nextIndex >= currentUnitIndex ? .forward : .reverse
         currentUnitIndex = nextIndex
-        pageViewController.setViewControllers([controllers[nextIndex]], direction: direction, animated: animated)
+        pageViewController.setViewControllers([controllers[nextIndex]], direction: direction, animated: animated && pageTurnsAnimated)
         reportCurrentPage()
     }
 
@@ -2682,7 +3098,13 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         }
     }
 
-    @objc private func handleTap() {
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        let point = gesture.location(in: view)
+        if let action = KanzenTapZone.action(at: point, in: view.bounds, kind: .paged) {
+            performTapZoneAction(action)
+            return
+        }
         readerDelegate?.readerChildDidRequestOverlayToggle()
     }
 
@@ -2695,6 +3117,11 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
 
         var result: [KanzenPagedUnit] = []
         var index = 0
+        if pageOffsetEnabled, !pages.isEmpty {
+            let first = pages[0]
+            result.append(KanzenPagedUnit(pages: [first], firstPageIndex: first.index))
+            index = 1
+        }
         while index < pages.count {
             let first = pages[index]
             let second = index + 1 < pages.count ? pages[index + 1] : nil
@@ -2709,8 +3136,36 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         guard next != currentUnitIndex else { return }
         let direction: UIPageViewController.NavigationDirection = next > currentUnitIndex ? .forward : .reverse
         currentUnitIndex = next
-        pageViewController.setViewControllers([controllers[next]], direction: direction, animated: true)
+        pageViewController.setViewControllers([controllers[next]], direction: direction, animated: pageTurnsAnimated)
         reportCurrentPage()
+    }
+
+    private func performTapZoneAction(_ action: KanzenTapZone.RegionType) {
+        let resolved: KanzenTapZone.RegionType
+        if UserDefaults.standard.bool(forKey: "Reader.invertTapZones") {
+            resolved = action == .left ? .right : .left
+        } else {
+            resolved = action
+        }
+
+        switch resolved {
+        case .left:
+            moveLeft()
+        case .right:
+            moveRight()
+        }
+    }
+
+    private var pageTurnsAnimated: Bool {
+        kanzenReaderAnimatesPageTransitions()
+    }
+
+    private var pageOffsetEnabled: Bool {
+        if let pageOffsetKey,
+           let scoped = UserDefaults.standard.object(forKey: pageOffsetKey) as? Bool {
+            return scoped
+        }
+        return UserDefaults.standard.bool(forKey: "Reader.pagedPageOffset")
     }
 
     private func reportCurrentPage() {
@@ -2726,6 +3181,62 @@ final class KanzenPagedReaderViewController: UIViewController, KanzenReaderChild
         view.backgroundColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
         pageViewController.view.backgroundColor = view.backgroundColor
         controllers[safe: currentUnitIndex]?.applyReaderSettings()
+    }
+
+    private static func splitWidePagesIfNeeded(
+        _ pages: [KanzenReaderPage],
+        startPage: Int,
+        targetSize: CGSize,
+        scale: CGFloat,
+        reverseOrder: Bool
+    ) async -> (pages: [KanzenReaderPage], startPage: Int) {
+        var output: [KanzenReaderPage] = []
+        var mappedStartPage = 0
+
+        for page in pages {
+            if page.index == startPage || output.count == startPage {
+                mappedStartPage = output.count
+            }
+
+            guard page.isImageLike,
+                  let image = try? await ReaderWebtoonImagePipeline.loadImage(
+                    for: page.pageData,
+                    targetSize: targetSize,
+                    scale: scale
+                  ),
+                  let splitData = splitWideImageData(image, reverseOrder: reverseOrder) else {
+                output.append(displayPage(from: page.pageData, index: output.count, sourceID: page.id))
+                continue
+            }
+
+            for data in splitData {
+                output.append(displayPage(from: PageData(content: .imageData(data)), index: output.count, sourceID: page.id))
+            }
+        }
+
+        return (output, min(mappedStartPage, max(output.count - 1, 0)))
+    }
+
+    private static func displayPage(from pageData: PageData, index: Int, sourceID: String) -> KanzenReaderPage {
+        KanzenReaderPage(pageData: pageData, index: index, chapterNumber: "display-\(sourceID)")
+    }
+
+    private static func splitWideImageData(_ image: UIImage, reverseOrder: Bool) -> [Data]? {
+        guard let cgImage = image.cgImage else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > height, CGFloat(width) / CGFloat(max(height, 1)) >= 1.18 else { return nil }
+
+        let midpoint = width / 2
+        let leftRect = CGRect(x: 0, y: 0, width: midpoint, height: height)
+        let rightRect = CGRect(x: midpoint, y: 0, width: width - midpoint, height: height)
+        let orderedRects = reverseOrder ? [rightRect, leftRect] : [leftRect, rightRect]
+        let parts = orderedRects.compactMap { rect -> Data? in
+            guard let cropped = cgImage.cropping(to: rect) else { return nil }
+            let part = UIImage(cgImage: cropped, scale: image.scale, orientation: .up)
+            return part.jpegData(compressionQuality: 0.96) ?? part.pngData()
+        }
+        return parts.count == 2 ? parts : nil
     }
 }
 
@@ -2802,7 +3313,7 @@ final class KanzenReaderPageUnitViewController: UIViewController {
     }
 }
 
-final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
+final class KanzenReaderImageView: UIView, UIScrollViewDelegate, UIContextMenuInteractionDelegate {
     private let scrollView = UIScrollView()
     private let imageView = UIImageView()
     private let spinner = UIActivityIndicatorView(style: .medium)
@@ -2810,6 +3321,7 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
     private var page: KanzenReaderPage?
     private var loadTask: Task<Void, Never>?
     private var imageTask: ImageTask?
+    private var analysisTask: Task<Void, Never>?
     private lazy var doubleTapGesture: UITapGestureRecognizer = {
         let gesture = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         gesture.numberOfTapsRequired = 2
@@ -2829,6 +3341,8 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addGestureRecognizer(doubleTapGesture)
         imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        imageView.addInteraction(UIContextMenuInteraction(delegate: self))
         spinner.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("Retry", for: .normal)
         retryButton.isHidden = true
@@ -2871,6 +3385,7 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
         self.page = page
         applyReaderSettings()
         imageView.image = nil
+        configureLiveText(for: nil)
         retryButton.isHidden = true
         scrollView.setZoomScale(1, animated: false)
         imageView.frame = CGRect(origin: .zero, size: scrollView.bounds.size)
@@ -2884,11 +3399,17 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
         scrollView.backgroundColor = color
         imageView.backgroundColor = color
         doubleTapGesture.isEnabled = !UserDefaults.standard.bool(forKey: "Reader.disableDoubleTap")
+        if UserDefaults.standard.bool(forKey: "Reader.liveText") {
+            configureLiveText(for: imageView.image)
+        } else {
+            configureLiveText(for: nil)
+        }
     }
 
     private func cancel() {
         imageTask?.cancel()
         loadTask?.cancel()
+        analysisTask?.cancel()
     }
 
     private func load() {
@@ -2911,6 +3432,7 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
                 await MainActor.run {
                     self?.spinner.stopAnimating()
                     self?.imageView.image = image
+                    self?.configureLiveText(for: image)
                 }
             } catch {
                 await MainActor.run {
@@ -2923,6 +3445,26 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
 
     @objc private func retry() {
         load()
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard !UserDefaults.standard.bool(forKey: "Reader.disableQuickActions"),
+              let image = imageView.image else {
+            return nil
+        }
+
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            let share = UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                self?.share(image)
+            }
+            let save = UIAction(title: "Save Image", image: UIImage(systemName: "square.and.arrow.down")) { _ in
+                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+            }
+            let reload = UIAction(title: "Reload Page", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in
+                self?.load()
+            }
+            return UIMenu(title: "", children: [share, save, reload])
+        }
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -2954,6 +3496,76 @@ final class KanzenReaderImageView: UIView, UIScrollViewDelegate {
         frame.origin.y = frame.height < boundsSize.height ? (boundsSize.height - frame.height) / 2 : 0
         imageView.frame = frame
     }
+
+    private func share(_ image: UIImage) {
+        let controller = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        controller.popoverPresentationController?.sourceView = self
+        controller.popoverPresentationController?.sourceRect = bounds
+        owningViewController?.present(controller, animated: true)
+    }
+
+    private var owningViewController: UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                return viewController
+            }
+            responder = current.next
+        }
+        return nil
+    }
+
+    private func configureLiveText(for image: UIImage?) {
+        analysisTask?.cancel()
+#if canImport(VisionKit)
+        guard #available(iOS 16.0, *),
+              UserDefaults.standard.bool(forKey: "Reader.liveText"),
+              let image else {
+            if #available(iOS 16.0, *) {
+                removeImageAnalysisInteraction()
+            }
+            return
+        }
+
+        let interaction = imageAnalysisInteraction()
+        interaction.analysis = nil
+        analysisTask = Task { [weak self, image] in
+            do {
+                let analyzer = ImageAnalyzer()
+                let configuration = ImageAnalyzer.Configuration([.text])
+                let analysis = try await analyzer.analyze(image, configuration: configuration)
+                await MainActor.run {
+                    guard let currentImage = self?.imageView.image, currentImage === image else { return }
+                    interaction.analysis = analysis
+                    interaction.preferredInteractionTypes = .automatic
+                }
+            } catch {
+                ReaderLogger.shared.log("Reader Live Text skipped: \(error.localizedDescription)", type: "ReaderSettings")
+            }
+        }
+#else
+        _ = image
+#endif
+    }
+
+#if canImport(VisionKit)
+    @available(iOS 16.0, *)
+    private func imageAnalysisInteraction() -> ImageAnalysisInteraction {
+        if let existing = imageView.interactions.compactMap({ $0 as? ImageAnalysisInteraction }).first {
+            return existing
+        }
+        let interaction = ImageAnalysisInteraction()
+        imageView.addInteraction(interaction)
+        return interaction
+    }
+
+    @available(iOS 16.0, *)
+    private func removeImageAnalysisInteraction() {
+        imageView.interactions.compactMap { $0 as? ImageAnalysisInteraction }.forEach {
+            imageView.removeInteraction($0)
+        }
+    }
+#endif
 }
 
 final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildControlling, UIScrollViewDelegate {
@@ -2990,7 +3602,7 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
             stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
         ])
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
     }
@@ -3057,11 +3669,11 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
     }
 
     func moveLeft() {
-        moveToPage(max(lastReportedPage - 1, 0), animated: true)
+        moveToPage(max(lastReportedPage - 1, 0), animated: kanzenReaderAnimatesPageTransitions())
     }
 
     func moveRight() {
-        moveToPage(min(lastReportedPage + 1, max(pages.count - 1, 0)), animated: true)
+        moveToPage(min(lastReportedPage + 1, max(pages.count - 1, 0)), animated: kanzenReaderAnimatesPageTransitions())
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -3076,8 +3688,30 @@ final class KanzenTextReaderViewController: UIViewController, KanzenReaderChildC
         detectEndOverscroll(in: scrollView)
     }
 
-    @objc private func handleTap() {
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        let point = gesture.location(in: view)
+        if let action = KanzenTapZone.action(at: point, in: view.bounds, kind: .text) {
+            performTapZoneAction(action)
+            return
+        }
         readerDelegate?.readerChildDidRequestOverlayToggle()
+    }
+
+    private func performTapZoneAction(_ action: KanzenTapZone.RegionType) {
+        let resolved: KanzenTapZone.RegionType
+        if UserDefaults.standard.bool(forKey: "Reader.invertTapZones") {
+            resolved = action == .left ? .right : .left
+        } else {
+            resolved = action
+        }
+
+        switch resolved {
+        case .left:
+            moveLeft()
+        case .right:
+            moveRight()
+        }
     }
 
     private func restorePendingPageIfNeeded() {

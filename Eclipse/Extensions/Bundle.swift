@@ -14,6 +14,17 @@ extension Bundle {
     var buildNumber: String {
         infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
+    var distributionChannel: String {
+        let channel = infoDictionary?["EclipseDistributionChannel"] as? String
+        let trimmedChannel = channel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedChannel = trimmedChannel, !trimmedChannel.isEmpty {
+            return trimmedChannel
+        }
+        return "GitHub"
+    }
+    var usesGitHubReleaseUpdates: Bool {
+        distributionChannel.caseInsensitiveCompare("TestFlight") != .orderedSame
+    }
 }
 
 enum GitHubReleaseChecker {
@@ -30,6 +41,10 @@ enum GitHubReleaseChecker {
 
     // Keep release checks lightweight and avoid excessive GitHub API calls.
     private static let autoCheckInterval: TimeInterval = 6 * 3600
+
+    static var isGitHubReleaseUpdatesAvailable: Bool {
+        Bundle.main.usesGitHubReleaseUpdates
+    }
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -54,6 +69,10 @@ enum GitHubReleaseChecker {
 
     static func checkForUpdatesIfNeeded() async {
         registerDefaults()
+        guard isGitHubReleaseUpdatesAvailable else {
+            clearCachedUpdateState()
+            return
+        }
         guard isAutoCheckEnabled else { return }
 
         if let lastCheckDate,
@@ -66,6 +85,10 @@ enum GitHubReleaseChecker {
 
     static func checkForUpdates(force: Bool) async {
         registerDefaults()
+        guard isGitHubReleaseUpdatesAvailable else {
+            clearCachedUpdateState()
+            return
+        }
 
         if !force && !isAutoCheckEnabled {
             return
@@ -104,6 +127,10 @@ enum GitHubReleaseChecker {
 
     static var shouldShowPendingUpdatePrompt: Bool {
         registerDefaults()
+        guard isGitHubReleaseUpdatesAvailable else {
+            clearCachedUpdateState()
+            return false
+        }
 
         let defaults = UserDefaults.standard
         guard defaults.bool(forKey: pendingPromptKey),
@@ -179,6 +206,11 @@ enum GitHubReleaseChecker {
     }
 
     private static func refreshCachedUpdateStateForCurrentVersion() {
+        guard isGitHubReleaseUpdatesAvailable else {
+            clearCachedUpdateState()
+            return
+        }
+
         let defaults = UserDefaults.standard
         guard defaults.bool(forKey: updateAvailableKey) || defaults.bool(forKey: pendingPromptKey) else {
             return
@@ -198,6 +230,14 @@ enum GitHubReleaseChecker {
 
         defaults.set(false, forKey: updateAvailableKey)
         defaults.set(false, forKey: pendingPromptKey)
+    }
+
+    private static func clearCachedUpdateState() {
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: updateAvailableKey)
+        defaults.set(false, forKey: pendingPromptKey)
+        defaults.set("", forKey: latestVersionKey)
+        defaults.set("", forKey: latestReleaseURLKey)
     }
 
     static func consumePendingUpdatePrompt() {

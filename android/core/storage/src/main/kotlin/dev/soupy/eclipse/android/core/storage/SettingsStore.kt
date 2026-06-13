@@ -531,7 +531,7 @@ class SettingsStore(
             prefs[Keys.alwaysLandscape] = payload.alwaysLandscape
             prefs[Keys.aniSkipEnabled] = payload.aniSkipEnabled
             prefs[Keys.introDbEnabled] = payload.introDBEnabled
-            prefs[Keys.introDbAppEnabled] = true
+            prefs[Keys.introDbAppEnabled] = payload.introDBAppEnabled
             prefs[Keys.aniSkipAutoSkip] = payload.aniSkipAutoSkip
             prefs[Keys.skip85sEnabled] = payload.skip85sEnabled
             prefs[Keys.skip85sAlwaysVisible] = payload.skip85sAlwaysVisible
@@ -574,6 +574,8 @@ class SettingsStore(
             prefs[Keys.githubReleaseUpdateAvailable] = payload.githubReleaseUpdateAvailable
             prefs[Keys.githubReleaseLatestVersion] = payload.githubReleaseLatestVersion
             prefs[Keys.githubReleaseUrl] = payload.githubReleaseURL
+            prefs[Keys.githubReleaseShowAlertPending] = payload.githubReleaseShowAlertPending
+            prefs[Keys.githubReleaseLastPromptedVersion] = payload.githubReleaseLastPromptedVersion
             prefs[Keys.seasonMenu] = payload.seasonMenu
             prefs[Keys.horizontalEpisodeList] = payload.horizontalEpisodeList
             prefs[Keys.mediaDetailElementOrder] =

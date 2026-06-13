@@ -8,6 +8,7 @@
 
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 #if !os(tvOS)
 typealias KanzenReaderChildViewController = UIViewController & KanzenReaderChildControlling
@@ -38,6 +39,135 @@ private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor
         return style == .dark ? .black : .white
     default:
         return .black
+    }
+}
+
+enum KanzenTapZonePreset: String, CaseIterable, Identifiable {
+    case automatic = "auto"
+    case leftRight = "left-right"
+    case lShaped = "l-shaped"
+    case kindle = "kindle"
+    case edge = "edge"
+    case disabled = "disabled"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .leftRight: return "Left / Right"
+        case .lShaped: return "L-Shaped"
+        case .kindle: return "Kindle"
+        case .edge: return "Edge"
+        case .disabled: return "Disabled"
+        }
+    }
+}
+
+struct KanzenTapZone {
+    enum ReaderKind {
+        case paged
+        case webtoon
+        case text
+    }
+
+    enum RegionType {
+        case left
+        case right
+    }
+
+    struct Region {
+        let bounds: CGRect
+        let type: RegionType
+    }
+
+    let regions: [Region]
+
+    static func configured(for kind: ReaderKind) -> KanzenTapZone? {
+        let raw = UserDefaults.standard.string(forKey: "Reader.tapZones") ?? KanzenTapZonePreset.disabled.rawValue
+        let preset = KanzenTapZonePreset(rawValue: raw) ?? .disabled
+        switch preset {
+        case .automatic:
+            return kind == .paged ? .leftRight : .lShaped
+        case .leftRight:
+            return .leftRight
+        case .lShaped:
+            return .lShaped
+        case .kindle:
+            return .kindle
+        case .edge:
+            return .edge
+        case .disabled:
+            return nil
+        }
+    }
+
+    static func action(at point: CGPoint, in bounds: CGRect, kind: ReaderKind) -> RegionType? {
+        guard bounds.width > 0, bounds.height > 0,
+              let zone = configured(for: kind) else {
+            return nil
+        }
+        let relativePoint = CGPoint(x: point.x / bounds.width, y: point.y / bounds.height)
+        return zone.regions.first { $0.bounds.contains(relativePoint) }?.type
+    }
+
+    static let leftRight = KanzenTapZone(regions: [
+        Region(bounds: CGRect(x: 0, y: 0, width: 1.0 / 3.0, height: 1), type: .left),
+        Region(bounds: CGRect(x: 2.0 / 3.0, y: 0, width: 1.0 / 3.0, height: 1), type: .right)
+    ])
+
+    static let lShaped = KanzenTapZone(regions: [
+        Region(bounds: CGRect(x: 0, y: 1.0 / 3.0, width: 1.0 / 3.0, height: 1.0 / 3.0), type: .left),
+        Region(bounds: CGRect(x: 0, y: 0, width: 1, height: 1.0 / 3.0), type: .left),
+        Region(bounds: CGRect(x: 2.0 / 3.0, y: 1.0 / 3.0, width: 1.0 / 3.0, height: 2.0 / 3.0), type: .right),
+        Region(bounds: CGRect(x: 0, y: 2.0 / 3.0, width: 2.0 / 3.0, height: 1.0 / 3.0), type: .right)
+    ])
+
+    static let kindle = KanzenTapZone(regions: [
+        Region(bounds: CGRect(x: 0, y: 1.0 / 3.0, width: 1.0 / 3.0, height: 2.0 / 3.0), type: .left),
+        Region(bounds: CGRect(x: 1.0 / 3.0, y: 1.0 / 3.0, width: 2.0 / 3.0, height: 2.0 / 3.0), type: .right)
+    ])
+
+    static let edge = KanzenTapZone(regions: [
+        Region(bounds: CGRect(x: 0, y: 0, width: 1.0 / 3.0, height: 1), type: .right),
+        Region(bounds: CGRect(x: 1.0 / 3.0, y: 2.0 / 3.0, width: 1.0 / 3.0, height: 1.0 / 3.0), type: .left),
+        Region(bounds: CGRect(x: 2.0 / 3.0, y: 0, width: 1.0 / 3.0, height: 1), type: .right)
+    ])
+}
+
+enum KanzenReaderUpscaleModelStore {
+    private static let storedFileName = "reader-upscale.mlmodel"
+
+    static var storedModelURL: URL {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ReaderUpscaling", isDirectory: true)
+        return directory.appendingPathComponent(storedFileName)
+    }
+
+    static var storedModelName: String {
+        UserDefaults.standard.string(forKey: "Reader.upscaleModelName") ?? "None"
+    }
+
+    static func importModel(from sourceURL: URL) throws {
+        let didAccess = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let directory = storedModelURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: storedModelURL.path) {
+            try FileManager.default.removeItem(at: storedModelURL)
+        }
+        try FileManager.default.copyItem(at: sourceURL, to: storedModelURL)
+        UserDefaults.standard.set(sourceURL.lastPathComponent, forKey: "Reader.upscaleModelName")
+    }
+
+    static func clearModel() {
+        try? FileManager.default.removeItem(at: storedModelURL)
+        UserDefaults.standard.removeObject(forKey: "Reader.upscaleModelName")
     }
 }
 
@@ -152,6 +282,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         configureLoadingView()
         configureErrorView()
         configureOverlay()
+        applyReaderOrientationPreference()
         ReaderLogger.shared.log("Reader controller opened title=\(mangaLogTitle) chapter=\(session.selectedChapter.chapterNumber) mode=\(session.mode.rawValue)", type: "Reader")
         loadCurrentChapter()
     }
@@ -270,7 +401,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         } else if session.mode == .webtoon {
             nextReader = KanzenWebtoonReaderViewController()
         } else {
-            nextReader = KanzenPagedReaderViewController(mode: session.mode)
+            nextReader = KanzenPagedReaderViewController(mode: session.mode, pageOffsetKey: KanzenReaderSettingsView.pageOffsetStorageKey(scopeKey: session.readerSettingsScopeKey))
         }
 
         let needsNewReader: Bool
@@ -395,12 +526,15 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
 
     private func presentSettings() {
         ReaderLogger.shared.log("Reader settings opened chapter=\(session.selectedChapter.chapterNumber) mode=\(session.mode.rawValue)", type: "ReaderSettings")
-        let view = KanzenAidokuStyleReaderSettingsView(
-            titleKey: session.mangaRoute?.stableKey ?? "\(session.mangaId)",
+        let view = KanzenReaderSettingsView(
+            scopeKey: session.readerSettingsScopeKey,
             onModeChanged: { [weak self] mode in
                 guard let self else { return }
                 self.session.mode = mode
-                UserDefaults.standard.set(mode.rawValue, forKey: "kanzenReaderMode")
+                UserDefaults.standard.set(mode.rawValue, forKey: self.session.readerModeStorageKey)
+                if self.session.readerModeStorageKey == "kanzenReaderMode" {
+                    UserDefaults.standard.set(mode.readingMode.rawValue, forKey: "readingMode")
+                }
                 ReaderLogger.shared.log("Reader mode changed mode=\(mode.rawValue)", type: "ReaderSettings")
                 self.loadCurrentChapter()
             },
@@ -415,6 +549,10 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         view.backgroundColor = readerBackgroundColor()
         ReaderLogger.shared.log("Reader setting changed key=\(changedKey) reload=\(reloadPages)", type: "ReaderSettings")
 
+        if changedKey == "Reader.orientation" {
+            applyReaderOrientationPreference()
+        }
+
         if reloadPages {
             activeReader?.setPages(session.pages, startPage: session.currentPage)
         }
@@ -426,7 +564,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
         if orientationLockEnabled {
             orientationLockEnabled = false
             orientationLockMaskRaw = "all"
-            applyOrientationMask(.all)
+            applyReaderOrientationPreference()
         } else {
             let mask = currentExactOrientationMask()
             orientationLockEnabled = true
@@ -437,8 +575,25 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     }
 
     private func applyPersistedOrientationLockIfNeeded() {
-        guard orientationLockEnabled else { return }
-        applyOrientationMask(mask(for: orientationLockMaskRaw))
+        if orientationLockEnabled {
+            applyOrientationMask(mask(for: orientationLockMaskRaw))
+        } else {
+            applyReaderOrientationPreference()
+        }
+    }
+
+    private func applyReaderOrientationPreference() {
+        guard !orientationLockEnabled else { return }
+        switch UserDefaults.standard.string(forKey: "Reader.orientation") ?? "device" {
+        case "portrait":
+            applyOrientationMask(.portrait)
+        case "landscape":
+            applyOrientationMask(.landscape)
+        case "all":
+            applyOrientationMask(.all)
+        default:
+            applyOrientationMask(.all)
+        }
     }
 
     private func releaseActiveOrientationLock() {
@@ -745,25 +900,80 @@ private struct KanzenReaderChapterListView: View {
     }
 }
 
-private struct KanzenAidokuStyleReaderSettingsView: View {
-    let titleKey: String
+private struct KanzenReaderSettingsView: View {
+    let scopeKey: String?
     let onModeChanged: (KanzenReaderMode) -> Void
     let onSettingsChanged: (_ requiresReload: Bool, _ key: String) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("kanzenReaderMode") private var modeRaw = KanzenReaderMode.currentDefault().rawValue
+    @State private var modeRaw: String
+    @State private var pageOffset: Bool
+    @State private var showingUpscaleImporter = false
+    @State private var upscaleModelName: String
     @AppStorage("Reader.downsampleImages") private var downsampleImages = true
+    @AppStorage("Reader.cropBorders") private var cropBorders = false
+    @AppStorage("Reader.disableQuickActions") private var disableQuickActions = false
     @AppStorage("Reader.disableDoubleTap") private var disableDoubleTap = false
+    @AppStorage("Reader.liveText") private var liveText = false
     @AppStorage("Reader.hideBarsOnSwipe") private var hideBarsOnSwipe = false
     @AppStorage("Reader.backgroundColor") private var backgroundColor = "black"
+    @AppStorage("Reader.orientation") private var orientation = "device"
+    @AppStorage("Reader.tapZones") private var tapZones = KanzenTapZonePreset.disabled.rawValue
+    @AppStorage("Reader.invertTapZones") private var invertTapZones = false
+    @AppStorage("Reader.animatePageTransitions") private var animatePageTransitions = true
+    @AppStorage("Reader.upscaleImages") private var upscaleImages = false
+    @AppStorage("Reader.upscaleMaxHeight") private var upscaleMaxHeight = 2000
     @AppStorage("Reader.pagesToPreload") private var pagesToPreload = 3
     @AppStorage("Reader.pagedPageLayout") private var pagedLayout = "single"
+    @AppStorage("Reader.splitWideImages") private var splitWideImages = false
+    @AppStorage("Reader.reverseSplitOrder") private var reverseSplitOrder = false
     @AppStorage("Reader.verticalInfiniteScroll") private var infiniteScroll = true
     @AppStorage("Reader.pillarbox") private var pillarbox = false
     @AppStorage("Reader.pillarboxAmount") private var pillarboxAmount = 15.0
+    @AppStorage("Reader.pillarboxOrientation") private var pillarboxOrientation = "both"
     @AppStorage("readerFontSize") private var textFontSize = 16.0
+    @AppStorage("readerFontFamily") private var textFontFamily = "-apple-system"
+    @AppStorage("readerFontWeight") private var textFontWeight = "normal"
+    @AppStorage("readerColorPreset") private var textColorPreset = 0
+    @AppStorage("readerTextAlignment") private var textAlignment = "left"
     @AppStorage("readerLineSpacing") private var textLineSpacing = 1.6
     @AppStorage("readerMargin") private var textHorizontalPadding = 4.0
+
+    init(
+        scopeKey: String?,
+        onModeChanged: @escaping (KanzenReaderMode) -> Void,
+        onSettingsChanged: @escaping (_ requiresReload: Bool, _ key: String) -> Void
+    ) {
+        self.scopeKey = scopeKey
+        self.onModeChanged = onModeChanged
+        self.onSettingsChanged = onSettingsChanged
+        let mode = KanzenReaderMode.currentDefault(scopeKey: scopeKey)
+        _modeRaw = State(initialValue: mode.rawValue)
+        _pageOffset = State(initialValue: UserDefaults.standard.object(forKey: Self.pageOffsetStorageKey(scopeKey: scopeKey)) as? Bool ?? false)
+        _upscaleModelName = State(initialValue: KanzenReaderUpscaleModelStore.storedModelName)
+    }
+
+    static func pageOffsetStorageKey(scopeKey: String?) -> String {
+        if let scopeKey, !scopeKey.isEmpty {
+            return "Reader.pagedPageOffset.\(scopeKey)"
+        }
+        return "Reader.pagedPageOffset"
+    }
+
+    private var modeStorageKey: String {
+        KanzenReaderMode.storageKey(scopeKey: scopeKey)
+    }
+
+    private var pageOffsetStorageKey: String {
+        Self.pageOffsetStorageKey(scopeKey: scopeKey)
+    }
+
+    private var liveTextAvailable: Bool {
+        if #available(iOS 16.0, *) {
+            return true
+        }
+        return false
+    }
 
     var body: some View {
         Form {
@@ -772,6 +982,7 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     get: { KanzenReaderMode(rawValue: modeRaw) ?? .webtoon },
                     set: {
                         modeRaw = $0.rawValue
+                        UserDefaults.standard.set($0.rawValue, forKey: modeStorageKey)
                         onModeChanged($0)
                     }
                 )) {
@@ -780,7 +991,14 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     }
                 }
                 Toggle("Downsample Images", isOn: $downsampleImages)
+                Toggle("Crop Borders", isOn: $cropBorders)
+                Toggle("Quick Actions", isOn: Binding(
+                    get: { !disableQuickActions },
+                    set: { disableQuickActions = !$0 }
+                ))
                 Toggle("Disable Double Tap Zoom", isOn: $disableDoubleTap)
+                Toggle("Live Text", isOn: $liveText)
+                    .disabled(!liveTextAvailable)
                 Toggle("Hide Bars On Swipe", isOn: $hideBarsOnSwipe)
                 Picker("Background", selection: $backgroundColor) {
                     Text("Black").tag("black")
@@ -789,6 +1007,51 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     Text("Auto").tag("auto")
                 }
                 .pickerStyle(.menu)
+                Picker("Orientation", selection: $orientation) {
+                    Text("Device").tag("device")
+                    Text("Portrait").tag("portrait")
+                    Text("Landscape").tag("landscape")
+                    Text("All").tag("all")
+                }
+                .pickerStyle(.menu)
+            }
+
+            Section("Tap Zones") {
+                Picker("Preset", selection: $tapZones) {
+                    ForEach(KanzenTapZonePreset.allCases) { preset in
+                        Text(preset.title).tag(preset.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+                Toggle("Invert Zones", isOn: $invertTapZones)
+                Toggle("Animate Page Turns", isOn: $animatePageTransitions)
+            }
+
+            Section("Upscaling") {
+                Toggle("Upscale Images", isOn: $upscaleImages)
+                    .disabled(downsampleImages || upscaleModelName == "None")
+                Stepper("Max Height: \(upscaleMaxHeight) px", value: $upscaleMaxHeight, in: 800...6000, step: 100)
+                    .disabled(!upscaleImages || downsampleImages)
+                Button {
+                    showingUpscaleImporter = true
+                } label: {
+                    HStack {
+                        Text("Import Core ML Model")
+                        Spacer()
+                        Text(upscaleModelName)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                if upscaleModelName != "None" {
+                    Button(role: .destructive) {
+                        KanzenReaderUpscaleModelStore.clearModel()
+                        upscaleModelName = KanzenReaderUpscaleModelStore.storedModelName
+                        upscaleImages = false
+                        onSettingsChanged(true, "Reader.upscaleModel")
+                    } label: {
+                        Text("Remove Imported Model")
+                    }
+                }
             }
 
             Section("Paged") {
@@ -799,6 +1062,10 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                     Text("Auto").tag("auto")
                 }
                 .pickerStyle(.menu)
+                Toggle("Page Offset", isOn: $pageOffset)
+                Toggle("Split Wide Images", isOn: $splitWideImages)
+                Toggle("Reverse Split Order", isOn: $reverseSplitOrder)
+                    .disabled(!splitWideImages)
             }
 
             Section("Webtoon") {
@@ -806,9 +1073,44 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
                 Toggle("Pillarbox", isOn: $pillarbox)
                 Stepper("Pillarbox Amount: \(Int(pillarboxAmount))%", value: $pillarboxAmount, in: 5...95, step: 5)
                     .disabled(!pillarbox)
+                Picker("Pillarbox In", selection: $pillarboxOrientation) {
+                    Text("Both").tag("both")
+                    Text("Portrait").tag("portrait")
+                    Text("Landscape").tag("landscape")
+                }
+                .pickerStyle(.menu)
+                .disabled(!pillarbox)
             }
 
             Section("Text") {
+                Picker("Font", selection: $textFontFamily) {
+                    Text("System").tag("-apple-system")
+                    Text("Serif").tag("Georgia")
+                    Text("Mono").tag("Menlo")
+                    Text("Rounded").tag("ui-rounded")
+                }
+                .pickerStyle(.menu)
+                Picker("Weight", selection: $textFontWeight) {
+                    Text("Regular").tag("normal")
+                    Text("Medium").tag("500")
+                    Text("Bold").tag("700")
+                }
+                .pickerStyle(.menu)
+                Picker("Theme", selection: $textColorPreset) {
+                    Text("Light").tag(0)
+                    Text("Sepia").tag(1)
+                    Text("Gray").tag(2)
+                    Text("Dark").tag(3)
+                    Text("Black").tag(4)
+                }
+                .pickerStyle(.menu)
+                Picker("Alignment", selection: $textAlignment) {
+                    Text("Left").tag("left")
+                    Text("Center").tag("center")
+                    Text("Right").tag("right")
+                    Text("Justify").tag("justify")
+                }
+                .pickerStyle(.menu)
                 Stepper("Font Size: \(Int(textFontSize))", value: $textFontSize, in: 12...32, step: 1)
                 Stepper("Line Spacing: \(String(format: "%.1f", textLineSpacing))", value: $textLineSpacing, in: 1...3, step: 0.1)
                 Stepper("Margin: \(Int(textHorizontalPadding))", value: $textHorizontalPadding, in: 0...30, step: 1)
@@ -816,20 +1118,55 @@ private struct KanzenAidokuStyleReaderSettingsView: View {
         }
         .navigationTitle("Reader Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .fileImporter(isPresented: $showingUpscaleImporter, allowedContentTypes: [.data]) { result in
+            guard case .success(let url) = result else { return }
+            do {
+                try KanzenReaderUpscaleModelStore.importModel(from: url)
+                upscaleModelName = KanzenReaderUpscaleModelStore.storedModelName
+                onSettingsChanged(true, "Reader.upscaleModel")
+            } catch {
+                upscaleModelName = KanzenReaderUpscaleModelStore.storedModelName
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") { dismiss() }
             }
         }
-        .onChange(of: downsampleImages) { _ in onSettingsChanged(true, "Reader.downsampleImages") }
+        .onChange(of: downsampleImages) { _ in
+            if downsampleImages, upscaleImages {
+                upscaleImages = false
+            }
+            onSettingsChanged(true, "Reader.downsampleImages")
+        }
+        .onChange(of: cropBorders) { _ in onSettingsChanged(true, "Reader.cropBorders") }
+        .onChange(of: disableQuickActions) { _ in onSettingsChanged(false, "Reader.disableQuickActions") }
         .onChange(of: disableDoubleTap) { _ in onSettingsChanged(false, "Reader.disableDoubleTap") }
+        .onChange(of: liveText) { _ in onSettingsChanged(false, "Reader.liveText") }
         .onChange(of: hideBarsOnSwipe) { _ in onSettingsChanged(false, "Reader.hideBarsOnSwipe") }
         .onChange(of: backgroundColor) { _ in onSettingsChanged(false, "Reader.backgroundColor") }
+        .onChange(of: orientation) { _ in onSettingsChanged(false, "Reader.orientation") }
+        .onChange(of: tapZones) { _ in onSettingsChanged(false, "Reader.tapZones") }
+        .onChange(of: invertTapZones) { _ in onSettingsChanged(false, "Reader.invertTapZones") }
+        .onChange(of: animatePageTransitions) { _ in onSettingsChanged(false, "Reader.animatePageTransitions") }
+        .onChange(of: upscaleImages) { _ in onSettingsChanged(true, "Reader.upscaleImages") }
+        .onChange(of: upscaleMaxHeight) { _ in onSettingsChanged(true, "Reader.upscaleMaxHeight") }
         .onChange(of: pagesToPreload) { _ in onSettingsChanged(false, "Reader.pagesToPreload") }
         .onChange(of: pagedLayout) { _ in onSettingsChanged(true, "Reader.pagedPageLayout") }
+        .onChange(of: pageOffset) { newValue in
+            UserDefaults.standard.set(newValue, forKey: pageOffsetStorageKey)
+            onSettingsChanged(true, pageOffsetStorageKey)
+        }
+        .onChange(of: splitWideImages) { _ in onSettingsChanged(true, "Reader.splitWideImages") }
+        .onChange(of: reverseSplitOrder) { _ in onSettingsChanged(true, "Reader.reverseSplitOrder") }
         .onChange(of: infiniteScroll) { _ in onSettingsChanged(false, "Reader.verticalInfiniteScroll") }
         .onChange(of: pillarbox) { _ in onSettingsChanged(true, "Reader.pillarbox") }
         .onChange(of: pillarboxAmount) { _ in onSettingsChanged(true, "Reader.pillarboxAmount") }
+        .onChange(of: pillarboxOrientation) { _ in onSettingsChanged(true, "Reader.pillarboxOrientation") }
+        .onChange(of: textFontFamily) { _ in onSettingsChanged(true, "readerFontFamily") }
+        .onChange(of: textFontWeight) { _ in onSettingsChanged(true, "readerFontWeight") }
+        .onChange(of: textColorPreset) { _ in onSettingsChanged(true, "readerColorPreset") }
+        .onChange(of: textAlignment) { _ in onSettingsChanged(true, "readerTextAlignment") }
         .onChange(of: textFontSize) { _ in onSettingsChanged(true, "readerFontSize") }
         .onChange(of: textLineSpacing) { _ in onSettingsChanged(true, "readerLineSpacing") }
         .onChange(of: textHorizontalPadding) { _ in onSettingsChanged(true, "readerMargin") }

@@ -11,6 +11,7 @@ import Kingfisher
 struct ServicesView: View {
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
+    @StateObject private var pluginManager = NuvioPluginManager.shared
     @StateObject private var healthStore = SourceHealthStore.shared
     @Environment(\.editMode) private var editMode
     @State private var showDownloadAlert = false
@@ -37,7 +38,7 @@ struct ServicesView: View {
     var body: some View {
         ZStack {
             VStack {
-                if serviceManager.services.isEmpty && stremioManager.addons.isEmpty {
+                if serviceManager.services.isEmpty && stremioManager.addons.isEmpty && pluginManager.activeSources.isEmpty {
                     emptyStateView
                 } else {
                     servicesList
@@ -105,6 +106,7 @@ struct ServicesView: View {
             }
             .onAppear {
                 _ = healthStore.version
+                pluginManager.load()
                 syncAutoModeSelectionWithInstalledSources()
             }
         }
@@ -180,8 +182,58 @@ struct ServicesView: View {
         return (services + addons).sorted { $0.sortIndex < $1.sortIndex }
     }
 
-    private var orderedAutoModeListItems: [UnifiedItem] {
-        let activeItems = unifiedItems.filter { $0.isActive && $0.supportsAutoMode }
+    private enum AutoModeSourceItem: Identifiable {
+        case service(Service)
+        case stremio(StremioAddon)
+        case plugin(NuvioPluginSource)
+
+        var id: String { autoModeSourceId }
+
+        var isActive: Bool {
+            switch self {
+            case .service(let service): return service.isActive
+            case .stremio(let addon): return addon.isActive
+            case .plugin: return true
+            }
+        }
+
+        var supportsAutoMode: Bool {
+            switch self {
+            case .service:
+                return true
+            case .stremio(let addon):
+                return addon.manifest.supportsStreams
+            case .plugin(let source):
+                return !source.scrapers.isEmpty
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .service(let service): return service.metadata.sourceName
+            case .stremio(let addon): return addon.manifest.name
+            case .plugin(let source): return source.name
+            }
+        }
+
+        var autoModeSourceId: String {
+            switch self {
+            case .service(let service): return "service:\(service.id.uuidString)"
+            case .stremio(let addon): return "stremio:\(addon.id.uuidString)"
+            case .plugin(let source): return source.id
+            }
+        }
+    }
+
+    private var orderedAutoModeListItems: [AutoModeSourceItem] {
+        let unifiedSources: [AutoModeSourceItem] = unifiedItems.compactMap { item in
+            switch item {
+            case .service(let service): return .service(service)
+            case .stremio(let addon): return .stremio(addon)
+            }
+        }
+        let pluginSources: [AutoModeSourceItem] = pluginManager.activeSources.map { .plugin($0) }
+        let activeItems = (unifiedSources + pluginSources).filter { $0.isActive && $0.supportsAutoMode }
         let byId = Dictionary(uniqueKeysWithValues: activeItems.map { ($0.autoModeSourceId, $0) })
         var ordered = autoModeSourceOrderIds.compactMap { byId[$0] }
         let existing = Set(ordered.map(\.autoModeSourceId))
@@ -189,7 +241,7 @@ struct ServicesView: View {
         return ordered
     }
 
-    private var orderedAutoModeItems: [UnifiedItem] {
+    private var orderedAutoModeItems: [AutoModeSourceItem] {
         orderedAutoModeListItems.filter { selectedAutoModeSourceIds.contains($0.autoModeSourceId) }
     }
 
@@ -248,7 +300,7 @@ struct ServicesView: View {
                         .foregroundColor(.secondary)
 
                     if orderedAutoModeListItems.isEmpty {
-                        Text("Activate at least one stream-capable service or addon to use Auto Mode.")
+                        Text("Activate at least one stream-capable service, addon, or plugin to use Auto Mode.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else {
@@ -373,7 +425,7 @@ struct ServicesView: View {
         }
     }
 
-    private func autoModeSelectionBinding(for item: UnifiedItem) -> Binding<Bool> {
+    private func autoModeSelectionBinding(for item: AutoModeSourceItem) -> Binding<Bool> {
         Binding(
             get: { selectedAutoModeSourceIds.contains(item.autoModeSourceId) },
             set: { isSelected in
@@ -403,7 +455,7 @@ struct ServicesView: View {
     }
 
     private func syncAutoModeSelectionWithInstalledSources() {
-        let validIds = Set(unifiedItems.filter(\.supportsAutoMode).map(\.autoModeSourceId))
+        let validIds = Set(orderedAutoModeListItems.map(\.autoModeSourceId))
         let previous = selectedAutoModeSourceIds
         selectedAutoModeSourceIds = selectedAutoModeSourceIds.intersection(validIds)
         let ordered = orderedAutoModeListItems.map(\.autoModeSourceId)

@@ -18,6 +18,8 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
     let emptyColor: Color
     let height: CGFloat
     let durationKnown: Bool
+    let showRemainingTime: Bool
+    let preciseAdjustment: Bool
     /// Normalized 0-1 skip segment ranges to render as yellow overlays.
     let segments: [(start: Double, end: Double)]
     let onEditingChanged: (Bool) -> Void
@@ -37,6 +39,8 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
         emptyColor: Color,
         height: CGFloat,
         durationKnown: Bool = true,
+        showRemainingTime: Bool = true,
+        preciseAdjustment: Bool = false,
         segments: [(start: Double, end: Double)] = [],
         onEditingChanged: @escaping (Bool) -> Void
     ) {
@@ -48,6 +52,8 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
         self.emptyColor = emptyColor
         self.height = height
         self.durationKnown = durationKnown
+        self.showRemainingTime = showRemainingTime
+        self.preciseAdjustment = preciseAdjustment
         self.segments = segments
         self.onEditingChanged = onEditingChanged
     }
@@ -96,7 +102,7 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
                     HStack {
                         Text(timeString(from: progressDuration))
                         Spacer(minLength: 0)
-                        Text(displayDurationIsKnown ? "-" + timeString(from: (inRange.upperBound - progressDuration)) : "--:--")
+                        Text(trailingTimeText)
                     }
                     .font(.system(size: 12.5))
                     .foregroundColor(textColor)
@@ -113,7 +119,8 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
                         state = true
                     }
                     .onChanged { gesture in
-                        localTempProgress = T(gesture.translation.width / bounds.size.width)
+                        let adjustmentScale = preciseAdjustment ? 0.65 : 1.0
+                        localTempProgress = T((gesture.translation.width / bounds.size.width) * adjustmentScale)
                         let prg = max(min((localRealProgress + localTempProgress), 1), 0)
                         progressDuration = inRange.upperBound * prg
                         value = max(min(getPrgValue(), inRange.upperBound), inRange.lowerBound)
@@ -153,6 +160,14 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
     private var displayDurationIsKnown: Bool {
         let upper = Double(inRange.upperBound)
         return durationKnown && upper.isFinite && upper > 1.5
+    }
+
+    private var trailingTimeText: String {
+        guard displayDurationIsKnown else { return "--:--" }
+        if showRemainingTime {
+            return "-" + timeString(from: (inRange.upperBound - progressDuration))
+        }
+        return timeString(from: inRange.upperBound)
     }
     
     private func getPrgPercentage(_ value: T) -> T {

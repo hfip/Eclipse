@@ -329,6 +329,227 @@ struct ContentView: View {
     }
 }
 
+#if !os(tvOS)
+private enum ExperimentalMediaTab: Hashable {
+    case home
+    case schedule
+    case downloads
+    case library
+    case search
+}
+
+struct ExperimentalContentView: View {
+    @StateObject private var accentColorManager = AccentColorManager.shared
+    @ObservedObject private var downloadManager = DownloadManager.shared
+    @AppStorage("githubReleaseShowAlertPending") private var githubReleaseShowAlertPending = false
+    @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
+    @AppStorage("githubReleaseURL") private var githubReleaseURL = ""
+
+    @State private var selectedTab: ExperimentalMediaTab = .home
+    @State private var showingSettings = false
+    @State private var showingReleaseAlert = false
+    @State private var showingAniListFallbackAlert = false
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    @Namespace private var heroNamespace
+
+    private let onStartupReady: () -> Void
+
+    init(onStartupReady: @escaping () -> Void = {}) {
+        self.onStartupReady = onStartupReady
+    }
+
+    private var navItems: [ExperimentalFloatingTabItem<ExperimentalMediaTab>] {
+        [
+            .init(id: .home, title: "Discover", systemImage: "sparkles.tv.fill"),
+            .init(id: .library, title: "Library", systemImage: "externaldrive.fill"),
+            .init(id: .downloads, title: "Downloads", systemImage: "arrow.down.circle.fill")
+        ]
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ExperimentalGradientBackground()
+                .ignoresSafeArea()
+
+            activeDestination
+                .heroNamespace(heroNamespace)
+                .overlay(alignment: .topTrailing) {
+                    if selectedTab == .home || selectedTab == .schedule {
+                        HStack(spacing: 12) {
+                            ExperimentalCircleButton(systemName: "calendar", size: 52) {
+                                selectedTab = .schedule
+                            }
+                            ExperimentalCircleButton(systemName: "gearshape.fill", size: 52) {
+                                showingSettings = true
+                            }
+                        }
+                        .padding(.top, 54)
+                        .padding(.trailing, 18)
+                    }
+                }
+
+            ExperimentalFloatingTabBar(
+                items: navItems,
+                selection: $selectedTab,
+                searchAction: { selectedTab = .search },
+                settingsAction: { showingSettings = true }
+            )
+
+            if showingSettings {
+                experimentalSettingsFullScreen
+                    .zIndex(2)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+            }
+        }
+        .preferredColorScheme(.dark)
+        .accentColor(accentColorManager.currentAccentColor)
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: showingSettings)
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: selectedTab)
+        .task { await runBackgroundAutoChecks() }
+        .onChange(of: scenePhase) { newPhase in
+            publishScenePhase(newPhase)
+            if newPhase == .active {
+                Task { await runBackgroundAutoChecks() }
+            }
+        }
+        .onAppear {
+            publishScenePhase(scenePhase)
+            presentUpdateAlertIfNeeded()
+        }
+        .onChange(of: githubReleaseShowAlertPending) { pending in
+            if pending {
+                presentUpdateAlertIfNeeded()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .animeMetadataDidSwitchToMALFallback)) { _ in
+            showingAniListFallbackAlert = true
+        }
+        .alert("Update Available", isPresented: $showingReleaseAlert) {
+            Button("Later", role: .cancel) { consumeUpdateAlert() }
+            Button("Open Release") {
+                consumeUpdateAlert()
+                if let url = URL(string: githubReleaseURL), !githubReleaseURL.isEmpty {
+                    openURL(url)
+                }
+            }
+        } message: {
+            if githubReleaseLatestVersion.isEmpty {
+                Text("A new Eclipse release is available on GitHub.")
+            } else {
+                Text("A new Eclipse release (\(githubReleaseLatestVersion)) is available on GitHub.")
+            }
+        }
+        .alert("AniList Unavailable", isPresented: $showingAniListFallbackAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("AniList appears to be down. Eclipse is switching to MyAnimeList fallback for anime metadata. Season and special mapping should still work, but may be less accurate until AniList recovers.")
+        }
+    }
+
+    @ViewBuilder
+    private var activeDestination: some View {
+        switch selectedTab {
+        case .home:
+            HomeView(onStartupReady: onStartupReady)
+        case .schedule:
+            ScheduleView(isActive: selectedTab == .schedule)
+        case .downloads:
+            DownloadsView()
+        case .library:
+            LibraryView()
+        case .search:
+            SearchView()
+        }
+    }
+
+    private var experimentalSettingsFullScreen: some View {
+        ZStack(alignment: .topLeading) {
+            ExperimentalGradientBackground()
+                .ignoresSafeArea()
+
+            if #available(iOS 16.0, *) {
+                NavigationStack {
+                    SettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarLeading) {
+                                closeSettingsButton
+                            }
+                        }
+                }
+            } else {
+                NavigationView {
+                    SettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarLeading) {
+                                closeSettingsButton
+                            }
+                        }
+                }
+                .navigationViewStyle(StackNavigationViewStyle())
+            }
+        }
+    }
+
+    private var closeSettingsButton: some View {
+        Button {
+            showingSettings = false
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                Text("Back")
+            }
+        }
+    }
+
+    private func runBackgroundAutoChecks() async {
+        await ServiceManager.shared.autoUpdateServicesIfNeeded()
+        await SourceHealthMonitor.shared.runDailyEnabledSourceChecksIfNeeded()
+        await GitHubReleaseChecker.checkForUpdatesIfNeeded()
+
+        await MainActor.run {
+            presentUpdateAlertIfNeeded()
+        }
+    }
+
+    private func publishScenePhase(_ phase: ScenePhase) {
+        let phaseName: String
+        switch phase {
+        case .active:
+            phaseName = "active"
+        case .inactive:
+            phaseName = "inactive"
+        case .background:
+            phaseName = "background"
+        @unknown default:
+            phaseName = "unknown"
+        }
+        NotificationCenter.default.post(
+            name: .eclipseScenePhaseDidChange,
+            object: nil,
+            userInfo: ["phase": phaseName]
+        )
+    }
+
+    private func presentUpdateAlertIfNeeded() {
+        guard GitHubReleaseChecker.shouldShowPendingUpdatePrompt else {
+            githubReleaseShowAlertPending = false
+            return
+        }
+        showingReleaseAlert = true
+    }
+
+    private func consumeUpdateAlert() {
+        GitHubReleaseChecker.consumePendingUpdatePrompt()
+        githubReleaseShowAlertPending = false
+        showingReleaseAlert = false
+    }
+}
+#endif
+
 #Preview {
     ContentView()
 }
