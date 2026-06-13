@@ -1987,14 +1987,14 @@ private enum KanzenReaderImageProcessor {
 }
 
 private enum KanzenReaderUpscaler {
-    static func upscale(_ image: UIImage, maxHeight: Int) async -> UIImage? {
+    static func upscale(_ sourceImage: UIImage, maxHeight: Int) async -> UIImage? {
         guard UserDefaults.standard.bool(forKey: "Reader.upscaleImages"),
               FileManager.default.fileExists(atPath: KanzenReaderUpscaleModelStore.storedModelURL.path),
-              let cgImage = image.cgImage else {
+              let cgImage = sourceImage.cgImage else {
             return nil
         }
         let pixelHeight = max(cgImage.height, 1)
-        guard pixelHeight < maxHeight else { return image }
+        guard pixelHeight < maxHeight else { return sourceImage }
 
 #if canImport(CoreML) && canImport(Vision)
         if #available(iOS 15.0, *) {
@@ -2009,12 +2009,12 @@ private enum KanzenReaderUpscaler {
                     try handler.perform([request])
 
                     if let observation = request.results?.first as? VNPixelBufferObservation {
-                        return image(from: observation.pixelBuffer, scale: image.scale)
+                        return image(from: observation.pixelBuffer, scale: sourceImage.scale)
                     }
 
                     if let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
                        let pixelBuffer = observation.featureValue.imageBufferValue {
-                        return image(from: pixelBuffer, scale: image.scale)
+                        return image(from: pixelBuffer, scale: sourceImage.scale)
                     }
                 } catch {
                     ReaderLogger.shared.log("Reader upscaling skipped: \(error.localizedDescription)", type: "ReaderSettings")
