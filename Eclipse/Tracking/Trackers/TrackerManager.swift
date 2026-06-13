@@ -2259,7 +2259,7 @@ final class TrackerManager: NSObject, ObservableObject {
 
     private struct TraktCommentResponse: Decodable {
         let comment: TraktComment
-        let user: TraktUser?
+        let user: TraktCommentUser?
     }
 
     private struct TraktComment: Decodable {
@@ -2276,7 +2276,7 @@ final class TrackerManager: NSObject, ObservableObject {
         }
     }
 
-    private struct TraktUser: Decodable {
+    private struct TraktCommentUser: Decodable {
         let username: String?
         let name: String?
     }

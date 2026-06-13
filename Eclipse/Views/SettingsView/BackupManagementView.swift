@@ -14,6 +14,7 @@ struct BackupDocument: FileDocument {
     
     static var readableContentTypes: [UTType] { [.json] }
     static var writableContentTypes: [UTType] { [.json] }
+    static var importableContentTypes: [UTType] { [.json, .plainText, .text, .data] }
     
     init(data: Data) {
         self.data = data
@@ -100,7 +101,7 @@ struct BackupManagementView: View {
         #if !os(tvOS)
         .fileImporter(
             isPresented: $showDocumentPicker,
-            allowedContentTypes: [.json],
+            allowedContentTypes: BackupDocument.importableContentTypes,
             allowsMultipleSelection: false
         ) { result in
             handleImportResult(result)
@@ -125,7 +126,9 @@ struct BackupManagementView: View {
         }
         #endif
         .alert("Restore Confirmation", isPresented: $showRestoreConfirmation) {
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) {
+                clearSelectedBackup()
+            }
             Button("Restore", role: .destructive) {
                 performRestore()
             }
@@ -168,13 +171,26 @@ struct BackupManagementView: View {
         }
     }
     
+    #if !os(tvOS)
     private func handleImportResult(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            guard let selectedFile = urls.first else { return }
-            self.selectedBackupURL = selectedFile
-            // Ask for confirmation before restoring
-            showRestoreConfirmation = true
+            guard let selectedFile = urls.first else {
+                backupMessage = "No backup file selected"
+                showMessageAlert = true
+                return
+            }
+
+            do {
+                clearSelectedBackup()
+                self.selectedBackupURL = try prepareSelectedBackupForRestore(from: selectedFile)
+                // Ask for confirmation before restoring
+                showRestoreConfirmation = true
+            } catch {
+                backupMessage = "Failed to select file: \(error.localizedDescription)"
+                showMessageAlert = true
+                Logger.shared.log("Import file preparation failed: \(error.localizedDescription)", type: "Error")
+            }
             
         case .failure(let error):
             backupMessage = "Failed to select file: \(error.localizedDescription)"
@@ -182,6 +198,7 @@ struct BackupManagementView: View {
             Logger.shared.log("Import error: \(error.localizedDescription)", type: "Error")
         }
     }
+    #endif
     
     private func performRestore() {
         guard let backupURL = selectedBackupURL else {
@@ -195,24 +212,14 @@ struct BackupManagementView: View {
         showRestoreConfirmation = false
         
         DispatchQueue.global(qos: .userInitiated).async {
-            var success = false
-            var accessGranted = false
-            if backupURL.startAccessingSecurityScopedResource() {
-                accessGranted = true
-            }
-            defer {
-                if accessGranted {
-                    backupURL.stopAccessingSecurityScopedResource()
-                }
-            }
-
-            success = BackupManager.shared.restoreBackup(from: backupURL)
+            let success = BackupManager.shared.restoreBackup(from: backupURL)
+            try? FileManager.default.removeItem(at: backupURL)
             
             DispatchQueue.main.async {
                 isProcessing = false
+                selectedBackupURL = nil
                 if success {
                     backupMessage = "Backup restored successfully! Please restart the app to see all changes."
-                    selectedBackupURL = nil
                 } else {
                     backupMessage = "Failed to restore backup. The file may be corrupted or completely incompatible."
                 }
@@ -220,6 +227,70 @@ struct BackupManagementView: View {
             }
         }
     }
+
+    private func clearSelectedBackup() {
+        if let selectedBackupURL {
+            try? FileManager.default.removeItem(at: selectedBackupURL)
+        }
+        selectedBackupURL = nil
+    }
+
+    #if !os(tvOS)
+    private func prepareSelectedBackupForRestore(from sourceURL: URL) throws -> URL {
+        let accessGranted = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessGranted {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let values = try? sourceURL.resourceValues(forKeys: [.isDirectoryKey])
+        if values?.isDirectory == true {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        let data = try coordinatedDataContents(of: sourceURL)
+        guard !data.isEmpty else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        let importDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EclipseBackupImports", isDirectory: true)
+        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+
+        let localURL = importDirectory
+            .appendingPathComponent("selected-backup-\(UUID().uuidString)")
+            .appendingPathExtension("json")
+        try data.write(to: localURL, options: .atomic)
+        Logger.shared.log("Prepared selected backup for restore: \(sourceURL.lastPathComponent)", type: "Info")
+        return localURL
+    }
+
+    private func coordinatedDataContents(of sourceURL: URL) throws -> Data {
+        var coordinationError: NSError?
+        var readError: Error?
+        var data: Data?
+
+        NSFileCoordinator().coordinate(readingItemAt: sourceURL, options: [], error: &coordinationError) { coordinatedURL in
+            do {
+                data = try Data(contentsOf: coordinatedURL)
+            } catch {
+                readError = error
+            }
+        }
+
+        if let readError = readError {
+            throw readError
+        }
+        if let coordinationError = coordinationError {
+            throw coordinationError
+        }
+        guard let data = data else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return data
+    }
+    #endif
 }
 
 #Preview {

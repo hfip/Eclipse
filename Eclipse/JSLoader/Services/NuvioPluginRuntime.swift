@@ -173,7 +173,7 @@ enum NuvioPluginRuntime {
         context.setObject(hexToUTF8, forKeyedSubscript: "__hex_to_utf8" as NSString)
 
         let parseURL: @convention(block) (String, String?) -> [String: Any] = { value, base in
-            parseURL(value, base: base)
+            Self.parseURL(value, base: base)
         }
         context.setObject(parseURL, forKeyedSubscript: "__parse_url" as NSString)
 

@@ -152,7 +152,10 @@ struct NuvioPluginStream: Identifiable, Codable, Hashable {
     }
 
     var qualitySearchLabel: String {
-        [displayName, metadataLabel, type].filter { !$0.isEmpty }.joined(separator: " ")
+        [displayName, metadataLabel, type ?? ""]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
 

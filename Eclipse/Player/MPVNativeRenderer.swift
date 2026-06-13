@@ -143,6 +143,7 @@ private final class MPVMoltenVKLayer: CAMetalLayer {
         }
     }
 
+    @available(iOS 16.0, *)
     override var wantsExtendedDynamicRangeContent: Bool {
         get { super.wantsExtendedDynamicRangeContent }
         set {

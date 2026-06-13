@@ -927,7 +927,7 @@ fun SettingsRoute(
                     exportLauncher.launch(defaultBackupFileName())
                 },
                 onImportClicked = {
-                    importLauncher.launch(arrayOf("application/json", "text/plain"))
+                    importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*"))
                 },
             )
         }
