@@ -39,6 +39,9 @@ struct HomeView: View {
     @ObservedObject private var theme = EclipseTheme.shared
     @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
     @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
+    @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
+    @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
+    @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
 
     private let heroCarouselTimer = Timer.publish(every: 12, on: .main, in: .common).autoconnect()
 
@@ -54,12 +57,22 @@ struct HomeView: View {
 #if os(tvOS)
         UIScreen.main.bounds.height * 0.8
 #else
-        isIPad ? 720 : min(max(UIScreen.main.bounds.height * 0.74, 620), 760)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return designMetrics.homeHeroHeight(screenHeight: UIScreen.main.bounds.height, isIPad: isIPad)
+        }
+        return isIPad ? 720 : 580
 #endif
     }
 
     private var ambientColor: Color { homeViewModel.ambientColor }
     private var atmosphereColor: Color { theme.atmosphereColor(dominant: ambientColor) }
+    private var designMetrics: ExperimentalMediaDesignMetrics {
+        ExperimentalMediaDesignMetrics(
+            preset: ExperimentalMediaDesignPreset(rawValue: experimentalDesignPreset) ?? ExperimentalMediaDesignPreset.defaultValue,
+            heroBleedLevel: ExperimentalHeroBleedLevel(rawValue: experimentalHeroBleedLevel) ?? ExperimentalHeroBleedLevel.defaultValue,
+            cardShape: ExperimentalHomeCardShape(rawValue: experimentalHomeCardShape) ?? ExperimentalHomeCardShape.defaultValue
+        )
+    }
 
     private var tracksBackgroundScroll: Bool {
 #if os(iOS)
@@ -92,22 +105,20 @@ struct HomeView: View {
     
     private var homeContent: some View {
         ZStack {
-            GlobalGradientBackground(scrollOffset: backgroundScrollOffset)
-                .ignoresSafeArea(.all)
-            
             if ExperimentalFeatureState.isEnabledAtLaunch {
-                LinearGradient(
-                    colors: [
-                        homeViewModel.ambientColor.opacity(0.22),
-                        .clear,
-                        atmosphereColor.opacity(0.14)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                HeroBleedGradientBackground(
+                    dominantColor: atmosphereColor,
+                    scrollOffset: backgroundScrollOffset,
+                    heroHeight: heroHeight,
+                    fadeDistance: designMetrics.heroBleedDistance,
+                    bleedStrength: designMetrics.heroWashStrength,
+                    style: theme.atmosphereStyle
                 )
                 .ignoresSafeArea(.all)
-                .blendMode(.screen)
             } else {
+                GlobalGradientBackground(scrollOffset: backgroundScrollOffset)
+                    .ignoresSafeArea(.all)
+
                 Group {
                     theme.atmosphereStyle == .solid ? atmosphereColor : homeViewModel.ambientColor
                 }
@@ -269,7 +280,7 @@ struct HomeView: View {
                 backdropURL: homeViewModel.heroContent?.fullBackdropURL ?? homeViewModel.heroContent?.fullPosterURL,
                 isMovie: homeViewModel.heroContent?.mediaType == "movie",
                 headerHeight: heroHeight,
-                minHeaderHeight: ExperimentalFeatureState.isEnabledAtLaunch ? 430 : 300,
+                minHeaderHeight: ExperimentalFeatureState.isEnabledAtLaunch ? max(440, heroHeight * 0.62) : 300,
                 onAmbientColorExtracted: { color in
                     homeViewModel.ambientColor = color
                 }
@@ -285,14 +296,14 @@ struct HomeView: View {
         LinearGradient(
             gradient: Gradient(stops: [
                 .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.35 : 0.25), location: 0.18),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.72 : 0.58), location: 0.54),
-                .init(color: atmosphereColor.opacity(1), location: 1.0)
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.16 : 0.35), location: 0.18),
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.42 : 0.72), location: 0.54),
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.86 : 1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? 280 : 150)
+        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.heroBottomFadeHeight : 150)
         .clipShape(RoundedRectangle(cornerRadius: 0))
     }
     
@@ -309,24 +320,24 @@ struct HomeView: View {
 
     @ViewBuilder
     private func experimentalHeroContent(_ hero: TMDBSearchResult) -> some View {
-        VStack(alignment: .center, spacing: 12) {
-            Text(heroMetadataLine(hero))
-                .font(.system(size: isIPad ? 18 : 15, weight: .medium))
+        VStack(alignment: .center, spacing: isIPad ? 14 : 11) {
+            Text(experimentalMetadataLine(hero))
+                .font(.system(size: isIPad ? 20 : 17, weight: .medium))
                 .foregroundColor(.white.opacity(0.92))
                 .lineLimit(1)
                 .shadow(color: .black.opacity(0.7), radius: 8, x: 0, y: 3)
 
             heroTitleText(hero)
-                .font(.system(size: isIPad ? 42 : 32, weight: .heavy))
+                .font(.system(size: isIPad ? 52 : 40, weight: .heavy))
 
             if let overview = hero.overview, !overview.isEmpty {
-                Text(String(overview.prefix(132)) + (overview.count > 132 ? "..." : ""))
-                    .font(.system(size: isIPad ? 18 : 16, weight: .regular))
+                Text(String(overview.prefix(150)) + (overview.count > 150 ? "..." : ""))
+                    .font(.system(size: isIPad ? 20 : 17, weight: .regular))
                     .shadow(color: .black.opacity(0.7), radius: 8, x: 0, y: 4)
                     .foregroundColor(.white.opacity(0.88))
                     .lineLimit(3)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, isIPad ? 90 : 28)
+                    .padding(.horizontal, isIPad ? 110 : 30)
             }
 
             if let voteAverage = hero.voteAverage, voteAverage > 0 {
@@ -347,7 +358,7 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
-        .padding(.bottom, isIPad ? 42 : 34)
+        .padding(.bottom, isIPad ? 58 : 48)
     }
 
     @ViewBuilder
@@ -485,10 +496,20 @@ struct HomeView: View {
         return [date, kind].compactMap { $0 }.joined(separator: " · ")
     }
     
+    private func experimentalMetadataLine(_ hero: TMDBSearchResult) -> String {
+        let date = hero.displayDate.isEmpty ? nil : String(hero.displayDate.prefix(10))
+        let kind = hero.isMovie ? "Movie" : "TV Series"
+        return [date, kind].compactMap { $0 }.joined(separator: " - ")
+    }
+
     @ViewBuilder
     private func heroTitleText(_ hero: TMDBSearchResult) -> some View {
         Text(hero.displayTitle)
-            .font(.system(size: isTvOS ? 40 : 25))
+            .font(
+                ExperimentalFeatureState.isEnabledAtLaunch
+                    ? .system(size: isIPad ? 52 : 40, weight: .heavy)
+                    : .system(size: isTvOS ? 40 : 25)
+            )
             .fontWeight(.bold)
             .shadow(color: .black.opacity(0.6), radius: 8, x: 0, y: 4)
             .foregroundColor(.white)
@@ -589,8 +610,8 @@ struct HomeView: View {
         }
         .background(
             Group {
-                if ExperimentalFeatureState.isEnabledAtLaunch && theme.atmosphereStyle.isMultiGradient {
-                    GlobalGradientBackground(overrideColor: ambientColor, scrollOffset: backgroundScrollOffset)
+                if ExperimentalFeatureState.isEnabledAtLaunch {
+                    Color.clear
                 } else if theme.atmosphereStyle == .solid {
                     atmosphereColor
                 } else {
@@ -825,6 +846,18 @@ struct MediaSection: View {
     var gap: Double { isTvOS ? 50.0 : (isIPad ? 28.0 : 20.0) }
     
     var body: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch && !isTvOS {
+            ExperimentalMediaShelf(
+                title: title,
+                items: items,
+                preferredStyle: title.localizedCaseInsensitiveContains("anime") ? .poster : .automatic
+            )
+        } else {
+            legacySection
+        }
+    }
+
+    private var legacySection: some View {
         VStack(alignment: .leading, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 16) {
             HStack {
                 Text(title)
@@ -859,6 +892,161 @@ struct MediaSection: View {
         return ExperimentalFeatureState.isEnabledAtLaunch
             ? .system(size: isIPad ? 30 : 28, weight: .bold)
             : .title2.weight(.bold)
+    }
+}
+
+enum ExperimentalMediaShelfStyle {
+    case automatic
+    case landscape
+    case poster
+}
+
+struct ExperimentalMediaShelf: View {
+    let title: String
+    let items: [TMDBSearchResult]
+    let preferredStyle: ExperimentalMediaShelfStyle
+
+    private var metrics: ExperimentalMediaDesignMetrics { .current }
+    private var gap: CGFloat { isIPad ? 24 : 28 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isIPad ? 18 : 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.system(size: isIPad ? 34 : 29, weight: .heavy))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: isIPad ? 26 : 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.46))
+            }
+            .padding(.horizontal, isIPad ? 24 : 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: gap) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                        ExperimentalMediaCard(
+                            result: item,
+                            heroID: "experimental-home-\(title)-\(index)-\(item.stableIdentity)",
+                            preferredStyle: preferredStyle
+                        )
+                    }
+                }
+                .padding(.horizontal, isIPad ? 24 : 16)
+            }
+            .modifier(ScrollClipModifier())
+            .buttonStyle(.borderless)
+        }
+        .padding(.top, metrics.sectionSpacing)
+        .opacity(items.isEmpty ? 0 : 1)
+    }
+}
+
+struct ExperimentalMediaCard: View {
+    let result: TMDBSearchResult
+    let heroID: String
+    let preferredStyle: ExperimentalMediaShelfStyle
+
+    @Environment(\.heroNamespace) private var heroNamespace
+
+    private var metrics: ExperimentalMediaDesignMetrics { .current }
+
+    private var resolvedStyle: ExperimentalMediaShelfStyle {
+        switch metrics.cardShape {
+        case .landscape:
+            return result.fullBackdropURL == nil ? .poster : .landscape
+        case .poster:
+            return .poster
+        case .automatic:
+            if preferredStyle == .poster || result.genreIds?.contains(16) == true {
+                return .poster
+            }
+            return result.fullBackdropURL == nil ? .poster : .landscape
+        }
+    }
+
+    private var cardSize: CGSize {
+        switch resolvedStyle {
+        case .landscape, .automatic:
+            return metrics.landscapeCardSize(isIPad: isIPad)
+        case .poster:
+            return metrics.posterCardSize(isIPad: isIPad)
+        }
+    }
+
+    private var imageAspectRatio: CGFloat {
+        switch resolvedStyle {
+        case .landscape, .automatic:
+            return 16 / 9
+        case .poster:
+            return 2 / 3
+        }
+    }
+
+    private var imageURL: String {
+        switch resolvedStyle {
+        case .landscape, .automatic:
+            return result.fullBackdropURL ?? result.fullPosterURL ?? ""
+        case .poster:
+            return result.fullPosterURL ?? result.fullBackdropURL ?? ""
+        }
+    }
+
+    var body: some View {
+        NavigationLink(destination: MediaDetailView(searchResult: result)
+            .heroDestination(id: heroID, namespace: heroNamespace)
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                mediaImage
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.displayTitle)
+                        .font(.system(size: resolvedStyle == .poster ? (isIPad ? 19 : 17) : (isIPad ? 21 : 20), weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
+                    Text(cardSubtitle)
+                        .font(.system(size: isIPad ? 16 : 15, weight: .regular))
+                        .foregroundColor(.white.opacity(0.56))
+                        .lineLimit(1)
+                }
+                .frame(width: cardSize.width, alignment: .leading)
+            }
+            .frame(width: cardSize.width, alignment: .leading)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private var mediaImage: some View {
+        KFImage(URL(string: imageURL))
+            .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: cardSize.width, height: cardSize.height)))
+            .placeholder {
+                FallbackImageView(
+                    isMovie: result.isMovie,
+                    size: cardSize
+                )
+            }
+            .resizable()
+            .aspectRatio(imageAspectRatio, contentMode: .fill)
+            .frame(width: cardSize.width, height: cardSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: metrics.cardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: metrics.cardRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.28), radius: 14, x: 0, y: 8)
+            .heroSource(id: heroID, namespace: heroNamespace)
+    }
+
+    private var cardSubtitle: String {
+        let year = result.displayDate.isEmpty ? nil : String(result.displayDate.prefix(4))
+        let kind = result.genreIds?.contains(16) == true ? "Animation" : (result.isMovie ? "Movie" : "TV")
+        return [year, kind].compactMap { $0 }.joined(separator: " - ")
     }
 }
 

@@ -149,10 +149,21 @@ struct MediaDetailView: View {
     @AppStorage("mediaDetailHiddenElements") private var mediaDetailHiddenElements = ""
     @AppStorage("showCastSection") private var legacyShowCastSection = true
     @AppStorage("seasonMenu") private var useSeasonMenu = false
+    @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
+    @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
+    @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
     private let nextEpisodeSheetPresentationDelay: TimeInterval = 1.2
 
     private var atmosphereColor: Color {
         theme.atmosphereColor(dominant: ambientColor)
+    }
+
+    private var designMetrics: ExperimentalMediaDesignMetrics {
+        ExperimentalMediaDesignMetrics(
+            preset: ExperimentalMediaDesignPreset(rawValue: experimentalDesignPreset) ?? ExperimentalMediaDesignPreset.defaultValue,
+            heroBleedLevel: ExperimentalHeroBleedLevel(rawValue: experimentalHeroBleedLevel) ?? ExperimentalHeroBleedLevel.defaultValue,
+            cardShape: ExperimentalHomeCardShape(rawValue: experimentalHomeCardShape) ?? ExperimentalHomeCardShape.defaultValue
+        )
     }
 
     private var backgroundScrollOffset: CGFloat {
@@ -206,6 +217,9 @@ struct MediaDetailView: View {
 #if os(tvOS)
         UIScreen.main.bounds.height * 0.8
 #else
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return designMetrics.detailHeroHeight(screenHeight: UIScreen.main.bounds.height, isIPad: isIPad)
+        }
         isIPad ? 720 : min(max(UIScreen.main.bounds.height * 0.76, 620), 780)
 #endif
     }
@@ -519,8 +533,15 @@ struct MediaDetailView: View {
 
     @ViewBuilder
     private var detailBackground: some View {
-        if ExperimentalFeatureState.isEnabledAtLaunch && theme.atmosphereStyle.isMultiGradient {
-            GlobalGradientBackground(overrideColor: ambientColor, scrollOffset: backgroundScrollOffset)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            HeroBleedGradientBackground(
+                dominantColor: atmosphereColor,
+                scrollOffset: backgroundScrollOffset,
+                heroHeight: headerHeight,
+                fadeDistance: designMetrics.heroBleedDistance,
+                bleedStrength: designMetrics.heroWashStrength,
+                style: theme.atmosphereStyle
+            )
         } else if theme.atmosphereStyle == .solid {
             atmosphereColor
         } else {
@@ -583,15 +604,28 @@ struct MediaDetailView: View {
                     presentationMode.wrappedValue.dismiss()
                 }) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.system(size: ExperimentalFeatureState.isEnabledAtLaunch ? 28 : 16, weight: .medium))
                         .foregroundColor(.white)
-                        .frame(width: 32, height: 32)
-                        .applyLiquidGlassBackground(cornerRadius: 16)
+                        .frame(
+                            width: ExperimentalFeatureState.isEnabledAtLaunch ? 58 : 32,
+                            height: ExperimentalFeatureState.isEnabledAtLaunch ? 58 : 32
+                        )
+                        .background(
+                            Circle()
+                                .fill(ExperimentalFeatureState.isEnabledAtLaunch ? atmosphereColor.opacity(0.36) : Color.clear)
+                                .background(
+                                    Circle()
+                                        .fill(.ultraThinMaterial)
+                                        .opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.72 : 0)
+                                )
+                        )
+                        .applyLiquidGlassBackground(cornerRadius: ExperimentalFeatureState.isEnabledAtLaunch ? 29 : 16)
                 }
                 
                 Spacer()
             }
-            .padding(.horizontal)
+            .padding(.horizontal, ExperimentalFeatureState.isEnabledAtLaunch ? 22 : 16)
+            .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? 20 : 0)
             
             Spacer()
         }
@@ -657,13 +691,7 @@ struct MediaDetailView: View {
     private var heroImageSection: some View {
         ZStack(alignment: .bottom) {
             StretchyHeaderView(
-                backdropURL: {
-                    if searchResult.isMovie {
-                        return movieDetail?.fullBackdropURL ?? movieDetail?.fullPosterURL
-                    } else {
-                        return tvShowDetail?.fullBackdropURL ?? tvShowDetail?.fullPosterURL
-                    }
-                }(),
+                backdropURL: detailHeroImageURL,
                 isMovie: searchResult.isMovie,
                 headerHeight: headerHeight,
                 minHeaderHeight: minHeaderHeight,
@@ -681,7 +709,10 @@ struct MediaDetailView: View {
     private var contentContainer: some View {
         let _ = Logger.shared.log("MediaDetailView construct contentContainer: id=\(searchResult.id) movie=\(searchResult.isMovie) cast=\(castMembers.count)", type: "CrashProbe")
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(
+                alignment: .leading,
+                spacing: ExperimentalFeatureState.isEnabledAtLaunch ? max(18, designMetrics.sectionSpacing * 0.62) : 16
+            ) {
                 ForEach(visibleMediaDetailElements) { element in
                     mediaDetailElementView(element)
                 }
@@ -695,13 +726,15 @@ struct MediaDetailView: View {
             .background(
                 detailContentBackground
             )
+            .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? -designMetrics.contentTopOverlap : 0)
+            .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 28 : 0)
         }
     }
 
     @ViewBuilder
     private var detailContentBackground: some View {
-        if ExperimentalFeatureState.isEnabledAtLaunch && theme.atmosphereStyle.isMultiGradient {
-            GlobalGradientBackground(overrideColor: ambientColor, scrollOffset: backgroundScrollOffset)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            Color.clear
         } else if theme.atmosphereStyle == .solid {
             atmosphereColor
         } else {
@@ -725,13 +758,33 @@ struct MediaDetailView: View {
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? 280 : 120)
+        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.heroBottomFadeHeight : 120)
         .clipShape(RoundedRectangle(cornerRadius: 0))
+    }
+
+    private var detailHeroImageURL: String? {
+        if ExperimentalFeatureState.isEnabledAtLaunch && !isIPad && !isTvOS {
+            if searchResult.isMovie {
+                return movieDetail?.fullPosterURL
+                    ?? searchResult.fullPosterURL
+                    ?? movieDetail?.fullBackdropURL
+                    ?? searchResult.fullBackdropURL
+            }
+            return tvShowDetail?.fullPosterURL
+                ?? searchResult.fullPosterURL
+                ?? tvShowDetail?.fullBackdropURL
+                ?? searchResult.fullBackdropURL
+        }
+
+        if searchResult.isMovie {
+            return movieDetail?.fullBackdropURL ?? searchResult.fullBackdropURL ?? movieDetail?.fullPosterURL ?? searchResult.fullPosterURL
+        }
+        return tvShowDetail?.fullBackdropURL ?? searchResult.fullBackdropURL ?? tvShowDetail?.fullPosterURL ?? searchResult.fullPosterURL
     }
     
     @ViewBuilder
     private var headerSection: some View {
-        VStack(alignment: .center, spacing: 8) {
+        VStack(alignment: .center, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 12 : 8) {
             if let logoURL = logoURL {
                 KFImage(URL(string: logoURL))
                     .placeholder {
@@ -739,7 +792,10 @@ struct MediaDetailView: View {
                     }
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: isIPad ? 400 : 280, maxHeight: isIPad ? 140 : 100)
+                    .frame(
+                        maxWidth: ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 500 : 330) : (isIPad ? 400 : 280),
+                        maxHeight: ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 170 : 125) : (isIPad ? 140 : 100)
+                    )
                     .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
             } else {
                 titleText
@@ -748,7 +804,7 @@ struct MediaDetailView: View {
             if ExperimentalFeatureState.isEnabledAtLaunch {
                 if let metadata = detailMetadataLine {
                     Text(metadata)
-                        .font(.system(size: isIPad ? 18 : 15, weight: .semibold))
+                        .font(.system(size: isIPad ? 20 : 17, weight: .semibold))
                         .foregroundColor(.white.opacity(0.92))
                         .lineLimit(1)
                         .shadow(color: .black.opacity(0.65), radius: 6, x: 0, y: 3)
@@ -770,14 +826,14 @@ struct MediaDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 34 : 10)
-        .padding(.horizontal)
+        .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 58 : 10)
+        .padding(.horizontal, ExperimentalFeatureState.isEnabledAtLaunch ? 28 : 16)
     }
     
     @ViewBuilder
     private var titleText: some View {
         Text(searchResult.displayTitle)
-            .font(.largeTitle)
+            .font(ExperimentalFeatureState.isEnabledAtLaunch ? .system(size: isIPad ? 54 : 40, weight: .heavy) : .largeTitle)
             .fontWeight(.bold)
             .foregroundColor(.white)
             .lineLimit(3)
@@ -793,7 +849,7 @@ struct MediaDetailView: View {
             guard let value, !value.isEmpty else { return nil }
             return value
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return parts.isEmpty ? nil : parts.joined(separator: ExperimentalFeatureState.isEnabledAtLaunch ? " - " : " · ")
     }
 
     private var detailDate: String? {
@@ -814,22 +870,18 @@ struct MediaDetailView: View {
     
     @ViewBuilder
     private var synopsisSection: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            experimentalSynopsisSection
+        } else {
+            legacySynopsisSection
+        }
+    }
+
+    @ViewBuilder
+    private var legacySynopsisSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !synopsis.isEmpty {
-                Text(showFullSynopsis ? synopsis : String(synopsis.prefix(180)) + (synopsis.count > 180 ? "..." : ""))
-                    .font(.body)
-                    .foregroundColor(.white)
-                    .lineLimit(showFullSynopsis ? nil : 3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal)
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            showFullSynopsis.toggle()
-                        }
-                    }
-            } else if let overview = searchResult.isMovie ? movieDetail?.overview : tvShowDetail?.overview,
-                      !overview.isEmpty {
-                Text(showFullSynopsis ? overview : String(overview.prefix(200)) + (overview.count > 200 ? "..." : ""))
+            if let overviewText = currentOverviewText {
+                Text(showFullSynopsis ? overviewText : String(overviewText.prefix(200)) + (overviewText.count > 200 ? "..." : ""))
                     .font(.body)
                     .foregroundColor(.white)
                     .lineLimit(showFullSynopsis ? nil : 3)
@@ -843,9 +895,50 @@ struct MediaDetailView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var experimentalSynopsisSection: some View {
+        if let overviewText = currentOverviewText {
+            VStack(spacing: 10) {
+                Text(showFullSynopsis ? overviewText : String(overviewText.prefix(240)) + (overviewText.count > 240 ? "..." : ""))
+                    .font(.system(size: isIPad ? 21 : 18, weight: .regular))
+                    .foregroundColor(.white.opacity(0.90))
+                    .lineLimit(showFullSynopsis ? nil : 4)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .shadow(color: .black.opacity(0.42), radius: 6, x: 0, y: 3)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showFullSynopsis.toggle()
+                        }
+                    }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, isIPad ? 80 : 28)
+        }
+    }
+
+    private var currentOverviewText: String? {
+        if !synopsis.isEmpty {
+            return synopsis
+        }
+
+        let overview = searchResult.isMovie ? movieDetail?.overview : tvShowDetail?.overview
+        guard let overview, !overview.isEmpty else { return nil }
+        return overview
+    }
     
     @ViewBuilder
     private var playAndBookmarkSection: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            experimentalPlayAndBookmarkSection
+        } else {
+            legacyPlayAndBookmarkSection
+        }
+    }
+
+    @ViewBuilder
+    private var legacyPlayAndBookmarkSection: some View {
         HStack(spacing: 8) {
             Button(action: {
                 searchInServices()
@@ -910,6 +1003,67 @@ struct MediaDetailView: View {
             }
         }
         .padding(.horizontal)
+    }
+
+    @ViewBuilder
+    private var experimentalPlayAndBookmarkSection: some View {
+        VStack(spacing: isIPad ? 26 : 22) {
+            Button(action: {
+                searchInServices()
+            }) {
+                Text(canUseMainPlayButton ? playButtonText : "No Services")
+                    .font(.system(size: isIPad ? 30 : 27, weight: .heavy))
+                    .foregroundColor(canUseMainPlayButton ? .black : .white.opacity(0.62))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: isIPad ? 66 : 58)
+                    .background(
+                        RoundedRectangle(cornerRadius: isIPad ? 24 : 20, style: .continuous)
+                            .fill(canUseMainPlayButton ? Color.white.opacity(0.72) : Color.white.opacity(0.16))
+                            .background(
+                                RoundedRectangle(cornerRadius: isIPad ? 24 : 20, style: .continuous)
+                                    .fill(.ultraThinMaterial)
+                                    .opacity(0.72)
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: isIPad ? 24 : 20, style: .continuous)
+                            .stroke(Color.white.opacity(0.32), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!canUseMainPlayButton)
+
+            HStack(spacing: isIPad ? 56 : 44) {
+                experimentalActionButton(systemName: "rectangle.stack.badge.plus", foregroundColor: .white) {
+                    showingAddToCollection = true
+                }
+
+                experimentalActionButton(systemName: isBookmarked ? "heart.fill" : "heart", foregroundColor: isBookmarked ? .white : .white) {
+                    toggleBookmark()
+                }
+
+                if searchResult.isMovie {
+                    experimentalActionButton(systemName: downloadButtonIcon, foregroundColor: downloadButtonColor) {
+                        downloadInServices()
+                    }
+                    .disabled(!hasActiveSources || isCurrentlyDownloading)
+                }
+            }
+        }
+        .padding(.horizontal, isIPad ? 90 : 28)
+    }
+
+    private func experimentalActionButton(systemName: String, foregroundColor: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: isIPad ? 36 : 31, weight: .semibold))
+                .foregroundColor(foregroundColor)
+                .frame(width: isIPad ? 70 : 58, height: isIPad ? 70 : 58)
+                .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
     }
     
     @ViewBuilder

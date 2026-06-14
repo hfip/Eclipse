@@ -13,6 +13,9 @@ struct AlternativeUIView: View {
     @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
     @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
     @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
+    @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
+    @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
+    @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
     
     @StateObject private var accentColorManager = AccentColorManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
@@ -107,6 +110,33 @@ struct AlternativeUIView: View {
                 }
             } header: {
                 Text("Settings Theme")
+            }
+
+            Section {
+                experimentalDesignPickerRow(
+                    title: "Design Preset",
+                    description: "Controls experimental hero scale, section spacing, cards, and glass.",
+                    selection: $experimentalDesignPreset,
+                    values: ExperimentalMediaDesignPreset.allCases.map { ($0.rawValue, $0.displayName) }
+                )
+
+                experimentalDesignPickerRow(
+                    title: "Hero Bleed",
+                    description: "Controls how strongly poster color washes into the page.",
+                    selection: $experimentalHeroBleedLevel,
+                    values: ExperimentalHeroBleedLevel.allCases.map { ($0.rawValue, $0.displayName) }
+                )
+
+                experimentalDesignPickerRow(
+                    title: "Card Shape",
+                    description: "Controls whether home shelves prefer backdrop or poster art.",
+                    selection: $experimentalHomeCardShape,
+                    values: ExperimentalHomeCardShape.allCases.map { ($0.rawValue, $0.displayName) }
+                )
+            } header: {
+                Text("Experimental Design")
+            } footer: {
+                Text("Applies to the Experimental UI only. Standard UI and the native tab bar stay unchanged.")
             }
 
             Section {
@@ -302,6 +332,35 @@ struct AlternativeUIView: View {
         .navigationTitle("Appearance")
         .eclipseSettingsStyle()
         .onAppear(perform: reloadMediaDetailElements)
+    }
+
+    private func experimentalDesignPickerRow(
+        title: String,
+        description: String,
+        selection: Binding<String>,
+        values: [(String, String)]
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+
+            Spacer()
+
+            Picker("", selection: selection) {
+                ForEach(values, id: \.0) { option in
+                    Text(option.1).tag(option.0)
+                }
+            }
+            .pickerStyle(.menu)
+        }
     }
 
     private func mediaDetailElementRow(_ element: MediaDetailElement) -> some View {

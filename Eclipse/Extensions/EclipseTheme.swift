@@ -114,7 +114,7 @@ class EclipseTheme: ObservableObject {
     var backgroundBase: Color {
         #if !os(tvOS)
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            return Color(red: 0.055, green: 0.050, blue: 0.090)
+            return Color(red: 0.070, green: 0.060, blue: 0.095)
         }
         #endif
         return Color(red: 0.08, green: 0.08, blue: 0.08)

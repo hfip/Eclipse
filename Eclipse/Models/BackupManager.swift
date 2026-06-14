@@ -147,6 +147,9 @@ struct BackupData: Codable {
     var useClassicScheduleUI: Bool = false
     var heroBannerCatalogId: String = "trending"
     var heroBannerBehavior: String = HeroBannerBehavior.static.rawValue
+    var experimentalMediaDesignPreset: String = ExperimentalMediaDesignPreset.defaultValue.rawValue
+    var experimentalHeroBleedLevel: String = ExperimentalHeroBleedLevel.defaultValue.rawValue
+    var experimentalHomeCardShape: String = ExperimentalHomeCardShape.defaultValue.rawValue
     var atmosphereStyle: String = AtmosphereStyle.gradient.rawValue
     var atmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue
     var atmosphereSolidColor: Data?
@@ -399,7 +402,7 @@ struct BackupData: Codable {
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, preferDownloadedMedia, alwaysLandscape, aniSkipEnabled, introDBEnabled, introDBAppEnabled, aniSkipAutoSkip, skip85sEnabled, skip85sAlwaysVisible, showNextEpisodeButton, showEpisodeBrowserButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
         case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerCenterTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled, experimentalFeaturesEnabled, experimentalFeaturesLastChangedAt, experimentalMPVPreloadEnabled, experimentalMPVSmoothTransitionEnabled, experimentalMPVPreloadCellularEnabled, experimentalMPVPreloadWifiLimitMB, experimentalMPVPreloadCellularLimitMB, experimentalMPVShowRemainingTime, experimentalMPVPreciseProgress, experimentalMPVIgnoreSpecialSubtitleStyles, experimentalICloudSyncEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
+        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, experimentalMediaDesignPreset, experimentalHeroBleedLevel, experimentalHomeCardShape, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode, kanzenReaderMode, kanzenReaderModeOverrides, readerDownsampleImages, readerCropBorders, readerDisableQuickActions, readerDisableDoubleTap, readerLiveText, readerHideBarsOnSwipe, readerBackgroundColor, readerOrientation, readerTapZones, readerInvertTapZones, readerAnimatePageTransitions, readerUpscaleImages, readerUpscaleMaxHeight, readerPagesToPreload, readerPagedPageLayout, readerPagedPageOffset, readerPagedPageOffsetOverrides, readerSplitWideImages, readerReverseSplitOrder, readerVerticalInfiniteScroll, readerPillarbox, readerPillarboxAmount, readerPillarboxOrientation, readerOrientationLockEnabled, readerOrientationLockMask, readerReadThresholdPercent
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, backgroundHLSPipelineEnabled, readerDownloadsBackgroundEnabled, readerDownloadsWifiOnly, readerDownloadsParallelLimit, autoUpdateServicesEnabled, servicesAutoModeEnabled, servicesAutoSelectEpisodesEnabled, servicesAutoModeSourceIds, servicesAutoModeSourceOrderIds, servicesAutoModeQualityPreference, githubReleaseAutoCheckEnabled, githubReleaseUpdateAvailable, githubReleaseLatestVersion, githubReleaseURL, githubReleaseShowAlertPending, githubReleaseLastPromptedVersion, filterHorrorContent = "filterHorror", selectedSimilarityAlgorithm, performanceModeEnabled, performanceModeSkipAniListTraversalForAnimeDetails, performanceModeFastAnimeCatalogOverrides
@@ -513,6 +516,9 @@ struct BackupData: Codable {
         useClassicScheduleUI = try container.decodeIfPresent(Bool.self, forKey: .useClassicScheduleUI) ?? false
         heroBannerCatalogId = Self.sanitizedNonEmptyString(try container.decodeIfPresent(String.self, forKey: .heroBannerCatalogId), defaultValue: "trending")
         heroBannerBehavior = Self.sanitizedHeroBannerBehavior(try container.decodeIfPresent(String.self, forKey: .heroBannerBehavior))
+        experimentalMediaDesignPreset = Self.sanitizedExperimentalMediaDesignPreset(try container.decodeIfPresent(String.self, forKey: .experimentalMediaDesignPreset))
+        experimentalHeroBleedLevel = Self.sanitizedExperimentalHeroBleedLevel(try container.decodeIfPresent(String.self, forKey: .experimentalHeroBleedLevel))
+        experimentalHomeCardShape = Self.sanitizedExperimentalHomeCardShape(try container.decodeIfPresent(String.self, forKey: .experimentalHomeCardShape))
         atmosphereStyle = Self.sanitizedAtmosphereStyle(try container.decodeIfPresent(String.self, forKey: .atmosphereStyle))
         atmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(try container.decodeIfPresent(String.self, forKey: .atmosphereSolidColorSource))
         atmosphereSolidColor = try Self.decodeColorData(from: container, forKey: .atmosphereSolidColor)
@@ -756,6 +762,9 @@ struct BackupData: Codable {
         try container.encode(useClassicScheduleUI, forKey: .useClassicScheduleUI)
         try container.encode(heroBannerCatalogId, forKey: .heroBannerCatalogId)
         try container.encode(Self.sanitizedHeroBannerBehavior(heroBannerBehavior), forKey: .heroBannerBehavior)
+        try container.encode(Self.sanitizedExperimentalMediaDesignPreset(experimentalMediaDesignPreset), forKey: .experimentalMediaDesignPreset)
+        try container.encode(Self.sanitizedExperimentalHeroBleedLevel(experimentalHeroBleedLevel), forKey: .experimentalHeroBleedLevel)
+        try container.encode(Self.sanitizedExperimentalHomeCardShape(experimentalHomeCardShape), forKey: .experimentalHomeCardShape)
         try container.encode(Self.sanitizedAtmosphereStyle(atmosphereStyle), forKey: .atmosphereStyle)
         try container.encode(Self.sanitizedAtmosphereSolidColorSource(atmosphereSolidColorSource), forKey: .atmosphereSolidColorSource)
         try container.encodeIfPresent(atmosphereSolidColor, forKey: .atmosphereSolidColor)
@@ -932,6 +941,9 @@ struct BackupData: Codable {
         useClassicScheduleUI: Bool = false,
         heroBannerCatalogId: String = "trending",
         heroBannerBehavior: String = HeroBannerBehavior.static.rawValue,
+        experimentalMediaDesignPreset: String = ExperimentalMediaDesignPreset.defaultValue.rawValue,
+        experimentalHeroBleedLevel: String = ExperimentalHeroBleedLevel.defaultValue.rawValue,
+        experimentalHomeCardShape: String = ExperimentalHomeCardShape.defaultValue.rawValue,
         atmosphereStyle: String = AtmosphereStyle.gradient.rawValue,
         atmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue,
         atmosphereSolidColor: Data? = nil,
@@ -1103,6 +1115,9 @@ struct BackupData: Codable {
         self.useClassicScheduleUI = useClassicScheduleUI
         self.heroBannerCatalogId = Self.sanitizedNonEmptyString(heroBannerCatalogId, defaultValue: "trending")
         self.heroBannerBehavior = Self.sanitizedHeroBannerBehavior(heroBannerBehavior)
+        self.experimentalMediaDesignPreset = Self.sanitizedExperimentalMediaDesignPreset(experimentalMediaDesignPreset)
+        self.experimentalHeroBleedLevel = Self.sanitizedExperimentalHeroBleedLevel(experimentalHeroBleedLevel)
+        self.experimentalHomeCardShape = Self.sanitizedExperimentalHomeCardShape(experimentalHomeCardShape)
         self.atmosphereStyle = Self.sanitizedAtmosphereStyle(atmosphereStyle)
         self.atmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(atmosphereSolidColorSource)
         self.atmosphereSolidColor = atmosphereSolidColor
@@ -1278,6 +1293,30 @@ struct BackupData: Codable {
             return HeroBannerBehavior.static.rawValue
         }
         return behavior.rawValue
+    }
+
+    static func sanitizedExperimentalMediaDesignPreset(_ value: String?) -> String {
+        guard let value,
+              let preset = ExperimentalMediaDesignPreset(rawValue: value) else {
+            return ExperimentalMediaDesignPreset.defaultValue.rawValue
+        }
+        return preset.rawValue
+    }
+
+    static func sanitizedExperimentalHeroBleedLevel(_ value: String?) -> String {
+        guard let value,
+              let level = ExperimentalHeroBleedLevel(rawValue: value) else {
+            return ExperimentalHeroBleedLevel.defaultValue.rawValue
+        }
+        return level.rawValue
+    }
+
+    static func sanitizedExperimentalHomeCardShape(_ value: String?) -> String {
+        guard let value,
+              let shape = ExperimentalHomeCardShape(rawValue: value) else {
+            return ExperimentalHomeCardShape.defaultValue.rawValue
+        }
+        return shape.rawValue
     }
 
     static func sanitizedAtmosphereStyle(_ value: String?) -> String {
@@ -1761,6 +1800,9 @@ class BackupManager {
         let useClassicScheduleUI = userDefaults.bool(forKey: "useClassicScheduleUI")
         let heroBannerCatalogId = BackupData.sanitizedNonEmptyString(userDefaults.string(forKey: "heroBannerCatalogId"), defaultValue: "trending")
         let heroBannerBehavior = BackupData.sanitizedHeroBannerBehavior(userDefaults.string(forKey: "heroBannerBehavior"))
+        let experimentalMediaDesignPreset = BackupData.sanitizedExperimentalMediaDesignPreset(userDefaults.string(forKey: ExperimentalMediaDesignPreset.storageKey))
+        let experimentalHeroBleedLevel = BackupData.sanitizedExperimentalHeroBleedLevel(userDefaults.string(forKey: ExperimentalHeroBleedLevel.storageKey))
+        let experimentalHomeCardShape = BackupData.sanitizedExperimentalHomeCardShape(userDefaults.string(forKey: ExperimentalHomeCardShape.storageKey))
         let atmosphereStyle = BackupData.sanitizedAtmosphereStyle(userDefaults.string(forKey: "atmosphereStyle"))
         let atmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(userDefaults.string(forKey: "atmosphereSolidColorSource"))
         let atmosphereSolidColor = userDefaults.data(forKey: "atmosphereSolidColor")
@@ -2029,6 +2071,9 @@ class BackupManager {
             useClassicScheduleUI: useClassicScheduleUI,
             heroBannerCatalogId: heroBannerCatalogId,
             heroBannerBehavior: heroBannerBehavior,
+            experimentalMediaDesignPreset: experimentalMediaDesignPreset,
+            experimentalHeroBleedLevel: experimentalHeroBleedLevel,
+            experimentalHomeCardShape: experimentalHomeCardShape,
             atmosphereStyle: atmosphereStyle,
             atmosphereSolidColorSource: atmosphereSolidColorSource,
             atmosphereSolidColor: atmosphereSolidColor,
@@ -2257,6 +2302,9 @@ class BackupManager {
         let useClassicScheduleUI = json["useClassicScheduleUI"] as? Bool ?? false
         let heroBannerCatalogId = BackupData.sanitizedNonEmptyString(json["heroBannerCatalogId"] as? String, defaultValue: "trending")
         let heroBannerBehavior = BackupData.sanitizedHeroBannerBehavior(json["heroBannerBehavior"] as? String)
+        let experimentalMediaDesignPreset = BackupData.sanitizedExperimentalMediaDesignPreset(json["experimentalMediaDesignPreset"] as? String)
+        let experimentalHeroBleedLevel = BackupData.sanitizedExperimentalHeroBleedLevel(json["experimentalHeroBleedLevel"] as? String)
+        let experimentalHomeCardShape = BackupData.sanitizedExperimentalHomeCardShape(json["experimentalHomeCardShape"] as? String)
         let atmosphereStyle = BackupData.sanitizedAtmosphereStyle(json["atmosphereStyle"] as? String)
         let atmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(json["atmosphereSolidColorSource"] as? String)
         let atmosphereSolidColor = BackupData.backupColorData(from: json["atmosphereSolidColor"])
@@ -2558,6 +2606,9 @@ class BackupManager {
             useClassicScheduleUI: useClassicScheduleUI,
             heroBannerCatalogId: heroBannerCatalogId,
             heroBannerBehavior: heroBannerBehavior,
+            experimentalMediaDesignPreset: experimentalMediaDesignPreset,
+            experimentalHeroBleedLevel: experimentalHeroBleedLevel,
+            experimentalHomeCardShape: experimentalHomeCardShape,
             atmosphereStyle: atmosphereStyle,
             atmosphereSolidColorSource: atmosphereSolidColorSource,
             atmosphereSolidColor: atmosphereSolidColor,
@@ -2750,6 +2801,9 @@ class BackupManager {
         userDefaults.set(backup.useClassicScheduleUI, forKey: "useClassicScheduleUI")
         userDefaults.set(BackupData.sanitizedNonEmptyString(backup.heroBannerCatalogId, defaultValue: "trending"), forKey: "heroBannerCatalogId")
         userDefaults.set(BackupData.sanitizedHeroBannerBehavior(backup.heroBannerBehavior), forKey: "heroBannerBehavior")
+        userDefaults.set(BackupData.sanitizedExperimentalMediaDesignPreset(backup.experimentalMediaDesignPreset), forKey: ExperimentalMediaDesignPreset.storageKey)
+        userDefaults.set(BackupData.sanitizedExperimentalHeroBleedLevel(backup.experimentalHeroBleedLevel), forKey: ExperimentalHeroBleedLevel.storageKey)
+        userDefaults.set(BackupData.sanitizedExperimentalHomeCardShape(backup.experimentalHomeCardShape), forKey: ExperimentalHomeCardShape.storageKey)
         userDefaults.set(BackupData.sanitizedAtmosphereStyle(backup.atmosphereStyle), forKey: "atmosphereStyle")
         userDefaults.set(BackupData.sanitizedAtmosphereSolidColorSource(backup.atmosphereSolidColorSource), forKey: "atmosphereSolidColorSource")
         if let atmosphereSolidColor = backup.atmosphereSolidColor {

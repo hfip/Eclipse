@@ -16,6 +16,233 @@ struct ScrollOffsetPreferenceKey: PreferenceKey {
     }
 }
 
+enum ExperimentalMediaDesignPreset: String, CaseIterable, Identifiable {
+    static let storageKey = "experimentalMediaDesignPreset"
+
+    case cinematic
+    case balanced
+    case compact
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .cinematic: return "Cinematic"
+        case .balanced: return "Balanced"
+        case .compact: return "Compact"
+        }
+    }
+
+    static var defaultValue: ExperimentalMediaDesignPreset { .cinematic }
+
+    static var current: ExperimentalMediaDesignPreset {
+        let rawValue = UserDefaults.standard.string(forKey: storageKey)
+        return ExperimentalMediaDesignPreset(rawValue: rawValue ?? "") ?? defaultValue
+    }
+}
+
+enum ExperimentalHeroBleedLevel: String, CaseIterable, Identifiable {
+    static let storageKey = "experimentalHeroBleedLevel"
+
+    case soft
+    case standard
+    case strong
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .soft: return "Soft"
+        case .standard: return "Standard"
+        case .strong: return "Strong"
+        }
+    }
+
+    var strengthMultiplier: Double {
+        switch self {
+        case .soft: return 0.72
+        case .standard: return 1.0
+        case .strong: return 1.24
+        }
+    }
+
+    static var defaultValue: ExperimentalHeroBleedLevel { .standard }
+
+    static var current: ExperimentalHeroBleedLevel {
+        let rawValue = UserDefaults.standard.string(forKey: storageKey)
+        return ExperimentalHeroBleedLevel(rawValue: rawValue ?? "") ?? defaultValue
+    }
+}
+
+enum ExperimentalHomeCardShape: String, CaseIterable, Identifiable {
+    static let storageKey = "experimentalHomeCardShape"
+
+    case automatic
+    case landscape
+    case poster
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .landscape: return "Landscape"
+        case .poster: return "Poster"
+        }
+    }
+
+    static var defaultValue: ExperimentalHomeCardShape { .automatic }
+
+    static var current: ExperimentalHomeCardShape {
+        let rawValue = UserDefaults.standard.string(forKey: storageKey)
+        return ExperimentalHomeCardShape(rawValue: rawValue ?? "") ?? defaultValue
+    }
+}
+
+struct ExperimentalMediaDesignMetrics {
+    let preset: ExperimentalMediaDesignPreset
+    let heroBleedLevel: ExperimentalHeroBleedLevel
+    let cardShape: ExperimentalHomeCardShape
+
+    var homeHeroHeightRatio: CGFloat {
+        switch preset {
+        case .cinematic: return 0.86
+        case .balanced: return 0.78
+        case .compact: return 0.68
+        }
+    }
+
+    var detailHeroHeightRatio: CGFloat {
+        switch preset {
+        case .cinematic: return 0.90
+        case .balanced: return 0.80
+        case .compact: return 0.70
+        }
+    }
+
+    var heroBleedDistance: CGFloat {
+        switch preset {
+        case .cinematic: return 520
+        case .balanced: return 420
+        case .compact: return 320
+        }
+    }
+
+    var heroWashStrength: Double {
+        let base: Double
+        switch preset {
+        case .cinematic: base = 0.92
+        case .balanced: base = 0.76
+        case .compact: base = 0.62
+        }
+        return base * heroBleedLevel.strengthMultiplier
+    }
+
+    var contentTopOverlap: CGFloat {
+        switch preset {
+        case .cinematic: return 34
+        case .balanced: return 22
+        case .compact: return 10
+        }
+    }
+
+    var sectionSpacing: CGFloat {
+        switch preset {
+        case .cinematic: return 42
+        case .balanced: return 32
+        case .compact: return 24
+        }
+    }
+
+    var cardRadius: CGFloat {
+        switch preset {
+        case .cinematic: return 22
+        case .balanced: return 18
+        case .compact: return 15
+        }
+    }
+
+    var glassOpacity: Double {
+        switch preset {
+        case .cinematic: return 0.72
+        case .balanced: return 0.64
+        case .compact: return 0.56
+        }
+    }
+
+    var heroBottomFadeHeight: CGFloat {
+        switch preset {
+        case .cinematic: return 360
+        case .balanced: return 300
+        case .compact: return 240
+        }
+    }
+
+    func homeHeroHeight(screenHeight: CGFloat, isIPad: Bool) -> CGFloat {
+        if isIPad {
+            switch preset {
+            case .cinematic: return 780
+            case .balanced: return 720
+            case .compact: return 640
+            }
+        }
+        let minimum: CGFloat = preset == .compact ? 560 : 640
+        let maximum: CGFloat = preset == .cinematic ? 820 : 760
+        return min(max(screenHeight * homeHeroHeightRatio, minimum), maximum)
+    }
+
+    func detailHeroHeight(screenHeight: CGFloat, isIPad: Bool) -> CGFloat {
+        if isIPad {
+            switch preset {
+            case .cinematic: return 760
+            case .balanced: return 700
+            case .compact: return 620
+            }
+        }
+        let minimum: CGFloat = preset == .compact ? 560 : 650
+        let maximum: CGFloat = preset == .cinematic ? 850 : 780
+        return min(max(screenHeight * detailHeroHeightRatio, minimum), maximum)
+    }
+
+    func landscapeCardSize(isIPad: Bool) -> CGSize {
+        if isIPad {
+            switch preset {
+            case .cinematic: return CGSize(width: 330, height: 186)
+            case .balanced: return CGSize(width: 300, height: 169)
+            case .compact: return CGSize(width: 270, height: 152)
+            }
+        }
+        switch preset {
+        case .cinematic: return CGSize(width: 198, height: 112)
+        case .balanced: return CGSize(width: 184, height: 104)
+        case .compact: return CGSize(width: 168, height: 95)
+        }
+    }
+
+    func posterCardSize(isIPad: Bool) -> CGSize {
+        if isIPad {
+            switch preset {
+            case .cinematic: return CGSize(width: 156, height: 234)
+            case .balanced: return CGSize(width: 142, height: 213)
+            case .compact: return CGSize(width: 128, height: 192)
+            }
+        }
+        switch preset {
+        case .cinematic: return CGSize(width: 132, height: 198)
+        case .balanced: return CGSize(width: 120, height: 180)
+        case .compact: return CGSize(width: 108, height: 162)
+        }
+    }
+
+    static var current: ExperimentalMediaDesignMetrics {
+        ExperimentalMediaDesignMetrics(
+            preset: ExperimentalMediaDesignPreset.current,
+            heroBleedLevel: ExperimentalHeroBleedLevel.current,
+            cardShape: ExperimentalHomeCardShape.current
+        )
+    }
+}
+
 struct SettingsGradientBackground: View {
     @ObservedObject private var theme = EclipseTheme.shared
     var scrollOffset: CGFloat = 0
@@ -138,6 +365,86 @@ struct GlobalGradientBackground: View {
     }
 }
 
+struct HeroBleedGradientBackground: View {
+    var dominantColor: Color
+    var scrollOffset: CGFloat
+    var heroHeight: CGFloat
+    var fadeDistance: CGFloat
+    var bleedStrength: Double
+    var style: AtmosphereStyle
+
+    private var fadeProgress: Double {
+        guard fadeDistance > 0 else { return 1 }
+        let rawProgress = Double(max(0, min(scrollOffset / fadeDistance, 1)))
+        return rawProgress * rawProgress * (3 - 2 * rawProgress)
+    }
+
+    private var activeStrength: Double {
+        max(0, bleedStrength * (1 - fadeProgress))
+    }
+
+    @ViewBuilder
+    private var baseBackground: some View {
+        if style == .solid {
+            dominantColor
+        } else {
+            GlobalGradientBackground(
+                overrideColor: style.isMultiGradient ? dominantColor : nil,
+                scrollOffset: scrollOffset
+            )
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let bleedHeight = max(heroHeight + fadeDistance, geo.size.height * 0.92)
+
+            ZStack(alignment: .top) {
+                baseBackground
+
+                LinearGradient(
+                    stops: [
+                        .init(color: dominantColor.opacity(0.88 * activeStrength), location: 0.00),
+                        .init(color: dominantColor.opacity(0.74 * activeStrength), location: 0.24),
+                        .init(color: dominantColor.opacity(0.48 * activeStrength), location: 0.52),
+                        .init(color: dominantColor.opacity(0.18 * activeStrength), location: 0.78),
+                        .init(color: .clear, location: 1.00)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: bleedHeight)
+                .offset(y: -scrollOffset * 0.18)
+
+                RadialGradient(
+                    colors: [
+                        dominantColor.opacity(0.34 * activeStrength),
+                        dominantColor.opacity(0.12 * activeStrength),
+                        .clear
+                    ],
+                    center: UnitPoint(x: 0.5, y: 0.18),
+                    startRadius: 10,
+                    endRadius: max(geo.size.width, bleedHeight) * 0.72
+                )
+                .frame(height: bleedHeight)
+                .blendMode(style.isMultiGradient ? .screen : .normal)
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.06),
+                        .clear,
+                        .black.opacity(0.18 * (1 - fadeProgress))
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: bleedHeight)
+            }
+        }
+        .clipped()
+    }
+}
+
 #if !os(tvOS)
 struct ExperimentalGradientBackground: View {
     @ObservedObject private var theme = EclipseTheme.shared
@@ -146,7 +453,7 @@ struct ExperimentalGradientBackground: View {
     var style: AtmosphereStyle = .multiGradient
 
     private var accent: Color {
-        dominantColor ?? Color(red: 0.20, green: 0.17, blue: 0.28)
+        dominantColor ?? Color(red: 0.25, green: 0.21, blue: 0.34)
     }
 
     private var resolvedStyle: AtmosphereStyle {
@@ -157,27 +464,27 @@ struct ExperimentalGradientBackground: View {
         switch resolvedStyle {
         case .aurora:
             return [
-                .init(color: Color(red: 0.02, green: 0.08, blue: 0.12), location: 0.00),
-                .init(color: Color(red: 0.06, green: 0.23, blue: 0.24), location: 0.22),
-                .init(color: Color(red: 0.20, green: 0.20, blue: 0.45), location: 0.48),
-                .init(color: Color(red: 0.16, green: 0.10, blue: 0.25), location: 0.72),
-                .init(color: Color(red: 0.05, green: 0.05, blue: 0.09), location: 1.00)
+                .init(color: Color(red: 0.05, green: 0.10, blue: 0.14), location: 0.00),
+                .init(color: Color(red: 0.08, green: 0.25, blue: 0.26), location: 0.22),
+                .init(color: Color(red: 0.22, green: 0.21, blue: 0.46), location: 0.48),
+                .init(color: Color(red: 0.18, green: 0.12, blue: 0.27), location: 0.72),
+                .init(color: Color(red: 0.07, green: 0.06, blue: 0.10), location: 1.00)
             ]
         case .ember:
             return [
-                .init(color: Color(red: 0.08, green: 0.06, blue: 0.08), location: 0.00),
-                .init(color: Color(red: 0.25, green: 0.12, blue: 0.14), location: 0.24),
-                .init(color: Color(red: 0.45, green: 0.28, blue: 0.18), location: 0.50),
-                .init(color: Color(red: 0.20, green: 0.14, blue: 0.25), location: 0.76),
-                .init(color: Color(red: 0.06, green: 0.05, blue: 0.08), location: 1.00)
+                .init(color: Color(red: 0.11, green: 0.08, blue: 0.10), location: 0.00),
+                .init(color: Color(red: 0.29, green: 0.15, blue: 0.16), location: 0.24),
+                .init(color: Color(red: 0.48, green: 0.31, blue: 0.20), location: 0.50),
+                .init(color: Color(red: 0.23, green: 0.16, blue: 0.27), location: 0.76),
+                .init(color: Color(red: 0.08, green: 0.06, blue: 0.09), location: 1.00)
             ]
         case .multiGradient, .gradient, .solid:
             return [
-                .init(color: Color(red: 0.018, green: 0.020, blue: 0.028), location: 0.00),
-                .init(color: Color(red: 0.040, green: 0.045, blue: 0.062), location: 0.22),
-                .init(color: Color(red: 0.075, green: 0.066, blue: 0.105), location: 0.48),
-                .init(color: Color(red: 0.085, green: 0.052, blue: 0.074), location: 0.72),
-                .init(color: Color(red: 0.026, green: 0.026, blue: 0.034), location: 1.00)
+                .init(color: Color(red: 0.060, green: 0.056, blue: 0.078), location: 0.00),
+                .init(color: Color(red: 0.086, green: 0.076, blue: 0.112), location: 0.22),
+                .init(color: Color(red: 0.150, green: 0.118, blue: 0.190), location: 0.48),
+                .init(color: Color(red: 0.155, green: 0.096, blue: 0.126), location: 0.72),
+                .init(color: Color(red: 0.070, green: 0.060, blue: 0.084), location: 1.00)
             ]
         }
     }
@@ -200,10 +507,10 @@ struct ExperimentalGradientBackground: View {
             ]
         case .multiGradient, .gradient, .solid:
             return [
-                .init(color: Color(red: 0.03, green: 0.22, blue: 0.24).opacity(0.16), location: 0.04),
-                .init(color: Color(red: 0.18, green: 0.15, blue: 0.30).opacity(0.15), location: 0.34),
-                .init(color: Color(red: 0.28, green: 0.10, blue: 0.16).opacity(0.12), location: 0.68),
-                .init(color: Color(red: 0.35, green: 0.22, blue: 0.12).opacity(0.07), location: 0.96)
+                .init(color: Color(red: 0.04, green: 0.28, blue: 0.30).opacity(0.22), location: 0.04),
+                .init(color: Color(red: 0.24, green: 0.19, blue: 0.38).opacity(0.21), location: 0.34),
+                .init(color: Color(red: 0.36, green: 0.13, blue: 0.21).opacity(0.16), location: 0.68),
+                .init(color: Color(red: 0.42, green: 0.26, blue: 0.14).opacity(0.10), location: 0.96)
             ]
         }
     }
@@ -228,11 +535,11 @@ struct ExperimentalGradientBackground: View {
             ]
         case .multiGradient, .gradient, .solid:
             return [
-                Color(red: 0.06, green: 0.32, blue: 0.33).opacity(0.12),
-                accent.opacity(0.18),
-                Color(red: 0.34, green: 0.12, blue: 0.22).opacity(0.12),
-                Color(red: 0.20, green: 0.18, blue: 0.38).opacity(0.16),
-                Color(red: 0.06, green: 0.32, blue: 0.33).opacity(0.12)
+                Color(red: 0.07, green: 0.38, blue: 0.39).opacity(0.16),
+                accent.opacity(0.24),
+                Color(red: 0.40, green: 0.15, blue: 0.26).opacity(0.17),
+                Color(red: 0.26, green: 0.23, blue: 0.47).opacity(0.22),
+                Color(red: 0.07, green: 0.38, blue: 0.39).opacity(0.16)
             ]
         }
     }
@@ -241,7 +548,7 @@ struct ExperimentalGradientBackground: View {
         GeometryReader { geo in
             let h = max(geo.size.height * 1.65, geo.size.height + 1)
             ZStack {
-                Color(red: 0.024, green: 0.024, blue: 0.032)
+                Color(red: 0.068, green: 0.060, blue: 0.088)
 
                 LinearGradient(
                     stops: baseStops,
@@ -270,9 +577,9 @@ struct ExperimentalGradientBackground: View {
 
                 LinearGradient(
                     colors: [
-                        accent.opacity(resolvedStyle == .multiGradient ? 0.13 : 0.24),
+                        accent.opacity(resolvedStyle == .multiGradient ? 0.18 : 0.24),
                         .clear,
-                        Color(red: 0.05, green: 0.20, blue: 0.22).opacity(resolvedStyle == .multiGradient ? 0.10 : 0.22)
+                        Color(red: 0.06, green: 0.24, blue: 0.26).opacity(resolvedStyle == .multiGradient ? 0.14 : 0.22)
                     ],
                     startPoint: .leading,
                     endPoint: .trailing
@@ -281,9 +588,9 @@ struct ExperimentalGradientBackground: View {
 
                 LinearGradient(
                     colors: [
-                        .black.opacity(resolvedStyle == .multiGradient ? 0.14 : 0.08),
+                        .black.opacity(resolvedStyle == .multiGradient ? 0.10 : 0.08),
                         .clear,
-                        .black.opacity(resolvedStyle == .multiGradient ? 0.42 : 0.30)
+                        .black.opacity(resolvedStyle == .multiGradient ? 0.34 : 0.30)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
