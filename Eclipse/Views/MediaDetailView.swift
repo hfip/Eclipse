@@ -639,7 +639,7 @@ struct MediaDetailView: View {
             .background(
                 ZStack {
                     if ExperimentalFeatureState.isEnabledAtLaunch {
-                        ExperimentalGradientBackground(dominantColor: ambientColor, scrollOffset: scrollOffset)
+                        ExperimentalGradientBackground(dominantColor: ambientColor)
                     } else if theme.atmosphereStyle == .solid {
                         atmosphereColor
                     } else {
