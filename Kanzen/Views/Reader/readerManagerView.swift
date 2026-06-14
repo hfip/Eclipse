@@ -30,7 +30,8 @@ protocol KanzenReaderChildDelegate: AnyObject {
 }
 
 private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor {
-    switch UserDefaults.standard.string(forKey: "Reader.backgroundColor") {
+    let storedValue = UserDefaults.standard.string(forKey: "Reader.backgroundColor")
+    switch storedValue {
     case "white":
         return .white
     case "system":
@@ -38,6 +39,9 @@ private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor
     case "auto":
         return style == .dark ? .black : .white
     default:
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return UIColor(red: 0.055, green: 0.050, blue: 0.090, alpha: 1)
+        }
         return .black
     }
 }
@@ -244,6 +248,7 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     let session: KanzenReaderSession
     var onClose: (() -> Void)?
 
+    private let experimentalBackgroundLayer = CAGradientLayer()
     private let overlayView = KanzenReaderOverlayView()
     private let loadingView = UIActivityIndicatorView(style: .large)
     private let errorContainer = UIStackView()
@@ -279,12 +284,18 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = readerBackgroundColor()
+        configureExperimentalBackgroundIfNeeded()
         configureLoadingView()
         configureErrorView()
         configureOverlay()
         applyReaderOrientationPreference()
         ReaderLogger.shared.log("Reader controller opened title=\(mangaLogTitle) chapter=\(session.selectedChapter.chapterNumber) mode=\(session.mode.rawValue)", type: "Reader")
         loadCurrentChapter()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        experimentalBackgroundLayer.frame = view.bounds
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -311,6 +322,21 @@ final class KanzenReaderViewController: UIViewController, KanzenReaderChildDeleg
             loadingView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             loadingView.centerYAnchor.constraint(equalTo: view.centerYAnchor)
         ])
+    }
+
+    private func configureExperimentalBackgroundIfNeeded() {
+        guard ExperimentalFeatureState.isEnabledAtLaunch else { return }
+        experimentalBackgroundLayer.colors = [
+            UIColor(red: 0.04, green: 0.07, blue: 0.12, alpha: 1).cgColor,
+            UIColor(red: 0.24, green: 0.18, blue: 0.42, alpha: 1).cgColor,
+            UIColor(red: 0.13, green: 0.12, blue: 0.22, alpha: 1).cgColor,
+            UIColor(red: 0.05, green: 0.05, blue: 0.09, alpha: 1).cgColor
+        ]
+        experimentalBackgroundLayer.locations = [0.0, 0.38, 0.72, 1.0]
+        experimentalBackgroundLayer.startPoint = CGPoint(x: 0.0, y: 0.0)
+        experimentalBackgroundLayer.endPoint = CGPoint(x: 1.0, y: 1.0)
+        experimentalBackgroundLayer.frame = view.bounds
+        view.layer.insertSublayer(experimentalBackgroundLayer, at: 0)
     }
 
     private func configureErrorView() {
@@ -717,10 +743,11 @@ private final class KanzenReaderOverlayView: UIView {
         topPanel.axis = .horizontal
         topPanel.alignment = .center
         topPanel.spacing = 12
-        topPanel.backgroundColor = UIColor.black.withAlphaComponent(0.78)
-        topPanel.layer.cornerRadius = 22
+        applyPanelChrome(to: topPanel)
         topPanel.isLayoutMarginsRelativeArrangement = true
-        topPanel.layoutMargins = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        topPanel.layoutMargins = ExperimentalFeatureState.isEnabledAtLaunch
+            ? UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 14)
+            : UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
         topPanel.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.textColor = .white
@@ -759,10 +786,11 @@ private final class KanzenReaderOverlayView: UIView {
         bottomPanel.axis = .horizontal
         bottomPanel.alignment = .center
         bottomPanel.spacing = 16
-        bottomPanel.backgroundColor = UIColor.black.withAlphaComponent(0.78)
-        bottomPanel.layer.cornerRadius = 22
+        applyPanelChrome(to: bottomPanel)
         bottomPanel.isLayoutMarginsRelativeArrangement = true
-        bottomPanel.layoutMargins = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        bottomPanel.layoutMargins = ExperimentalFeatureState.isEnabledAtLaunch
+            ? UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
+            : UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
         bottomPanel.translatesAutoresizingMaskIntoConstraints = false
 
         lockButton.tintColor = .white
@@ -792,8 +820,14 @@ private final class KanzenReaderOverlayView: UIView {
         pager.axis = .horizontal
         pager.alignment = .center
         pager.spacing = 8
-        pager.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        pager.backgroundColor = ExperimentalFeatureState.isEnabledAtLaunch
+            ? UIColor.white.withAlphaComponent(0.16)
+            : UIColor.white.withAlphaComponent(0.12)
         pager.layer.cornerRadius = 18
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            pager.layer.borderWidth = 1
+            pager.layer.borderColor = UIColor.white.withAlphaComponent(0.10).cgColor
+        }
         pager.isLayoutMarginsRelativeArrangement = true
         pager.layoutMargins = UIEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
 
@@ -826,6 +860,22 @@ private final class KanzenReaderOverlayView: UIView {
     private func constrainIcon(_ button: UIButton, width: CGFloat = 36) {
         button.widthAnchor.constraint(equalToConstant: width).isActive = true
         button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    }
+
+    private func applyPanelChrome(to panel: UIStackView) {
+        panel.backgroundColor = ExperimentalFeatureState.isEnabledAtLaunch
+            ? UIColor(red: 0.10, green: 0.09, blue: 0.16, alpha: 0.86)
+            : UIColor.black.withAlphaComponent(0.78)
+        panel.layer.cornerRadius = ExperimentalFeatureState.isEnabledAtLaunch ? 24 : 22
+        panel.layer.cornerCurve = .continuous
+        panel.layer.borderWidth = ExperimentalFeatureState.isEnabledAtLaunch ? 1 : 0
+        panel.layer.borderColor = ExperimentalFeatureState.isEnabledAtLaunch
+            ? UIColor(red: 0.52, green: 0.43, blue: 0.92, alpha: 0.50).cgColor
+            : UIColor.clear.cgColor
+        panel.layer.shadowColor = UIColor.black.cgColor
+        panel.layer.shadowOpacity = ExperimentalFeatureState.isEnabledAtLaunch ? 0.32 : 0
+        panel.layer.shadowRadius = ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 0
+        panel.layer.shadowOffset = CGSize(width: 0, height: 10)
     }
 
     @objc private func closeTapped() { onClose?() }
@@ -892,6 +942,7 @@ private struct KanzenReaderChapterListView: View {
         }
         .navigationTitle("Chapters")
         .navigationBarTitleDisplayMode(.inline)
+        .kanzenReaderModalStyle()
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") { dismiss() }
@@ -1118,6 +1169,7 @@ private struct KanzenReaderSettingsView: View {
         }
         .navigationTitle("Reader Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .kanzenReaderModalStyle()
         .fileImporter(isPresented: $showingUpscaleImporter, allowedContentTypes: [.data]) { result in
             guard case .success(let url) = result else { return }
             do {
@@ -1170,6 +1222,17 @@ private struct KanzenReaderSettingsView: View {
         .onChange(of: textFontSize) { _ in onSettingsChanged(true, "readerFontSize") }
         .onChange(of: textLineSpacing) { _ in onSettingsChanged(true, "readerLineSpacing") }
         .onChange(of: textHorizontalPadding) { _ in onSettingsChanged(true, "readerMargin") }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func kanzenReaderModalStyle() -> some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            self.eclipseSettingsStyle()
+        } else {
+            self
+        }
     }
 }
 #endif

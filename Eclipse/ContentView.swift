@@ -448,42 +448,44 @@ struct ExperimentalContentView: View {
     }
 
     private var experimentalTabView: some View {
-        TabView(selection: $selectedTab) {
+        ZStack(alignment: .bottom) {
+            experimentalScreen
+                .safeAreaInset(edge: .bottom) {
+                    Color.clear.frame(height: 92)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+
+            ExperimentalFloatingTabBar(
+                items: [
+                    ExperimentalFloatingTabItem(id: .home, title: "Discover", systemImage: "face.smiling"),
+                    ExperimentalFloatingTabItem(id: .schedule, title: "Schedule", systemImage: "calendar"),
+                    ExperimentalFloatingTabItem(id: .downloads, title: "Downloads", systemImage: "tray.and.arrow.down.fill"),
+                    ExperimentalFloatingTabItem(id: .library, title: "Library", systemImage: "books.vertical.fill")
+                ],
+                selection: $selectedTab,
+                searchItemID: .search,
+                searchAction: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        selectedTab = .search
+                    }
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var experimentalScreen: some View {
+        switch selectedTab {
+        case .home:
             HomeView(onStartupReady: onStartupReady)
-                .tabItem {
-                    Image(systemName: "house.fill")
-                    Text("Home")
-                }
-                .tag(ExperimentalMediaTab.home)
-
-            ScheduleView(isActive: selectedTab == .schedule)
-                .tabItem {
-                    Image(systemName: "calendar")
-                    Text("Schedule")
-                }
-                .tag(ExperimentalMediaTab.schedule)
-
+        case .schedule:
+            ScheduleView(isActive: true)
+        case .downloads:
             DownloadsView()
-                .tabItem {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text("Downloads")
-                }
-                .tag(ExperimentalMediaTab.downloads)
-                .badge(downloadManager.activeDownloadCount > 0 ? downloadManager.activeDownloadCount : 0)
-
+        case .library:
             LibraryView()
-                .tabItem {
-                    Image(systemName: "books.vertical.fill")
-                    Text("Library")
-                }
-                .tag(ExperimentalMediaTab.library)
-
+        case .search:
             SearchView()
-                .tabItem {
-                    Image(systemName: "magnifyingglass")
-                    Text("Search")
-                }
-                .tag(ExperimentalMediaTab.search)
         }
     }
 

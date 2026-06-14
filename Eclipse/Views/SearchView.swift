@@ -268,7 +268,7 @@ struct SearchView: View {
             }
         }
         .navigationTitle("Search")
-        .background(EclipseTheme.shared.backgroundBase.ignoresSafeArea())
+        .eclipseBackground()
         .onChangeComp(of: selectedLanguage) { _, _ in
             if !searchText.isEmpty && !searchResults.isEmpty {
                 performSearch()

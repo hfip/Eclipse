@@ -57,7 +57,7 @@ struct DiscoverDetailView: View {
                 Spacer(minLength: 80)
             }
         }
-        .background(EclipseTheme.shared.backgroundBase.ignoresSafeArea())
+        .eclipseBackground()
         .navigationTitle(title)
 #if os(iOS)
         .navigationBarTitleDisplayMode(.large)

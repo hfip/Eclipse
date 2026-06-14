@@ -22,7 +22,6 @@ struct SettingsView: View {
     @AppStorage("hideSplashScreen") private var hideSplashScreen = false
     @State private var scrollOffset: CGFloat = 0
     @State private var isCheckingGitHubRelease = false
-    @State private var showExperimentalRestartAlert = false
 
     private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Eclipse")!
@@ -38,24 +37,6 @@ struct SettingsView: View {
         GitHubReleaseChecker.isGitHubReleaseUpdatesAvailable
     }
 
-    private var performanceModeBinding: Binding<Bool> {
-        Binding(
-            get: { catalogManager.performanceModeEnabled },
-            set: { catalogManager.setPerformanceModeEnabled($0) }
-        )
-    }
-
-    private var experimentalFeaturesBinding: Binding<Bool> {
-        Binding(
-            get: { experimentalFeaturesEnabled },
-            set: { newValue in
-                ExperimentalFeatureState.setStoredValue(newValue)
-                experimentalFeaturesEnabled = newValue
-                showExperimentalRestartAlert = true
-            }
-        )
-    }
-    
     let languages = [
         ("en-US", "English (US)"),
         ("en-GB", "English (UK)"),
@@ -164,9 +145,19 @@ struct SettingsView: View {
                         
                         GlassDivider()
 
-                        GlassSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Performance Mode") {
-                            Toggle("", isOn: performanceModeBinding)
+                        NavigationLink(destination: PerformanceModeSettingsView()) {
+                            GlassSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Performance Mode") {
+                                HStack(spacing: 4) {
+                                    Text(catalogManager.performanceModeEnabled ? "On" : "Off")
+                                        .font(.subheadline)
+                                        .foregroundColor(.white.opacity(0.5))
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                            }
                         }
+                        .buttonStyle(.plain)
 
                         GlassDivider()
 
@@ -178,11 +169,19 @@ struct SettingsView: View {
 
                         GlassDivider()
 
-                        GlassSettingsRow(icon: "sparkles", iconColor: .purple, title: "Enable experimental features") {
-                            Toggle("", isOn: experimentalFeaturesBinding)
-                                .labelsHidden()
-                                .tint(.purple)
+                        NavigationLink(destination: ExperimentalFeaturesSettingsView()) {
+                            GlassSettingsRow(icon: "sparkles", iconColor: .purple, title: "Experimental Features") {
+                                HStack(spacing: 4) {
+                                    Text(experimentalFeaturesEnabled ? (ExperimentalFeatureState.isEnabledAtLaunch ? "On" : "Restart") : "Off")
+                                        .font(.subheadline)
+                                        .foregroundColor(.white.opacity(0.5))
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                            }
                         }
+                        .buttonStyle(.plain)
 
                         GlassDivider()
                         
@@ -410,11 +409,6 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .background(SettingsGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
         .eclipseDarkToolbar()
-        .alert("Restart Required", isPresented: $showExperimentalRestartAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Experimental features are applied only at app launch. Restart Eclipse to switch the active interface.")
-        }
         #endif
     }
     
@@ -433,7 +427,12 @@ struct SettingsView: View {
             NavigationLink(destination: TMDBFiltersView()) {
                 Text("Content Filters")
             }
-            Toggle("Performance Mode", isOn: performanceModeBinding)
+            NavigationLink(destination: PerformanceModeSettingsView()) {
+                Text("Performance Mode")
+            }
+            NavigationLink(destination: ExperimentalFeaturesSettingsView()) {
+                Text("Experimental Features")
+            }
             Toggle("Hide Splash Screen", isOn: $hideSplashScreen)
         } header: {
             Text("TMDB Settings")
@@ -598,6 +597,94 @@ struct LegalNoticeView: View {
         }
         .navigationTitle("Legal & Source")
         .eclipseSettingsStyle()
+    }
+}
+
+struct PerformanceModeSettingsView: View {
+    @ObservedObject private var catalogManager = CatalogManager.shared
+
+    private var performanceModeBinding: Binding<Bool> {
+        Binding(
+            get: { catalogManager.performanceModeEnabled },
+            set: { catalogManager.setPerformanceModeEnabled($0) }
+        )
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("Performance Mode", isOn: performanceModeBinding)
+            } footer: {
+                Text("Performance Mode keeps anime-heavy home catalogs on the faster AniList-backed path and locks those anime catalog rows to their performance-safe source. Detail pages still load full metadata when opened.")
+            }
+
+            Section("Affected Catalogs") {
+                ForEach(catalogManager.catalogs.filter { PerformanceModeSettings.isAnimeCatalog($0) }) { catalog in
+                    HStack {
+                        Label(catalog.name, systemImage: "bolt.fill")
+                        Spacer()
+                        Text(catalogManager.isCatalogEffectivelyEnabled(catalog) ? "Enabled" : "Hidden")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Performance Mode")
+        .eclipseSettingsStyle()
+    }
+}
+
+struct ExperimentalFeaturesSettingsView: View {
+    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = false
+    @State private var showRestartAlert = false
+
+    private var experimentalFeaturesBinding: Binding<Bool> {
+        Binding(
+            get: { experimentalFeaturesEnabled },
+            set: { newValue in
+                ExperimentalFeatureState.setStoredValue(newValue)
+                experimentalFeaturesEnabled = newValue
+                showRestartAlert = true
+            }
+        )
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("Experimental Features", isOn: experimentalFeaturesBinding)
+            } footer: {
+                Text("Experimental Features enables interface and playback work that is still being validated. The switch is stored immediately, but the active feature set is chosen when Eclipse launches.")
+            }
+
+            Section("Current Launch") {
+                Label(
+                    ExperimentalFeatureState.isEnabledAtLaunch ? "Experimental features are active" : "Standard features are active",
+                    systemImage: ExperimentalFeatureState.isEnabledAtLaunch ? "checkmark.circle.fill" : "circle"
+                )
+
+                if experimentalFeaturesEnabled != ExperimentalFeatureState.isEnabledAtLaunch {
+                    Label("Restart required to apply the stored setting", systemImage: "arrow.clockwise")
+                        .foregroundColor(.orange)
+                }
+            }
+
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                Section("Available Experimental Settings") {
+                    NavigationLink(destination: ExperimentalCloudSyncView()) {
+                        Label("iCloud Sync", systemImage: "icloud")
+                    }
+                }
+            }
+        }
+        .navigationTitle("Experimental Features")
+        .eclipseSettingsStyle()
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Experimental features are applied only at app launch. Restart Eclipse to switch the active interface.")
+        }
     }
 }
 

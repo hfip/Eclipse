@@ -18,13 +18,53 @@ struct GlassCardGroup<Content: View>: View {
     
     var body: some View {
         content
-            .background(
-                RoundedRectangle(cornerRadius: EclipseTheme.shared.cardCornerRadius, style: .continuous)
-                    .fill(EclipseTheme.shared.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: EclipseTheme.shared.cardCornerRadius, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
+            .background(cardBackground)
+    }
+
+    @ViewBuilder
+    private var cardBackground: some View {
+#if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.16, green: 0.13, blue: 0.22).opacity(0.88),
+                            Color(red: 0.09, green: 0.09, blue: 0.15).opacity(0.78)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.54, green: 0.44, blue: 0.95).opacity(0.38),
+                                    Color.white.opacity(0.08)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: Color(red: 0.05, green: 0.03, blue: 0.12).opacity(0.36), radius: 22, x: 0, y: 14)
+        } else {
+            legacyCardBackground
+        }
+#else
+        legacyCardBackground
+#endif
+    }
+
+    private var legacyCardBackground: some View {
+        RoundedRectangle(cornerRadius: EclipseTheme.shared.cardCornerRadius, style: .continuous)
+            .fill(EclipseTheme.shared.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: EclipseTheme.shared.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
             )
     }
 }
@@ -51,15 +91,10 @@ struct GlassSettingsRow<Trailing: View>: View {
     
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(iconColor)
-                .frame(width: 32, height: 32)
-                .background(iconColor.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            settingsIcon
             
             Text(title)
-                .font(.body)
+                .font(rowTitleFont)
                 .foregroundColor(.white)
             
             Spacer()
@@ -67,8 +102,55 @@ struct GlassSettingsRow<Trailing: View>: View {
             trailing
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.vertical, rowVerticalPadding)
         .contentShape(Rectangle())
+    }
+
+    private var iconSize: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 15
+    }
+
+    private var iconFrame: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch ? 42 : 32
+    }
+
+    @ViewBuilder
+    private var settingsIcon: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            Image(systemName: icon)
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: iconFrame, height: iconFrame)
+                .background(
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    iconColor.opacity(0.82),
+                                    Color.white.opacity(0.12)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 1))
+                )
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: iconSize, weight: .medium))
+                .foregroundColor(iconColor)
+                .frame(width: iconFrame, height: iconFrame)
+                .background(iconColor.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    private var rowTitleFont: Font {
+        ExperimentalFeatureState.isEnabledAtLaunch ? .title3.weight(.medium) : .body
+    }
+
+    private var rowVerticalPadding: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch ? 16 : 13
     }
 }
 

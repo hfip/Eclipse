@@ -3624,7 +3624,11 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             fallbackRenderer.activatePictureInPictureLayer()
             return
         }
-        guard isUsingPiPBridge || isPreparingPiPBridge else { return }
+        let bridgePrimed = pipBridge.isPictureInPicturePrimed()
+        guard isUsingPiPBridge || isPreparingPiPBridge || (pipBridgeLoadGeneration == loadGeneration && bridgePrimed) else {
+            logMPV("PiP hybrid activate skipped preparing=\(isPreparingPiPBridge) using=\(isUsingPiPBridge) bridgeGen=\(pipBridgeLoadGeneration ?? -1) currentGen=\(loadGeneration) primed=\(bridgePrimed) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}")
+            return
+        }
         let wasActive = isUsingPiPBridge
         isUsingPiPBridge = true
         isPreparingPiPBridge = false
@@ -3637,7 +3641,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     }
 
     func isPictureInPicturePrimed() -> Bool {
-        fallbackRenderer?.isPictureInPicturePrimed() ?? ((isUsingPiPBridge || isPreparingPiPBridge) && pipBridge.isPictureInPicturePrimed())
+        fallbackRenderer?.isPictureInPicturePrimed()
+            ?? ((isUsingPiPBridge || isPreparingPiPBridge || pipBridgeLoadGeneration == loadGeneration) && pipBridge.isPictureInPicturePrimed())
     }
 
     func resumeForegroundRendering(reason: String) {
@@ -4449,6 +4454,10 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     func renderer(_ renderer: PlayerRenderer, didFailWithError message: String) {
         guard renderer === pipBridge else { return }
         guard isUsingPiPBridge else {
+            if pipBridge.isPictureInPicturePrimed() {
+                logMPV("PiP hybrid bridge warmup error ignored after frames message=\(message) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}")
+                return
+            }
             logMPV("PiP hybrid bridge error during warmup suppressed message=\(message) foreground={\(pictureInPictureDebugSnapshot())}")
             isPreparingPiPBridge = false
             pipBridgeLoadGeneration = nil

@@ -12,6 +12,18 @@ import Kingfisher
 import AidokuRunner
 #endif
 
+private var kanzenReaderCanvasSwiftUIColor: Color {
+    ExperimentalFeatureState.isEnabledAtLaunch
+        ? Color(red: 0.055, green: 0.050, blue: 0.090)
+        : .black
+}
+
+private var kanzenReaderCanvasUIColor: UIColor {
+    ExperimentalFeatureState.isEnabledAtLaunch
+        ? UIColor(red: 0.055, green: 0.050, blue: 0.090, alpha: 1)
+        : .black
+}
+
 enum ChapterPosition {
     case prev
     case curr
@@ -289,7 +301,7 @@ struct chapterView: View {
             Text("Page failed to load")
                 .foregroundColor(.white.opacity(0.75))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
+                .background(kanzenReaderCanvasSwiftUIColor)
         }
     }
 }
@@ -305,7 +317,7 @@ private struct ReaderTextPageView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
         }
-        .background(Color.black)
+        .background(kanzenReaderCanvasSwiftUIColor)
     }
 }
 
@@ -319,9 +331,9 @@ private struct ReaderDataImageView: View {
                 .scaledToFit()
                 .frame(width: max(proxy.size.width, 1))
                 .frame(maxHeight: .infinity)
-                .background(Color.black)
+                .background(kanzenReaderCanvasSwiftUIColor)
         }
-        .background(Color.black)
+        .background(kanzenReaderCanvasSwiftUIColor)
     }
 }
 
@@ -341,7 +353,7 @@ private struct ReaderKFImage: View {
                     .readerPageImageStyle(width: width)
             }
         }
-        .background(Color.black)
+        .background(kanzenReaderCanvasSwiftUIColor)
     }
 
     private var baseImage: KFImage {
@@ -469,7 +481,7 @@ private extension KFImage {
         scaledToFit()
             .frame(width: width)
             .frame(maxHeight: .infinity)
-            .background(Color.black)
+            .background(kanzenReaderCanvasSwiftUIColor)
     }
 }
 
@@ -486,11 +498,11 @@ struct ZoomablePageView: UIViewRepresentable {
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.bouncesZoom = true
-        scrollView.backgroundColor = .black
+        scrollView.backgroundColor = kanzenReaderCanvasUIColor
 
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFit
-        imageView.backgroundColor = .black
+        imageView.backgroundColor = kanzenReaderCanvasUIColor
         imageView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(imageView)
 

@@ -95,10 +95,42 @@ class EclipseTheme: ObservableObject {
     // MARK: - Constants
     
     let cardCornerRadius: CGFloat = 16
-    let backgroundBase = Color(red: 0.08, green: 0.08, blue: 0.08)
-    let cardBackground = Color.white.opacity(0.08)
-    let separatorColor = Color.white.opacity(0.12)
-    let sectionHeaderColor = Color.white.opacity(0.5)
+
+    var backgroundBase: Color {
+        #if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return Color(red: 0.055, green: 0.050, blue: 0.090)
+        }
+        #endif
+        return Color(red: 0.08, green: 0.08, blue: 0.08)
+    }
+
+    var cardBackground: Color {
+        #if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return Color(red: 0.12, green: 0.105, blue: 0.17).opacity(0.72)
+        }
+        #endif
+        return Color.white.opacity(0.08)
+    }
+
+    var separatorColor: Color {
+        #if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return Color.white.opacity(0.10)
+        }
+        #endif
+        return Color.white.opacity(0.12)
+    }
+
+    var sectionHeaderColor: Color {
+        #if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return Color.white.opacity(0.58)
+        }
+        #endif
+        return Color.white.opacity(0.5)
+    }
     
     // MARK: - Presets
     
@@ -180,8 +212,17 @@ class EclipseTheme: ObservableObject {
 
 extension View {
     /// Apply the standard dark base background used across all screens
+    @ViewBuilder
     func eclipseBackground() -> some View {
+        #if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            self.background(ExperimentalGradientBackground().ignoresSafeArea())
+        } else {
+            self.background(EclipseTheme.shared.backgroundBase.ignoresSafeArea())
+        }
+        #else
         self.background(EclipseTheme.shared.backgroundBase.ignoresSafeArea())
+        #endif
     }
     
     /// Apply the gradient background used in Settings screens

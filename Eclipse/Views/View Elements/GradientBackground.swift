@@ -26,7 +26,23 @@ struct SettingsGradientBackground: View {
         -scrollOffset * 0.35
     }
     
+    @ViewBuilder
     var body: some View {
+#if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            ExperimentalGradientBackground(
+                dominantColor: theme.scopedGradientColor(),
+                scrollOffset: scrollOffset
+            )
+        } else {
+            legacyBackground
+        }
+#else
+        legacyBackground
+#endif
+    }
+
+    private var legacyBackground: some View {
         GeometryReader { geo in
             let h = geo.size.height * 2.5
             let gradientColor = theme.scopedGradientColor()
@@ -126,68 +142,73 @@ struct ExperimentalGradientBackground: View {
     var scrollOffset: CGFloat = 0
 
     private var accent: Color {
-        dominantColor ?? Color(red: 0.50, green: 0.36, blue: 0.76)
+        dominantColor ?? Color(red: 0.56, green: 0.39, blue: 0.94)
     }
 
     var body: some View {
         GeometryReader { geo in
-            let h = max(geo.size.height * 1.45, geo.size.height + 1)
-            let longestSide = max(geo.size.width, geo.size.height)
+            let h = max(geo.size.height * 1.65, geo.size.height + 1)
             ZStack {
-                Color(red: 0.07, green: 0.07, blue: 0.11)
+                Color(red: 0.055, green: 0.050, blue: 0.090)
 
                 LinearGradient(
                     stops: [
-                        .init(color: Color(red: 0.06, green: 0.08, blue: 0.12), location: 0.00),
-                        .init(color: Color(red: 0.14, green: 0.12, blue: 0.22), location: 0.22),
-                        .init(color: Color(red: 0.24, green: 0.20, blue: 0.42), location: 0.46),
-                        .init(color: Color(red: 0.19, green: 0.12, blue: 0.19), location: 0.74),
-                        .init(color: Color(red: 0.07, green: 0.07, blue: 0.11), location: 1.00)
+                        .init(color: Color(red: 0.04, green: 0.07, blue: 0.12), location: 0.00),
+                        .init(color: Color(red: 0.15, green: 0.10, blue: 0.24), location: 0.20),
+                        .init(color: Color(red: 0.32, green: 0.25, blue: 0.57), location: 0.46),
+                        .init(color: Color(red: 0.22, green: 0.15, blue: 0.28), location: 0.68),
+                        .init(color: Color(red: 0.06, green: 0.06, blue: 0.10), location: 1.00)
                     ],
-                    startPoint: .top,
-                    endPoint: .bottom
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
                 .frame(height: h)
-                .offset(y: -scrollOffset * 0.08)
+                .offset(y: -scrollOffset * 0.10)
 
-                RadialGradient(
-                    colors: [
-                        Color(red: 0.10, green: 0.24, blue: 0.34).opacity(0.46),
-                        Color(red: 0.12, green: 0.17, blue: 0.32).opacity(0.24),
-                        .clear
+                LinearGradient(
+                    stops: [
+                        .init(color: Color(red: 0.05, green: 0.66, blue: 0.78).opacity(0.40), location: 0.02),
+                        .init(color: Color(red: 0.35, green: 0.24, blue: 0.86).opacity(0.30), location: 0.33),
+                        .init(color: Color(red: 0.84, green: 0.28, blue: 0.54).opacity(0.24), location: 0.64),
+                        .init(color: Color(red: 0.95, green: 0.55, blue: 0.22).opacity(0.14), location: 0.95)
                     ],
-                    center: UnitPoint(x: 0.88, y: 0.05),
-                    startRadius: 0,
-                    endRadius: longestSide * 0.82
+                    startPoint: .topTrailing,
+                    endPoint: .bottomLeading
                 )
+                .blendMode(.screen)
+                .offset(y: -scrollOffset * 0.055)
 
-                RadialGradient(
+                AngularGradient(
                     colors: [
-                        Color(red: 0.47, green: 0.28, blue: 0.58).opacity(0.42),
-                        accent.opacity(0.20),
-                        .clear
+                        Color(red: 0.11, green: 0.72, blue: 0.72).opacity(0.26),
+                        accent.opacity(0.34),
+                        Color(red: 0.82, green: 0.22, blue: 0.58).opacity(0.24),
+                        Color(red: 0.36, green: 0.30, blue: 0.77).opacity(0.30),
+                        Color(red: 0.11, green: 0.72, blue: 0.72).opacity(0.26)
                     ],
-                    center: UnitPoint(x: 0.18, y: 0.38),
-                    startRadius: 20,
-                    endRadius: longestSide * 0.78
+                    center: UnitPoint(x: 0.48, y: 0.34)
                 )
-
-                RadialGradient(
-                    colors: [
-                        Color(red: 0.48, green: 0.22, blue: 0.18).opacity(0.24),
-                        Color(red: 0.22, green: 0.12, blue: 0.18).opacity(0.14),
-                        .clear
-                    ],
-                    center: UnitPoint(x: 0.82, y: 0.82),
-                    startRadius: 0,
-                    endRadius: longestSide * 0.72
-                )
+                .scaleEffect(1.7)
+                .blur(radius: 42)
+                .opacity(0.68)
+                .blendMode(.screen)
 
                 LinearGradient(
                     colors: [
-                        .black.opacity(0.10),
+                        accent.opacity(0.24),
                         .clear,
-                        .black.opacity(0.24)
+                        Color(red: 0.05, green: 0.30, blue: 0.34).opacity(0.22)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .offset(y: -scrollOffset * 0.03)
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(0.08),
+                        .clear,
+                        .black.opacity(0.30)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -211,12 +232,32 @@ struct ExperimentalCard<Content: View>: View {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color(red: 0.10, green: 0.10, blue: 0.16).opacity(0.72))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.16, green: 0.13, blue: 0.23).opacity(0.82),
+                                Color(red: 0.09, green: 0.09, blue: 0.14).opacity(0.74)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.16),
+                                        Color(red: 0.58, green: 0.42, blue: 1.0).opacity(0.34),
+                                        Color.white.opacity(0.06)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
                     )
-                    .shadow(color: .black.opacity(0.22), radius: 18, x: 0, y: 10)
+                    .shadow(color: Color(red: 0.10, green: 0.05, blue: 0.20).opacity(0.38), radius: 22, x: 0, y: 12)
             )
     }
 }
@@ -245,6 +286,8 @@ struct ExperimentalSection<Content: View>: View {
 struct ExperimentalCircleButton: View {
     let systemName: String
     var size: CGFloat = 44
+    var isSelected: Bool = false
+    var accessibilityLabel: String? = nil
     var action: () -> Void
 
     var body: some View {
@@ -255,11 +298,33 @@ struct ExperimentalCircleButton: View {
                 .frame(width: size, height: size)
                 .background(
                     Circle()
-                        .fill(Color.black.opacity(0.30))
-                        .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                        .fill(
+                            LinearGradient(
+                                colors: isSelected
+                                    ? [
+                                        Color(red: 0.42, green: 0.34, blue: 0.78).opacity(0.80),
+                                        Color(red: 0.12, green: 0.11, blue: 0.20).opacity(0.90)
+                                    ]
+                                    : [
+                                        Color(red: 0.10, green: 0.10, blue: 0.16).opacity(0.86),
+                                        Color.black.opacity(0.42)
+                                    ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(
+                                    isSelected ? Color(red: 0.50, green: 0.42, blue: 0.92).opacity(0.70) : Color.white.opacity(0.14),
+                                    lineWidth: 1
+                                )
+                        )
+                        .shadow(color: .black.opacity(0.24), radius: 16, x: 0, y: 10)
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel ?? systemName)
     }
 }
 
@@ -272,8 +337,11 @@ struct ExperimentalFloatingTabItem<ID: Hashable>: Identifiable {
 struct ExperimentalFloatingTabBar<ID: Hashable>: View {
     let items: [ExperimentalFloatingTabItem<ID>]
     @Binding var selection: ID
+    var searchItemID: ID? = nil
     var searchAction: (() -> Void)?
-    var settingsAction: (() -> Void)?
+    var trailingSystemImage: String? = nil
+    var trailingAccessibilityLabel: String? = nil
+    var trailingAction: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -293,32 +361,61 @@ struct ExperimentalFloatingTabBar<ID: Hashable>: View {
                                 .minimumScaleFactor(0.8)
                         }
                         .foregroundColor(.white)
-                        .frame(minWidth: 58)
+                        .frame(minWidth: 48)
                         .padding(.vertical, 8)
+                        .padding(.horizontal, 1)
                         .background(
                             Capsule()
-                                .fill(selection == item.id ? Color.white.opacity(0.18) : Color.clear)
+                                .fill(
+                                    selection == item.id
+                                        ? Color.white.opacity(0.20)
+                                        : Color.clear
+                                )
                         )
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(6)
+            .padding(5)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.34))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.10, green: 0.10, blue: 0.17).opacity(0.92),
+                                Color.black.opacity(0.46)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color(red: 0.43, green: 0.35, blue: 0.82).opacity(0.52), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.26), radius: 20, x: 0, y: 12)
             )
 
             if let searchAction {
-                ExperimentalCircleButton(systemName: "magnifyingglass", size: 52, action: searchAction)
+                ExperimentalCircleButton(
+                    systemName: "magnifyingglass",
+                    size: 50,
+                    isSelected: searchItemID.map { $0 == selection } ?? false,
+                    accessibilityLabel: "Search",
+                    action: searchAction
+                )
             }
 
-            if let settingsAction {
-                ExperimentalCircleButton(systemName: "gearshape.fill", size: 44, action: settingsAction)
+            if let trailingSystemImage, let trailingAction {
+                ExperimentalCircleButton(
+                    systemName: trailingSystemImage,
+                    size: 44,
+                    accessibilityLabel: trailingAccessibilityLabel,
+                    action: trailingAction
+                )
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .padding(.bottom, 8)
     }
 }

@@ -169,44 +169,35 @@ struct ExperimentalKanzenMenu: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             ExperimentalGradientBackground()
                 .ignoresSafeArea()
 
-            TabView(selection: $selectedTab) {
-                KanzenHomeView(onStartupReady: onStartupReady)
-                    .tabItem {
-                        Label("Home", systemImage: "house")
-                    }
-                    .tag(KanzenRootTab.home)
+            experimentalScreen
+                .environmentObject(kanzen)
+                .safeAreaInset(edge: .bottom) {
+                    Color.clear.frame(height: 92)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.985)))
 
-                KanzenLibraryView()
-                    .tabItem {
-                        Label("Library", systemImage: "books.vertical")
+            ExperimentalFloatingTabBar(
+                items: [
+                    ExperimentalFloatingTabItem(id: .home, title: "Discover", systemImage: "face.smiling"),
+                    ExperimentalFloatingTabItem(id: .library, title: "Library", systemImage: "books.vertical.fill"),
+                    ExperimentalFloatingTabItem(id: .history, title: "History", systemImage: "clock.fill"),
+                    ExperimentalFloatingTabItem(id: .settings, title: "Settings", systemImage: "sparkles")
+                ],
+                selection: $selectedTab,
+                searchItemID: .search,
+                searchAction: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        selectedTab = .search
                     }
-                    .tag(KanzenRootTab.library)
-
-                KanzenGlobalSearchView()
-                    .tabItem {
-                        Label("Search", systemImage: "magnifyingglass")
-                    }
-                    .tag(KanzenRootTab.search)
-
-                KanzenHistoryView()
-                    .tabItem {
-                        Label("History", systemImage: "clock")
-                    }
-                    .tag(KanzenRootTab.history)
-
-                KanzenSettingsView()
-                    .tabItem {
-                        Label("Settings", systemImage: "gear")
-                    }
-                    .tag(KanzenRootTab.settings)
-            }
-            .environmentObject(kanzen)
+                }
+            )
         }
         .environmentObject(kanzen)
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: selectedTab)
         .task {
             await moduleManager.autoUpdateModulesIfNeeded()
             await aidokuManager.autoUpdateInstalledSourcesIfNeeded(reason: "reader-open")
@@ -218,6 +209,22 @@ struct ExperimentalKanzenMenu: View {
                     await aidokuManager.autoUpdateInstalledSourcesIfNeeded(reason: "reader-active")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var experimentalScreen: some View {
+        switch selectedTab {
+        case .home:
+            KanzenHomeView(onStartupReady: onStartupReady)
+        case .library:
+            KanzenLibraryView()
+        case .search:
+            KanzenGlobalSearchView()
+        case .history:
+            KanzenHistoryView()
+        case .settings:
+            KanzenSettingsView()
         }
     }
 }

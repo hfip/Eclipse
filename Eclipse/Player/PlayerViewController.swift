@@ -1093,6 +1093,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var pipController: PiPController?
     private var mpvPiPStartAttemptID = 0
     private var mpvAppExitPiPStartRequested = false
+    private var mpvPiPStartedAt: Date?
     private var mpvPendingAppExitPiPWorkItem: DispatchWorkItem?
     private var initialURL: URL?
     private var initialPreset: PlayerPreset?
@@ -1804,7 +1805,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if primed {
                 self.rendererActivatePictureInPictureLayer()
             } else {
-                _ = self.prepareMPVPictureInPictureRenderer(source: "\(source)-watchdog", activateLayer: true)
+                self.rendererPrimePictureInPictureFrames(reason: "\(source)-watchdog")
+                self.rendererActivatePictureInPictureLayer()
             }
         }
     }
@@ -9145,7 +9147,8 @@ extension PlayerViewController: PiPControllerDelegate {
             return
         }
         logPictureInPicture("delegate willStart possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive)")
-        let primed = prepareMPVPictureInPictureRenderer(source: "delegate-willStart", activateLayer: true)
+        let primed = rendererIsPictureInPicturePrimed()
+            || prepareMPVPictureInPictureRenderer(source: "delegate-willStart", activateLayer: false)
         logPictureInPicture("delegate willStart prepared primed=\(primed) subs={\(subtitlePictureInPictureDebugSnapshot())}")
     }
     func pipController(_ controller: PiPController, didStartPictureInPicture: Bool) {
@@ -9157,14 +9160,17 @@ extension PlayerViewController: PiPControllerDelegate {
         let primed = rendererIsPictureInPicturePrimed()
         logPictureInPicture("delegate didStart success=\(didStartPictureInPicture) possible=\(controller.isPictureInPicturePossible) active=\(controller.isPictureInPictureActive) primed=\(primed) renderer={\(rendererPictureInPictureDebugSnapshot())}")
         if didStartPictureInPicture {
+            mpvPiPStartedAt = Date()
             if primed {
                 rendererActivatePictureInPictureLayer()
             } else {
-                logPictureInPicture("delegate didStart found unprimed renderer; forcing PiP renderer prepare")
-                _ = prepareMPVPictureInPictureRenderer(source: "delegate-didStart-unprimed", activateLayer: true)
+                logPictureInPicture("delegate didStart found unprimed renderer; priming without reloading warm bridge")
+                rendererPrimePictureInPictureFrames(reason: "delegate-didStart-unprimed")
+                rendererActivatePictureInPictureLayer()
             }
             scheduleMPVPictureInPictureRendererWatchdog(source: "delegate-didStart")
         } else {
+            mpvPiPStartedAt = nil
             mpvPiPStartAttemptID += 1
             mpvAppExitPiPStartRequested = false
             rendererFinishPictureInPicture()
@@ -9185,6 +9191,7 @@ extension PlayerViewController: PiPControllerDelegate {
             updatePiPButtonVisibility()
             return
         }
+        mpvPiPStartedAt = nil
         logPictureInPicture("delegate didStop renderer={\(rendererPictureInPictureDebugSnapshot())}")
         mpvPiPStartAttemptID += 1
         mpvAppExitPiPStartRequested = false
@@ -9214,6 +9221,13 @@ extension PlayerViewController: PiPControllerDelegate {
         rendererPlay()
     }
     func pipControllerPause(_ controller: PiPController) {
+        if isMPVRenderer,
+           let startedAt = mpvPiPStartedAt,
+           Date().timeIntervalSince(startedAt) < 6 {
+            logPictureInPicture("ignoring early PiP pause callback during MPV handoff renderer={\(rendererPictureInPictureDebugSnapshot())}")
+            rendererUpdatePictureInPicturePlaybackState()
+            return
+        }
         rendererPausePlayback()
     }
     func pipController(_ controller: PiPController, skipByInterval interval: CMTime) {

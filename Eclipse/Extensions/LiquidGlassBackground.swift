@@ -31,14 +31,46 @@ extension View {
     
     @ViewBuilder
     private func oldBackground(cornerRadius: CGFloat, fallbackFill: Color, fallbackMaterial: Material) -> some View {
-        self
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(fallbackFill)
-                    .background(
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(fallbackMaterial)
-                    )
-            )
+        #if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            self
+                .background(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.17, green: 0.14, blue: 0.24).opacity(0.78),
+                                    Color(red: 0.08, green: 0.08, blue: 0.13).opacity(0.70)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        )
+                        .background(
+                            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                                .fill(fallbackMaterial)
+                        )
+                )
+        } else {
+            legacyBackground(cornerRadius: cornerRadius, fallbackFill: fallbackFill, fallbackMaterial: fallbackMaterial)
+        }
+        #else
+        legacyBackground(cornerRadius: cornerRadius, fallbackFill: fallbackFill, fallbackMaterial: fallbackMaterial)
+        #endif
+    }
+
+    private func legacyBackground(cornerRadius: CGFloat, fallbackFill: Color, fallbackMaterial: Material) -> some View {
+        self.background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(fallbackFill)
+                .background(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(fallbackMaterial)
+                )
+        )
     }
 }

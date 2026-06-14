@@ -93,10 +93,24 @@ struct HomeView: View {
             GlobalGradientBackground(scrollOffset: backgroundScrollOffset)
                 .ignoresSafeArea(.all)
             
-            Group {
-                theme.atmosphereStyle == .solid ? atmosphereColor : homeViewModel.ambientColor
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                LinearGradient(
+                    colors: [
+                        homeViewModel.ambientColor.opacity(0.22),
+                        .clear,
+                        atmosphereColor.opacity(0.14)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea(.all)
+                .blendMode(.screen)
+            } else {
+                Group {
+                    theme.atmosphereStyle == .solid ? atmosphereColor : homeViewModel.ambientColor
+                }
+                .ignoresSafeArea(.all)
             }
-            .ignoresSafeArea(.all)
             
             if homeViewModel.isLoading {
                 loadingView

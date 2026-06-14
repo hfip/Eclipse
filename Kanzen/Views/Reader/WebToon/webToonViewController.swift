@@ -31,6 +31,9 @@ private func kanzenReaderCanvasColor(for style: UIUserInterfaceStyle) -> UIColor
     case "auto":
         return style == .dark ? .black : .white
     default:
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return UIColor(red: 0.055, green: 0.050, blue: 0.090, alpha: 1)
+        }
         return .black
     }
 }
@@ -60,7 +63,8 @@ struct WebtoonView: UIViewControllerRepresentable {
         layout.fallbackHeightProvider = { [weak coordinator = context.coordinator] indexPath, width in
             coordinator?.estimatedHeight(for: indexPath.item, width: width) ?? max(320, width * Coordinator.defaultImageAspectRatio)
         }
-        collectionNode.backgroundColor = .black
+        let canvasColor = kanzenReaderCanvasColor(for: viewController.traitCollection.userInterfaceStyle)
+        collectionNode.backgroundColor = canvasColor
         collectionNode.dataSource = context.coordinator
         collectionNode.delegate = context.coordinator
         collectionNode.setTuningParameters(collectionNode.tuningParameters(for: .display), for: .minimum, rangeType: .display)
@@ -73,7 +77,7 @@ struct WebtoonView: UIViewControllerRepresentable {
         collectionNode.automaticallyManagesSubnodes = true
         collectionNode.shouldAnimateSizeChanges = false
         collectionNode.insetsLayoutMarginsFromSafeArea = false
-        collectionView.backgroundColor = .black
+        collectionView.backgroundColor = canvasColor
         collectionView.isPagingEnabled = false
         collectionView.bounces = false
         collectionView.alwaysBounceVertical = false
@@ -670,7 +674,7 @@ final class WebtoonTextureContainerView: UIView {
     init(layout: UICollectionViewLayout) {
         self.collectionNode = ASCollectionNode(collectionViewLayout: layout)
         super.init(frame: .zero)
-        backgroundColor = .black
+        backgroundColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
         collectionNode.view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(collectionNode.view)
         NSLayoutConstraint.activate([
@@ -731,13 +735,13 @@ private final class WebtoonTexturePageNode: ASCellNode {
         super.init()
         automaticallyManagesSubnodes = true
         shouldAnimateSizeChanges = false
-        backgroundColor = .black
+        backgroundColor = kanzenReaderCanvasColor(for: .dark)
 
-        imageNode.backgroundColor = .black
+        imageNode.backgroundColor = kanzenReaderCanvasColor(for: .dark)
         imageNode.contentMode = .scaleToFill
         imageNode.isUserInteractionEnabled = false
 
-        textNode.backgroundColor = .black
+        textNode.backgroundColor = kanzenReaderCanvasColor(for: .dark)
         textNode.maximumNumberOfLines = 0
 
         statusNode.attributedText = Self.statusText("Loading...")
@@ -1075,8 +1079,9 @@ final class WebtoonImageCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.backgroundColor = .black
-        backgroundColor = .black
+        let canvasColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        contentView.backgroundColor = canvasColor
+        backgroundColor = canvasColor
         pageView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(pageView)
         NSLayoutConstraint.activate([
@@ -1230,12 +1235,13 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func setup() {
-        backgroundColor = .black
+        let canvasColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        backgroundColor = canvasColor
         clipsToBounds = true
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFit
-        imageView.backgroundColor = .black
+        imageView.backgroundColor = canvasColor
         imageView.clipsToBounds = true
         imageView.isUserInteractionEnabled = false
         addSubview(imageView)
@@ -1251,7 +1257,7 @@ final class WebtoonPageView: UIView, UIGestureRecognizerDelegate {
         textLabel.numberOfLines = 0
         textLabel.font = .preferredFont(forTextStyle: .body)
         textLabel.textColor = UIColor.white.withAlphaComponent(0.9)
-        textLabel.backgroundColor = .black
+        textLabel.backgroundColor = canvasColor
         addSubview(textLabel)
 
         activityIndicator.translatesAutoresizingMaskIntoConstraints = false
@@ -2458,9 +2464,10 @@ final class KanzenZoomableTextureView: UIView, UIScrollViewDelegate, UIGestureRe
         self.layout = layout
         self.collectionNode = ASCollectionNode(collectionViewLayout: layout)
         super.init(frame: .zero)
-        backgroundColor = .black
+        let canvasColor = kanzenReaderCanvasColor(for: traitCollection.userInterfaceStyle)
+        backgroundColor = canvasColor
 
-        collectionNode.view.backgroundColor = .black
+        collectionNode.view.backgroundColor = canvasColor
         collectionNode.view.contentInsetAdjustmentBehavior = .never
         collectionNode.view.showsVerticalScrollIndicator = false
         collectionNode.view.showsHorizontalScrollIndicator = false
@@ -2716,9 +2723,10 @@ final class KanzenWebtoonPageNode: ASCellNode, KanzenReaderHeightQueryable, UICo
         super.init()
         automaticallyManagesSubnodes = true
         shouldAnimateSizeChanges = false
-        backgroundColor = .black
+        let canvasColor = kanzenReaderCanvasColor(for: .dark)
+        backgroundColor = canvasColor
 
-        imageNode.backgroundColor = .black
+        imageNode.backgroundColor = canvasColor
         imageNode.contentMode = .scaleToFill
         imageNode.shouldAnimateSizeChanges = false
 
