@@ -9503,7 +9503,7 @@ extension PlayerViewController: PiPControllerDelegate {
         }
     }
 
-    private func scheduleMPVBackgroundAudioFallback(source: String, delay: TimeInterval = 0.75, force: Bool = false) {
+    private func scheduleMPVBackgroundAudioFallback(source: String, delay: TimeInterval = 0.75, pendingChecksRemaining: Int = 4) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self,
                   !self.isVLCPlayer,
@@ -9513,9 +9513,9 @@ extension PlayerViewController: PiPControllerDelegate {
             }
             let active = self.pipController?.isPictureInPictureActive ?? false
             guard !active, !self.rendererIsPausedState() else { return }
-            if self.mpvAppExitPiPStartRequested && !force {
-                self.logPictureInPicture("MPV background fallback waiting for pending PiP source=\(source)")
-                self.scheduleMPVBackgroundAudioFallback(source: source, delay: 1.25, force: true)
+            if self.mpvAppExitPiPStartRequested, pendingChecksRemaining > 0 {
+                self.logPictureInPicture("MPV background fallback waiting for pending PiP source=\(source) remaining=\(pendingChecksRemaining)")
+                self.scheduleMPVBackgroundAudioFallback(source: source, delay: 0.75, pendingChecksRemaining: pendingChecksRemaining - 1)
                 return
             }
             self.logPictureInPicture("MPV background fallback pause source=\(source) active=\(active) requested=\(self.mpvAppExitPiPStartRequested) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")

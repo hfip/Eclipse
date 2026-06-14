@@ -124,6 +124,7 @@ struct MediaDetailView: View {
     @State private var detailTrailers: [TMDBVideo] = []
     @State private var isLoadingExperimentalExtras = false
     @State private var traktComments: [TraktCommentReview] = []
+    @State private var traktRating: TraktMediaRating?
     @State private var isLoadingTraktComments = false
     @State private var hasLoadedContent = false
     @State private var detailLoadTask: Task<Void, Never>?
@@ -174,7 +175,9 @@ struct MediaDetailView: View {
 #endif
     }
 
-    private var scrollOffsetUpdateThreshold: CGFloat { 8 }
+    private var scrollOffsetUpdateThreshold: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.scrollOffsetThreshold : 8
+    }
 
     private var hasActiveSources: Bool {
         !serviceManager.activeServices.isEmpty ||
@@ -279,20 +282,6 @@ struct MediaDetailView: View {
             detailBackground
                 .ignoresSafeArea(.all)
 
-            if ExperimentalFeatureState.isEnabledAtLaunch {
-                LinearGradient(
-                    colors: [
-                        ambientColor.opacity(0.22),
-                        .clear,
-                        atmosphereColor.opacity(0.12)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea(.all)
-                .blendMode(.screen)
-            }
-            
             if isLoading {
                 let _ = Logger.shared.log("MediaDetailView body branch loading: id=\(searchResult.id)", type: "CrashProbe")
                 loadingView
@@ -751,9 +740,9 @@ struct MediaDetailView: View {
         LinearGradient(
             gradient: Gradient(stops: [
                 .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.0 : 0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.35 : 0.24), location: 0.18),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.78 : 0.56), location: 0.58),
-                .init(color: atmosphereColor.opacity(1), location: 1.0)
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.25 : 0.16), location: 0.20),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.62 : 0.42), location: 0.62),
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.70 : 1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
@@ -810,19 +799,7 @@ struct MediaDetailView: View {
                         .shadow(color: .black.opacity(0.65), radius: 6, x: 0, y: 3)
                 }
 
-                if let voteAverage = detailVoteAverage, voteAverage > 0 {
-                    HStack(spacing: 6) {
-                        Image(systemName: "star.fill")
-                            .font(.caption)
-                            .foregroundColor(.yellow)
-                        Text(String(format: "%.1f", voteAverage))
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .applyLiquidGlassBackground(cornerRadius: 14)
-                }
+                detailRatingChips
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -866,6 +843,55 @@ struct MediaDetailView: View {
 
     private var detailVoteAverage: Double? {
         searchResult.isMovie ? (movieDetail?.voteAverage ?? searchResult.voteAverage) : (tvShowDetail?.voteAverage ?? searchResult.voteAverage)
+    }
+
+    @ViewBuilder
+    private var detailRatingChips: some View {
+        let tmdbRating = detailVoteAverage
+        if (tmdbRating ?? 0) > 0 || traktRating != nil || (isAnimeShow && animeRating?.source == .myAnimeList) {
+            HStack(spacing: 8) {
+                if let tmdbRating, tmdbRating > 0 {
+                    ratingChip(label: "TMDB", value: String(format: "%.1f", tmdbRating), tint: .cyan)
+                }
+
+                if let traktRating {
+                    ratingChip(label: "Trakt", value: traktRating.displayText, tint: .red)
+                }
+
+                if isAnimeShow, let animeRating, animeRating.source == .myAnimeList {
+                    ratingChip(label: "MAL", value: String(format: "%.1f", animeRating.value), tint: .blue)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.74)
+            .padding(.top, 1)
+        }
+    }
+
+    private func ratingChip(label: String, value: String, tint: Color) -> some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.system(size: 11, weight: .heavy))
+                .foregroundColor(tint)
+            Text(value)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.22))
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.70)
+                )
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.white.opacity(0.16), lineWidth: 0.7)
+        )
     }
     
     @ViewBuilder
@@ -1105,11 +1131,15 @@ struct MediaDetailView: View {
             synopsisSection
         case .details:
             if searchResult.isMovie {
-                MovieDetailsSection(movie: movieDetail)
+                MovieDetailsSection(
+                    movie: movieDetail,
+                    compactHeroMetadata: ExperimentalFeatureState.isEnabledAtLaunch
+                )
             } else {
                 TVShowDetailsSection(
                     tvShow: tvShowDetail,
-                    ratingOverride: isAnimeShow ? animeRating?.displayText : nil
+                    ratingOverride: isAnimeShow ? animeRating?.displayText : nil,
+                    compactHeroMetadata: ExperimentalFeatureState.isEnabledAtLaunch
                 )
             }
         case .cast:
@@ -2225,26 +2255,30 @@ struct MediaDetailView: View {
     private func startTraktFeatureLoad() {
         traktFeatureLoadTask?.cancel()
 
-        let hasTraktAccount = trackerManager.trackerState.getAccount(for: .trakt) != nil
-        let shouldLoadComments = trackerManager.trackerState.traktCommentsEnabled && hasTraktAccount
+        let shouldLoadComments = trackerManager.trackerState.traktCommentsEnabled
 
-        guard shouldLoadComments else {
+        guard shouldLoadComments || traktRating == nil else {
             traktComments = []
             isLoadingTraktComments = false
             return
         }
 
-        isLoadingTraktComments = traktComments.isEmpty
+        isLoadingTraktComments = shouldLoadComments && traktComments.isEmpty
 
         let tmdbId = searchResult.id
         let isMovie = searchResult.isMovie
         traktFeatureLoadTask = Task {
-            let loadedComments: [TraktCommentReview]
-            loadedComments = await TrackerManager.shared.fetchTraktComments(tmdbId: tmdbId, isMovie: isMovie)
+            async let loadedComments: [TraktCommentReview] = shouldLoadComments
+                ? TrackerManager.shared.fetchTraktComments(tmdbId: tmdbId, isMovie: isMovie)
+                : []
+            async let loadedRating: TraktMediaRating? = TrackerManager.shared.fetchTraktRating(tmdbId: tmdbId, isMovie: isMovie)
 
             guard !Task.isCancelled else { return }
+            let comments = await loadedComments
+            let rating = await loadedRating
             await MainActor.run {
-                self.traktComments = loadedComments
+                self.traktComments = comments
+                self.traktRating = rating
                 self.isLoadingTraktComments = false
                 self.refreshDetailContentLayout(reason: "trakt-features")
             }
@@ -2398,6 +2432,7 @@ struct MediaDetailView: View {
         animeSpecialEntries = []
         isLoadingAnimeSpecials = false
         traktComments = []
+        traktRating = nil
         detailStills = []
         detailTrailers = []
         isLoadingTraktComments = false
@@ -2550,11 +2585,7 @@ struct MediaDetailView: View {
                     }
                     
                     let resolvedAnimeRating: AnimeMetadataRating?
-                    if detectedAsAnime && (performanceModeEnabled || skipAniListTraversal) {
-                        resolvedAnimeRating = detail.voteAverage > 0
-                            ? AnimeMetadataRating(value: detail.voteAverage, source: .tmdb)
-                            : nil
-                    } else if detectedAsAnime {
+                    if detectedAsAnime {
                         resolvedAnimeRating = await AniListService.shared.preferredAnimeRating(
                             title: detail.name,
                             tmdbShowId: detail.id,

@@ -137,6 +137,15 @@ struct TraktCommentReview: Identifiable, Codable, Equatable {
     let isReview: Bool
 }
 
+struct TraktMediaRating: Codable, Equatable {
+    let rating: Double
+    let votes: Int
+
+    var displayText: String {
+        String(format: "%.1f", rating)
+    }
+}
+
 // AniList Models
 struct AniListAuthResponse: Codable {
     let accessToken: String

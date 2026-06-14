@@ -13,9 +13,9 @@ import Kingfisher
 struct NetworkSectionWidget: View {
     let widgetData: [String: [TMDBSearchResult]]
     let tmdbService: TMDBService
+    var metrics: ExperimentalMediaDesignMetrics = .current
     
     private let networks = WidgetNetwork.curated
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
     
     var body: some View {
         let availableNetworks = networks.filter { network in
@@ -60,8 +60,10 @@ struct NetworkSectionWidget: View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
         let posterWidth: CGFloat = isExperimental ? (isIPad ? 124 : 96) : (isIPad ? 100 : 80)
         let posterHeight: CGFloat = isExperimental ? (isIPad ? 178 : 142) : (isIPad ? 150 : 120)
-        let cardWidth: CGFloat = isExperimental ? (isIPad ? 430 : 330) : (isIPad ? 340 : 260)
-        let cardHeight: CGFloat = isExperimental ? (isIPad ? 220 : 178) : (isIPad ? 190 : 160)
+        let availableWidth = max(UIScreen.main.bounds.width - 44, 280)
+        let maxCardWidth: CGFloat = isIPad ? 430 : 318
+        let cardWidth: CGFloat = isExperimental ? min(maxCardWidth, availableWidth) : (isIPad ? 340 : 260)
+        let cardHeight: CGFloat = isExperimental ? (isIPad ? 214 : 168) : (isIPad ? 190 : 160)
         let radius = isExperimental ? metrics.cardRadius : 16
 
         ZStack(alignment: .leading) {
@@ -116,9 +118,9 @@ struct NetworkSectionWidget: View {
 struct GenreSectionWidget: View {
     let widgetData: [String: [TMDBSearchResult]]
     let tmdbService: TMDBService
+    var metrics: ExperimentalMediaDesignMetrics = .current
     
     private let genres = WidgetGenre.curated
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
     private var columns: [GridItem] {
         if isIPad {
             return [
@@ -197,7 +199,9 @@ struct GenreSectionWidget: View {
                 .fontWeight(.bold)
                 .foregroundStyle(.white)
                 .lineLimit(1)
+                .minimumScaleFactor(0.75)
                 .padding(.trailing, isExperimental ? 18 : 14)
+                .layoutPriority(1)
         }
         .frame(maxWidth: .infinity)
         .frame(height: CGFloat(isExperimental ? 100 : 80) * iPadScale)
@@ -224,9 +228,9 @@ struct GenreSectionWidget: View {
 struct CompanySectionWidget: View {
     let widgetData: [String: [TMDBSearchResult]]
     let tmdbService: TMDBService
+    var metrics: ExperimentalMediaDesignMetrics = .current
     
     private let companies = WidgetCompany.curated
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
     private var columns: [GridItem] {
         if isIPad {
             return [
@@ -302,6 +306,9 @@ struct CompanySectionWidget: View {
                 .font(isExperimental ? .system(size: isIPad ? 28 : 22, weight: .heavy) : (isIPad ? .title3 : .headline))
                 .fontWeight(.heavy)
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .padding(.horizontal, 14)
                 .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 2)
         }
         .frame(maxWidth: .infinity)
@@ -322,7 +329,7 @@ struct RankedListWidget: View {
     let title: String
     let items: [TMDBSearchResult]
     let tmdbService: TMDBService
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
+    var metrics: ExperimentalMediaDesignMetrics = .current
     
     var body: some View {
         if !items.isEmpty {
@@ -405,7 +412,7 @@ struct RankedListWidget: View {
             .padding(.top, 10)
             .padding(.bottom, 14)
         }
-        .frame(width: isExperimental ? (isIPad ? 420 : 330) : (isIPad ? 360 : 280))
+        .frame(width: isExperimental ? min(CGFloat(isIPad ? 420 : 318), max(UIScreen.main.bounds.width - 44, 280)) : (isIPad ? 360 : 280))
         .background(
             LinearGradient(
                 colors: isExperimental
@@ -430,7 +437,7 @@ struct FeaturedSpotlightWidget: View {
     let widgetData: [String: [TMDBSearchResult]]
     let genreName: String
     let tmdbService: TMDBService
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
+    var metrics: ExperimentalMediaDesignMetrics = .current
     
     var body: some View {
         let items = widgetData["featured"] ?? []
@@ -472,7 +479,7 @@ struct FeaturedSpotlightWidget: View {
     @ViewBuilder
     private func spotlightBanner(spotlight: TMDBSearchResult) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let bannerHeight: CGFloat = isExperimental ? (isIPad ? 360 : 286) : (isIPad ? 280 : 200)
+        let bannerHeight: CGFloat = isExperimental ? (isIPad ? 330 : 248) : (isIPad ? 280 : 200)
         let radius = isExperimental ? metrics.cardRadius + 4 : 16
 
         ZStack(alignment: isExperimental ? .center : .bottomLeading) {
@@ -545,8 +552,8 @@ struct FeaturedSpotlightWidget: View {
     @ViewBuilder
     private func spotlightSmallCard(item: TMDBSearchResult) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let posterWidth = CGFloat(isExperimental ? 198 : 120) * iPadScale
-        let posterHeight = CGFloat(isExperimental ? 112 : 180) * iPadScale
+        let posterWidth = CGFloat(isExperimental ? 190 : 120) * iPadScale
+        let posterHeight = CGFloat(isExperimental ? 107 : 180) * iPadScale
         let posterShadowRadius: CGFloat = isIPad ? 3 : 6
         let radius = isExperimental ? metrics.cardRadius : 12
 

@@ -9,6 +9,7 @@ import SwiftUI
 
 struct MovieDetailsSection: View {
     let movie: TMDBMovieDetail?
+    var compactHeroMetadata: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -25,15 +26,15 @@ struct MovieDetailsSection: View {
                         DetailRow(title: "Runtime", value: movie.runtimeFormatted)
                     }
                     
-                    if !movie.genres.isEmpty {
+                    if !compactHeroMetadata && !movie.genres.isEmpty {
                         DetailRow(title: "Genres", value: movie.genres.map { $0.name }.joined(separator: ", "))
                     }
                     
-                    if let releaseDate = movie.releaseDate, !releaseDate.isEmpty {
+                    if !compactHeroMetadata, let releaseDate = movie.releaseDate, !releaseDate.isEmpty {
                         DetailRow(title: "Release Date", value: releaseDate)
                     }
                     
-                    if movie.voteAverage > 0 {
+                    if !compactHeroMetadata && movie.voteAverage > 0 {
                         DetailRow(title: "Rating", value: String(format: "%.1f/10", movie.voteAverage))
                     }
                     

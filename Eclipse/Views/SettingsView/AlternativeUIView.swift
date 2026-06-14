@@ -16,6 +16,7 @@ struct AlternativeUIView: View {
     @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
     @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
     @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
+    @AppStorage(ExperimentalMultiGradientPalette.storageKey) private var experimentalMultiGradientPalette = ExperimentalMultiGradientPalette.defaultValue.rawValue
     
     @StateObject private var accentColorManager = AccentColorManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
@@ -133,10 +134,17 @@ struct AlternativeUIView: View {
                     selection: $experimentalHomeCardShape,
                     values: ExperimentalHomeCardShape.allCases.map { ($0.rawValue, $0.displayName) }
                 )
+
+                experimentalDesignPickerRow(
+                    title: "Multi Gradient Palette",
+                    description: "Controls the regular background once the hero color fades out.",
+                    selection: $experimentalMultiGradientPalette,
+                    values: ExperimentalMultiGradientPalette.allCases.map { ($0.rawValue, $0.displayName) }
+                )
             } header: {
                 Text("Experimental Design")
             } footer: {
-                Text("Applies to the Experimental UI only. Standard UI and the native tab bar stay unchanged.")
+                Text("Applies to the Experimental UI only. Hero Bleed controls poster color wash; Multi Gradient Palette controls the background that takes over while scrolling.")
             }
 
             Section {

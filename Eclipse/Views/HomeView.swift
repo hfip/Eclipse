@@ -87,7 +87,7 @@ struct HomeView: View {
     }
 
     private var scrollOffsetUpdateThreshold: CGFloat {
-        8
+        ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.scrollOffsetThreshold : 8
     }
     
     var body: some View {
@@ -295,10 +295,10 @@ struct HomeView: View {
     private var heroGradientOverlay: some View {
         LinearGradient(
             gradient: Gradient(stops: [
-                .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.16 : 0.35), location: 0.18),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.42 : 0.72), location: 0.54),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.86 : 1), location: 1.0)
+            .init(color: ambientColor.opacity(0.0), location: 0.0),
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.10 : 0.35), location: 0.14),
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.34 : 0.72), location: 0.58),
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.66 : 1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
@@ -560,26 +560,30 @@ struct HomeView: View {
                         
                         MediaSection(
                             title: displayTitle,
-                            items: displayItems
+                            items: displayItems,
+                            metrics: designMetrics
                         )
                     }
                     
                 case .network:
                     NetworkSectionWidget(
                         widgetData: homeViewModel.widgetData,
-                        tmdbService: tmdbService
+                        tmdbService: tmdbService,
+                        metrics: designMetrics
                     )
                     
                 case .genre:
                     GenreSectionWidget(
                         widgetData: homeViewModel.widgetData,
-                        tmdbService: tmdbService
+                        tmdbService: tmdbService,
+                        metrics: designMetrics
                     )
                     
                 case .company:
                     CompanySectionWidget(
                         widgetData: homeViewModel.widgetData,
-                        tmdbService: tmdbService
+                        tmdbService: tmdbService,
+                        metrics: designMetrics
                     )
                     
                 case .ranked:
@@ -590,18 +594,20 @@ struct HomeView: View {
                         catalogId: catalog.id,
                         title: catalog.name,
                         items: Array(items.prefix(10)),
-                        tmdbService: tmdbService
+                        tmdbService: tmdbService,
+                        metrics: designMetrics
                     )
                     
                 case .featured:
                     FeaturedSpotlightWidget(
                         widgetData: homeViewModel.widgetData,
                         genreName: homeViewModel.featuredGenreName,
-                        tmdbService: tmdbService
+                        tmdbService: tmdbService,
+                        metrics: designMetrics
                     )
                 }
                 
-                if index < catalogs.count - 1 {
+                if index < catalogs.count - 1 && !ExperimentalFeatureState.isEnabledAtLaunch {
                     SectionDivider()
                 }
             }
@@ -842,6 +848,7 @@ struct HomeView: View {
 struct MediaSection: View {
     let title: String
     let items: [TMDBSearchResult]
+    var metrics: ExperimentalMediaDesignMetrics = .current
     
     var gap: Double { isTvOS ? 50.0 : (isIPad ? 28.0 : 20.0) }
     
@@ -850,7 +857,8 @@ struct MediaSection: View {
             ExperimentalMediaShelf(
                 title: title,
                 items: items,
-                preferredStyle: title.localizedCaseInsensitiveContains("anime") ? .poster : .automatic
+                preferredStyle: title.localizedCaseInsensitiveContains("anime") ? .poster : .automatic,
+                metrics: metrics
             )
         } else {
             legacySection
@@ -905,9 +913,9 @@ struct ExperimentalMediaShelf: View {
     let title: String
     let items: [TMDBSearchResult]
     let preferredStyle: ExperimentalMediaShelfStyle
+    let metrics: ExperimentalMediaDesignMetrics
 
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
-    private var gap: CGFloat { isIPad ? 24 : 28 }
+    private var gap: CGFloat { isIPad ? 22 : 20 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: isIPad ? 18 : 16) {
@@ -932,7 +940,8 @@ struct ExperimentalMediaShelf: View {
                         ExperimentalMediaCard(
                             result: item,
                             heroID: "experimental-home-\(title)-\(index)-\(item.stableIdentity)",
-                            preferredStyle: preferredStyle
+                            preferredStyle: preferredStyle,
+                            metrics: metrics
                         )
                     }
                 }
@@ -950,10 +959,9 @@ struct ExperimentalMediaCard: View {
     let result: TMDBSearchResult
     let heroID: String
     let preferredStyle: ExperimentalMediaShelfStyle
+    let metrics: ExperimentalMediaDesignMetrics
 
     @Environment(\.heroNamespace) private var heroNamespace
-
-    private var metrics: ExperimentalMediaDesignMetrics { .current }
 
     private var resolvedStyle: ExperimentalMediaShelfStyle {
         switch metrics.cardShape {

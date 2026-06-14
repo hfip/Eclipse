@@ -175,6 +175,7 @@ final class TrackerManager: NSObject, ObservableObject {
     private let traktContinueWatchingCacheQueue = DispatchQueue(label: "app.eclipse.soupy.traktContinueWatchingCache")
     private let traktContinueWatchingCacheTTL: TimeInterval = 90
     private var traktCommentsCache: [String: (fetchedAt: Date, items: [TraktCommentReview])] = [:]
+    private var traktRatingsCache: [String: (fetchedAt: Date, rating: TraktMediaRating)] = [:]
     private var traktRelatedCache: [String: (fetchedAt: Date, items: [TMDBSearchResult])] = [:]
     private let traktFeatureCacheQueue = DispatchQueue(label: "app.eclipse.soupy.traktFeatureCache")
     private let traktFeatureCacheTTL: TimeInterval = 10 * 60
@@ -2283,6 +2284,11 @@ final class TrackerManager: NSObject, ObservableObject {
         let name: String?
     }
 
+    private struct TraktRatingResponse: Decodable {
+        let rating: Double?
+        let votes: Int?
+    }
+
     private struct TraktEpisode: Decodable {
         let title: String?
         let season: Int
@@ -2657,8 +2663,7 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     func fetchTraktComments(tmdbId: Int, isMovie: Bool) async -> [TraktCommentReview] {
-        guard trackerState.traktCommentsEnabled,
-              let account = trackerState.getAccount(for: .trakt) else {
+        guard trackerState.traktCommentsEnabled else {
             return []
         }
 
@@ -2675,8 +2680,7 @@ final class TrackerManager: NSObject, ObservableObject {
         let endpoint = isMovie ? "movies" : "shows"
         do {
             let data = try await fetchTraktData(
-                path: "\(endpoint)/\(traktId)/comments/likes?page=1&limit=25",
-                account: account
+                path: "\(endpoint)/\(traktId)/comments/likes?page=1&limit=25"
             )
             let decoded = try JSONDecoder().decode([TraktCommentResponse].self, from: data)
             let comments = decoded.compactMap { response -> TraktCommentReview? in
@@ -2702,6 +2706,31 @@ final class TrackerManager: NSObject, ObservableObject {
         } catch {
             Logger.shared.log("Failed to load Trakt comments for \(cacheKey): \(error.localizedDescription)", type: "Error")
             return []
+        }
+    }
+
+    func fetchTraktRating(tmdbId: Int, isMovie: Bool) async -> TraktMediaRating? {
+        let cacheKey = "\(isMovie ? "movie" : "show")|\(tmdbId)"
+        if let cached = cachedTraktRating(key: cacheKey) {
+            return cached
+        }
+
+        let mediaType: TraktMediaType = isMovie ? .movie : .show
+        guard let traktId = await getTraktIdFromTmdbId(tmdbId, mediaType: mediaType) else {
+            return nil
+        }
+
+        let endpoint = isMovie ? "movies" : "shows"
+        do {
+            let data = try await fetchTraktData(path: "\(endpoint)/\(traktId)/ratings")
+            let decoded = try JSONDecoder().decode(TraktRatingResponse.self, from: data)
+            guard let value = decoded.rating, value > 0 else { return nil }
+            let rating = TraktMediaRating(rating: min(max(value, 0), 10), votes: decoded.votes ?? 0)
+            storeTraktRating(rating, key: cacheKey)
+            return rating
+        } catch {
+            Logger.shared.log("Failed to load Trakt rating for \(cacheKey): \(error.localizedDescription)", type: "Error")
+            return nil
         }
     }
 
@@ -2915,6 +2944,23 @@ final class TrackerManager: NSObject, ObservableObject {
     private func storeTraktComments(_ items: [TraktCommentReview], key: String) {
         traktFeatureCacheQueue.sync {
             traktCommentsCache[key] = (Date(), items)
+        }
+    }
+
+    private func cachedTraktRating(key: String) -> TraktMediaRating? {
+        let now = Date()
+        return traktFeatureCacheQueue.sync {
+            guard let cache = traktRatingsCache[key],
+                  now.timeIntervalSince(cache.fetchedAt) < traktFeatureCacheTTL else {
+                return nil
+            }
+            return cache.rating
+        }
+    }
+
+    private func storeTraktRating(_ rating: TraktMediaRating, key: String) {
+        traktFeatureCacheQueue.sync {
+            traktRatingsCache[key] = (Date(), rating)
         }
     }
 

@@ -99,6 +99,33 @@ enum ExperimentalHomeCardShape: String, CaseIterable, Identifiable {
     }
 }
 
+enum ExperimentalMultiGradientPalette: String, CaseIterable, Identifiable {
+    static let storageKey = "experimentalMultiGradientPalette"
+
+    case eclipse
+    case nocturne
+    case velvet
+    case auroraMuted
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .eclipse: return "Eclipse"
+        case .nocturne: return "Nocturne"
+        case .velvet: return "Velvet"
+        case .auroraMuted: return "Muted Aurora"
+        }
+    }
+
+    static var defaultValue: ExperimentalMultiGradientPalette { .eclipse }
+
+    static var current: ExperimentalMultiGradientPalette {
+        let rawValue = UserDefaults.standard.string(forKey: storageKey)
+        return ExperimentalMultiGradientPalette(rawValue: rawValue ?? "") ?? defaultValue
+    }
+}
+
 struct ExperimentalMediaDesignMetrics {
     let preset: ExperimentalMediaDesignPreset
     let heroBleedLevel: ExperimentalHeroBleedLevel
@@ -122,18 +149,18 @@ struct ExperimentalMediaDesignMetrics {
 
     var heroBleedDistance: CGFloat {
         switch preset {
-        case .cinematic: return 520
-        case .balanced: return 420
-        case .compact: return 320
+        case .cinematic: return 420
+        case .balanced: return 340
+        case .compact: return 260
         }
     }
 
     var heroWashStrength: Double {
         let base: Double
         switch preset {
-        case .cinematic: base = 0.92
-        case .balanced: base = 0.76
-        case .compact: base = 0.62
+        case .cinematic: base = 0.82
+        case .balanced: base = 0.68
+        case .compact: base = 0.54
         }
         return base * heroBleedLevel.strengthMultiplier
     }
@@ -148,9 +175,9 @@ struct ExperimentalMediaDesignMetrics {
 
     var sectionSpacing: CGFloat {
         switch preset {
-        case .cinematic: return 42
-        case .balanced: return 32
-        case .compact: return 24
+        case .cinematic: return 28
+        case .balanced: return 22
+        case .compact: return 18
         }
     }
 
@@ -172,9 +199,17 @@ struct ExperimentalMediaDesignMetrics {
 
     var heroBottomFadeHeight: CGFloat {
         switch preset {
-        case .cinematic: return 360
-        case .balanced: return 300
-        case .compact: return 240
+        case .cinematic: return 420
+        case .balanced: return 340
+        case .compact: return 280
+        }
+    }
+
+    var scrollOffsetThreshold: CGFloat {
+        switch preset {
+        case .cinematic: return 18
+        case .balanced: return 20
+        case .compact: return 24
         }
     }
 
@@ -213,9 +248,9 @@ struct ExperimentalMediaDesignMetrics {
             }
         }
         switch preset {
-        case .cinematic: return CGSize(width: 198, height: 112)
-        case .balanced: return CGSize(width: 184, height: 104)
-        case .compact: return CGSize(width: 168, height: 95)
+        case .cinematic: return CGSize(width: 190, height: 107)
+        case .balanced: return CGSize(width: 178, height: 100)
+        case .compact: return CGSize(width: 164, height: 92)
         }
     }
 
@@ -228,9 +263,9 @@ struct ExperimentalMediaDesignMetrics {
             }
         }
         switch preset {
-        case .cinematic: return CGSize(width: 132, height: 198)
-        case .balanced: return CGSize(width: 120, height: 180)
-        case .compact: return CGSize(width: 108, height: 162)
+        case .cinematic: return CGSize(width: 126, height: 189)
+        case .balanced: return CGSize(width: 116, height: 174)
+        case .compact: return CGSize(width: 106, height: 159)
         }
     }
 
@@ -385,41 +420,35 @@ struct HeroBleedGradientBackground: View {
 
     @ViewBuilder
     private var baseBackground: some View {
-        if style == .solid {
-            dominantColor
-        } else {
-            GlobalGradientBackground(
-                overrideColor: style.isMultiGradient ? dominantColor : nil,
-                scrollOffset: scrollOffset
-            )
-        }
+        GlobalGradientBackground(scrollOffset: scrollOffset)
     }
 
     var body: some View {
         GeometryReader { geo in
-            let bleedHeight = max(heroHeight + fadeDistance, geo.size.height * 0.92)
+            let bleedHeight = max(heroHeight + fadeDistance, geo.size.height * 0.72)
+            let safeStrength = min(max(activeStrength, 0), 1.35)
 
             ZStack(alignment: .top) {
                 baseBackground
 
                 LinearGradient(
                     stops: [
-                        .init(color: dominantColor.opacity(0.88 * activeStrength), location: 0.00),
-                        .init(color: dominantColor.opacity(0.74 * activeStrength), location: 0.24),
-                        .init(color: dominantColor.opacity(0.48 * activeStrength), location: 0.52),
-                        .init(color: dominantColor.opacity(0.18 * activeStrength), location: 0.78),
+                        .init(color: dominantColor.opacity(0.70 * safeStrength), location: 0.00),
+                        .init(color: dominantColor.opacity(0.54 * safeStrength), location: 0.28),
+                        .init(color: dominantColor.opacity(0.28 * safeStrength), location: 0.58),
+                        .init(color: dominantColor.opacity(0.08 * safeStrength), location: 0.86),
                         .init(color: .clear, location: 1.00)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
                 .frame(height: bleedHeight)
-                .offset(y: -scrollOffset * 0.18)
+                .offset(y: -scrollOffset * 0.08)
 
                 RadialGradient(
                     colors: [
-                        dominantColor.opacity(0.34 * activeStrength),
-                        dominantColor.opacity(0.12 * activeStrength),
+                        dominantColor.opacity(0.26 * safeStrength),
+                        dominantColor.opacity(0.10 * safeStrength),
                         .clear
                     ],
                     center: UnitPoint(x: 0.5, y: 0.18),
@@ -448,12 +477,17 @@ struct HeroBleedGradientBackground: View {
 #if !os(tvOS)
 struct ExperimentalGradientBackground: View {
     @ObservedObject private var theme = EclipseTheme.shared
+    @AppStorage(ExperimentalMultiGradientPalette.storageKey) private var multiGradientPaletteRaw = ExperimentalMultiGradientPalette.defaultValue.rawValue
     var dominantColor: Color? = nil
     var scrollOffset: CGFloat = 0
     var style: AtmosphereStyle = .multiGradient
 
     private var accent: Color {
         dominantColor ?? Color(red: 0.25, green: 0.21, blue: 0.34)
+    }
+
+    private var palette: ExperimentalMultiGradientPalette {
+        ExperimentalMultiGradientPalette(rawValue: multiGradientPaletteRaw) ?? .defaultValue
     }
 
     private var resolvedStyle: AtmosphereStyle {
@@ -479,13 +513,40 @@ struct ExperimentalGradientBackground: View {
                 .init(color: Color(red: 0.08, green: 0.06, blue: 0.09), location: 1.00)
             ]
         case .multiGradient, .gradient, .solid:
-            return [
-                .init(color: Color(red: 0.060, green: 0.056, blue: 0.078), location: 0.00),
-                .init(color: Color(red: 0.086, green: 0.076, blue: 0.112), location: 0.22),
-                .init(color: Color(red: 0.150, green: 0.118, blue: 0.190), location: 0.48),
-                .init(color: Color(red: 0.155, green: 0.096, blue: 0.126), location: 0.72),
-                .init(color: Color(red: 0.070, green: 0.060, blue: 0.084), location: 1.00)
-            ]
+            switch palette {
+            case .eclipse:
+                return [
+                    .init(color: Color(red: 0.070, green: 0.062, blue: 0.090), location: 0.00),
+                    .init(color: Color(red: 0.105, green: 0.086, blue: 0.130), location: 0.24),
+                    .init(color: Color(red: 0.165, green: 0.126, blue: 0.188), location: 0.50),
+                    .init(color: Color(red: 0.145, green: 0.094, blue: 0.124), location: 0.74),
+                    .init(color: Color(red: 0.074, green: 0.064, blue: 0.088), location: 1.00)
+                ]
+            case .nocturne:
+                return [
+                    .init(color: Color(red: 0.052, green: 0.058, blue: 0.078), location: 0.00),
+                    .init(color: Color(red: 0.078, green: 0.100, blue: 0.126), location: 0.24),
+                    .init(color: Color(red: 0.114, green: 0.118, blue: 0.166), location: 0.50),
+                    .init(color: Color(red: 0.118, green: 0.084, blue: 0.126), location: 0.74),
+                    .init(color: Color(red: 0.058, green: 0.056, blue: 0.074), location: 1.00)
+                ]
+            case .velvet:
+                return [
+                    .init(color: Color(red: 0.080, green: 0.058, blue: 0.082), location: 0.00),
+                    .init(color: Color(red: 0.132, green: 0.082, blue: 0.112), location: 0.24),
+                    .init(color: Color(red: 0.170, green: 0.112, blue: 0.158), location: 0.50),
+                    .init(color: Color(red: 0.112, green: 0.088, blue: 0.150), location: 0.74),
+                    .init(color: Color(red: 0.068, green: 0.058, blue: 0.080), location: 1.00)
+                ]
+            case .auroraMuted:
+                return [
+                    .init(color: Color(red: 0.052, green: 0.076, blue: 0.086), location: 0.00),
+                    .init(color: Color(red: 0.070, green: 0.124, blue: 0.126), location: 0.24),
+                    .init(color: Color(red: 0.112, green: 0.112, blue: 0.168), location: 0.50),
+                    .init(color: Color(red: 0.126, green: 0.092, blue: 0.136), location: 0.74),
+                    .init(color: Color(red: 0.058, green: 0.060, blue: 0.078), location: 1.00)
+                ]
+            }
         }
     }
 
@@ -506,12 +567,33 @@ struct ExperimentalGradientBackground: View {
                 .init(color: Color(red: 0.07, green: 0.62, blue: 0.72).opacity(0.12), location: 0.95)
             ]
         case .multiGradient, .gradient, .solid:
-            return [
-                .init(color: Color(red: 0.04, green: 0.28, blue: 0.30).opacity(0.22), location: 0.04),
-                .init(color: Color(red: 0.24, green: 0.19, blue: 0.38).opacity(0.21), location: 0.34),
-                .init(color: Color(red: 0.36, green: 0.13, blue: 0.21).opacity(0.16), location: 0.68),
-                .init(color: Color(red: 0.42, green: 0.26, blue: 0.14).opacity(0.10), location: 0.96)
-            ]
+            switch palette {
+            case .eclipse:
+                return [
+                    .init(color: Color(red: 0.06, green: 0.30, blue: 0.30).opacity(0.18), location: 0.04),
+                    .init(color: Color(red: 0.28, green: 0.20, blue: 0.40).opacity(0.18), location: 0.34),
+                    .init(color: Color(red: 0.38, green: 0.14, blue: 0.22).opacity(0.14), location: 0.68),
+                    .init(color: Color(red: 0.48, green: 0.30, blue: 0.16).opacity(0.10), location: 0.96)
+                ]
+            case .nocturne:
+                return [
+                    .init(color: Color(red: 0.08, green: 0.26, blue: 0.34).opacity(0.16), location: 0.04),
+                    .init(color: Color(red: 0.18, green: 0.22, blue: 0.42).opacity(0.16), location: 0.38),
+                    .init(color: Color(red: 0.28, green: 0.16, blue: 0.30).opacity(0.12), location: 0.72)
+                ]
+            case .velvet:
+                return [
+                    .init(color: Color(red: 0.38, green: 0.14, blue: 0.24).opacity(0.18), location: 0.04),
+                    .init(color: Color(red: 0.30, green: 0.18, blue: 0.42).opacity(0.16), location: 0.40),
+                    .init(color: Color(red: 0.54, green: 0.28, blue: 0.16).opacity(0.10), location: 0.88)
+                ]
+            case .auroraMuted:
+                return [
+                    .init(color: Color(red: 0.08, green: 0.42, blue: 0.36).opacity(0.16), location: 0.04),
+                    .init(color: Color(red: 0.24, green: 0.28, blue: 0.50).opacity(0.16), location: 0.44),
+                    .init(color: Color(red: 0.46, green: 0.22, blue: 0.38).opacity(0.11), location: 0.88)
+                ]
+            }
         }
     }
 
@@ -535,11 +617,11 @@ struct ExperimentalGradientBackground: View {
             ]
         case .multiGradient, .gradient, .solid:
             return [
-                Color(red: 0.07, green: 0.38, blue: 0.39).opacity(0.16),
-                accent.opacity(0.24),
-                Color(red: 0.40, green: 0.15, blue: 0.26).opacity(0.17),
-                Color(red: 0.26, green: 0.23, blue: 0.47).opacity(0.22),
-                Color(red: 0.07, green: 0.38, blue: 0.39).opacity(0.16)
+                Color(red: 0.07, green: 0.34, blue: 0.36).opacity(0.12),
+                accent.opacity(0.16),
+                Color(red: 0.38, green: 0.15, blue: 0.27).opacity(0.12),
+                Color(red: 0.24, green: 0.22, blue: 0.44).opacity(0.14),
+                Color(red: 0.07, green: 0.34, blue: 0.36).opacity(0.12)
             ]
         }
     }
@@ -566,13 +648,13 @@ struct ExperimentalGradientBackground: View {
                 .blendMode(.screen)
                 .offset(y: -scrollOffset * 0.055)
 
-                AngularGradient(
+                RadialGradient(
                     colors: angularColors,
-                    center: UnitPoint(x: 0.48, y: 0.34)
+                    center: UnitPoint(x: 0.48, y: 0.34),
+                    startRadius: 16,
+                    endRadius: max(geo.size.width, geo.size.height) * 0.86
                 )
-                .scaleEffect(1.7)
-                .blur(radius: 42)
-                .opacity(0.68)
+                .opacity(0.54)
                 .blendMode(.screen)
 
                 LinearGradient(

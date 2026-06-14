@@ -293,6 +293,40 @@ extension View {
             .eclipseDarkToolbar()
     }
 
+    /// Give native List/Form settings rows the experimental glass treatment without
+    /// rewriting each settings screen into custom containers.
+    @ViewBuilder
+    func eclipseExperimentalSettingsRows() -> some View {
+        #if os(iOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            self
+                .listRowSeparator(.hidden)
+                .listRowBackground(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.16, green: 0.13, blue: 0.22).opacity(0.78),
+                                    Color(red: 0.08, green: 0.08, blue: 0.13).opacity(0.70)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.8)
+                        )
+                        .padding(.vertical, 3)
+                )
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+
     /// Hide list row separators where supported (no-op on tvOS).
     @ViewBuilder
     func eclipseHideListRowSeparator() -> some View {

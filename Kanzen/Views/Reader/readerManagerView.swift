@@ -1066,6 +1066,7 @@ private struct KanzenReaderSettingsView: View {
                 }
                 .pickerStyle(.menu)
             }
+            .eclipseExperimentalSettingsRows()
 
             Section("Tap Zones") {
                 Picker("Preset", selection: $tapZones) {
@@ -1077,6 +1078,7 @@ private struct KanzenReaderSettingsView: View {
                 Toggle("Invert Zones", isOn: $invertTapZones)
                 Toggle("Animate Page Turns", isOn: $animatePageTransitions)
             }
+            .eclipseExperimentalSettingsRows()
 
             Section("Upscaling") {
                 Toggle("Upscale Images", isOn: $upscaleImages)
@@ -1104,6 +1106,7 @@ private struct KanzenReaderSettingsView: View {
                     }
                 }
             }
+            .eclipseExperimentalSettingsRows()
 
             Section("Paged") {
                 Stepper("Pages To Preload: \(pagesToPreload)", value: $pagesToPreload, in: 1...10)
@@ -1118,6 +1121,7 @@ private struct KanzenReaderSettingsView: View {
                 Toggle("Reverse Split Order", isOn: $reverseSplitOrder)
                     .disabled(!splitWideImages)
             }
+            .eclipseExperimentalSettingsRows()
 
             Section("Webtoon") {
                 Toggle("Infinite Vertical Scroll", isOn: $infiniteScroll)
@@ -1132,6 +1136,7 @@ private struct KanzenReaderSettingsView: View {
                 .pickerStyle(.menu)
                 .disabled(!pillarbox)
             }
+            .eclipseExperimentalSettingsRows()
 
             Section("Text") {
                 Picker("Font", selection: $textFontFamily) {
@@ -1166,6 +1171,7 @@ private struct KanzenReaderSettingsView: View {
                 Stepper("Line Spacing: \(String(format: "%.1f", textLineSpacing))", value: $textLineSpacing, in: 1...3, step: 0.1)
                 Stepper("Margin: \(Int(textHorizontalPadding))", value: $textHorizontalPadding, in: 0...30, step: 1)
             }
+            .eclipseExperimentalSettingsRows()
         }
         .navigationTitle("Reader Settings")
         .navigationBarTitleDisplayMode(.inline)

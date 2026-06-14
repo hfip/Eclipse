@@ -91,6 +91,7 @@ struct KanzenGeneralSettingsView: View {
                     }
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
 
             Section(header: Text("Reader Text")) {
@@ -151,6 +152,7 @@ struct KanzenGeneralSettingsView: View {
                     }
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
 
             Section(
@@ -165,6 +167,7 @@ struct KanzenGeneralSettingsView: View {
                         .monospacedDigit()
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
 
             Section(
@@ -196,6 +199,7 @@ struct KanzenGeneralSettingsView: View {
                     }
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .environment(\.editMode, .constant(.active))
             .background(EclipseScrollTracker())
         }

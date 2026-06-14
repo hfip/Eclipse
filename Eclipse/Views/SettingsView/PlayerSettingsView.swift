@@ -410,6 +410,7 @@ struct PlayerSettingsView: View {
                         .tint(accentColorManager.currentAccentColor)
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .disabled(store.externalPlayer != .none)
             .background(EclipseScrollTracker())
             
@@ -472,6 +473,7 @@ struct PlayerSettingsView: View {
                         .tint(accentColorManager.currentAccentColor)
                 }
             }
+            .eclipseExperimentalSettingsRows()
             
             if store.inAppPlayer == .mpv {
                 Section(header: Text("MPV Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
@@ -944,11 +946,13 @@ struct PlayerSettingsView: View {
                         Label("Next Episode", systemImage: "forward.end.fill")
                     }
                 }
+                .eclipseExperimentalSettingsRows()
             } else {
                 Section(header: Text("MPV Advanced Features"), footer: Text("Select MPV as the in-app player and keep external player set to Default to use MPV advanced playback features.")) {
                     Label("Requires MPV", systemImage: "lock.fill")
                         .foregroundColor(.secondary)
                 }
+                .eclipseExperimentalSettingsRows()
             }
         }
         .navigationTitle("Media Player")

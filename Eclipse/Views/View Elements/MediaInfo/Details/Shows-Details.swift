@@ -12,10 +12,12 @@ import AVKit
 struct TVShowDetailsSection: View {
     let tvShow: TMDBTVShowWithSeasons?
     let ratingOverride: String?
+    var compactHeroMetadata: Bool
 
-    init(tvShow: TMDBTVShowWithSeasons?, ratingOverride: String? = nil) {
+    init(tvShow: TMDBTVShowWithSeasons?, ratingOverride: String? = nil, compactHeroMetadata: Bool = false) {
         self.tvShow = tvShow
         self.ratingOverride = ratingOverride
+        self.compactHeroMetadata = compactHeroMetadata
     }
 
     var body: some View {
@@ -37,13 +39,13 @@ struct TVShowDetailsSection: View {
                         DetailRow(title: "Episodes", value: "\(numberOfEpisodes)")
                     }
 
-                    if !tvShow.genres.isEmpty {
+                    if !compactHeroMetadata && !tvShow.genres.isEmpty {
                         DetailRow(title: "Genres", value: tvShow.genres.map { $0.name }.joined(separator: ", "))
                     }
 
-                    if let ratingOverride {
+                    if !compactHeroMetadata, let ratingOverride {
                         DetailRow(title: "Rating", value: ratingOverride)
-                    } else if tvShow.voteAverage > 0 {
+                    } else if !compactHeroMetadata && tvShow.voteAverage > 0 {
                         DetailRow(title: "Rating", value: String(format: "%.1f/10", tvShow.voteAverage))
                     }
 
@@ -51,11 +53,11 @@ struct TVShowDetailsSection: View {
                         DetailRow(title: "Age Rating", value: ageRating)
                     }
 
-                    if let firstAirDate = tvShow.firstAirDate, !firstAirDate.isEmpty {
+                    if !compactHeroMetadata, let firstAirDate = tvShow.firstAirDate, !firstAirDate.isEmpty {
                         DetailRow(title: "First aired", value: "\(firstAirDate)")
                     }
 
-                    if let lastAirDate = tvShow.lastAirDate, !lastAirDate.isEmpty {
+                    if !compactHeroMetadata, let lastAirDate = tvShow.lastAirDate, !lastAirDate.isEmpty {
                         DetailRow(title: "Last aired", value: "\(lastAirDate)")
                     }
 
