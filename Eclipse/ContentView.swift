@@ -12,7 +12,6 @@ struct ContentView: View {
         case home, schedule, downloads, library, search
     }
     
-    @StateObject private var accentColorManager = AccentColorManager.shared
     @ObservedObject private var downloadManager = DownloadManager.shared
     @AppStorage("githubReleaseShowAlertPending") private var githubReleaseShowAlertPending = false
     @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
@@ -59,7 +58,6 @@ struct ContentView: View {
             if #available(iOS 26.0, tvOS 26.0, *) {
                 ZStack {
                     modernTabView
-                        .accentColor(accentColorManager.currentAccentColor)
                         .heroNamespace(heroNamespace)
                         .overlay(alignment: .topTrailing) {
                             if (selectedTab == .home || selectedTab == .schedule) && !showingSettings {
@@ -325,7 +323,6 @@ struct ContentView: View {
                 }
                 .tag(AppTab.search)
         }
-        .accentColor(accentColorManager.currentAccentColor)
     }
 }
 
@@ -339,7 +336,6 @@ private enum ExperimentalMediaTab: Hashable {
 }
 
 struct ExperimentalContentView: View {
-    @StateObject private var accentColorManager = AccentColorManager.shared
     @ObservedObject private var downloadManager = DownloadManager.shared
     @AppStorage("githubReleaseShowAlertPending") private var githubReleaseShowAlertPending = false
     @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
@@ -382,7 +378,7 @@ struct ExperimentalContentView: View {
 
     var body: some View {
         ZStack {
-            ExperimentalGradientBackground()
+            GlobalGradientBackground()
                 .ignoresSafeArea()
 
             experimentalTabView
@@ -403,9 +399,7 @@ struct ExperimentalContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .accentColor(accentColorManager.currentAccentColor)
         .animation(.spring(response: 0.35, dampingFraction: 0.86), value: showingSettings)
-        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: selectedTab)
         .task { await runBackgroundAutoChecks() }
         .onChange(of: scenePhase) { newPhase in
             publishScenePhase(newPhase)
@@ -448,50 +442,48 @@ struct ExperimentalContentView: View {
     }
 
     private var experimentalTabView: some View {
-        ZStack(alignment: .bottom) {
-            experimentalScreen
-                .safeAreaInset(edge: .bottom) {
-                    Color.clear.frame(height: 92)
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.985)))
-
-            ExperimentalFloatingTabBar(
-                items: [
-                    ExperimentalFloatingTabItem(id: .home, title: "Discover", systemImage: "face.smiling"),
-                    ExperimentalFloatingTabItem(id: .schedule, title: "Schedule", systemImage: "calendar"),
-                    ExperimentalFloatingTabItem(id: .downloads, title: "Downloads", systemImage: "tray.and.arrow.down.fill"),
-                    ExperimentalFloatingTabItem(id: .library, title: "Library", systemImage: "books.vertical.fill")
-                ],
-                selection: $selectedTab,
-                searchItemID: .search,
-                searchAction: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                        selectedTab = .search
-                    }
-                }
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var experimentalScreen: some View {
-        switch selectedTab {
-        case .home:
+        TabView(selection: $selectedTab) {
             HomeView(onStartupReady: onStartupReady)
-        case .schedule:
-            ScheduleView(isActive: true)
-        case .downloads:
+                .tabItem {
+                    Image(systemName: "house.fill")
+                    Text("Home")
+                }
+                .tag(ExperimentalMediaTab.home)
+
+            ScheduleView(isActive: selectedTab == .schedule)
+                .tabItem {
+                    Image(systemName: "calendar")
+                    Text("Schedule")
+                }
+                .tag(ExperimentalMediaTab.schedule)
+
             DownloadsView()
-        case .library:
+                .tabItem {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Downloads")
+                }
+                .tag(ExperimentalMediaTab.downloads)
+                .badge(downloadManager.activeDownloadCount > 0 ? downloadManager.activeDownloadCount : 0)
+
             LibraryView()
-        case .search:
+                .tabItem {
+                    Image(systemName: "books.vertical.fill")
+                    Text("Library")
+                }
+                .tag(ExperimentalMediaTab.library)
+
             SearchView()
+                .tabItem {
+                    Image(systemName: "magnifyingglass")
+                    Text("Search")
+                }
+                .tag(ExperimentalMediaTab.search)
         }
     }
 
     private var experimentalSettingsFullScreen: some View {
         ZStack(alignment: .topLeading) {
-            ExperimentalGradientBackground()
+            GlobalGradientBackground()
                 .ignoresSafeArea()
 
             if #available(iOS 16.0, *) {

@@ -223,6 +223,7 @@ struct BackupData: Codable {
     var filterHorrorContent: Bool = false
     var selectedSimilarityAlgorithm: String = SimilarityAlgorithm.hybrid.rawValue
     var performanceModeEnabled: Bool = false
+    var performanceModeSkipAniListTraversalForAnimeDetails: Bool = false
     var performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:]
     
     // Collections (Library)
@@ -401,7 +402,7 @@ struct BackupData: Codable {
         case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode, kanzenReaderMode, kanzenReaderModeOverrides, readerDownsampleImages, readerCropBorders, readerDisableQuickActions, readerDisableDoubleTap, readerLiveText, readerHideBarsOnSwipe, readerBackgroundColor, readerOrientation, readerTapZones, readerInvertTapZones, readerAnimatePageTransitions, readerUpscaleImages, readerUpscaleMaxHeight, readerPagesToPreload, readerPagedPageLayout, readerPagedPageOffset, readerPagedPageOffsetOverrides, readerSplitWideImages, readerReverseSplitOrder, readerVerticalInfiniteScroll, readerPillarbox, readerPillarboxAmount, readerPillarboxOrientation, readerOrientationLockEnabled, readerOrientationLockMask, readerReadThresholdPercent
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
-        case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, backgroundHLSPipelineEnabled, readerDownloadsBackgroundEnabled, readerDownloadsWifiOnly, readerDownloadsParallelLimit, autoUpdateServicesEnabled, servicesAutoModeEnabled, servicesAutoSelectEpisodesEnabled, servicesAutoModeSourceIds, servicesAutoModeSourceOrderIds, servicesAutoModeQualityPreference, githubReleaseAutoCheckEnabled, githubReleaseUpdateAvailable, githubReleaseLatestVersion, githubReleaseURL, githubReleaseShowAlertPending, githubReleaseLastPromptedVersion, filterHorrorContent = "filterHorror", selectedSimilarityAlgorithm, performanceModeEnabled, performanceModeFastAnimeCatalogOverrides
+        case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, backgroundHLSPipelineEnabled, readerDownloadsBackgroundEnabled, readerDownloadsWifiOnly, readerDownloadsParallelLimit, autoUpdateServicesEnabled, servicesAutoModeEnabled, servicesAutoSelectEpisodesEnabled, servicesAutoModeSourceIds, servicesAutoModeSourceOrderIds, servicesAutoModeQualityPreference, githubReleaseAutoCheckEnabled, githubReleaseUpdateAvailable, githubReleaseLatestVersion, githubReleaseURL, githubReleaseShowAlertPending, githubReleaseLastPromptedVersion, filterHorrorContent = "filterHorror", selectedSimilarityAlgorithm, performanceModeEnabled, performanceModeSkipAniListTraversalForAnimeDetails, performanceModeFastAnimeCatalogOverrides
         case collections, progressData, trackerState, catalogs, services, stremioAddons, nuvioPlugins
         case mangaCollections, mangaReadingProgress, mangaCatalogs, kanzenModules, aidokuState
         case searchHistory, recommendationCache
@@ -598,6 +599,7 @@ struct BackupData: Codable {
         filterHorrorContent = try container.decodeIfPresent(Bool.self, forKey: .filterHorrorContent) ?? false
         selectedSimilarityAlgorithm = Self.sanitizedSimilarityAlgorithm(try container.decodeIfPresent(String.self, forKey: .selectedSimilarityAlgorithm))
         performanceModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .performanceModeEnabled) ?? false
+        performanceModeSkipAniListTraversalForAnimeDetails = try container.decodeIfPresent(Bool.self, forKey: .performanceModeSkipAniListTraversalForAnimeDetails) ?? false
         let decodedPerformanceOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .performanceModeFastAnimeCatalogOverrides) ?? [:]
         performanceModeFastAnimeCatalogOverrides = decodedPerformanceOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
 
@@ -830,6 +832,7 @@ struct BackupData: Codable {
         try container.encode(filterHorrorContent, forKey: .filterHorrorContent)
         try container.encode(Self.sanitizedSimilarityAlgorithm(selectedSimilarityAlgorithm), forKey: .selectedSimilarityAlgorithm)
         try container.encode(performanceModeEnabled, forKey: .performanceModeEnabled)
+        try container.encode(performanceModeSkipAniListTraversalForAnimeDetails, forKey: .performanceModeSkipAniListTraversalForAnimeDetails)
         try container.encode(performanceModeFastAnimeCatalogOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }, forKey: .performanceModeFastAnimeCatalogOverrides)
 
         try container.encode(collections, forKey: .collections)
@@ -1005,6 +1008,7 @@ struct BackupData: Codable {
         filterHorrorContent: Bool = false,
         selectedSimilarityAlgorithm: String = SimilarityAlgorithm.hybrid.rawValue,
         performanceModeEnabled: Bool = false,
+        performanceModeSkipAniListTraversalForAnimeDetails: Bool = false,
         performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:],
 
         collections: [BackupCollection] = [],
@@ -1172,6 +1176,7 @@ struct BackupData: Codable {
         self.filterHorrorContent = filterHorrorContent
         self.selectedSimilarityAlgorithm = Self.sanitizedSimilarityAlgorithm(selectedSimilarityAlgorithm)
         self.performanceModeEnabled = performanceModeEnabled
+        self.performanceModeSkipAniListTraversalForAnimeDetails = performanceModeSkipAniListTraversalForAnimeDetails
         self.performanceModeFastAnimeCatalogOverrides = performanceModeFastAnimeCatalogOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
 
         self.collections = collections
@@ -1850,6 +1855,7 @@ class BackupManager {
         let filterHorrorContent = userDefaults.bool(forKey: "filterHorror")
         let selectedSimilarityAlgorithm = BackupData.sanitizedSimilarityAlgorithm(userDefaults.string(forKey: "selectedSimilarityAlgorithm"))
         let performanceModeEnabled = PerformanceModeSettings.isEnabled
+        let performanceModeSkipAniListTraversalForAnimeDetails = PerformanceModeSettings.skipsAniListTraversalForAnimeDetails
         let performanceModeFastAnimeCatalogOverrides = PerformanceModeSettings.fastAnimeCatalogOverrides
         let searchHistory: BackupSearchHistory
         if let historyData = userDefaults.data(forKey: "searchHistory"),
@@ -2096,6 +2102,7 @@ class BackupManager {
             filterHorrorContent: filterHorrorContent,
             selectedSimilarityAlgorithm: selectedSimilarityAlgorithm,
             performanceModeEnabled: performanceModeEnabled,
+            performanceModeSkipAniListTraversalForAnimeDetails: performanceModeSkipAniListTraversalForAnimeDetails,
             performanceModeFastAnimeCatalogOverrides: performanceModeFastAnimeCatalogOverrides,
 
             collections: backupCollections,
@@ -2327,6 +2334,7 @@ class BackupManager {
         let filterHorrorContent = json["filterHorror"] as? Bool ?? false
         let selectedSimilarityAlgorithm = BackupData.sanitizedSimilarityAlgorithm(json["selectedSimilarityAlgorithm"] as? String)
         let performanceModeEnabled = json["performanceModeEnabled"] as? Bool ?? false
+        let performanceModeSkipAniListTraversalForAnimeDetails = json["performanceModeSkipAniListTraversalForAnimeDetails"] as? Bool ?? false
         let rawPerformanceModeOverrides = json["performanceModeFastAnimeCatalogOverrides"] as? [String: Bool] ?? [:]
         let performanceModeFastAnimeCatalogOverrides = rawPerformanceModeOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
         
@@ -2620,6 +2628,7 @@ class BackupManager {
             filterHorrorContent: filterHorrorContent,
             selectedSimilarityAlgorithm: selectedSimilarityAlgorithm,
             performanceModeEnabled: performanceModeEnabled,
+            performanceModeSkipAniListTraversalForAnimeDetails: performanceModeSkipAniListTraversalForAnimeDetails,
             performanceModeFastAnimeCatalogOverrides: performanceModeFastAnimeCatalogOverrides,
             collections: collections,
             progressData: progressData,
@@ -2833,6 +2842,7 @@ class BackupManager {
         userDefaults.set(backup.filterHorrorContent, forKey: "filterHorror")
         userDefaults.set(BackupData.sanitizedSimilarityAlgorithm(backup.selectedSimilarityAlgorithm), forKey: "selectedSimilarityAlgorithm")
         userDefaults.set(backup.performanceModeEnabled, forKey: PerformanceModeSettings.enabledKey)
+        userDefaults.set(backup.performanceModeSkipAniListTraversalForAnimeDetails, forKey: PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey)
         PerformanceModeSettings.fastAnimeCatalogOverrides = backup.performanceModeFastAnimeCatalogOverrides
         if let searchHistoryData = try? JSONEncoder().encode(backup.searchHistory.queries) {
             userDefaults.set(searchHistoryData, forKey: "searchHistory")

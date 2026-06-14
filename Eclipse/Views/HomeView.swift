@@ -24,6 +24,8 @@ struct HomeView: View {
     @State private var continueWatchingRefreshID = UUID()
     @State private var didReportStartupReady = false
     @State private var observedPerformanceMode = PerformanceModeSettings.isEnabled
+    @State private var observedHomeCatalogSignature = ""
+    @State private var pendingHomeCatalogReloadTask: Task<Void, Never>?
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var trackerManager = TrackerManager.shared
     @State private var scrollOffset: CGFloat = 0
@@ -52,7 +54,7 @@ struct HomeView: View {
 #if os(tvOS)
         UIScreen.main.bounds.height * 0.8
 #else
-        isIPad ? 720 : 580
+        isIPad ? 720 : min(max(UIScreen.main.bounds.height * 0.74, 620), 760)
 #endif
     }
 
@@ -123,12 +125,17 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .onAppear {
             refreshContinueWatchingItems()
+            observedHomeCatalogSignature = currentHomeCatalogSignature()
             if homeViewModel.hasCompletedInitialLoad {
                 reportStartupReadyIfNeeded()
             }
             if !homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
             }
+        }
+        .onDisappear {
+            pendingHomeCatalogReloadTask?.cancel()
+            pendingHomeCatalogReloadTask = nil
         }
         .onChange(of: homeViewModel.hasCompletedInitialLoad) { hasCompletedInitialLoad in
             if hasCompletedInitialLoad {
@@ -158,16 +165,12 @@ struct HomeView: View {
             homeViewModel.refreshHeroContentForSettingsChange()
         }
         .onReceive(catalogManager.$catalogs) { _ in
-            guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
-            homeViewModel.resetContent(preserveVisibleContent: true)
-            loadContent(showLoading: false)
+            scheduleHomeCatalogReloadIfNeeded()
         }
         .onReceive(catalogManager.$performanceModeEnabled) { enabled in
             guard observedPerformanceMode != enabled else { return }
             observedPerformanceMode = enabled
-            guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
-            homeViewModel.resetContent(preserveVisibleContent: true)
-            loadContent(showLoading: false)
+            scheduleHomeCatalogReloadIfNeeded()
         }
         .onReceive(heroCarouselTimer) { _ in
             homeViewModel.advanceHeroCarouselIfNeeded()
@@ -266,7 +269,7 @@ struct HomeView: View {
                 backdropURL: homeViewModel.heroContent?.fullBackdropURL ?? homeViewModel.heroContent?.fullPosterURL,
                 isMovie: homeViewModel.heroContent?.mediaType == "movie",
                 headerHeight: heroHeight,
-                minHeaderHeight: 300,
+                minHeaderHeight: ExperimentalFeatureState.isEnabledAtLaunch ? 430 : 300,
                 onAmbientColorExtracted: { color in
                     homeViewModel.ambientColor = color
                 }
@@ -282,134 +285,204 @@ struct HomeView: View {
         LinearGradient(
             gradient: Gradient(stops: [
                 .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.5 : 0.4), location: 0.2),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.8 : 0.7), location: 0.6),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.35 : 0.25), location: 0.18),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.72 : 0.58), location: 0.54),
                 .init(color: atmosphereColor.opacity(1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: 150)
+        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? 280 : 150)
         .clipShape(RoundedRectangle(cornerRadius: 0))
     }
     
     @ViewBuilder
     private var heroContentInfo: some View {
         if let hero = homeViewModel.heroContent {
-            VStack(alignment: .center, spacing: isTvOS ? 30 : 12) {
-                HStack {
-                    Text(hero.isMovie ? "Movie" : "TV Series")
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                experimentalHeroContent(hero)
+            } else {
+                legacyHeroContent(hero)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func experimentalHeroContent(_ hero: TMDBSearchResult) -> some View {
+        VStack(alignment: .center, spacing: 12) {
+            Text(heroMetadataLine(hero))
+                .font(.system(size: isIPad ? 18 : 15, weight: .medium))
+                .foregroundColor(.white.opacity(0.92))
+                .lineLimit(1)
+                .shadow(color: .black.opacity(0.7), radius: 8, x: 0, y: 3)
+
+            heroTitleText(hero)
+                .font(.system(size: isIPad ? 42 : 32, weight: .heavy))
+
+            if let overview = hero.overview, !overview.isEmpty {
+                Text(String(overview.prefix(132)) + (overview.count > 132 ? "..." : ""))
+                    .font(.system(size: isIPad ? 18 : 16, weight: .regular))
+                    .shadow(color: .black.opacity(0.7), radius: 8, x: 0, y: 4)
+                    .foregroundColor(.white.opacity(0.88))
+                    .lineLimit(3)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, isIPad ? 90 : 28)
+            }
+
+            if let voteAverage = hero.voteAverage, voteAverage > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "star.fill")
                         .font(.caption)
-                        .fontWeight(.semibold)
+                        .foregroundColor(.yellow)
+                    Text(String(format: "%.1f", voteAverage))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(.white)
-                        .padding(.horizontal, isTvOS ? 16 : 8)
-                        .padding(.vertical, isTvOS ? 10 : 4)
-                        .applyLiquidGlassBackground(cornerRadius: 12)
-                    
-                    if (hero.voteAverage ?? 0.0) > 0 {
-                        HStack(alignment: .firstTextBaseline, spacing: 2) {
-                            Image(systemName: "star.fill")
-                                .foregroundColor(.yellow)
-                            
-                            Text(String(format: "%.1f", hero.voteAverage ?? 0.0))
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
-                        }
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, isTvOS ? 16 : 8)
-                        .padding(.vertical, isTvOS ? 10 : 4)
-                        .applyLiquidGlassBackground(cornerRadius: 12)
-                    }
                 }
-                
-                heroTitleText(hero)
-                
-                if let overview = hero.overview, !overview.isEmpty {
-                    Text(String(overview.prefix(100)) + (overview.count > 100 ? "..." : ""))
-                        .font(.system(size: isTvOS ? 30 : 15))
-                        .shadow(color: .black.opacity(0.6), radius: 8, x: 0, y: 4)
-                        .foregroundColor(.white.opacity(0.9))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 20)
-                }
-                
-                HStack(spacing: 16) {
-                    NavigationLink(destination: MediaDetailView(searchResult: hero)) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "play.fill")
-                                .font(.subheadline)
-                            Text("Watch Now")
-                                .fontWeight(.semibold)
-                                .fixedSize()
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(isHoveringWatchNow ? .black : .white)
-                        .tvos({ view in
-                            view.frame(width: 200, height: 60)
-                                .buttonStyle(PlainButtonStyle())
-#if os(tvOS)
-                                .onContinuousHover { phase in
-                                    switch phase {
-                                    case .active(_): isHoveringWatchNow = true
-                                    case .ended: isHoveringWatchNow = false
-                                    }
-                                }
-#endif
-                        }, else: { view in
-                            view
-                                .frame(width: 140, height: 42)
-                                .buttonStyle(PlainButtonStyle())
-                                .applyLiquidGlassBackground(cornerRadius: 12)
-                        })
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .applyLiquidGlassBackground(cornerRadius: 14)
+            }
+
+            heroPagerDots
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+        .padding(.bottom, isIPad ? 42 : 34)
+    }
+
+    @ViewBuilder
+    private var heroPagerDots: some View {
+        HStack(spacing: 14) {
+            ForEach(0..<8, id: \.self) { index in
+                Circle()
+                    .fill(Color.white.opacity(index == 0 ? 0.95 : 0.38))
+                    .frame(width: 9, height: 9)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private func legacyHeroContent(_ hero: TMDBSearchResult) -> some View {
+        VStack(alignment: .center, spacing: isTvOS ? 30 : 12) {
+            HStack {
+                Text(hero.isMovie ? "Movie" : "TV Series")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, isTvOS ? 16 : 8)
+                    .padding(.vertical, isTvOS ? 10 : 4)
+                    .applyLiquidGlassBackground(cornerRadius: 12)
+
+                if (hero.voteAverage ?? 0.0) > 0 {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Image(systemName: "star.fill")
+                            .foregroundColor(.yellow)
+
+                        Text(String(format: "%.1f", hero.voteAverage ?? 0.0))
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
                     }
-                    
-                    Button(action: {
-                        if let hero = homeViewModel.heroContent {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                libraryManager.toggleBookmark(for: hero)
-                            }
-                        }
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: libraryManager.isBookmarked(hero) ? "checkmark" : "plus")
-                                .font(.subheadline)
-                            Text(libraryManager.isBookmarked(hero) ? "In Watchlist" : "Watchlist")
-                                .fontWeight(.semibold)
-                                .fixedSize()
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(isHoveringWatchlist ? .black : .white)
-                        .tvos({ view in
-                            view.frame(width: 200, height: 60)
-                                .buttonStyle(PlainButtonStyle())
-#if os(tvOS)
-                                .onContinuousHover { phase in
-                                    switch phase {
-                                    case .active(_): isHoveringWatchlist = true
-                                    case .ended: isHoveringWatchlist = false
-                                    }
-                                }
-#endif
-                        }, else: { view in
-                            view.frame(width: 140, height: 42)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color.black.opacity(0.3))
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(.white.opacity(0.3), lineWidth: 1)
-                                        )
-                                )
-                        })
-                        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-                    }
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, isTvOS ? 16 : 8)
+                    .padding(.vertical, isTvOS ? 10 : 4)
+                    .applyLiquidGlassBackground(cornerRadius: 12)
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal)
+
+            heroTitleText(hero)
+
+            if let overview = hero.overview, !overview.isEmpty {
+                Text(String(overview.prefix(100)) + (overview.count > 100 ? "..." : ""))
+                    .font(.system(size: isTvOS ? 30 : 15))
+                    .shadow(color: .black.opacity(0.6), radius: 8, x: 0, y: 4)
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+
+            HStack(spacing: 16) {
+                NavigationLink(destination: MediaDetailView(searchResult: hero)) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "play.fill")
+                            .font(.subheadline)
+                        Text("Watch Now")
+                            .fontWeight(.semibold)
+                            .fixedSize()
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(isHoveringWatchNow ? .black : .white)
+                    .tvos({ view in
+                        view.frame(width: 200, height: 60)
+                            .buttonStyle(PlainButtonStyle())
+#if os(tvOS)
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case .active(_): isHoveringWatchNow = true
+                                case .ended: isHoveringWatchNow = false
+                                }
+                            }
+#endif
+                    }, else: { view in
+                        view
+                            .frame(width: 140, height: 42)
+                            .buttonStyle(PlainButtonStyle())
+                            .applyLiquidGlassBackground(cornerRadius: 12)
+                    })
+                }
+
+                Button(action: {
+                    if let hero = homeViewModel.heroContent {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            libraryManager.toggleBookmark(for: hero)
+                        }
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: libraryManager.isBookmarked(hero) ? "checkmark" : "plus")
+                            .font(.subheadline)
+                        Text(libraryManager.isBookmarked(hero) ? "In Watchlist" : "Watchlist")
+                            .fontWeight(.semibold)
+                            .fixedSize()
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(isHoveringWatchlist ? .black : .white)
+                    .tvos({ view in
+                        view.frame(width: 200, height: 60)
+                            .buttonStyle(PlainButtonStyle())
+#if os(tvOS)
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case .active(_): isHoveringWatchlist = true
+                                case .ended: isHoveringWatchlist = false
+                                }
+                            }
+#endif
+                    }, else: { view in
+                        view.frame(width: 140, height: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.black.opacity(0.3))
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(.white.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                    })
+                    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                }
+            }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+    }
+
+    private func heroMetadataLine(_ hero: TMDBSearchResult) -> String {
+        let date = hero.displayDate.isEmpty ? nil : String(hero.displayDate.prefix(10))
+        let kind = hero.isMovie ? "Movie" : "TV Series"
+        return [date, kind].compactMap { $0 }.joined(separator: " · ")
     }
     
     @ViewBuilder
@@ -516,7 +589,9 @@ struct HomeView: View {
         }
         .background(
             Group {
-                if theme.atmosphereStyle == .solid {
+                if ExperimentalFeatureState.isEnabledAtLaunch && theme.atmosphereStyle.isMultiGradient {
+                    GlobalGradientBackground(overrideColor: ambientColor, scrollOffset: backgroundScrollOffset)
+                } else if theme.atmosphereStyle == .solid {
                     atmosphereColor
                 } else {
                     LinearGradient(
@@ -536,6 +611,44 @@ struct HomeView: View {
             contentFilter: contentFilter,
             showLoading: showLoading
         )
+    }
+
+    private func scheduleHomeCatalogReloadIfNeeded() {
+        guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else {
+            observedHomeCatalogSignature = currentHomeCatalogSignature()
+            return
+        }
+
+        let newSignature = currentHomeCatalogSignature()
+        guard observedHomeCatalogSignature != newSignature else { return }
+        observedHomeCatalogSignature = newSignature
+        pendingHomeCatalogReloadTask?.cancel()
+        pendingHomeCatalogReloadTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 180_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            homeViewModel.resetContent(preserveVisibleContent: true)
+            loadContent(showLoading: false)
+        }
+    }
+
+    private func currentHomeCatalogSignature() -> String {
+        let enabled = catalogManager.getEnabledCatalogs()
+        let catalogPart = enabled
+            .map { "\($0.id):\($0.source.rawValue):\($0.displayStyle.rawValue):\($0.order)" }
+            .joined(separator: "|")
+        let hasAnimeCatalog = enabled.contains { PerformanceModeSettings.isAnimeCatalog($0) }
+        let modePart = hasAnimeCatalog
+            ? (PerformanceModeSettings.isEnabled ? "animeFast" : "animeFull")
+            : "noAnime"
+        let overrides = PerformanceModeSettings.fastAnimeCatalogOverrides
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ",")
+        return "\(catalogPart)#\(modePart)#\(overrides)"
     }
 
     private func refreshContinueWatchingItems() {
@@ -712,11 +825,10 @@ struct MediaSection: View {
     var gap: Double { isTvOS ? 50.0 : (isIPad ? 28.0 : 20.0) }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 16) {
             HStack {
                 Text(title)
-                    .font(isTvOS ? .headline : .title2)
-                    .fontWeight(.bold)
+                    .font(sectionTitleFont)
                     .foregroundColor(.white)
                 Spacer()
             }
@@ -738,6 +850,15 @@ struct MediaSection: View {
         }
         .padding(.top, isTvOS ? 40 : 24)
         .opacity(items.isEmpty ? 0 : 1)
+    }
+
+    private var sectionTitleFont: Font {
+        if isTvOS {
+            return .headline
+        }
+        return ExperimentalFeatureState.isEnabledAtLaunch
+            ? .system(size: isIPad ? 30 : 28, weight: .bold)
+            : .title2.weight(.bold)
     }
 }
 
@@ -787,82 +908,20 @@ struct MediaCard: View {
     private var posterWidth: CGFloat { isTvOS ? 280 : 120 * iPadScale }
     private var posterHeight: CGFloat { isTvOS ? 380 : 180 * iPadScale }
     private var posterShadowRadius: CGFloat { isIPad ? 4 : 8 }
+    private var usesBackdropCard: Bool {
+        ExperimentalFeatureState.isEnabledAtLaunch && !isTvOS && result.fullBackdropURL != nil
+    }
+    private var backdropWidth: CGFloat { isIPad ? 300 : 220 }
+    private var backdropHeight: CGFloat { isIPad ? 170 : 124 }
     
     var body: some View {
         NavigationLink(destination: MediaDetailView(searchResult: result)
             .heroDestination(id: heroID, namespace: heroNamespace)
         ) {
-            VStack(alignment: .leading, spacing: 6) {
-                KFImage(URL(string: result.fullPosterURL ?? ""))
-                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
-                    .placeholder {
-                        FallbackImageView(
-                            isMovie: result.isMovie,
-                            size: CGSize(width: posterWidth, height: posterHeight)
-                        )
-                    }
-                    .resizable()
-                    .aspectRatio(2/3, contentMode: .fill)
-                    .tvos({ view in
-                        view
-                            .frame(width: posterWidth, height: posterHeight)
-                            .clipShape(RoundedRectangle(cornerRadius: 20))
-                            .hoverEffect(.highlight)
-                            .modifier(ContinuousHoverModifier(isHovering: $isHovering))
-                            .padding(.vertical, 30)
-                    }, else: { view in
-                        view
-                            .frame(width: posterWidth, height: posterHeight)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: .black.opacity(0.25), radius: posterShadowRadius, x: 0, y: 4)
-                    })
-                    .heroSource(id: heroID, namespace: heroNamespace)
-                
-                VStack(alignment: .leading, spacing: isTvOS ? 10 : 3) {
-                    Text(result.displayTitle)
-                        .tvos({ view in
-                            view
-                                .foregroundColor(isHovering ? .white : .secondary)
-                                .fontWeight(.semibold)
-                        }, else: { view in
-                            view
-                                .foregroundColor(.white)
-                                .fontWeight(.medium)
-                        })
-                        .font(.caption)
-                        .lineLimit(1)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, alignment: .center)
-
-                    HStack(alignment: .center, spacing: isTvOS ? 18 : 8) {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundColor(.yellow)
-                            
-                            Text(String(format: "%.1f", result.voteAverage ?? 0.0))
-                                .font(.caption2)
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
-                            .padding(.horizontal, isTvOS ? 16 : 8)
-                            .padding(.vertical, isTvOS ? 10 : 4)
-                            .applyLiquidGlassBackground(cornerRadius: 12)
-
-                        Spacer()
-
-                        Text(result.isMovie ? "Movie" : "TV")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, isTvOS ? 16 : 8)
-                            .padding(.vertical, isTvOS ? 10 : 4)
-                            .applyLiquidGlassBackground(cornerRadius: 12)
-                    }
-                }
-                .frame(width: posterWidth, alignment: .leading)
+            if usesBackdropCard {
+                backdropCard
+            } else {
+                posterCard
             }
         }
         .tvos({ view in
@@ -870,6 +929,125 @@ struct MediaCard: View {
         }, else: { view in
             view.buttonStyle(PlainButtonStyle())
         })
+    }
+
+    private var posterCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            KFImage(URL(string: result.fullPosterURL ?? ""))
+                .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
+                .placeholder {
+                    FallbackImageView(
+                        isMovie: result.isMovie,
+                        size: CGSize(width: posterWidth, height: posterHeight)
+                    )
+                }
+                .resizable()
+                .aspectRatio(2/3, contentMode: .fill)
+                .tvos({ view in
+                    view
+                        .frame(width: posterWidth, height: posterHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .hoverEffect(.highlight)
+                        .modifier(ContinuousHoverModifier(isHovering: $isHovering))
+                        .padding(.vertical, 30)
+                }, else: { view in
+                    view
+                        .frame(width: posterWidth, height: posterHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .shadow(color: .black.opacity(0.25), radius: posterShadowRadius, x: 0, y: 4)
+                })
+                .heroSource(id: heroID, namespace: heroNamespace)
+
+            VStack(alignment: .leading, spacing: isTvOS ? 10 : 3) {
+                Text(result.displayTitle)
+                    .tvos({ view in
+                        view
+                            .foregroundColor(isHovering ? .white : .secondary)
+                            .fontWeight(.semibold)
+                    }, else: { view in
+                        view
+                            .foregroundColor(.white)
+                            .fontWeight(.medium)
+                    })
+                    .font(.caption)
+                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                HStack(alignment: .center, spacing: isTvOS ? 18 : 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundColor(.yellow)
+
+                        Text(String(format: "%.1f", result.voteAverage ?? 0.0))
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, isTvOS ? 16 : 8)
+                    .padding(.vertical, isTvOS ? 10 : 4)
+                    .applyLiquidGlassBackground(cornerRadius: 12)
+
+                    Spacer()
+
+                    Text(result.isMovie ? "Movie" : "TV")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, isTvOS ? 16 : 8)
+                        .padding(.vertical, isTvOS ? 10 : 4)
+                        .applyLiquidGlassBackground(cornerRadius: 12)
+                }
+            }
+            .frame(width: posterWidth, alignment: .leading)
+        }
+    }
+
+    private var backdropCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            KFImage(URL(string: result.fullBackdropURL ?? result.fullPosterURL ?? ""))
+                .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: backdropWidth, height: backdropHeight)))
+                .placeholder {
+                    FallbackImageView(
+                        isMovie: result.isMovie,
+                        size: CGSize(width: backdropWidth, height: backdropHeight)
+                    )
+                }
+                .resizable()
+                .aspectRatio(16/9, contentMode: .fill)
+                .frame(width: backdropWidth, height: backdropHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
+                .heroSource(id: heroID, namespace: heroNamespace)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.displayTitle)
+                    .font(.system(size: isIPad ? 19 : 18, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .frame(width: backdropWidth, alignment: .leading)
+
+                Text(cardSubtitle)
+                    .font(.system(size: isIPad ? 15 : 14, weight: .regular))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+                    .frame(width: backdropWidth, alignment: .leading)
+            }
+        }
+        .frame(width: backdropWidth, alignment: .leading)
+    }
+
+    private var cardSubtitle: String {
+        let year = result.displayDate.isEmpty ? nil : String(result.displayDate.prefix(4))
+        let kind = result.isMovie ? "Movie" : "TV"
+        return [year, kind].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -985,7 +1163,7 @@ struct ContinueWatchingCard: View {
     private var selectedEpisodePlaybackContext: EpisodePlaybackContext? {
         let baseContext = enrichedPlaybackContext ?? item.playbackContext
         guard let episode = selectedEpisodeForSearch else { return baseContext }
-        if PerformanceModeSettings.isEnabled, searchSheetIsAnime {
+        if (PerformanceModeSettings.isEnabled || PerformanceModeSettings.skipsAniListTraversalForAnimeDetails), searchSheetIsAnime {
             return EpisodePlaybackContext(
                 localSeasonNumber: episode.seasonNumber,
                 localEpisodeNumber: episode.episodeNumber,
@@ -1260,7 +1438,7 @@ struct ContinueWatchingCard: View {
                     self.isLoaded = true
                 }
 
-                if detectedAsAnime {
+                if detectedAsAnime && !PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
                     // Fetch AniList data for correct season title mapping
                     do {
                         let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -1327,6 +1505,18 @@ struct ContinueWatchingCard: View {
                                 self.pendingOpenSheet = false
                                 self.showingSearchResults = true
                             }
+                        }
+                    }
+                } else if detectedAsAnime {
+                    Logger.shared.log("ContinueWatchingCard skipped AniList metadata because detail traversal performance mode is enabled", type: "AniList")
+                    await MainActor.run {
+                        self.isAnimeContent = true
+                        self.animeSeasonRomajiTitle = nil
+                        self.enrichedPlaybackContext = item.playbackContext
+                        self.isMetadataReady = true
+                        if self.pendingOpenSheet {
+                            self.pendingOpenSheet = false
+                            self.showingSearchResults = true
                         }
                     }
                 } else {

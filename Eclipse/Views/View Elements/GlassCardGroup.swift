@@ -25,7 +25,7 @@ struct GlassCardGroup<Content: View>: View {
     private var cardBackground: some View {
 #if !os(tvOS)
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
@@ -37,7 +37,7 @@ struct GlassCardGroup<Content: View>: View {
                     )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .strokeBorder(
                             LinearGradient(
                                 colors: [
@@ -50,7 +50,7 @@ struct GlassCardGroup<Content: View>: View {
                             lineWidth: 1
                         )
                 )
-                .shadow(color: Color(red: 0.05, green: 0.03, blue: 0.12).opacity(0.36), radius: 22, x: 0, y: 14)
+                .shadow(color: Color(red: 0.05, green: 0.03, blue: 0.12).opacity(0.30), radius: 14, x: 0, y: 8)
         } else {
             legacyCardBackground
         }
@@ -90,7 +90,7 @@ struct GlassSettingsRow<Trailing: View>: View {
     }
     
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             settingsIcon
             
             Text(title)
@@ -101,17 +101,17 @@ struct GlassSettingsRow<Trailing: View>: View {
             
             trailing
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, rowVerticalPadding)
         .contentShape(Rectangle())
     }
 
     private var iconSize: CGFloat {
-        ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 15
+        ExperimentalFeatureState.isEnabledAtLaunch ? 16 : 15
     }
 
     private var iconFrame: CGFloat {
-        ExperimentalFeatureState.isEnabledAtLaunch ? 42 : 32
+        ExperimentalFeatureState.isEnabledAtLaunch ? 36 : 32
     }
 
     @ViewBuilder
@@ -146,11 +146,11 @@ struct GlassSettingsRow<Trailing: View>: View {
     }
 
     private var rowTitleFont: Font {
-        ExperimentalFeatureState.isEnabledAtLaunch ? .title3.weight(.medium) : .body
+        ExperimentalFeatureState.isEnabledAtLaunch ? .body.weight(.medium) : .body
     }
 
     private var rowVerticalPadding: CGFloat {
-        ExperimentalFeatureState.isEnabledAtLaunch ? 16 : 13
+        ExperimentalFeatureState.isEnabledAtLaunch ? 12 : 13
     }
 }
 
@@ -180,19 +180,19 @@ struct GlassSection<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if let header = header {
                 Text(header)
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundColor(EclipseTheme.shared.sectionHeaderColor)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 18)
             }
             
             GlassCardGroup {
                 content
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
         }
     }
 }
@@ -204,6 +204,6 @@ struct GlassDivider: View {
         Rectangle()
             .fill(EclipseTheme.shared.separatorColor)
             .frame(height: 0.5)
-            .padding(.leading, 62)
+            .padding(.leading, 54)
     }
 }

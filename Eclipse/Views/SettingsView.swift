@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("githubReleaseURL") private var githubReleaseURL = ""
     @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
     @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = false
+    @AppStorage(PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey) private var skipAniListTraversalForAnimeDetails = false
 
     @StateObject private var algorithmManager = AlgorithmManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
@@ -118,7 +119,7 @@ struct SettingsView: View {
         .scrollClipDisabled()
         #else
         ScrollView {
-            VStack(spacing: 28) {
+            VStack(spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 22 : 28) {
                 // MARK: - Basic
                 GlassSection(header: "Basic") {
                     VStack(spacing: 0) {
@@ -148,7 +149,7 @@ struct SettingsView: View {
                         NavigationLink(destination: PerformanceModeSettingsView()) {
                             GlassSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Performance Mode") {
                                 HStack(spacing: 4) {
-                                    Text(catalogManager.performanceModeEnabled ? "On" : "Off")
+                                    Text(catalogManager.performanceModeEnabled || skipAniListTraversalForAnimeDetails ? "On" : "Off")
                                         .font(.subheadline)
                                         .foregroundColor(.white.opacity(0.5))
                                     Image(systemName: "chevron.right")
@@ -394,7 +395,7 @@ struct SettingsView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 30)
             }
-            .padding(.top, 16)
+            .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? 12 : 16)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
@@ -602,6 +603,7 @@ struct LegalNoticeView: View {
 
 struct PerformanceModeSettingsView: View {
     @ObservedObject private var catalogManager = CatalogManager.shared
+    @AppStorage(PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey) private var skipAniListTraversalForAnimeDetails = false
 
     private var performanceModeBinding: Binding<Bool> {
         Binding(
@@ -616,6 +618,12 @@ struct PerformanceModeSettingsView: View {
                 Toggle("Performance Mode", isOn: performanceModeBinding)
             } footer: {
                 Text("Performance Mode keeps anime-heavy home catalogs on the faster AniList-backed path and locks those anime catalog rows to their performance-safe source. Detail pages still load full metadata when opened.")
+            }
+
+            Section {
+                Toggle("Skip AniList Traversal for Anime Details", isOn: $skipAniListTraversalForAnimeDetails)
+            } footer: {
+                Text("Some anime services, season mappings, specials, OVAs, and tracker matching may be less accurate or unavailable.")
             }
 
             Section("Affected Catalogs") {

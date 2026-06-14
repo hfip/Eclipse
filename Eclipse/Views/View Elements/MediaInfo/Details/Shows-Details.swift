@@ -220,7 +220,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
 
         guard isAnime else { return nil }
 
-        if PerformanceModeSettings.isEnabled {
+        if PerformanceModeSettings.isEnabled || PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
             return EpisodePlaybackContext(
                 localSeasonNumber: episode.seasonNumber,
                 localEpisodeNumber: episode.episodeNumber,
@@ -616,7 +616,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 12))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 12)
-                                                .stroke(specialEpisodeContext == nil && selectedSeason?.id == season.id ? Color.accentColor : Color.clear, lineWidth: 2)
+                                                .stroke(specialEpisodeContext == nil && selectedSeason?.id == season.id ? Color.white.opacity(0.9) : Color.clear, lineWidth: 2)
                                         )
                                     
                                     Text(season.name)
@@ -625,7 +625,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                                         .lineLimit(1)
                                         .multilineTextAlignment(.center)
                                         .frame(width: 80)
-                                        .foregroundColor(specialEpisodeContext == nil && selectedSeason?.id == season.id ? .accentColor : .white)
+                                        .foregroundColor(specialEpisodeContext == nil && selectedSeason?.id == season.id ? .white : .white.opacity(0.7))
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())

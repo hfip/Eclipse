@@ -9,6 +9,9 @@ import SwiftUI
 
 enum AtmosphereStyle: String, CaseIterable, Identifiable {
     case gradient
+    case multiGradient
+    case aurora
+    case ember
     case solid
 
     var id: String { rawValue }
@@ -16,7 +19,19 @@ enum AtmosphereStyle: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .gradient: return "Gradient"
+        case .multiGradient: return "Multi Gradient"
+        case .aurora: return "Aurora"
+        case .ember: return "Ember"
         case .solid: return "Solid Color"
+        }
+    }
+
+    var isMultiGradient: Bool {
+        switch self {
+        case .multiGradient, .aurora, .ember:
+            return true
+        case .gradient, .solid:
+            return false
         }
     }
 }
@@ -145,7 +160,7 @@ class EclipseTheme: ObservableObject {
     // MARK: - Init
     
     private init() {
-        let styleRaw = UserDefaults.standard.string(forKey: "atmosphereStyle") ?? AtmosphereStyle.gradient.rawValue
+        let styleRaw = UserDefaults.standard.string(forKey: "atmosphereStyle") ?? Self.defaultAtmosphereStyle.rawValue
         let sourceRaw = UserDefaults.standard.string(forKey: "atmosphereSolidColorSource") ?? AtmosphereSolidColorSource.dominant.rawValue
         let readerStyleRaw = UserDefaults.standard.string(forKey: "readerAtmosphereStyle") ?? styleRaw
         let readerSourceRaw = UserDefaults.standard.string(forKey: "readerAtmosphereSolidColorSource") ?? sourceRaw
@@ -161,6 +176,14 @@ class EclipseTheme: ObservableObject {
         self.readerAtmosphereSolidColorSource = AtmosphereSolidColorSource(rawValue: readerSourceRaw) ?? .dominant
         self.atmosphereSolidColor = Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
         self.readerAtmosphereSolidColor = Self.loadColor(key: "readerAtmosphereSolidColor") ?? Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
+    }
+
+    private static var defaultAtmosphereStyle: AtmosphereStyle {
+        #if !os(tvOS)
+        return ExperimentalFeatureState.isEnabledAtLaunch ? .multiGradient : .gradient
+        #else
+        return .gradient
+        #endif
     }
 
     func atmosphereColor(dominant: Color) -> Color {
@@ -214,15 +237,10 @@ extension View {
     /// Apply the standard dark base background used across all screens
     @ViewBuilder
     func eclipseBackground() -> some View {
-        #if !os(tvOS)
-        if ExperimentalFeatureState.isEnabledAtLaunch {
-            self.background(ExperimentalGradientBackground().ignoresSafeArea())
-        } else {
-            self.background(EclipseTheme.shared.backgroundBase.ignoresSafeArea())
-        }
-        #else
-        self.background(EclipseTheme.shared.backgroundBase.ignoresSafeArea())
-        #endif
+        self.background(
+            GlobalGradientBackground()
+                .ignoresSafeArea()
+        )
     }
     
     /// Apply the gradient background used in Settings screens

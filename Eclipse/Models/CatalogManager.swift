@@ -279,6 +279,7 @@ class CatalogManager: ObservableObject {
 
 enum PerformanceModeSettings {
     static let enabledKey = "performanceModeEnabled"
+    static let skipAniListTraversalForAnimeDetailsKey = "performanceModeSkipAniListTraversalForAnimeDetails"
     static let fastAnimeCatalogOverridesKey = "performanceModeFastAnimeCatalogOverrides"
 
     static let animeCatalogIds: Set<String> = [
@@ -295,6 +296,11 @@ enum PerformanceModeSettings {
     static var isEnabled: Bool {
         get { defaults.bool(forKey: enabledKey) }
         set { defaults.set(newValue, forKey: enabledKey) }
+    }
+
+    static var skipsAniListTraversalForAnimeDetails: Bool {
+        get { defaults.bool(forKey: skipAniListTraversalForAnimeDetailsKey) }
+        set { defaults.set(newValue, forKey: skipAniListTraversalForAnimeDetailsKey) }
     }
 
     static var fastAnimeCatalogOverrides: [String: Bool] {
@@ -328,7 +334,15 @@ enum PerformanceModeSettings {
     }
 
     static func detailCacheKey(for stableIdentity: String) -> String {
-        isEnabled ? "\(stableIdentity):performanceMode" : stableIdentity
+        var modes: [String] = []
+        if isEnabled {
+            modes.append("performanceMode")
+        }
+        if skipsAniListTraversalForAnimeDetails {
+            modes.append("skipAniListTraversal")
+        }
+        guard !modes.isEmpty else { return stableIdentity }
+        return "\(stableIdentity):\(modes.joined(separator: ":"))"
     }
 }
 

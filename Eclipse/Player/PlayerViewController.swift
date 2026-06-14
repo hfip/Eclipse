@@ -4882,6 +4882,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     /// AniSkip fetch with anime ID resolution, then conversion to the MAL ID the API expects.
     private func fetchAniSkipSegments(tmdbId: Int, seasonNumber: Int, episodeNumber: Int, showTitle: String?, duration: Double) async -> [SkipSegment] {
         let performanceModeEnabled = PerformanceModeSettings.isEnabled
+        let skipAniListTraversal = PerformanceModeSettings.skipsAniListTraversalForAnimeDetails
 
         // Step 0: Prefer the playback context because it is tied to the selected anime season.
         var animeProviderId = episodePlaybackContext?.anilistMediaId
@@ -4906,7 +4907,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         // Step 3: Full AniList resolution via sequel chain
-        if animeProviderId == nil, !performanceModeEnabled, let title = showTitle {
+        if animeProviderId == nil, !performanceModeEnabled, !skipAniListTraversal, let title = showTitle {
             Logger.shared.log("SkipData: AniSkip step 3 – resolving via AniListService for '\(title)'", type: "Skip")
             do {
                 let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -4925,7 +4926,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         // Step 4: Last resort – simple title search
-        if animeProviderId == nil, !performanceModeEnabled {
+        if animeProviderId == nil, !performanceModeEnabled, !skipAniListTraversal {
             animeProviderId = await trackerManager.getAniListMediaId(tmdbId: tmdbId)
         }
 
@@ -4940,7 +4941,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("SkipData: AniSkip using MAL fallback mediaId=\(malId)", type: "Skip")
         } else {
             let resolvedMALId: Int?
-            if performanceModeEnabled {
+            if performanceModeEnabled || skipAniListTraversal {
                 resolvedMALId = trackerManager.cachedMyAnimeListAnimeId(fromAniListId: finalId)
             } else {
                 resolvedMALId = await trackerManager.resolveMyAnimeListAnimeId(fromAniListId: finalId)
@@ -8245,7 +8246,7 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
             var animeData: AniListAnimeWithSeasons?
             var specialContexts: [SpecialEpisodeListContext] = []
 
-            if seed.isAnime {
+            if seed.isAnime && !PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
                 animeData = try? await AniListService.shared.fetchAnimeDetailsWithEpisodes(
                     title: seed.showTitle,
                     tmdbShowId: seed.showId,
@@ -8267,6 +8268,8 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
                 specialContexts = specialEntries.compactMap {
                     SpecialEpisodeListContext(entry: $0, tmdbShowId: seed.showId)
                 }
+            } else if seed.isAnime {
+                Logger.shared.log("EpisodeBrowser: skipped AniList traversal because detail traversal performance mode is enabled", type: "AniList")
             }
 
             var loaded: [PlayerEpisodeBrowserSeason] = []
@@ -8368,7 +8371,16 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
             seed.currentPlaybackContext?.kitsuMediaId.map(String.init) ?? "nil",
             seed.currentPlaybackContext?.isSpecial == true ? "special" : "regular"
         ].joined(separator: ":")
-        let modeKey = PerformanceModeSettings.isEnabled ? "performance" : "standard"
+        let modeKey: String
+        if PerformanceModeSettings.isEnabled && PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
+            modeKey = "performance+skipTraversal"
+        } else if PerformanceModeSettings.isEnabled {
+            modeKey = "performance"
+        } else if PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
+            modeKey = "skipTraversal"
+        } else {
+            modeKey = "standard"
+        }
         return "\(seed.showId)|S\(seed.currentSeasonNumber)|E\(seed.currentEpisodeNumber)|anime=\(seed.isAnime)|mode=\(modeKey)|\(contextKey)"
     }
 

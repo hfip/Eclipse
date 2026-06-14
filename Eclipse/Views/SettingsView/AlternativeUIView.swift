@@ -296,7 +296,7 @@ struct AlternativeUIView: View {
             } header: {
                 Text("Atmosphere")
             } footer: {
-                Text("Gradient keeps the current default look. Solid Color replaces the gradient atmosphere with the poster's dominant color or your chosen color.")
+                Text("Gradient keeps the classic poster-colored look. Multi Gradient, Aurora, and Ember use layered palettes that blend with poster colors as you scroll. Solid Color replaces the gradient atmosphere with the poster's dominant color or your chosen color.")
             }
         }
         .navigationTitle("Appearance")

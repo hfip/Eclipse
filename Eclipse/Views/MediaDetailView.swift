@@ -95,6 +95,7 @@ struct MediaDetailView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var ambientColor: Color = Color.black
+    @State private var scrollOffset: CGFloat = 0
     @State private var showFullSynopsis: Bool = false
     @State private var synopsis: String = ""
     @State private var isBookmarked: Bool = false
@@ -154,6 +155,16 @@ struct MediaDetailView: View {
         theme.atmosphereColor(dominant: ambientColor)
     }
 
+    private var backgroundScrollOffset: CGFloat {
+#if os(iOS)
+        isIPad ? 0 : scrollOffset
+#else
+        scrollOffset
+#endif
+    }
+
+    private var scrollOffsetUpdateThreshold: CGFloat { 8 }
+
     private var hasActiveSources: Bool {
         !serviceManager.activeServices.isEmpty ||
         !stremioManager.activeAddons.isEmpty ||
@@ -195,7 +206,7 @@ struct MediaDetailView: View {
 #if os(tvOS)
         UIScreen.main.bounds.height * 0.8
 #else
-        isIPad ? 680 : 550
+        isIPad ? 720 : min(max(UIScreen.main.bounds.height * 0.76, 620), 780)
 #endif
     }
 
@@ -204,7 +215,7 @@ struct MediaDetailView: View {
 #if os(tvOS)
         UIScreen.main.bounds.height * 0.8
 #else
-        isIPad ? 500 : 400
+        isIPad ? 520 : 420
 #endif
     }
 
@@ -250,11 +261,23 @@ struct MediaDetailView: View {
         ZStack {
             EclipseTheme.shared.backgroundBase
                 .ignoresSafeArea(.all)
-            
-            Group {
-                theme.atmosphereStyle == .solid ? atmosphereColor : ambientColor
+
+            detailBackground
+                .ignoresSafeArea(.all)
+
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                LinearGradient(
+                    colors: [
+                        ambientColor.opacity(0.22),
+                        .clear,
+                        atmosphereColor.opacity(0.12)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea(.all)
+                .blendMode(.screen)
             }
-            .ignoresSafeArea(.all)
             
             if isLoading {
                 let _ = Logger.shared.log("MediaDetailView body branch loading: id=\(searchResult.id)", type: "CrashProbe")
@@ -493,6 +516,26 @@ struct MediaDetailView: View {
             AddToCollectionView(searchResult: searchResult)
         }
     }
+
+    @ViewBuilder
+    private var detailBackground: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch && theme.atmosphereStyle.isMultiGradient {
+            GlobalGradientBackground(overrideColor: ambientColor, scrollOffset: backgroundScrollOffset)
+        } else if theme.atmosphereStyle == .solid {
+            atmosphereColor
+        } else {
+            LinearGradient(
+                stops: [
+                    .init(color: EclipseTheme.shared.backgroundBase, location: 0.0),
+                    .init(color: ambientColor.opacity(0.74), location: 0.12),
+                    .init(color: ambientColor.opacity(0.30), location: 0.34),
+                    .init(color: EclipseTheme.shared.backgroundBase, location: 0.72)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
     
     @ViewBuilder
     private var loadingView: some View {
@@ -577,6 +620,19 @@ struct MediaDetailView: View {
                 heroImageSection
                 contentContainer
             }
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ScrollOffsetPreferenceKey.self,
+                        value: -geo.frame(in: .named("mediaDetailScroll")).origin.y
+                    )
+                }
+            )
+        }
+        .coordinateSpace(name: "mediaDetailScroll")
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
+            guard abs(scrollOffset - newOffset) >= scrollOffsetUpdateThreshold else { return }
+            scrollOffset = newOffset
         }
     }
 
@@ -637,19 +693,22 @@ struct MediaDetailView: View {
                 Spacer(minLength: 50)
             }
             .background(
-                ZStack {
-                    if ExperimentalFeatureState.isEnabledAtLaunch {
-                        ExperimentalGradientBackground(dominantColor: ambientColor)
-                    } else if theme.atmosphereStyle == .solid {
-                        atmosphereColor
-                    } else {
-                        LinearGradient(
-                            colors: [ambientColor, EclipseTheme.shared.backgroundBase],
-                            startPoint: .top,
-                            endPoint: UnitPoint(x: 0.5, y: 0.35)
-                        )
-                    }
-                }
+                detailContentBackground
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var detailContentBackground: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch && theme.atmosphereStyle.isMultiGradient {
+            GlobalGradientBackground(overrideColor: ambientColor, scrollOffset: backgroundScrollOffset)
+        } else if theme.atmosphereStyle == .solid {
+            atmosphereColor
+        } else {
+            LinearGradient(
+                colors: [ambientColor, Color.clear, EclipseTheme.shared.backgroundBase],
+                startPoint: .top,
+                endPoint: UnitPoint(x: 0.5, y: 0.34)
             )
         }
     }
@@ -659,14 +718,14 @@ struct MediaDetailView: View {
         LinearGradient(
             gradient: Gradient(stops: [
                 .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.0 : 0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.5 : 0.4), location: 0.2),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.8 : 0.6), location: 0.5),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.35 : 0.24), location: 0.18),
+                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.78 : 0.56), location: 0.58),
                 .init(color: atmosphereColor.opacity(1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: 120)
+        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? 280 : 120)
         .clipShape(RoundedRectangle(cornerRadius: 0))
     }
     
@@ -685,9 +744,33 @@ struct MediaDetailView: View {
             } else {
                 titleText
             }
+
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                if let metadata = detailMetadataLine {
+                    Text(metadata)
+                        .font(.system(size: isIPad ? 18 : 15, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                        .lineLimit(1)
+                        .shadow(color: .black.opacity(0.65), radius: 6, x: 0, y: 3)
+                }
+
+                if let voteAverage = detailVoteAverage, voteAverage > 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundColor(.yellow)
+                        Text(String(format: "%.1f", voteAverage))
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .applyLiquidGlassBackground(cornerRadius: 14)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.bottom, 10)
+        .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 34 : 10)
         .padding(.horizontal)
     }
     
@@ -701,6 +784,32 @@ struct MediaDetailView: View {
             .multilineTextAlignment(.center)
             .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
             .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var detailMetadataLine: String? {
+        let date = detailDate
+        let genreText = detailGenres.prefix(2).map(\.name).joined(separator: ", ")
+        let parts = [date, genreText].compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var detailDate: String? {
+        let rawDate = searchResult.isMovie
+            ? (movieDetail?.releaseDate ?? searchResult.releaseDate)
+            : (tvShowDetail?.firstAirDate ?? searchResult.firstAirDate)
+        guard let rawDate, !rawDate.isEmpty else { return nil }
+        return String(rawDate.prefix(10))
+    }
+
+    private var detailGenres: [TMDBGenre] {
+        searchResult.isMovie ? (movieDetail?.genres ?? []) : (tvShowDetail?.genres ?? [])
+    }
+
+    private var detailVoteAverage: Double? {
+        searchResult.isMovie ? (movieDetail?.voteAverage ?? searchResult.voteAverage) : (tvShowDetail?.voteAverage ?? searchResult.voteAverage)
     }
     
     @ViewBuilder
@@ -875,7 +984,7 @@ struct MediaDetailView: View {
     private func playbackContextForSearchSheet(_ episode: TMDBEpisode?) -> EpisodePlaybackContext? {
         guard isAnimeShow, let episode else { return nil }
 
-        if PerformanceModeSettings.isEnabled {
+        if PerformanceModeSettings.isEnabled || PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
             return EpisodePlaybackContext(
                 localSeasonNumber: episode.seasonNumber,
                 localEpisodeNumber: episode.episodeNumber,
@@ -1323,7 +1432,7 @@ struct MediaDetailView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .frame(width: 84, height: 34)
-                    .foregroundColor(selectedSpecialEpisodeContext?.id == entry.id ? .accentColor : .white)
+                    .foregroundColor(selectedSpecialEpisodeContext?.id == entry.id ? .white : .white.opacity(0.82))
 
                 Text(entry.episodeCount == 1 ? entry.formatLabel : "\(entry.formatLabel) - \(entry.episodeCount) eps")
                     .font(.caption2)
@@ -1373,6 +1482,13 @@ struct MediaDetailView: View {
             animeSpecialEntries = []
             isLoadingAnimeSpecials = false
             selectedSpecialEpisodeContext = nil
+            return
+        }
+        guard !PerformanceModeSettings.skipsAniListTraversalForAnimeDetails else {
+            animeSpecialEntries = []
+            isLoadingAnimeSpecials = false
+            selectedSpecialEpisodeContext = nil
+            Logger.shared.log("MediaDetailView skipped anime specials because AniList traversal is disabled", type: "AniList")
             return
         }
 
@@ -2248,11 +2364,12 @@ struct MediaDetailView: View {
                     let isAnimation = detail.genres.contains { $0.id == 16 }
                     let detectedAsAnime = isAsianAnimation && isAnimation
                     let performanceModeEnabled = PerformanceModeSettings.isEnabled
+                    let skipAniListTraversal = PerformanceModeSettings.skipsAniListTraversalForAnimeDetails
                     Logger.shared.log("MediaDetailView: \(detail.name) — isAsianAnimation=\(isAsianAnimation) isAnimation=\(isAnimation) detectedAsAnime=\(detectedAsAnime) originCountry=\(detail.originCountry ?? []) genres=\(detail.genres.map { $0.id })", type: "AniList")
                     
-                    // Detail pages still need AniMap-backed season structure in Performance Mode.
+                    // Full anime structure stays available unless the user opts into the detail-only skip mode.
                     var animeData: AniListAnimeWithSeasons? = nil
-                    if detectedAsAnime {
+                    if detectedAsAnime && !skipAniListTraversal {
                         do {
                             Logger.shared.log("MediaDetailView: Starting AniMap-backed anime detail fetch for \(detail.name) (tmdbId=\(detail.id)) performanceMode=\(performanceModeEnabled)", type: "AniList")
                             animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -2272,12 +2389,14 @@ struct MediaDetailView: View {
                         } catch {
                             Logger.shared.log("MediaDetailView: FAILED AniList fetch for \(detail.name): \(error.localizedDescription)", type: "Error")
                         }
+                    } else if detectedAsAnime {
+                        Logger.shared.log("MediaDetailView: Skipping AniList traversal for \(detail.name) because detail traversal performance mode is enabled", type: "AniList")
                     } else {
                         Logger.shared.log("MediaDetailView: Skipping AniList fetch - not detected as anime", type: "AniList")
                     }
                     
                     let resolvedAnimeRating: AnimeMetadataRating?
-                    if detectedAsAnime && performanceModeEnabled {
+                    if detectedAsAnime && (performanceModeEnabled || skipAniListTraversal) {
                         resolvedAnimeRating = detail.voteAverage > 0
                             ? AnimeMetadataRating(value: detail.voteAverage, source: .tmdb)
                             : nil
