@@ -220,7 +220,7 @@ struct MediaDetailView: View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
             return designMetrics.detailHeroHeight(screenHeight: UIScreen.main.bounds.height, isIPad: isIPad)
         }
-        isIPad ? 720 : min(max(UIScreen.main.bounds.height * 0.76, 620), 780)
+        return isIPad ? 720 : min(max(UIScreen.main.bounds.height * 0.76, 620), 780)
 #endif
     }
 
