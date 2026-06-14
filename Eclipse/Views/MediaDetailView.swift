@@ -121,12 +121,9 @@ struct MediaDetailView: View {
     @State private var castMembers: [TMDBCastMember] = []
     @State private var detailStills: [TMDBImage] = []
     @State private var detailTrailers: [TMDBVideo] = []
-    @State private var experimentalRelatedItems: [TMDBSearchResult] = []
     @State private var isLoadingExperimentalExtras = false
     @State private var traktComments: [TraktCommentReview] = []
-    @State private var traktRelatedItems: [TMDBSearchResult] = []
     @State private var isLoadingTraktComments = false
-    @State private var isLoadingTraktRelated = false
     @State private var hasLoadedContent = false
     @State private var detailLoadTask: Task<Void, Never>?
     @State private var specialsLoadTask: Task<Void, Never>?
@@ -318,11 +315,6 @@ struct MediaDetailView: View {
             specialsLoadGeneration += 1
         }
         .onChange(of: trackerManager.trackerState.traktCommentsEnabled) { _ in
-            if hasLoadedContent {
-                startTraktFeatureLoad()
-            }
-        }
-        .onChange(of: trackerManager.trackerState.traktRelatedEnabled) { _ in
             if hasLoadedContent {
                 startTraktFeatureLoad()
             }
@@ -863,8 +855,6 @@ struct MediaDetailView: View {
             StarRatingView(mediaId: searchResult.id, isAnime: isAnimeShow)
         case .traktComments:
             traktCommentsSection
-        case .traktRelated:
-            traktRelatedSection
         case .episodes:
             episodesSection
         }
@@ -960,13 +950,6 @@ struct MediaDetailView: View {
         VStack(alignment: .leading, spacing: 22) {
             experimentalStillsSection
             experimentalTrailersSection
-            experimentalParentsGuideSection
-
-            if !experimentalRelatedItems.isEmpty {
-                MediaSection(title: "Related", items: Array(experimentalRelatedItems.prefix(15)))
-            } else if !isLoadingExperimentalExtras {
-                experimentalEmptyCard(title: "Related", message: "No related titles available")
-            }
         }
         .padding(.top, 4)
     }
@@ -1072,59 +1055,6 @@ struct MediaDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var experimentalParentsGuideSection: some View {
-        if let advisory = experimentalRatingAdvisory {
-            VStack(alignment: .leading, spacing: 12) {
-                experimentalSectionTitle("Parents Guide", isLoading: false)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.red.opacity(0.86))
-                            .frame(width: 5, height: 44)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(advisory.title)
-                                .font(.headline)
-                                .foregroundColor(.white)
-                            Text(advisory.detail)
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.62))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    if !advisory.descriptors.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(advisory.descriptors, id: \.self) { descriptor in
-                                    Text(descriptor)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundColor(.white.opacity(0.78))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(Color.white.opacity(0.10))
-                                        .clipShape(Capsule())
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(16)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-                .padding(.horizontal)
-            }
-        } else if !isLoadingExperimentalExtras {
-            experimentalEmptyCard(title: "Parents Guide", message: "No rating advisory available")
-        }
-    }
-
     private func experimentalSectionTitle(_ title: String, isLoading: Bool) -> some View {
         HStack(spacing: 10) {
             Text(title)
@@ -1173,40 +1103,6 @@ struct MediaDetailView: View {
         .padding(.horizontal)
     }
 
-    private struct ExperimentalRatingAdvisory {
-        let title: String
-        let detail: String
-        let descriptors: [String]
-    }
-
-    private var experimentalRatingAdvisory: ExperimentalRatingAdvisory? {
-        if searchResult.isMovie {
-            let results = movieDetail?.releaseDates?.results ?? []
-            let preferred = results.first(where: { $0.iso31661 == "US" }) ?? results.first
-            guard let release = preferred?.releaseDates.first(where: { !$0.certification.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
-                return nil
-            }
-            let region = preferred?.iso31661 ?? "Unknown"
-            let note = release.note?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ExperimentalRatingAdvisory(
-                title: "Rated \(release.certification)",
-                detail: note?.isEmpty == false ? "\(region): \(note!)" : "\(region) certification from TMDB",
-                descriptors: []
-            )
-        }
-
-        let ratings = tvShowDetail?.contentRatings?.results ?? []
-        let preferred = ratings.first(where: { $0.iso31661 == "US" }) ?? ratings.first
-        guard let rating = preferred?.rating.trimmingCharacters(in: .whitespacesAndNewlines), !rating.isEmpty else {
-            return nil
-        }
-        return ExperimentalRatingAdvisory(
-            title: "Rated \(rating)",
-            detail: "\(preferred?.iso31661 ?? "Unknown") content rating from TMDB",
-            descriptors: preferred?.descriptors ?? []
-        )
-    }
-    
     // MARK: - Cast Section
     
     @ViewBuilder
@@ -1337,31 +1233,6 @@ struct MediaDetailView: View {
                 }
             }
             .padding(.top, 8)
-        }
-    }
-
-    @ViewBuilder
-    private var traktRelatedSection: some View {
-        if trackerManager.trackerState.traktRelatedEnabled && (isLoadingTraktRelated || !traktRelatedItems.isEmpty) {
-            if !traktRelatedItems.isEmpty {
-                MediaSection(title: "Related on Trakt", items: Array(traktRelatedItems.prefix(15)))
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        Text("Related on Trakt")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-
-                        ProgressView()
-                            .scaleEffect(0.75)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                }
-                .padding(.top, 8)
-            }
         }
     }
 
@@ -2084,57 +1955,25 @@ struct MediaDetailView: View {
 
         let hasTraktAccount = trackerManager.trackerState.getAccount(for: .trakt) != nil
         let shouldLoadComments = trackerManager.trackerState.traktCommentsEnabled && hasTraktAccount
-        let shouldLoadRelated = trackerManager.trackerState.traktRelatedEnabled && hasTraktAccount
 
-        guard shouldLoadComments || shouldLoadRelated else {
+        guard shouldLoadComments else {
             traktComments = []
-            traktRelatedItems = []
             isLoadingTraktComments = false
-            isLoadingTraktRelated = false
             return
         }
 
-        if shouldLoadComments {
-            isLoadingTraktComments = traktComments.isEmpty
-        } else {
-            traktComments = []
-            isLoadingTraktComments = false
-        }
-
-        if shouldLoadRelated {
-            isLoadingTraktRelated = traktRelatedItems.isEmpty
-        } else {
-            traktRelatedItems = []
-            isLoadingTraktRelated = false
-        }
+        isLoadingTraktComments = traktComments.isEmpty
 
         let tmdbId = searchResult.id
         let isMovie = searchResult.isMovie
         traktFeatureLoadTask = Task {
             let loadedComments: [TraktCommentReview]
-            if shouldLoadComments {
-                loadedComments = await TrackerManager.shared.fetchTraktComments(tmdbId: tmdbId, isMovie: isMovie)
-            } else {
-                loadedComments = []
-            }
-
-            let loadedRelated: [TMDBSearchResult]
-            if shouldLoadRelated {
-                loadedRelated = await TrackerManager.shared.fetchTraktRelated(tmdbId: tmdbId, isMovie: isMovie, tmdbService: tmdbService)
-            } else {
-                loadedRelated = []
-            }
+            loadedComments = await TrackerManager.shared.fetchTraktComments(tmdbId: tmdbId, isMovie: isMovie)
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                if shouldLoadComments {
-                    self.traktComments = loadedComments
-                }
-                if shouldLoadRelated {
-                    self.traktRelatedItems = loadedRelated
-                }
+                self.traktComments = loadedComments
                 self.isLoadingTraktComments = false
-                self.isLoadingTraktRelated = false
                 self.refreshDetailContentLayout(reason: "trakt-features")
             }
         }
@@ -2146,40 +1985,32 @@ struct MediaDetailView: View {
         guard ExperimentalFeatureState.isEnabledAtLaunch else {
             detailStills = []
             detailTrailers = []
-            experimentalRelatedItems = []
             isLoadingExperimentalExtras = false
             return
         }
 
         let tmdbId = searchResult.id
         let isMovie = searchResult.isMovie
-        isLoadingExperimentalExtras = detailStills.isEmpty && detailTrailers.isEmpty && experimentalRelatedItems.isEmpty
+        isLoadingExperimentalExtras = detailStills.isEmpty && detailTrailers.isEmpty
 
         experimentalExtrasLoadTask = Task {
             let images: TMDBImagesResponse?
             let trailers: [TMDBVideo]
-            let related: [TMDBSearchResult]
 
             if isMovie {
                 async let imagesResult: TMDBImagesResponse? = try? tmdbService.getMovieImages(id: tmdbId, preferredLanguage: selectedLanguage)
                 async let videosResult: [TMDBVideo]? = try? tmdbService.getMovieVideos(id: tmdbId)
-                async let recommendationsResult: [TMDBMovie]? = try? tmdbService.getMovieRecommendations(id: tmdbId)
 
                 images = await imagesResult
                 let loadedVideos = (await videosResult) ?? []
-                let loadedRecommendations = (await recommendationsResult) ?? []
                 trailers = loadedVideos.filter { $0.isTrailerLike && $0.playbackURL != nil }
-                related = loadedRecommendations.map(\.asSearchResult)
             } else {
                 async let imagesResult: TMDBImagesResponse? = try? tmdbService.getTVShowImages(id: tmdbId, preferredLanguage: selectedLanguage)
                 async let videosResult: [TMDBVideo]? = try? tmdbService.getTVShowVideos(id: tmdbId)
-                async let recommendationsResult: [TMDBTVShow]? = try? tmdbService.getTVRecommendations(id: tmdbId)
 
                 images = await imagesResult
                 let loadedVideos = (await videosResult) ?? []
-                let loadedRecommendations = (await recommendationsResult) ?? []
                 trailers = loadedVideos.filter { $0.isTrailerLike && $0.playbackURL != nil }
-                related = loadedRecommendations.map(\.asSearchResult)
             }
 
             let stills = (images?.backdrops ?? [])
@@ -2195,7 +2026,6 @@ struct MediaDetailView: View {
                 guard !Task.isCancelled, self.searchResult.id == tmdbId else { return }
                 self.detailStills = stills
                 self.detailTrailers = trailers
-                self.experimentalRelatedItems = related
                 self.isLoadingExperimentalExtras = false
                 self.experimentalExtrasLoadTask = nil
                 self.refreshDetailContentLayout(reason: "experimental-extras")
@@ -2296,12 +2126,9 @@ struct MediaDetailView: View {
         animeSpecialEntries = []
         isLoadingAnimeSpecials = false
         traktComments = []
-        traktRelatedItems = []
         detailStills = []
         detailTrailers = []
-        experimentalRelatedItems = []
         isLoadingTraktComments = false
-        isLoadingTraktRelated = false
         isLoadingExperimentalExtras = false
         selectedSpecialEpisodeContext = nil
         Logger.shared.log("MediaDetail scheduling async task: id=\(searchResult.id)", type: "CrashProbe")
@@ -2421,11 +2248,11 @@ struct MediaDetailView: View {
                     let performanceModeEnabled = PerformanceModeSettings.isEnabled
                     Logger.shared.log("MediaDetailView: \(detail.name) — isAsianAnimation=\(isAsianAnimation) isAnimation=\(isAnimation) detectedAsAnime=\(detectedAsAnime) originCountry=\(detail.originCountry ?? []) genres=\(detail.genres.map { $0.id })", type: "AniList")
                     
-                    // Fetch AniList hybrid seasons/episodes if anime
+                    // Detail pages still need AniMap-backed season structure in Performance Mode.
                     var animeData: AniListAnimeWithSeasons? = nil
-                    if detectedAsAnime && !performanceModeEnabled {
+                    if detectedAsAnime {
                         do {
-                            Logger.shared.log("MediaDetailView: Starting AniList fetch for \(detail.name) (tmdbId=\(detail.id))", type: "AniList")
+                            Logger.shared.log("MediaDetailView: Starting AniMap-backed anime detail fetch for \(detail.name) (tmdbId=\(detail.id)) performanceMode=\(performanceModeEnabled)", type: "AniList")
                             animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
                                 title: detail.name,
                                 tmdbShowId: detail.id,
@@ -2443,8 +2270,6 @@ struct MediaDetailView: View {
                         } catch {
                             Logger.shared.log("MediaDetailView: FAILED AniList fetch for \(detail.name): \(error.localizedDescription)", type: "Error")
                         }
-                    } else if detectedAsAnime {
-                        Logger.shared.log("MediaDetailView: Performance Mode active - using TMDB seasons for \(detail.name)", type: "TMDB")
                     } else {
                         Logger.shared.log("MediaDetailView: Skipping AniList fetch - not detected as anime", type: "AniList")
                     }

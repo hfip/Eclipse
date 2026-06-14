@@ -181,8 +181,10 @@ final class TrackerManager: NSObject, ObservableObject {
     private var traktScrobbleLastActionByKey: [String: TraktScrobbleAction] = [:]
     private var traktScrobbleLastStampByKey: [String: (action: TraktScrobbleAction, progress: Double, sentAt: Date)] = [:]
     private var traktScrobblePendingByKey: [String: (action: TraktScrobbleAction, progress: Double, queuedAt: Date)] = [:]
+    private var traktScrobbleFailureStampByKey: [String: (action: TraktScrobbleAction, progress: Double, failedAt: Date)] = [:]
     private let traktScrobbleQueue = DispatchQueue(label: "app.eclipse.soupy.traktScrobbleDedupe")
     private let traktScrobbleMinimumInterval: TimeInterval = 8
+    private let traktScrobbleFailureCooldown: TimeInterval = 60
     private let traktScrobbleProgressWindow: Double = 1.5
 
     // OAuth config is supplied by ignored local build settings.
@@ -2397,6 +2399,7 @@ final class TrackerManager: NSObject, ObservableObject {
         guard let account = trackerState.getAccount(for: .trakt) else { return }
 
         if trackerState.liveTraktScrobbling {
+            guard force else { return }
             scrobbleTraktPlayback(
                 .stop,
                 for: .episode(showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber),
@@ -2432,6 +2435,7 @@ final class TrackerManager: NSObject, ObservableObject {
         guard let account = trackerState.getAccount(for: .trakt) else { return }
 
         if trackerState.liveTraktScrobbling {
+            guard force else { return }
             scrobbleTraktPlayback(.stop, for: .movie(id: movieId, title: ""), progress: progress, force: force)
             return
         }
@@ -3052,8 +3056,18 @@ final class TrackerManager: NSObject, ObservableObject {
             traktScrobblePendingByKey = traktScrobblePendingByKey.filter {
                 now.timeIntervalSince($0.value.queuedAt) < 2 * 60
             }
+            traktScrobbleFailureStampByKey = traktScrobbleFailureStampByKey.filter {
+                now.timeIntervalSince($0.value.failedAt) < traktScrobbleFailureCooldown
+            }
 
             if !force {
+                if let failure = traktScrobbleFailureStampByKey[key],
+                   failure.action == action,
+                   now.timeIntervalSince(failure.failedAt) < traktScrobbleFailureCooldown,
+                   abs(failure.progress - progress) <= traktScrobbleProgressWindow {
+                    return false
+                }
+
                 if action == .start, traktScrobbleLastActionByKey[key] == .start {
                     return false
                 }
@@ -3095,6 +3109,7 @@ final class TrackerManager: NSObject, ObservableObject {
             traktScrobbleLastActionByKey.removeAll()
             traktScrobbleLastStampByKey.removeAll()
             traktScrobblePendingByKey.removeAll()
+            traktScrobbleFailureStampByKey.removeAll()
         }
     }
 
@@ -3114,6 +3129,9 @@ final class TrackerManager: NSObject, ObservableObject {
             if sent {
                 traktScrobbleLastActionByKey[key] = action
                 traktScrobbleLastStampByKey[key] = (action, progress, now)
+                traktScrobbleFailureStampByKey.removeValue(forKey: key)
+            } else {
+                traktScrobbleFailureStampByKey[key] = (action, progress, now)
             }
         }
     }

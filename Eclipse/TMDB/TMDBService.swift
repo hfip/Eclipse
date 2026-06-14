@@ -897,7 +897,7 @@ class TMDBService: ObservableObject {
         } else {
             let response = try decodeTMDBListResponse(TMDBTVSearchResponse.self, from: data, endpoint: url.path)
             return response.results.map {
-                TMDBSearchResult(id: $0.id, mediaType: "tv", title: nil, name: $0.name, overview: $0.overview, posterPath: $0.posterPath, backdropPath: $0.backdropPath, releaseDate: nil, firstAirDate: $0.firstAirDate, voteAverage: $0.voteAverage, popularity: $0.popularity, adult: nil, genreIds: $0.genreIds)
+                TMDBSearchResult(id: $0.id, mediaType: "tv", title: nil, name: $0.name, overview: $0.overview, posterPath: $0.posterPath, backdropPath: $0.backdropPath, releaseDate: nil, firstAirDate: $0.firstAirDate, voteAverage: $0.voteAverage, popularity: $0.popularity, adult: $0.adult, genreIds: $0.genreIds)
             }
         }
     }
@@ -909,7 +909,7 @@ class TMDBService: ObservableObject {
         let (data, _) = try await throttledData(from: url)
         let response = try decodeTMDBListResponse(TMDBTVSearchResponse.self, from: data, endpoint: url.path)
         return response.results.map {
-            TMDBSearchResult(id: $0.id, mediaType: "tv", title: nil, name: $0.name, overview: $0.overview, posterPath: $0.posterPath, backdropPath: $0.backdropPath, releaseDate: nil, firstAirDate: $0.firstAirDate, voteAverage: $0.voteAverage, popularity: $0.popularity, adult: nil, genreIds: $0.genreIds)
+            TMDBSearchResult(id: $0.id, mediaType: "tv", title: nil, name: $0.name, overview: $0.overview, posterPath: $0.posterPath, backdropPath: $0.backdropPath, releaseDate: nil, firstAirDate: $0.firstAirDate, voteAverage: $0.voteAverage, popularity: $0.popularity, adult: $0.adult, genreIds: $0.genreIds)
         }
     }
     
@@ -926,7 +926,7 @@ class TMDBService: ObservableObject {
         } else {
             let response = try decodeTMDBListResponse(TMDBTVSearchResponse.self, from: data, endpoint: url.path)
             return response.results.map {
-                TMDBSearchResult(id: $0.id, mediaType: "tv", title: nil, name: $0.name, overview: $0.overview, posterPath: $0.posterPath, backdropPath: $0.backdropPath, releaseDate: nil, firstAirDate: $0.firstAirDate, voteAverage: $0.voteAverage, popularity: $0.popularity, adult: nil, genreIds: $0.genreIds)
+                TMDBSearchResult(id: $0.id, mediaType: "tv", title: nil, name: $0.name, overview: $0.overview, posterPath: $0.posterPath, backdropPath: $0.backdropPath, releaseDate: nil, firstAirDate: $0.firstAirDate, voteAverage: $0.voteAverage, popularity: $0.popularity, adult: $0.adult, genreIds: $0.genreIds)
             }
         }
     }

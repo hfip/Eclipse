@@ -18,8 +18,7 @@ import MPVKitSampleBufferGPL
 #endif
 
 private func experimentalSubtitleASSOverrideValue() -> String {
-    guard ExperimentalFeatureState.isEnabledAtLaunch,
-          ExperimentalFeatureState.canUseExperimentalMPVPlayback else {
+    guard ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable else {
         return "yes"
     }
     return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey) ? "yes" : "no"
@@ -2587,6 +2586,9 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     private var positionUpdateTimer: Timer?
     private var lastPositionUpdateAt: CFTimeInterval = 0
     private let positionUpdateInterval: CFTimeInterval = 0.5
+    private var lastLoggedSampleBufferState = ""
+    private var lastLoggedDiagnosticsFrameCount = 0
+    private var lastLoggedDiagnosticsFailures = 0
 
     var isPausedState: Bool { isPaused }
     var currentTime: Double { sampleRenderer.currentTime }
@@ -2632,6 +2634,11 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
                 self.delegate?.renderer(self, didFailWithError: message)
             }
         }
+        sampleRenderer.onDiagnostics = { [weak self] diagnostics in
+            DispatchQueue.main.async {
+                self?.logDiagnosticsIfNeeded(diagnostics)
+            }
+        }
         try sampleRenderer.start()
         isRunning = true
         startPositionUpdateTimer()
@@ -2640,11 +2647,17 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     func stop() {
         sampleRenderer.stop()
         stopPositionUpdateTimer()
+        sampleRenderer.onStateChange = nil
+        sampleRenderer.onError = nil
+        sampleRenderer.onDiagnostics = nil
         isRunning = false
         isReadyToSeek = false
         isLoading = false
         isAwaitingReadyForCurrentLoad = true
         lastPositionUpdateAt = 0
+        lastLoggedSampleBufferState = ""
+        lastLoggedDiagnosticsFrameCount = 0
+        lastLoggedDiagnosticsFailures = 0
     }
 
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]?) {
@@ -2931,6 +2944,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     }
 
     private func handleSampleBufferState(_ state: MPVMetalSampleBufferRendererState) {
+        logStateIfNeeded(state)
         switch state {
         case .loading, .starting:
             isLoading = true
@@ -2967,6 +2981,37 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         case .idle, .stopped:
             break
         }
+    }
+
+    private func logStateIfNeeded(_ state: MPVMetalSampleBufferRendererState) {
+        let label: String
+        switch state {
+        case .idle: label = "idle"
+        case .starting: label = "starting"
+        case .loading: label = "loading"
+        case .ready: label = "ready"
+        case .playing: label = "playing"
+        case .paused: label = "paused"
+        case .stopped: label = "stopped"
+        case .failed(let message): label = "failed:\(message)"
+        }
+        guard label != lastLoggedSampleBufferState else { return }
+        lastLoggedSampleBufferState = label
+        Logger.shared.log("[MPVSampleBufferPiPBridge] state=\(label) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) layer={\(pictureInPictureDebugSnapshot())}", type: "MPV")
+    }
+
+    private func logDiagnosticsIfNeeded(_ diagnostics: MPVMetalSampleBufferRendererDiagnostics) {
+        let totalFailures = diagnostics.renderFailureCount + diagnostics.allocationFailureCount + diagnostics.enqueueFailureCount
+        let shouldLogFrame = diagnostics.frameCount <= 3 && diagnostics.frameCount != lastLoggedDiagnosticsFrameCount
+        let shouldLogMilestone = diagnostics.frameCount >= lastLoggedDiagnosticsFrameCount + 120
+        let shouldLogFailure = totalFailures != lastLoggedDiagnosticsFailures
+        guard shouldLogFrame || shouldLogMilestone || shouldLogFailure else { return }
+        lastLoggedDiagnosticsFrameCount = diagnostics.frameCount
+        lastLoggedDiagnosticsFailures = totalFailures
+        Logger.shared.log(
+            "[MPVSampleBufferPiPBridge] diagnostics frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) metalProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
+            type: "MPV"
+        )
     }
 }
 
@@ -3032,6 +3077,9 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     private var isReadyToSeek = false
     private var isAwaitingFileLoadedForCurrentLoad = true
     private var isUsingPiPBridge = false
+    private var isPreparingPiPBridge = false
+    private var pipBridgeLoadGeneration: Int?
+    private var lastSuppressedPiPBridgeStateLog = ""
     private var loadGeneration = 0
     private var currentLoadStartedAt: Date?
     private var lastAppliedSubtitleStyle: SubtitleStyle = .default
@@ -3137,6 +3185,10 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         }
         mpv = nil
         isUsingPiPBridge = false
+        isPreparingPiPBridge = false
+        pipBridgeLoadGeneration = nil
+        pendingPiPAudioTrackId = nil
+        pendingPiPSubtitleTrackId = nil
         isReadyToSeek = false
         isLoading = false
         isPaused = true
@@ -3171,6 +3223,12 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         resetHardwareDecodeFailureTracking()
         loadGeneration += 1
         let generation = loadGeneration
+        pipBridgeLoadGeneration = nil
+        isPreparingPiPBridge = false
+        isUsingPiPBridge = false
+        pendingPiPAudioTrackId = nil
+        pendingPiPSubtitleTrackId = nil
+        pipBridge.stop()
         logMPV("load start gen=\(generation) target=\(describe(url: url)) preset=\(preset.id.rawValue) headerKeys=[\((headers ?? [:]).keys.sorted().joined(separator: ","))] pendingInitialSeek=\(pendingInitialSeek.map { String(format: "%.2f", $0) } ?? "nil")")
         setLoading(true)
 
@@ -3456,36 +3514,49 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             fallbackRenderer.prepareForPictureInPictureStart()
             return
         }
-        guard isRunning, !isUsingPiPBridge, let currentURL, let currentPreset else { return }
-        wasPausedBeforePiP = isPaused
-        pendingPiPAudioTrackId = selectedAudioTrackId ?? getCurrentAudioTrackId()
-        pendingPiPSubtitleTrackId = selectedSubtitleTrackId ?? getCurrentSubtitleTrackId()
-        isUsingPiPBridge = true
-        logMPV("PiP hybrid prepare begin pos=\(String(format: "%.2f", cachedPosition)) paused=\(isPaused) audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1)")
-        do {
-            try pipBridge.start()
-        } catch {
-            isUsingPiPBridge = false
-            logMPV("sample-buffer PiP bridge start failed error=\(error)")
-            delegate?.renderer(self, didFailWithError: "MPV Metal PiP bridge failed to start")
+        guard isRunning, let currentURL, let currentPreset else {
+            logMPV("PiP hybrid prepare skipped running=\(isRunning) url=\(currentURL != nil) preset=\(currentPreset != nil)")
             return
         }
-        pipBridge.prepareInitialSeek(to: cachedPosition)
-        pipBridge.load(url: currentURL, with: currentPreset, headers: currentHeaders)
-        pipBridge.setSpeed(getSpeed())
-        pipBridge.applySubtitleStyle(lastAppliedSubtitleStyle)
-        for request in loadedExternalSubtitleRequests {
-            pipBridge.loadExternalSubtitles(urls: request.urls, names: request.names, enforce: request.enforce)
+        wasPausedBeforePiP = isPausedState
+        pendingPiPAudioTrackId = selectedAudioTrackId ?? getCurrentAudioTrackId()
+        pendingPiPSubtitleTrackId = selectedSubtitleTrackId ?? getCurrentSubtitleTrackId()
+        isPreparingPiPBridge = true
+
+        if pipBridgeLoadGeneration != loadGeneration {
+            do {
+                try pipBridge.start()
+            } catch {
+                isPreparingPiPBridge = false
+                pipBridgeLoadGeneration = nil
+                logMPV("PiP hybrid bridge start failed error=\(error) foreground={\(pictureInPictureDebugSnapshot())}")
+                delegate?.renderer(self, didFailWithError: "MPV Metal PiP bridge failed to start")
+                return
+            }
+
+            pipBridgeLoadGeneration = loadGeneration
+            pipBridge.prepareInitialSeek(to: cachedPosition)
+            pipBridge.load(url: currentURL, with: currentPreset, headers: currentHeaders)
+            pipBridge.setSpeed(getSpeed())
+            pipBridge.applySubtitleStyle(lastAppliedSubtitleStyle)
+            for request in loadedExternalSubtitleRequests {
+                pipBridge.loadExternalSubtitles(urls: request.urls, names: request.names, enforce: request.enforce)
+            }
+            if wasPausedBeforePiP {
+                pipBridge.pausePlayback()
+            }
+            logMPV("PiP hybrid bridge load gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) paused=\(wasPausedBeforePiP) audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) externalSubs=\(loadedExternalSubtitleRequests.count) foregroundSid=\(getCurrentSubtitleTrackId())")
+        } else {
+            pipBridge.prepareInitialSeek(to: cachedPosition)
+            pipBridge.setSpeed(getSpeed())
+            pipBridge.applySubtitleStyle(lastAppliedSubtitleStyle)
+            logMPV("PiP hybrid bridge reuse gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) primed=\(pipBridge.isPictureInPicturePrimed())")
         }
-        if wasPausedBeforePiP {
-            pipBridge.pausePlayback()
-        }
-        setProperty(name: "pause", value: "yes")
-        setProperty(name: "vid", value: "no")
+
         DispatchQueue.main.async { [weak self] in
             self?.displayLayer.isHidden = false
             self?.displayLayer.opacity = 1.0
-            self?.displayLayer.zPosition = 1
+            self?.displayLayer.zPosition = -1
             self?.metalView.isHidden = false
         }
         pipBridge.prepareForPictureInPictureStart()
@@ -3496,31 +3567,38 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             fallbackRenderer.finishPictureInPicture()
             return
         }
-        guard isUsingPiPBridge else {
+        guard isUsingPiPBridge || isPreparingPiPBridge || pipBridgeLoadGeneration != nil else {
             resumeForegroundRendering(reason: "finish-pip-not-active")
             return
         }
+        let wasActive = isUsingPiPBridge
         let bridgePosition = pipBridge.currentTime
         let bridgeSpeed = pipBridge.getSpeed()
         let bridgeAudio = pipBridge.getCurrentAudioTrackId()
         let bridgeSubtitle = pipBridge.getCurrentSubtitleTrackId()
         let shouldResumePlayback = !pipBridge.isPausedState
-        logMPV("PiP hybrid finish pos=\(String(format: "%.2f", bridgePosition)) speed=\(String(format: "%.2f", bridgeSpeed)) audio=\(bridgeAudio) sub=\(bridgeSubtitle) resume=\(shouldResumePlayback)")
+        logMPV("PiP hybrid finish active=\(wasActive) pos=\(String(format: "%.2f", bridgePosition)) speed=\(String(format: "%.2f", bridgeSpeed)) audio=\(bridgeAudio) sub=\(bridgeSubtitle) resume=\(shouldResumePlayback)")
         pipBridge.stop()
         isUsingPiPBridge = false
-        setProperty(name: "vid", value: "auto")
-        setSpeed(bridgeSpeed)
-        seek(to: bridgePosition)
-        if bridgeAudio >= 0 { setAudioTrack(id: bridgeAudio) }
-        if bridgeSubtitle >= 0 {
-            setSubtitleTrack(id: bridgeSubtitle)
-        } else {
-            disableSubtitles()
-        }
-        if shouldResumePlayback {
-            play()
-        } else {
-            pausePlayback()
+        isPreparingPiPBridge = false
+        pipBridgeLoadGeneration = nil
+        pendingPiPAudioTrackId = nil
+        pendingPiPSubtitleTrackId = nil
+        if wasActive {
+            setProperty(name: "vid", value: "auto")
+            setSpeed(bridgeSpeed)
+            seek(to: bridgePosition)
+            if bridgeAudio >= 0 { setAudioTrack(id: bridgeAudio) }
+            if bridgeSubtitle >= 0 {
+                setSubtitleTrack(id: bridgeSubtitle)
+            } else {
+                disableSubtitles()
+            }
+            if shouldResumePlayback {
+                play()
+            } else {
+                pausePlayback()
+            }
         }
         DispatchQueue.main.async { [weak self] in
             self?.displayLayer.isHidden = true
@@ -3536,7 +3614,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             fallbackRenderer.primePictureInPictureFrames(reason: reason)
             return
         }
-        if isUsingPiPBridge {
+        if isUsingPiPBridge || isPreparingPiPBridge {
             pipBridge.primePictureInPictureFrames(reason: reason)
         }
     }
@@ -3546,12 +3624,20 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             fallbackRenderer.activatePictureInPictureLayer()
             return
         }
-        guard isUsingPiPBridge else { return }
+        guard isUsingPiPBridge || isPreparingPiPBridge else { return }
+        let wasActive = isUsingPiPBridge
+        isUsingPiPBridge = true
+        isPreparingPiPBridge = false
+        if !wasActive {
+            setProperty(name: "pause", value: "yes")
+            setProperty(name: "vid", value: "no")
+            logMPV("PiP hybrid activated bridge foregroundPos=\(String(format: "%.2f", cachedPosition)) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}")
+        }
         pipBridge.activatePictureInPictureLayer()
     }
 
     func isPictureInPicturePrimed() -> Bool {
-        fallbackRenderer?.isPictureInPicturePrimed() ?? (isUsingPiPBridge && pipBridge.isPictureInPicturePrimed())
+        fallbackRenderer?.isPictureInPicturePrimed() ?? ((isUsingPiPBridge || isPreparingPiPBridge) && pipBridge.isPictureInPicturePrimed())
     }
 
     func resumeForegroundRendering(reason: String) {
@@ -3561,6 +3647,10 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         }
         guard isRunning else { return }
         if isUsingPiPBridge {
+            finishPictureInPicture()
+            return
+        }
+        if isPreparingPiPBridge || pipBridgeLoadGeneration != nil {
             finishPictureInPicture()
             return
         }
@@ -3585,7 +3675,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         let size = currentVideoSize()
         let vo = mpv.flatMap { getStringProperty(handle: $0, name: "vo-configured") } ?? "nil"
         let hwdec = mpv.flatMap { getStringProperty(handle: $0, name: "hwdec-current") } ?? "nil"
-        return "mode=\(isUsingPiPBridge ? "metal-pip" : "moltenvk") running=\(isRunning) paused=\(isPausedState) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) video=\(String(format: "%.0fx%.0f", size.width, size.height)) vo=\(vo) hwdec=\(hwdec) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}"
+        let mode = isUsingPiPBridge ? "metal-pip" : (isPreparingPiPBridge ? "moltenvk-pip-warmup" : "moltenvk")
+        return "mode=\(mode) running=\(isRunning) paused=\(isPausedState) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) video=\(String(format: "%.0fx%.0f", size.width, size.height)) vo=\(vo) hwdec=\(hwdec) bridgeGen=\(pipBridgeLoadGeneration ?? -1) currentGen=\(loadGeneration) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}"
     }
 
     private func startMoltenVK() throws {
@@ -3853,6 +3944,11 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             var flag: Int32 = 0
             if getProperty(handle: handle, name: name, format: MPV_FORMAT_FLAG, value: &flag) >= 0 {
                 let newPaused = flag != 0
+                if isUsingPiPBridge {
+                    isPaused = newPaused
+                    logMPV("foreground pause change suppressed during PiP bridge active paused=\(newPaused)")
+                    return
+                }
                 if newPaused != isPaused {
                     isPaused = newPaused
                     DispatchQueue.main.async { [weak self] in
@@ -4304,6 +4400,10 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
 
     func renderer(_ renderer: PlayerRenderer, didUpdatePosition position: Double, duration: Double) {
         guard renderer === pipBridge else { return }
+        guard isUsingPiPBridge else {
+            logSuppressedPiPBridgeEvent("position", detail: "pos=\(String(format: "%.2f", position))/\(String(format: "%.2f", duration))")
+            return
+        }
         cachedPosition = max(0, position)
         cachedDuration = max(0, duration)
         delegate?.renderer(self, didUpdatePosition: cachedPosition, duration: cachedDuration)
@@ -4311,12 +4411,20 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
 
     func renderer(_ renderer: PlayerRenderer, didChangePause isPaused: Bool) {
         guard renderer === pipBridge else { return }
+        guard isUsingPiPBridge else {
+            logSuppressedPiPBridgeEvent("pause", detail: "paused=\(isPaused)")
+            return
+        }
         self.isPaused = isPaused
         delegate?.renderer(self, didChangePause: isPaused)
     }
 
     func renderer(_ renderer: PlayerRenderer, didChangeLoading isLoading: Bool) {
         guard renderer === pipBridge else { return }
+        guard isUsingPiPBridge else {
+            logSuppressedPiPBridgeEvent("loading", detail: "loading=\(isLoading)")
+            return
+        }
         self.isLoading = isLoading
         delegate?.renderer(self, didChangeLoading: isLoading)
     }
@@ -4333,23 +4441,46 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
                 pipBridge.disableSubtitles()
             }
         }
+        logMPV("PiP hybrid bridge ready audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) snapshot={\(pipBridge.pictureInPictureDebugSnapshot())}")
+        guard isUsingPiPBridge else { return }
         delegate?.renderer(self, didBecomeReadyToSeek: didBecomeReadyToSeek)
     }
 
     func renderer(_ renderer: PlayerRenderer, didFailWithError message: String) {
         guard renderer === pipBridge else { return }
+        guard isUsingPiPBridge else {
+            logMPV("PiP hybrid bridge error during warmup suppressed message=\(message) foreground={\(pictureInPictureDebugSnapshot())}")
+            isPreparingPiPBridge = false
+            pipBridgeLoadGeneration = nil
+            return
+        }
         delegate?.renderer(self, didFailWithError: message)
     }
 
     func rendererDidChangeTracks(_ renderer: PlayerRenderer) {
         guard renderer === pipBridge else { return }
+        guard isUsingPiPBridge else {
+            logSuppressedPiPBridgeEvent("tracks", detail: pipBridge.pictureInPictureDebugSnapshot())
+            return
+        }
         delegate?.rendererDidChangeTracks(self)
     }
 
     func renderer(_ renderer: PlayerRenderer, subtitleTrackDidChange trackId: Int) {
         guard renderer === pipBridge else { return }
+        guard isUsingPiPBridge else {
+            logSuppressedPiPBridgeEvent("subtitle", detail: "track=\(trackId)")
+            return
+        }
         selectedSubtitleTrackId = trackId >= 0 ? trackId : nil
         delegate?.renderer(self, subtitleTrackDidChange: trackId)
+    }
+
+    private func logSuppressedPiPBridgeEvent(_ event: String, detail: String) {
+        let signature = event == "position" ? event : "\(event)|\(detail)"
+        guard signature != lastSuppressedPiPBridgeStateLog else { return }
+        lastSuppressedPiPBridgeStateLog = signature
+        logMPV("PiP hybrid bridge warmup event suppressed event=\(event) detail={\(detail)}")
     }
 }
 #endif

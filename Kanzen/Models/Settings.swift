@@ -22,7 +22,6 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
     case cast
     case ratingNotes
     case traktComments
-    case traktRelated
     case episodes
 
     var id: String { rawValue }
@@ -38,7 +37,6 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
         .cast,
         .ratingNotes,
         .traktComments,
-        .traktRelated,
         .episodes
     ]
 
@@ -56,8 +54,6 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
             return "Rating & Notes"
         case .traktComments:
             return "Trakt Reviews"
-        case .traktRelated:
-            return "Trakt Related"
         case .episodes:
             return "Episodes"
         }
@@ -77,8 +73,6 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
             return "Your star rating, notes, and tracker sync shortcuts."
         case .traktComments:
             return "Community reviews and comments from Trakt."
-        case .traktRelated:
-            return "Related titles recommended by Trakt."
         case .episodes:
             return "Seasons, specials, and episode list for series."
         }
@@ -478,8 +472,12 @@ enum ExperimentalFeatureState {
         return inApp == "mpv" && usesInternalPlayer
     }
 
+    static var isMPVAdvancedPlaybackAvailable: Bool {
+        isMPVPlaybackDefault
+    }
+
     static var canUseExperimentalMPVPlayback: Bool {
-        isEnabledAtLaunch && isMPVPlaybackDefault
+        isMPVAdvancedPlaybackAvailable
     }
 }
 
@@ -681,18 +679,18 @@ final class ExperimentalMPVPreloadManager {
     }
 
     func noteNextEpisodeCandidate(showId: Int, seasonNumber: Int, episodeNumber: Int) {
-        guard ExperimentalFeatureState.canUseExperimentalMPVPlayback,
+        guard ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable,
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
             return
         }
         Logger.shared.log(
-            "Experimental MPV smooth transition staged candidate show=\(showId) S\(seasonNumber)E\(episodeNumber)",
+            "MPV advanced smooth transition staged candidate show=\(showId) S\(seasonNumber)E\(episodeNumber)",
             type: "MPV"
         )
     }
 
     func prewarm(url: URL, headers: [String: String]?, label: String) {
-        guard ExperimentalFeatureState.canUseExperimentalMPVPlayback,
+        guard ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable,
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey),
               shouldPreload(url: url) else {
             return
@@ -769,9 +767,9 @@ final class ExperimentalMPVPreloadManager {
             let trimmed = data.count > maxStarterBytes ? data.prefix(maxStarterBytes) : data[...]
             let target = cacheDirectory.appendingPathComponent(key).appendingPathExtension("starter")
             try Data(trimmed).write(to: target, options: .atomic)
-            Logger.shared.log("Experimental MPV preload cached \(data.count) bytes for \(label)", type: "MPV")
+            Logger.shared.log("MPV advanced preload cached \(data.count) bytes for \(label)", type: "MPV")
         } catch {
-            Logger.shared.log("Experimental MPV preload skipped for \(label): \(error.localizedDescription)", type: "MPV")
+            Logger.shared.log("MPV advanced preload skipped for \(label): \(error.localizedDescription)", type: "MPV")
         }
     }
 

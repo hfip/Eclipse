@@ -404,15 +404,6 @@ struct TrackersSettingsView: View {
                     set: { trackerManager.setTraktCommentsEnabled($0) }
                 )
             )
-
-            traktToggleRow(
-                title: "Detail Related",
-                subtitle: "Show Trakt related recommendations on media detail pages.",
-                isOn: Binding(
-                    get: { trackerManager.trackerState.traktRelatedEnabled },
-                    set: { trackerManager.setTraktRelatedEnabled($0) }
-                )
-            )
         }
         .padding()
         .background(Color.gray.opacity(0.1))

@@ -59,7 +59,11 @@ class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {
     private func postPlayerDidCloseNotification() {
         var userInfo: [String: Any] = [:]
         if let mediaInfo {
-            ProgressManager.shared.syncTraktProgressOnPlaybackClose(for: mediaInfo, playbackContext: episodePlaybackContext)
+            ProgressManager.shared.syncTraktProgressOnPlaybackClose(
+                for: mediaInfo,
+                playbackContext: episodePlaybackContext,
+                played: playbackDidStart
+            )
             switch mediaInfo {
             case .movie(let id, _, _, _):
                 userInfo["tmdbId"] = id
@@ -231,10 +235,11 @@ class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {
               let currentItem = player.currentItem else { return nil }
         let currentTime = player.currentTime().seconds
         let duration = currentItem.duration.seconds
-        guard currentTime.isFinite,
+        guard playbackDidStart,
+              currentTime.isFinite,
               duration.isFinite,
               duration >= 5,
-              currentTime >= 0,
+              currentTime > 0.5,
               currentTime <= duration + 2 else {
             return nil
         }

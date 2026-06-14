@@ -79,7 +79,20 @@ struct GlobalGradientBackground: View {
         -scrollOffset * 0.15
     }
     
+    @ViewBuilder
     var body: some View {
+#if !os(tvOS)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            ExperimentalGradientBackground(dominantColor: overrideColor, scrollOffset: scrollOffset)
+        } else {
+            legacyBackground
+        }
+#else
+        legacyBackground
+#endif
+    }
+
+    private var legacyBackground: some View {
         GeometryReader { geo in
             let h = geo.size.height * 5.0
             if theme.scopedAtmosphereStyle() == .solid {
@@ -113,42 +126,69 @@ struct ExperimentalGradientBackground: View {
     var scrollOffset: CGFloat = 0
 
     private var accent: Color {
-        dominantColor ?? theme.scopedGradientColor()
+        dominantColor ?? Color(red: 0.50, green: 0.36, blue: 0.76)
     }
 
     var body: some View {
         GeometryReader { geo in
-            let h = max(geo.size.height * 1.6, geo.size.height + 1)
+            let h = max(geo.size.height * 1.45, geo.size.height + 1)
+            let longestSide = max(geo.size.width, geo.size.height)
             ZStack {
-                theme.backgroundBase
+                Color(red: 0.07, green: 0.07, blue: 0.11)
 
                 LinearGradient(
                     stops: [
-                        .init(color: Color(red: 0.08, green: 0.10, blue: 0.15), location: 0.0),
-                        .init(color: accent.opacity(0.42), location: 0.18),
-                        .init(color: Color(red: 0.27, green: 0.24, blue: 0.48), location: 0.48),
-                        .init(color: Color(red: 0.22, green: 0.14, blue: 0.23), location: 0.78),
-                        .init(color: theme.backgroundBase, location: 1.0)
+                        .init(color: Color(red: 0.06, green: 0.08, blue: 0.12), location: 0.00),
+                        .init(color: Color(red: 0.14, green: 0.12, blue: 0.22), location: 0.22),
+                        .init(color: Color(red: 0.24, green: 0.20, blue: 0.42), location: 0.46),
+                        .init(color: Color(red: 0.19, green: 0.12, blue: 0.19), location: 0.74),
+                        .init(color: Color(red: 0.07, green: 0.07, blue: 0.11), location: 1.00)
                     ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
                 .frame(height: h)
-                .offset(y: -scrollOffset * 0.10)
+                .offset(y: -scrollOffset * 0.08)
 
                 RadialGradient(
                     colors: [
-                        accent.opacity(0.35),
-                        Color(red: 0.18, green: 0.20, blue: 0.43).opacity(0.22),
+                        Color(red: 0.10, green: 0.24, blue: 0.34).opacity(0.46),
+                        Color(red: 0.12, green: 0.17, blue: 0.32).opacity(0.24),
                         .clear
                     ],
-                    center: .topTrailing,
-                    startRadius: 40,
-                    endRadius: max(geo.size.width, geo.size.height) * 0.92
+                    center: UnitPoint(x: 0.88, y: 0.05),
+                    startRadius: 0,
+                    endRadius: longestSide * 0.82
+                )
+
+                RadialGradient(
+                    colors: [
+                        Color(red: 0.47, green: 0.28, blue: 0.58).opacity(0.42),
+                        accent.opacity(0.20),
+                        .clear
+                    ],
+                    center: UnitPoint(x: 0.18, y: 0.38),
+                    startRadius: 20,
+                    endRadius: longestSide * 0.78
+                )
+
+                RadialGradient(
+                    colors: [
+                        Color(red: 0.48, green: 0.22, blue: 0.18).opacity(0.24),
+                        Color(red: 0.22, green: 0.12, blue: 0.18).opacity(0.14),
+                        .clear
+                    ],
+                    center: UnitPoint(x: 0.82, y: 0.82),
+                    startRadius: 0,
+                    endRadius: longestSide * 0.72
                 )
 
                 LinearGradient(
-                    colors: [.black.opacity(0.18), .clear, .black.opacity(0.22)],
+                    colors: [
+                        .black.opacity(0.10),
+                        .clear,
+                        .black.opacity(0.24)
+                    ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -162,7 +202,7 @@ struct ExperimentalCard<Content: View>: View {
     let cornerRadius: CGFloat
     let content: Content
 
-    init(cornerRadius: CGFloat = 30, @ViewBuilder content: () -> Content) {
+    init(cornerRadius: CGFloat = 22, @ViewBuilder content: () -> Content) {
         self.cornerRadius = cornerRadius
         self.content = content()
     }
@@ -193,9 +233,9 @@ struct ExperimentalSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title)
-                .font(.system(size: 28, weight: .bold))
+                .font(.title2.weight(.bold))
                 .foregroundColor(.white)
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 16)
 
             content
         }
@@ -204,13 +244,13 @@ struct ExperimentalSection<Content: View>: View {
 
 struct ExperimentalCircleButton: View {
     let systemName: String
-    var size: CGFloat = 58
+    var size: CGFloat = 44
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: size * 0.36, weight: .semibold))
+                .font(.system(size: size * 0.40, weight: .semibold))
                 .foregroundColor(.white)
                 .frame(width: size, height: size)
                 .background(
@@ -253,8 +293,8 @@ struct ExperimentalFloatingTabBar<ID: Hashable>: View {
                                 .minimumScaleFactor(0.8)
                         }
                         .foregroundColor(.white)
-                        .frame(minWidth: 72)
-                        .padding(.vertical, 10)
+                        .frame(minWidth: 58)
+                        .padding(.vertical, 8)
                         .background(
                             Capsule()
                                 .fill(selection == item.id ? Color.white.opacity(0.18) : Color.clear)
@@ -271,15 +311,15 @@ struct ExperimentalFloatingTabBar<ID: Hashable>: View {
             )
 
             if let searchAction {
-                ExperimentalCircleButton(systemName: "magnifyingglass", size: 64, action: searchAction)
+                ExperimentalCircleButton(systemName: "magnifyingglass", size: 52, action: searchAction)
             }
 
             if let settingsAction {
-                ExperimentalCircleButton(systemName: "gearshape.fill", size: 54, action: settingsAction)
+                ExperimentalCircleButton(systemName: "gearshape.fill", size: 44, action: settingsAction)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 18)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 }
 #endif

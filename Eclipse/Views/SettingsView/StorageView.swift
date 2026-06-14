@@ -56,10 +56,10 @@ struct StorageView: View {
             }
             .background(EclipseScrollTracker())
 
-            if ExperimentalFeatureState.isEnabledAtLaunch {
+            if ExperimentalFeatureState.isEnabledAtLaunch || ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable {
                 Section(
-                    header: Text("EXPERIMENTAL BREAKDOWN"),
-                    footer: Text(ExperimentalFeatureState.canUseExperimentalMPVPlayback ? "MPV preload files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV preload cache actions require MPV as the default in-app player.")
+                    header: Text("STORAGE BREAKDOWN"),
+                    footer: Text(ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable ? "MPV preload files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV preload cache actions require MPV as the default in-app player.")
                 ) {
                     ForEach(storageBreakdown) { item in
                         HStack {
@@ -80,7 +80,7 @@ struct StorageView: View {
                     } label: {
                         Text("Clear MPV Preload Cache")
                     }
-                    .disabled(!ExperimentalFeatureState.canUseExperimentalMPVPlayback || isLoading || isClearing)
+                    .disabled(!ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable || isLoading || isClearing)
                 }
             }
             

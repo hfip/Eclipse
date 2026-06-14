@@ -216,17 +216,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var overlayMenuHandlers: [Int: () -> Void] = [:]
     private var nextOverlayMenuHandlerID = 1
     private var overlayMenuKind: String?
-    private lazy var usesOverlayPlayerMenusForSession: Bool = {
-#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(
-            requested: Settings.shared.mpvRenderBackend,
-            hasMetalDevice: MPVMoltenVKRenderer.isAvailable
-        )
-        return effectiveBackend == .metal
-#else
-        return false
-#endif
-    }()
+    private lazy var usesOverlayPlayerMenusForSession = false
 
     private let videoContainer: UIView = {
         let v = UIView()
@@ -1084,6 +1074,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var lastVLCUISteadyHeartbeatLogTime: CFTimeInterval = 0
     private var lastVLCUIMemoryWarningLogTime: CFTimeInterval = 0
     private var lastPiPButtonVisibilityLogKey: String?
+    private var lastSkippedCloseTraktSyncReason: String?
+    private var lastRendererPauseScrobbleAction: TraktScrobbleAction?
+    private var lastRendererPauseScrobbleAt: CFTimeInterval = 0
 
     private var isRendererLoading: Bool = false
     private var isClosing = false
@@ -1287,10 +1280,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func currentTraktProgressFraction() -> Double? {
         guard let mediaInfo,
+              isRunning,
+              !isClosing,
+              playbackDidStart,
+              !isRendererLoading,
               cachedPosition.isFinite,
               cachedDuration.isFinite,
               cachedDuration >= 5,
-              cachedPosition >= 0,
+              cachedPosition > 0.5,
               cachedPosition <= cachedDuration + 2 else {
             return nil
         }
@@ -1320,13 +1317,42 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         )
     }
 
+    private func syncTraktProgressOnPlaybackCloseIfNeeded(for mediaInfo: MediaInfo, reason: String) {
+        let didPlay = playbackDidStart || cachedPosition > 0.5
+        guard didPlay else {
+            let signature = "\(reason)|\(String(describing: mediaInfo))"
+            if signature != lastSkippedCloseTraktSyncReason {
+                lastSkippedCloseTraktSyncReason = signature
+                Logger.shared.log("PlayerViewController: skipping Trakt close sync reason=\(reason) playbackDidStart=\(playbackDidStart) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "Tracker")
+            }
+            return
+        }
+        ProgressManager.shared.syncTraktProgressOnPlaybackClose(
+            for: mediaInfo,
+            playbackContext: episodePlaybackContext,
+            played: true
+        )
+    }
+
+    private func sendRendererPauseTraktScrobble(_ action: TraktScrobbleAction, reason: String) {
+        guard currentTraktProgressFraction() != nil else { return }
+        let now = CACurrentMediaTime()
+        if lastRendererPauseScrobbleAction == action,
+           now - lastRendererPauseScrobbleAt < 3 {
+            return
+        }
+        lastRendererPauseScrobbleAction = action
+        lastRendererPauseScrobbleAt = now
+        sendTraktScrobble(action, reason: reason)
+    }
+
     private func updateTraktScrobbleFromProgress(position: Double, duration: Double) {
         guard !rendererIsPausedState(),
               playbackDidStart,
               position.isFinite,
               duration.isFinite,
               duration >= 5,
-              position >= 0,
+              position > 0.5,
               position <= duration + 2,
               let info = mediaInfo else {
             return
@@ -2551,6 +2577,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         onlineSubtitleLoadedRendererTrackIds.removeAll()
         lastSkippedMPVBitmapSubtitleSummary = ""
         vlcExternalSubtitlePriorityDeadline = nil
+        lastRendererPauseScrobbleAction = nil
+        lastRendererPauseScrobbleAt = 0
         defaultPlaybackSpeedApplied = false
         cachedPosition = 0
         cachedDuration = 0
@@ -2615,7 +2643,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         logVLCUI("load resume prepared pendingSeek=\(secondsText(pendingSeekTime)) progressCached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) launchContext=\(String(describing: playbackLaunchContext))", type: "Progress")
         rendererPrepareInitialSeek(to: pendingSeekTime)
         let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
-        if isMPVRenderer && ExperimentalFeatureState.canUseExperimentalMPVPlayback {
+        if isMPVRenderer && ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable {
             ExperimentalMPVPreloadManager.shared.prewarm(
                 url: playbackRequest.url,
                 headers: playbackRequest.headers ?? headers,
@@ -4147,7 +4175,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 self.logVLCUI("replacePlayback begin transition=\(transitionId) generation=\(replacementGeneration) reason=\(reason) from={\(previousMedia)} to={\(nextMedia)} cached=\(self.secondsText(self.cachedPosition))/\(self.secondsText(self.cachedDuration)) running=\(self.isRunning) loading=\(self.isRendererLoading)", type: "VLCCrashProbe")
             }
             if let mediaInfo = self.mediaInfo {
-                ProgressManager.shared.syncTraktProgressOnPlaybackClose(for: mediaInfo, playbackContext: self.episodePlaybackContext)
+                self.syncTraktProgressOnPlaybackCloseIfNeeded(for: mediaInfo, reason: "replace-playback")
             }
             self.dismissEpisodeBrowser(animated: true, reason: "\(reason)-replace-playback")
             self.controlsHideWorkItem?.cancel()
@@ -5403,7 +5431,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         threshold: Double
     ) {
         guard isMPVRenderer,
-              ExperimentalFeatureState.canUseExperimentalMPVPlayback,
+              ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable,
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
             return
         }
@@ -7176,11 +7204,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        let experimentalMPVControlsActive = isMPVRenderer && ExperimentalFeatureState.canUseExperimentalMPVPlayback
-        let showRemainingTime = !ExperimentalFeatureState.isEnabledAtLaunch
-            || !isMPVRenderer
-            || (experimentalMPVControlsActive && UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey))
-        let preciseAdjustment = experimentalMPVControlsActive
+        let mpvAdvancedControlsActive = isMPVRenderer && ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable
+        let showRemainingTime = !isMPVRenderer
+            || !mpvAdvancedControlsActive
+            || (mpvAdvancedControlsActive && UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey))
+        let preciseAdjustment = mpvAdvancedControlsActive
             && UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         
         let host = UIHostingController(rootView: AnyView(ProgressHostView(
@@ -7719,7 +7747,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func postPlayerDidCloseNotification() {
         var userInfo: [String: Any] = [:]
         if let mediaInfo {
-            ProgressManager.shared.syncTraktProgressOnPlaybackClose(for: mediaInfo, playbackContext: episodePlaybackContext)
+            syncTraktProgressOnPlaybackCloseIfNeeded(for: mediaInfo, reason: "close")
             switch mediaInfo {
             case .movie(let id, _, _, _):
                 userInfo["tmdbId"] = id
@@ -7791,7 +7819,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         if pip.isPictureInPicturePossible && primed && !pip.isPictureInPictureActive {
             logPictureInPicture("starting MPV PiP source=\(source) attempt=\(attempt)")
-            rendererActivatePictureInPictureLayer()
             pip.startPictureInPicture()
             scheduleMPVPictureInPictureRendererWatchdog(source: source, attemptID: attemptID)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self, weak pip] in
@@ -8217,18 +8244,16 @@ final class PlayerEpisodeBrowserViewModel: ObservableObject {
             var specialContexts: [SpecialEpisodeListContext] = []
 
             if seed.isAnime {
-                if !PerformanceModeSettings.isEnabled {
-                    animeData = try? await AniListService.shared.fetchAnimeDetailsWithEpisodes(
-                        title: seed.showTitle,
-                        tmdbShowId: seed.showId,
-                        tmdbService: tmdbService,
-                        tmdbShowPoster: showPosterURL,
-                        token: nil
-                    )
-                    if let animeData {
-                        let mappings = animeData.seasons.map { (seasonNumber: $0.seasonNumber, anilistId: $0.anilistId) }
-                        TrackerManager.shared.registerAniListAnimeData(tmdbId: seed.showId, seasons: mappings)
-                    }
+                animeData = try? await AniListService.shared.fetchAnimeDetailsWithEpisodes(
+                    title: seed.showTitle,
+                    tmdbShowId: seed.showId,
+                    tmdbService: tmdbService,
+                    tmdbShowPoster: showPosterURL,
+                    token: nil
+                )
+                if let animeData {
+                    let mappings = animeData.seasons.map { (seasonNumber: $0.seasonNumber, anilistId: $0.anilistId) }
+                    TrackerManager.shared.registerAniListAnimeData(tmdbId: seed.showId, seasons: mappings)
                 }
 
                 let specialEntries = await AniListService.shared.fetchSpecialSearchEntries(
@@ -9006,9 +9031,9 @@ extension PlayerViewController: MPVNativeRendererDelegate {
         if !isPaused {
             markPlaybackStarted(reason: "playing")
             rendererResumeForegroundRendering(reason: "mpv-unpause")
-            sendTraktScrobble(.start, reason: "mpv-unpause")
+            sendRendererPauseTraktScrobble(.start, reason: "mpv-unpause")
         } else {
-            sendTraktScrobble(.pause, reason: "mpv-pause")
+            sendRendererPauseTraktScrobble(.pause, reason: "mpv-pause")
         }
         refreshIdleTimerForPlayback(reason: "mpv-pause-changed")
         if isRendererLoading && !isPaused {

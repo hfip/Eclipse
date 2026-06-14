@@ -145,15 +145,15 @@ struct HomeView: View {
         }
         .onReceive(catalogManager.$catalogs) { _ in
             guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
-            homeViewModel.resetContent()
-            loadContent()
+            homeViewModel.resetContent(preserveVisibleContent: true)
+            loadContent(showLoading: false)
         }
         .onReceive(catalogManager.$performanceModeEnabled) { enabled in
             guard observedPerformanceMode != enabled else { return }
             observedPerformanceMode = enabled
             guard homeViewModel.hasLoadedContent || homeViewModel.hasCompletedInitialLoad else { return }
-            homeViewModel.resetContent()
-            loadContent()
+            homeViewModel.resetContent(preserveVisibleContent: true)
+            loadContent(showLoading: false)
         }
         .onReceive(heroCarouselTimer) { _ in
             homeViewModel.advanceHeroCarouselIfNeeded()
@@ -515,11 +515,12 @@ struct HomeView: View {
         )
     }
     
-    private func loadContent() {
+    private func loadContent(showLoading: Bool = true) {
         homeViewModel.loadContent(
             tmdbService: tmdbService,
             catalogManager: catalogManager,
-            contentFilter: contentFilter
+            contentFilter: contentFilter,
+            showLoading: showLoading
         )
     }
 
@@ -1229,7 +1230,6 @@ struct ContinueWatchingCard: View {
                 let animeOriginCountries: Set<String> = ["JP", "CN", "KR", "TW"]
                 let isAsianAnimation = details.originCountry?.contains(where: { animeOriginCountries.contains($0) }) ?? false
                 let isAnimation = details.genres.contains { $0.id == 16 }
-                let performanceModeEnabled = PerformanceModeSettings.isEnabled
                 let detectedAsAnime = item.isAnime ||
                     item.playbackContext?.hasAnimeMediaId == true ||
                     (isAsianAnimation && isAnimation)
@@ -1246,7 +1246,7 @@ struct ContinueWatchingCard: View {
                     self.isLoaded = true
                 }
 
-                if detectedAsAnime && !performanceModeEnabled {
+                if detectedAsAnime {
                     // Fetch AniList data for correct season title mapping
                     do {
                         let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
@@ -1315,19 +1315,6 @@ struct ContinueWatchingCard: View {
                             }
                         }
                     }
-                } else if detectedAsAnime {
-                    await MainActor.run {
-                        self.isAnimeContent = true
-                        self.animeSeasonTitle = nil
-                        self.animeSeasonRomajiTitle = nil
-                        self.enrichedPlaybackContext = item.playbackContext
-                        self.isMetadataReady = true
-                        if self.pendingOpenSheet {
-                            self.pendingOpenSheet = false
-                            self.showingSearchResults = true
-                        }
-                    }
-                    Logger.shared.log("ContinueWatchingCard: Performance Mode active - using TMDB metadata for \(details.name)", type: "TMDB")
                 } else {
                     // Not anime – metadata is ready
                     await MainActor.run {

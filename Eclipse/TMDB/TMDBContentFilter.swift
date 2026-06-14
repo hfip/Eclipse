@@ -17,6 +17,9 @@ class TMDBContentFilter: ObservableObject {
     }
     
     private let horrorGenreIds = [27]
+    private let explicitCatalogTitleDenylist: Set<String> = [
+        "overflow"
+    ]
     
     private init() {
         self.filterHorror = UserDefaults.standard.bool(forKey: "filterHorror")
@@ -25,33 +28,40 @@ class TMDBContentFilter: ObservableObject {
     // MARK: - Filter Functions
     
     func filterSearchResults(_ results: [TMDBSearchResult]) -> [TMDBSearchResult] {
-        if !filterHorror {
-            return results
-        }
-        
         return results.filter { result in
-            shouldIncludeContent(genreIds: result.genreIds)
+            shouldIncludeCatalogResult(result)
         }
     }
     
     func filterMovies(_ movies: [TMDBMovie]) -> [TMDBMovie] {
-        if !filterHorror {
-            return movies
-        }
-        
         return movies.filter { movie in
-            shouldIncludeContent(genreIds: movie.genreIds)
+            guard movie.adult != true else { return false }
+            guard shouldIncludeCatalogTitle(movie.title) else { return false }
+            return shouldIncludeContent(genreIds: movie.genreIds)
         }
     }
     
     func filterTVShows(_ tvShows: [TMDBTVShow]) -> [TMDBTVShow] {
-        if !filterHorror {
-            return tvShows
-        }
-        
         return tvShows.filter { tvShow in
-            shouldIncludeContent(genreIds: tvShow.genreIds)
+            guard tvShow.adult != true else { return false }
+            guard shouldIncludeCatalogTitle(tvShow.name) else { return false }
+            return shouldIncludeContent(genreIds: tvShow.genreIds)
         }
+    }
+
+    private func shouldIncludeCatalogResult(_ result: TMDBSearchResult) -> Bool {
+        guard result.adult != true else { return false }
+        guard shouldIncludeCatalogTitle(result.displayTitle) else { return false }
+        return shouldIncludeContent(genreIds: result.genreIds)
+    }
+
+    private func shouldIncludeCatalogTitle(_ title: String) -> Bool {
+        let normalized = title
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return !explicitCatalogTitleDenylist.contains(normalized)
     }
     
     private func shouldIncludeContent(genreIds: [Int]?) -> Bool {

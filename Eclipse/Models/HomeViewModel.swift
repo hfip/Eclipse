@@ -30,7 +30,8 @@ final class HomeViewModel: ObservableObject {
     func loadContent(
         tmdbService: TMDBService,
         catalogManager: CatalogManager,
-        contentFilter: TMDBContentFilter
+        contentFilter: TMDBContentFilter,
+        showLoading: Bool = true
     ) {
         // Don't reload if we already have content
         guard !hasLoadedContent else {
@@ -40,7 +41,9 @@ final class HomeViewModel: ObservableObject {
             return
         }
         
-        isLoading = true
+        if showLoading {
+            isLoading = true
+        }
         errorMessage = nil
         hasCompletedInitialLoad = false
         
@@ -88,7 +91,7 @@ final class HomeViewModel: ObservableObject {
             )
             guard !Task.isCancelled else { return }
 
-            let tmdbLoadedCatalogs: [String: [TMDBSearchResult]] = [
+            let rawTMDBLoadedCatalogs: [String: [TMDBSearchResult]] = [
                 "trending": tmdbResults.0,
                 "popularMovies": tmdbResults.1.map { self.movieSearchResult($0) },
                 "nowPlayingMovies": tmdbResults.2.map { self.movieSearchResult($0) },
@@ -99,6 +102,7 @@ final class HomeViewModel: ObservableObject {
                 "topRatedTVShows": tmdbResults.7.map { self.tvSearchResult($0) },
                 "topRatedMovies": tmdbResults.8.map { self.movieSearchResult($0) }
             ]
+            let tmdbLoadedCatalogs = rawTMDBLoadedCatalogs.mapValues { contentFilter.filterSearchResults($0) }
             let tmdbLoadedCatalogCount = tmdbLoadedCatalogs.values.filter { !$0.isEmpty }.count
 
             if tmdbLoadedCatalogCount > 0 {
@@ -154,10 +158,11 @@ final class HomeViewModel: ObservableObject {
                 // Generate "Just For You" recommendations after catalogs are populated
                 let currentResults = await MainActor.run { self.catalogResults }
                 if enabledCatalogSnapshot.contains(where: { $0.id == "forYou" }) {
-                    let forYou = await RecommendationEngine.shared.generateRecommendations(
+                    let rawForYou = await RecommendationEngine.shared.generateRecommendations(
                         catalogResults: currentResults,
                         tmdbService: tmdbService
                     )
+                    let forYou = contentFilter.filterSearchResults(rawForYou)
                     if !forYou.isEmpty {
                         await MainActor.run {
                             self.catalogResults["forYou"] = forYou
@@ -168,9 +173,10 @@ final class HomeViewModel: ObservableObject {
 
                 // Generate "Because you watched X" catalog
                 if enabledCatalogSnapshot.contains(where: { $0.id == "becauseYouWatched" }) {
-                    let (bywTitle, bywResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
+                    let (bywTitle, rawBYWResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
                         tmdbService: tmdbService
                     )
+                    let bywResults = contentFilter.filterSearchResults(rawBYWResults)
                     if !bywResults.isEmpty {
                         await MainActor.run {
                             self.catalogResults["becauseYouWatched"] = bywResults
@@ -183,7 +189,7 @@ final class HomeViewModel: ObservableObject {
             }
 
             // Load enabled widget/catalog rows before ending the initial media-home load.
-            await self.loadWidgetData(tmdbService: tmdbService, enabledCatalogs: enabledCatalogSnapshot)
+            await self.loadWidgetData(tmdbService: tmdbService, enabledCatalogs: enabledCatalogSnapshot, contentFilter: contentFilter)
             guard !Task.isCancelled else { return }
 
             let stremioCatalogs = await self.loadStremioCatalogs(
@@ -419,7 +425,7 @@ final class HomeViewModel: ObservableObject {
             firstAirDate: show.firstAirDate,
             voteAverage: show.voteAverage,
             popularity: show.popularity,
-            adult: nil,
+            adult: show.adult,
             genreIds: show.genreIds
         )
     }
@@ -427,7 +433,8 @@ final class HomeViewModel: ObservableObject {
     
     func loadWidgetData(
         tmdbService: TMDBService,
-        enabledCatalogs: [Catalog]
+        enabledCatalogs: [Catalog],
+        contentFilter: TMDBContentFilter
     ) async {
             guard !Task.isCancelled else { return }
             // Ranked lists reuse existing catalog data — zero extra API calls
@@ -452,7 +459,7 @@ final class HomeViewModel: ObservableObject {
                 await withTaskGroup(of: (Int, [TMDBSearchResult]).self) { group in
                     for network in WidgetNetwork.curated {
                         group.addTask {
-                            let results = (try? await tmdbService.discoverByNetwork(networkId: network.id)) ?? []
+                            let results = contentFilter.filterSearchResults((try? await tmdbService.discoverByNetwork(networkId: network.id)) ?? [])
                             return (network.id, results)
                         }
                     }
@@ -473,7 +480,7 @@ final class HomeViewModel: ObservableObject {
                 await withTaskGroup(of: (Int, [TMDBSearchResult]).self) { group in
                     for genre in WidgetGenre.curated {
                         group.addTask {
-                            let results = (try? await tmdbService.discoverByGenre(genreId: genre.id)) ?? []
+                            let results = contentFilter.filterSearchResults((try? await tmdbService.discoverByGenre(genreId: genre.id)) ?? [])
                             return (genre.id, results)
                         }
                     }
@@ -494,7 +501,7 @@ final class HomeViewModel: ObservableObject {
                 await withTaskGroup(of: (Int, [TMDBSearchResult]).self) { group in
                     for company in WidgetCompany.curated {
                         group.addTask {
-                            let results = (try? await tmdbService.discoverByCompany(companyId: company.id)) ?? []
+                            let results = contentFilter.filterSearchResults((try? await tmdbService.discoverByCompany(companyId: company.id)) ?? [])
                             return (company.id, results)
                         }
                     }
@@ -514,7 +521,7 @@ final class HomeViewModel: ObservableObject {
             if enabledCatalogs.contains(where: { $0.id == "featured" }) {
                 guard !Task.isCancelled else { return }
                 let randomGenre = WidgetGenre.curated.randomElement() ?? WidgetGenre.curated[0]
-                let results = (try? await tmdbService.discoverByGenre(genreId: randomGenre.id, mediaType: "tv")) ?? []
+                let results = contentFilter.filterSearchResults((try? await tmdbService.discoverByGenre(genreId: randomGenre.id, mediaType: "tv")) ?? [])
                 if !results.isEmpty {
                     await MainActor.run {
                         self.widgetData["featured"] = results
@@ -607,19 +614,21 @@ final class HomeViewModel: ObservableObject {
         return catalogResults["trending"] ?? []
     }
     
-    func resetContent() {
+    func resetContent(preserveVisibleContent: Bool = false) {
         activeLoadTask?.cancel()
         activeLoadTask = nil
-        catalogResults = [:]
-        widgetData = [:]
-        isLoading = true
+        if !preserveVisibleContent {
+            catalogResults = [:]
+            widgetData = [:]
+            isLoading = true
+            heroContent = nil
+            heroLaunchSelectionCatalogId = nil
+            featuredGenreName = ""
+            becauseYouWatchedTitle = ""
+        }
         errorMessage = nil
-        heroContent = nil
-        heroLaunchSelectionCatalogId = nil
         hasLoadedContent = false
         hasCompletedInitialLoad = false
-        featuredGenreName = ""
-        becauseYouWatchedTitle = ""
         RecommendationEngine.shared.invalidateCache()
     }
 }

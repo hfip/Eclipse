@@ -325,12 +325,13 @@ struct TMDBTVShow: Codable, Identifiable {
     let voteAverage: Double
     let popularity: Double
     let genreIds: [Int]?
+    let adult: Bool?
     let originalLanguage: String?
     let originCountry: [String]?
     let voteCount: Int?
     
     enum CodingKeys: String, CodingKey {
-        case id, name, overview, popularity
+        case id, name, overview, popularity, adult
         case posterPath = "poster_path"
         case backdropPath = "backdrop_path"
         case firstAirDate = "first_air_date"
@@ -364,7 +365,7 @@ struct TMDBTVShow: Codable, Identifiable {
             firstAirDate: firstAirDate,
             voteAverage: voteAverage,
             popularity: popularity,
-            adult: nil,
+            adult: adult,
             genreIds: genreIds,
             originalLanguage: originalLanguage,
             originCountry: originCountry,

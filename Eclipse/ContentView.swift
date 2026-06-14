@@ -357,44 +357,41 @@ struct ExperimentalContentView: View {
 
     init(onStartupReady: @escaping () -> Void = {}) {
         self.onStartupReady = onStartupReady
+        configureTabBarAppearance()
     }
 
-    private var navItems: [ExperimentalFloatingTabItem<ExperimentalMediaTab>] {
-        [
-            .init(id: .home, title: "Discover", systemImage: "sparkles.tv.fill"),
-            .init(id: .library, title: "Library", systemImage: "externaldrive.fill"),
-            .init(id: .downloads, title: "Downloads", systemImage: "arrow.down.circle.fill")
-        ]
+    private func configureTabBarAppearance() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.06, alpha: 0.92)
+        appearance.shadowColor = .clear
+
+        let itemAppearance = UITabBarItemAppearance()
+        itemAppearance.normal.iconColor = UIColor.gray
+        itemAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.gray]
+        itemAppearance.selected.iconColor = UIColor.white
+        itemAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.white]
+
+        appearance.stackedLayoutAppearance = itemAppearance
+        appearance.inlineLayoutAppearance = itemAppearance
+        appearance.compactInlineLayoutAppearance = itemAppearance
+
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             ExperimentalGradientBackground()
                 .ignoresSafeArea()
 
-            activeDestination
+            experimentalTabView
                 .heroNamespace(heroNamespace)
                 .overlay(alignment: .topTrailing) {
-                    if selectedTab == .home || selectedTab == .schedule {
-                        HStack(spacing: 12) {
-                            ExperimentalCircleButton(systemName: "calendar", size: 52) {
-                                selectedTab = .schedule
-                            }
-                            ExperimentalCircleButton(systemName: "gearshape.fill", size: 52) {
-                                showingSettings = true
-                            }
-                        }
-                        .padding(.top, 54)
-                        .padding(.trailing, 18)
+                    if (selectedTab == .home || selectedTab == .schedule) && !showingSettings {
+                        FloatingSettingsOverlay(showingSettings: $showingSettings)
                     }
                 }
-
-            ExperimentalFloatingTabBar(
-                items: navItems,
-                selection: $selectedTab,
-                searchAction: { selectedTab = .search },
-                settingsAction: { showingSettings = true }
-            )
 
             if showingSettings {
                 experimentalSettingsFullScreen
@@ -450,19 +447,43 @@ struct ExperimentalContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var activeDestination: some View {
-        switch selectedTab {
-        case .home:
+    private var experimentalTabView: some View {
+        TabView(selection: $selectedTab) {
             HomeView(onStartupReady: onStartupReady)
-        case .schedule:
+                .tabItem {
+                    Image(systemName: "house.fill")
+                    Text("Home")
+                }
+                .tag(ExperimentalMediaTab.home)
+
             ScheduleView(isActive: selectedTab == .schedule)
-        case .downloads:
+                .tabItem {
+                    Image(systemName: "calendar")
+                    Text("Schedule")
+                }
+                .tag(ExperimentalMediaTab.schedule)
+
             DownloadsView()
-        case .library:
+                .tabItem {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Downloads")
+                }
+                .tag(ExperimentalMediaTab.downloads)
+                .badge(downloadManager.activeDownloadCount > 0 ? downloadManager.activeDownloadCount : 0)
+
             LibraryView()
-        case .search:
+                .tabItem {
+                    Image(systemName: "books.vertical.fill")
+                    Text("Library")
+                }
+                .tag(ExperimentalMediaTab.library)
+
             SearchView()
+                .tabItem {
+                    Image(systemName: "magnifyingglass")
+                    Text("Search")
+                }
+                .tag(ExperimentalMediaTab.search)
         }
     }
 

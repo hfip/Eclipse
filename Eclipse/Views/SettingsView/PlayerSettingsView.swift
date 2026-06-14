@@ -882,10 +882,10 @@ struct PlayerSettingsView: View {
                         Label("Skip Segments", systemImage: "forward.fill")
                     }
 
-                    if ExperimentalFeatureState.isEnabledAtLaunch, store.inAppPlayer == .mpv, store.externalPlayer == .none {
+                    if store.inAppPlayer == .mpv, store.externalPlayer == .none {
                         experimentalMPVDisclosure
-                    } else if ExperimentalFeatureState.isEnabledAtLaunch {
-                        Label("Experimental features require MPV as the default in-app player.", systemImage: "lock.fill")
+                    } else {
+                        Label("MPV advanced features require MPV as the default in-app player.", systemImage: "lock.fill")
                             .foregroundColor(.secondary)
                     }
 
@@ -944,8 +944,8 @@ struct PlayerSettingsView: View {
                         Label("Next Episode", systemImage: "forward.end.fill")
                     }
                 }
-            } else if ExperimentalFeatureState.isEnabledAtLaunch {
-                Section(header: Text("Experimental Player Features"), footer: Text("Select MPV as the in-app player and keep external player set to Default to use experimental playback features.")) {
+            } else {
+                Section(header: Text("MPV Advanced Features"), footer: Text("Select MPV as the in-app player and keep external player set to Default to use MPV advanced playback features.")) {
                     Label("Requires MPV", systemImage: "lock.fill")
                         .foregroundColor(.secondary)
                 }
@@ -1058,7 +1058,7 @@ struct PlayerSettingsView: View {
 
             settingsToggleRow(
                 title: "Show Remaining Time",
-                detail: "Use remaining time in experimental MPV player controls where supported.",
+                detail: "Use remaining time in MPV player controls where supported.",
                 binding: $store.experimentalMPVShowRemainingTime
             )
 
@@ -1074,7 +1074,7 @@ struct PlayerSettingsView: View {
                 binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles
             )
         } label: {
-            Label("Experimental MPV", systemImage: "sparkles")
+            Label("MPV Advanced", systemImage: "sparkles")
         }
     }
 

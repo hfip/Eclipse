@@ -851,7 +851,11 @@ final class ProgressManager: ObservableObject {
 
     // MARK: - AVPlayer Extension
 
-    func syncTraktProgressOnPlaybackClose(for mediaInfo: MediaInfo, playbackContext: EpisodePlaybackContext? = nil) {
+    func syncTraktProgressOnPlaybackClose(for mediaInfo: MediaInfo, playbackContext: EpisodePlaybackContext? = nil, played: Bool = true) {
+        guard played else {
+            Logger.shared.log("Skipping Trakt playback-close sync because playback never started", type: "Tracker")
+            return
+        }
         switch mediaInfo {
         case .movie(let id, _, _, _):
             let progress = accessQueue.sync {

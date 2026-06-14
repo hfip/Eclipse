@@ -199,7 +199,7 @@ final class RecommendationEngine {
                         overview: show.overview, posterPath: show.posterPath,
                         backdropPath: show.backdropPath, releaseDate: nil,
                         firstAirDate: show.firstAirDate, voteAverage: show.voteAverage,
-                        popularity: show.popularity, adult: nil, genreIds: show.genreIds
+                        popularity: show.popularity, adult: show.adult, genreIds: show.genreIds
                     )
                 }
             }
@@ -455,7 +455,7 @@ final class RecommendationEngine {
                         firstAirDate: show.firstAirDate,
                         voteAverage: show.voteAverage,
                         popularity: show.popularity,
-                        adult: nil,
+                        adult: show.adult,
                         genreIds: show.genreIds
                     )
                 }
