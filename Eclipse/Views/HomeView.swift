@@ -66,6 +66,10 @@ struct HomeView: View {
 
     private var ambientColor: Color { homeViewModel.ambientColor }
     private var atmosphereColor: Color { theme.atmosphereColor(dominant: ambientColor) }
+    private var currentHeroImageURL: String? {
+        guard let hero = homeViewModel.heroContent else { return nil }
+        return heroImageURL(for: hero)
+    }
     private var designMetrics: ExperimentalMediaDesignMetrics {
         ExperimentalMediaDesignMetrics(
             preset: ExperimentalMediaDesignPreset(rawValue: experimentalDesignPreset) ?? ExperimentalMediaDesignPreset.defaultValue,
@@ -277,10 +281,10 @@ struct HomeView: View {
     private var heroSection: some View {
         ZStack(alignment: .bottom) {
             StretchyHeaderView(
-                backdropURL: homeViewModel.heroContent?.fullBackdropURL ?? homeViewModel.heroContent?.fullPosterURL,
+                backdropURL: currentHeroImageURL,
                 isMovie: homeViewModel.heroContent?.mediaType == "movie",
                 headerHeight: heroHeight,
-                minHeaderHeight: ExperimentalFeatureState.isEnabledAtLaunch ? max(440, heroHeight * 0.62) : 300,
+                minHeaderHeight: ExperimentalFeatureState.isEnabledAtLaunch ? max(380, heroHeight * 0.58) : 300,
                 onAmbientColorExtracted: { color in
                     homeViewModel.ambientColor = color
                 }
@@ -295,10 +299,10 @@ struct HomeView: View {
     private var heroGradientOverlay: some View {
         LinearGradient(
             gradient: Gradient(stops: [
-            .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.10 : 0.35), location: 0.14),
+                .init(color: ambientColor.opacity(0.0), location: 0.0),
+                .init(color: Color.black.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.16 : 0.26), location: 0.18),
                 .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.34 : 0.72), location: 0.58),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.66 : 1), location: 1.0)
+                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.82 : 1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom
@@ -320,39 +324,32 @@ struct HomeView: View {
 
     @ViewBuilder
     private func experimentalHeroContent(_ hero: TMDBSearchResult) -> some View {
-        VStack(alignment: .center, spacing: isIPad ? 14 : 11) {
+        VStack(alignment: .center, spacing: isIPad ? 13 : 10) {
+            if experimentalHeroShouldShowTitle(hero) {
+                heroTitleText(hero)
+                    .font(.system(size: isIPad ? 48 : 35, weight: .heavy))
+                    .padding(.horizontal, isIPad ? 90 : 24)
+            }
+
             Text(experimentalMetadataLine(hero))
                 .font(.system(size: isIPad ? 20 : 17, weight: .medium))
                 .foregroundColor(.white.opacity(0.92))
                 .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .padding(.horizontal, isIPad ? 90 : 22)
                 .shadow(color: .black.opacity(0.7), radius: 8, x: 0, y: 3)
 
-            heroTitleText(hero)
-                .font(.system(size: isIPad ? 52 : 40, weight: .heavy))
-
-            if let overview = hero.overview, !overview.isEmpty {
-                Text(String(overview.prefix(150)) + (overview.count > 150 ? "..." : ""))
+            if let overview = heroOverview(hero) {
+                Text(overview)
                     .font(.system(size: isIPad ? 20 : 17, weight: .regular))
                     .shadow(color: .black.opacity(0.7), radius: 8, x: 0, y: 4)
                     .foregroundColor(.white.opacity(0.88))
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, isIPad ? 110 : 30)
             }
 
-            if let voteAverage = hero.voteAverage, voteAverage > 0 {
-                HStack(spacing: 6) {
-                    Image(systemName: "star.fill")
-                        .font(.caption)
-                        .foregroundColor(.yellow)
-                    Text(String(format: "%.1f", voteAverage))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .applyLiquidGlassBackground(cornerRadius: 14)
-            }
+            heroRatingsRow(hero)
 
             heroPagerDots
         }
@@ -363,11 +360,11 @@ struct HomeView: View {
 
     @ViewBuilder
     private var heroPagerDots: some View {
-        HStack(spacing: 14) {
-            ForEach(0..<8, id: \.self) { index in
+        HStack(spacing: isIPad ? 15 : 12) {
+            ForEach(0..<9, id: \.self) { index in
                 Circle()
                     .fill(Color.white.opacity(index == 0 ? 0.95 : 0.38))
-                    .frame(width: 9, height: 9)
+                    .frame(width: isIPad ? 11 : 9, height: isIPad ? 11 : 9)
             }
         }
         .padding(.top, 2)
@@ -498,9 +495,125 @@ struct HomeView: View {
     
     private func experimentalMetadataLine(_ hero: TMDBSearchResult) -> String {
         let date = hero.displayDate.isEmpty ? nil : String(hero.displayDate.prefix(10))
-        let kind = hero.isMovie ? "Movie" : "TV Series"
-        return [date, kind].compactMap { $0 }.joined(separator: " - ")
+        let genres = genreNames(for: hero).prefix(3).joined(separator: ", ")
+        let kind = genres.isEmpty ? (hero.isMovie ? "Movie" : "TV Series") : genres
+        return [date, kind].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
+
+    private func heroImageURL(for hero: TMDBSearchResult) -> String? {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return hero.fullPosterURL ?? hero.fullBackdropURL
+        }
+        return hero.fullBackdropURL ?? hero.fullPosterURL
+    }
+
+    private func experimentalHeroShouldShowTitle(_ hero: TMDBSearchResult) -> Bool {
+        hero.fullPosterURL == nil
+    }
+
+    private func heroOverview(_ hero: TMDBSearchResult) -> String? {
+        guard let rawOverview = hero.overview?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawOverview.isEmpty else {
+            return nil
+        }
+        let limit = isIPad ? 180 : 125
+        return rawOverview.count > limit ? "\(rawOverview.prefix(limit))..." : rawOverview
+    }
+
+    @ViewBuilder
+    private func heroRatingsRow(_ hero: TMDBSearchResult) -> some View {
+        let chips = heroRatingChips(for: hero)
+        if !chips.isEmpty {
+            HStack(spacing: isIPad ? 14 : 10) {
+                ForEach(chips) { chip in
+                    HeroScoreChipView(chip: chip)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, isIPad ? 80 : 18)
+        }
+    }
+
+    private func heroRatingChips(for hero: TMDBSearchResult) -> [HeroScoreChip] {
+        var chips: [HeroScoreChip] = []
+
+        if let voteAverage = hero.voteAverage, voteAverage > 0 {
+            chips.append(HeroScoreChip(
+                id: "tmdb",
+                label: "TMDB",
+                value: String(format: "%.1f", voteAverage),
+                systemImage: nil,
+                tint: Color(red: 0.19, green: 0.78, blue: 0.76)
+            ))
+        }
+
+        if let userRating = UserRatingManager.shared.rating(for: hero.id), userRating > 0 {
+            chips.append(HeroScoreChip(
+                id: "you",
+                label: "You",
+                value: String(format: "%.1f", userRating),
+                systemImage: "checkmark.seal.fill",
+                tint: Color(red: 0.90, green: 0.24, blue: 0.78)
+            ))
+        }
+
+        if let voteCount = hero.voteCount, voteCount > 0, chips.count < 3 {
+            chips.append(HeroScoreChip(
+                id: "votes",
+                label: "Votes",
+                value: compactCount(voteCount),
+                systemImage: "person.2.fill",
+                tint: Color(red: 1.00, green: 0.68, blue: 0.22)
+            ))
+        }
+
+        return chips
+    }
+
+    private func compactCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+        if count >= 1_000 {
+            return String(format: "%.1fK", Double(count) / 1_000)
+        }
+        return "\(count)"
+    }
+
+    private func genreNames(for hero: TMDBSearchResult) -> [String] {
+        guard let genreIds = hero.genreIds else { return [] }
+        return genreIds.compactMap { Self.tmdbGenreNames[$0] }
+    }
+
+    private static let tmdbGenreNames: [Int: String] = [
+        12: "Adventure",
+        14: "Fantasy",
+        16: "Animation",
+        18: "Drama",
+        27: "Horror",
+        28: "Action",
+        35: "Comedy",
+        36: "History",
+        37: "Western",
+        53: "Thriller",
+        80: "Crime",
+        99: "Documentary",
+        878: "Sci-Fi",
+        9648: "Mystery",
+        10402: "Music",
+        10749: "Romance",
+        10751: "Family",
+        10752: "War",
+        10759: "Action Adventure",
+        10762: "Kids",
+        10763: "News",
+        10764: "Reality",
+        10765: "Sci-Fi Fantasy",
+        10766: "Soap",
+        10767: "Talk",
+        10768: "War Politics",
+        10770: "TV Movie"
+    ]
 
     @ViewBuilder
     private func heroTitleText(_ hero: TMDBSearchResult) -> some View {
@@ -845,6 +958,48 @@ struct HomeView: View {
 
 }
 
+private struct HeroScoreChip: Identifiable {
+    let id: String
+    let label: String
+    let value: String
+    let systemImage: String?
+    let tint: Color
+}
+
+private struct HeroScoreChipView: View {
+    let chip: HeroScoreChip
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 5) {
+            HStack(spacing: 3) {
+                if let systemImage = chip.systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10, weight: .bold))
+                }
+                Text(chip.label)
+                    .font(.system(size: 9, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundColor(.black.opacity(0.86))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(chip.tint)
+            )
+
+            Text(chip.value)
+                .font(.system(size: isIPad ? 21 : 18, weight: .semibold))
+                .foregroundColor(.white.opacity(0.96))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .shadow(color: .black.opacity(0.55), radius: 6, x: 0, y: 3)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct MediaSection: View {
     let title: String
     let items: [TMDBSearchResult]
@@ -1054,7 +1209,7 @@ struct ExperimentalMediaCard: View {
     private var cardSubtitle: String {
         let year = result.displayDate.isEmpty ? nil : String(result.displayDate.prefix(4))
         let kind = result.genreIds?.contains(16) == true ? "Animation" : (result.isMovie ? "Movie" : "TV")
-        return [year, kind].compactMap { $0 }.joined(separator: " - ")
+        return [year, kind].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 }
 

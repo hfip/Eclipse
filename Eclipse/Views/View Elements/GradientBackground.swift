@@ -149,18 +149,18 @@ struct ExperimentalMediaDesignMetrics {
 
     var heroBleedDistance: CGFloat {
         switch preset {
-        case .cinematic: return 420
-        case .balanced: return 340
-        case .compact: return 260
+        case .cinematic: return 560
+        case .balanced: return 440
+        case .compact: return 320
         }
     }
 
     var heroWashStrength: Double {
         let base: Double
         switch preset {
-        case .cinematic: base = 0.82
-        case .balanced: base = 0.68
-        case .compact: base = 0.54
+        case .cinematic: base = 0.94
+        case .balanced: base = 0.76
+        case .compact: base = 0.58
         }
         return base * heroBleedLevel.strengthMultiplier
     }
@@ -175,17 +175,17 @@ struct ExperimentalMediaDesignMetrics {
 
     var sectionSpacing: CGFloat {
         switch preset {
-        case .cinematic: return 28
-        case .balanced: return 22
+        case .cinematic: return 30
+        case .balanced: return 24
         case .compact: return 18
         }
     }
 
     var cardRadius: CGFloat {
         switch preset {
-        case .cinematic: return 22
+        case .cinematic: return 20
         case .balanced: return 18
-        case .compact: return 15
+        case .compact: return 16
         }
     }
 
@@ -199,9 +199,9 @@ struct ExperimentalMediaDesignMetrics {
 
     var heroBottomFadeHeight: CGFloat {
         switch preset {
-        case .cinematic: return 420
-        case .balanced: return 340
-        case .compact: return 280
+        case .cinematic: return 520
+        case .balanced: return 420
+        case .compact: return 320
         }
     }
 
@@ -248,9 +248,9 @@ struct ExperimentalMediaDesignMetrics {
             }
         }
         switch preset {
-        case .cinematic: return CGSize(width: 190, height: 107)
-        case .balanced: return CGSize(width: 178, height: 100)
-        case .compact: return CGSize(width: 164, height: 92)
+        case .cinematic: return CGSize(width: 186, height: 105)
+        case .balanced: return CGSize(width: 174, height: 98)
+        case .compact: return CGSize(width: 162, height: 91)
         }
     }
 
@@ -263,9 +263,9 @@ struct ExperimentalMediaDesignMetrics {
             }
         }
         switch preset {
-        case .cinematic: return CGSize(width: 126, height: 189)
-        case .balanced: return CGSize(width: 116, height: 174)
-        case .compact: return CGSize(width: 106, height: 159)
+        case .cinematic: return CGSize(width: 116, height: 174)
+        case .balanced: return CGSize(width: 108, height: 162)
+        case .compact: return CGSize(width: 100, height: 150)
         }
     }
 
@@ -433,10 +433,10 @@ struct HeroBleedGradientBackground: View {
 
                 LinearGradient(
                     stops: [
-                        .init(color: dominantColor.opacity(0.70 * safeStrength), location: 0.00),
-                        .init(color: dominantColor.opacity(0.54 * safeStrength), location: 0.28),
-                        .init(color: dominantColor.opacity(0.28 * safeStrength), location: 0.58),
-                        .init(color: dominantColor.opacity(0.08 * safeStrength), location: 0.86),
+                        .init(color: dominantColor.opacity(0.82 * safeStrength), location: 0.00),
+                        .init(color: dominantColor.opacity(0.66 * safeStrength), location: 0.24),
+                        .init(color: dominantColor.opacity(0.38 * safeStrength), location: 0.54),
+                        .init(color: dominantColor.opacity(0.15 * safeStrength), location: 0.80),
                         .init(color: .clear, location: 1.00)
                     ],
                     startPoint: .top,
@@ -447,8 +447,8 @@ struct HeroBleedGradientBackground: View {
 
                 RadialGradient(
                     colors: [
-                        dominantColor.opacity(0.26 * safeStrength),
-                        dominantColor.opacity(0.10 * safeStrength),
+                        dominantColor.opacity(0.34 * safeStrength),
+                        dominantColor.opacity(0.13 * safeStrength),
                         .clear
                     ],
                     center: UnitPoint(x: 0.5, y: 0.18),

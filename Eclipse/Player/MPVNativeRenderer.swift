@@ -17,8 +17,9 @@ import Metal
 import MPVKitSampleBufferGPL
 #endif
 
-private func experimentalSubtitleASSOverrideValue() -> String {
-    guard ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable else {
+private func experimentalSubtitleASSOverrideValue(isMetalRenderer: Bool) -> String {
+    guard isMetalRenderer,
+          ExperimentalFeatureState.canUseExperimentalMPVPlayback else {
         return "yes"
     }
     return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey) ? "yes" : "no"
@@ -872,7 +873,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "interpolation", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")
         setOption(name: "subs-fallback", value: "yes")
-        setOption(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue())
+        setOption(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: false))
         setOption(name: "sub-use-margins", value: "yes")
         applySubtitleStyle(lastAppliedSubtitleStyle)
 
@@ -2462,7 +2463,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         setProperty(name: "sub-border-color", value: mpvColor(style.strokeColor))
         setProperty(name: "sub-border-size", value: String(format: "%.2f", max(0, min(style.strokeWidth * 1.5, 5.0))))
         setProperty(name: "sub-shadow-offset", value: "0")
-        setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue())
+        setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: false))
     }
 
     private func refreshSubtitleStyleIfViewportChanged() {
@@ -3499,7 +3500,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         setProperty(name: "sub-border-color", value: mpvColor(style.strokeColor))
         setProperty(name: "sub-border-size", value: String(format: "%.2f", max(0, min(style.strokeWidth * 1.5, 5.0))))
         setProperty(name: "sub-shadow-offset", value: "0")
-        setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue())
+        setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: true))
         if isUsingPiPBridge {
             pipBridge.applySubtitleStyle(style)
         }
@@ -3715,7 +3716,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         setOption(name: "video-rotate", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")
         setOption(name: "subs-fallback", value: "yes")
-        setOption(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue())
+        setOption(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: true))
         setOption(name: "sub-use-margins", value: "yes")
         applySubtitleStyle(lastAppliedSubtitleStyle)
 

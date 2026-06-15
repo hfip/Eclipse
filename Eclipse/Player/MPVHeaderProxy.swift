@@ -28,6 +28,18 @@ private final class MPVHeaderProxyCore {
         case probe
     }
 
+    private struct CachedPrefixContinuation {
+        let responseStatus: Int
+        let responseHeaders: [String: String]
+        let data: Data
+        let upstreamRange: String
+    }
+
+    private enum CachedPrefixPlan {
+        case handled
+        case bridge(CachedPrefixContinuation)
+    }
+
     private let queue = DispatchQueue(label: "mpv.header.proxy")
     private var listener: NWListener?
     private var port: UInt16?
@@ -325,6 +337,26 @@ private final class MPVHeaderProxyCore {
             }
         }
 
+        let cachedPrefixPlan = await cachedPrefixPlanIfAvailable(
+            targetURL: targetURL,
+            headers: session.headers,
+            method: method,
+            rangeHeader: request.value(forHTTPHeaderField: "Range"),
+            requestId: requestId,
+            logType: logType,
+            connection: connection
+        )
+        let cachedPrefix: CachedPrefixContinuation?
+        switch cachedPrefixPlan {
+        case .handled:
+            return
+        case .bridge(let continuation):
+            cachedPrefix = continuation
+            request.setValue(continuation.upstreamRange, forHTTPHeaderField: "Range")
+        case nil:
+            cachedPrefix = nil
+        }
+
         let upstreamRange = request.value(forHTTPHeaderField: "Range") ?? "nil"
         Logger.shared.log("\(logPrefix)[\(requestId)]: upstream start range=\(upstreamRange) target=\(logURLSummary(targetURL))", type: logType)
         let bridge = UpstreamBridge(
@@ -335,9 +367,145 @@ private final class MPVHeaderProxyCore {
             targetURL: targetURL,
             sessionId: sessionId,
             logType: logType,
-            connection: connection
+            connection: connection,
+            cachedPrefix: cachedPrefix
         )
         await bridge.start()
+    }
+
+    private func cachedPrefixPlanIfAvailable(
+        targetURL: URL,
+        headers: [String: String],
+        method: String,
+        rangeHeader: String?,
+        requestId: String,
+        logType: String,
+        connection: NWConnection
+    ) async -> CachedPrefixPlan? {
+        guard method == "GET" else {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=method-\(method) target=\(logURLSummary(targetURL))", type: logType)
+            return nil
+        }
+
+        if let reason = ExperimentalMPVPreloadManager.shared.playbackProxySkipReason(for: targetURL) {
+            if !reason.hasPrefix("unsupported-extension") {
+                Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=\(reason) target=\(logURLSummary(targetURL))", type: logType)
+            }
+            return nil
+        }
+
+        let targetExtension = targetURL.pathExtension.lowercased()
+        if targetExtension == "m3u8" || targetExtension == "m3u" {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=playlist-prefix-replay-disabled target=\(logURLSummary(targetURL))", type: logType)
+            return nil
+        }
+
+        guard let starter = await ExperimentalMPVPreloadManager.shared.cachedStarter(for: targetURL, headers: headers, waitUpTo: 0.35) else {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache miss target=\(logURLSummary(targetURL)) range=\(rangeHeader ?? "nil")", type: logType)
+            return nil
+        }
+
+        guard !starter.isPlaylist else {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=cached-starter-is-playlist target=\(logURLSummary(targetURL))", type: logType)
+            return nil
+        }
+
+        guard let totalLength = starter.totalLength, totalLength > 0 else {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=unknown-total-length bytes=\(starter.data.count) target=\(logURLSummary(targetURL))", type: logType)
+            return nil
+        }
+
+        guard !starter.data.isEmpty else {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=empty-starter target=\(logURLSummary(targetURL))", type: logType)
+            return nil
+        }
+
+        let cachedByteCount = Int64(starter.data.count)
+        guard cachedByteCount > 0 else { return nil }
+
+        let parsedRange = parseByteRange(rangeHeader)
+        let requestedStart = parsedRange?.start ?? 0
+        guard requestedStart == 0 else {
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache skipped reason=nonzero-request-range range=\(rangeHeader ?? "nil") target=\(logURLSummary(targetURL))", type: logType)
+            return nil
+        }
+
+        let requestedEnd = min(parsedRange?.end ?? (totalLength - 1), totalLength - 1)
+        guard requestedEnd >= 0 else { return nil }
+
+        let cachedEnd = min(cachedByteCount - 1, requestedEnd)
+        guard cachedEnd >= 0 else { return nil }
+
+        if requestedEnd < cachedByteCount {
+            let responseData = starter.data.prefix(Int(requestedEnd + 1))
+            let headers = cachedResponseHeaders(
+                contentType: starter.contentType,
+                contentLength: Int64(responseData.count),
+                contentRange: rangeHeader == nil ? nil : "bytes 0-\(requestedEnd)/\(totalLength)"
+            )
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache served full request bytes=\(responseData.count) range=\(rangeHeader ?? "nil") target=\(logURLSummary(targetURL))", type: logType)
+            sendResponse(connection, statusCode: rangeHeader == nil ? 200 : 206, headers: headers, body: Data(responseData))
+            return .handled
+        }
+
+        guard cachedByteCount < totalLength else {
+            let responseData = starter.data.prefix(Int(min(cachedByteCount, requestedEnd + 1)))
+            let headers = cachedResponseHeaders(
+                contentType: starter.contentType,
+                contentLength: Int64(responseData.count),
+                contentRange: rangeHeader == nil ? nil : "bytes 0-\(Int64(responseData.count) - 1)/\(totalLength)"
+            )
+            Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache served complete media bytes=\(responseData.count) target=\(logURLSummary(targetURL))", type: logType)
+            sendResponse(connection, statusCode: rangeHeader == nil ? 200 : 206, headers: headers, body: Data(responseData))
+            return .handled
+        }
+
+        let upstreamRange = "bytes=\(cachedByteCount)-\(requestedEnd)"
+
+        let responseHeaders = cachedResponseHeaders(
+            contentType: starter.contentType,
+            contentLength: requestedEnd + 1,
+            contentRange: rangeHeader == nil ? nil : "bytes 0-\(requestedEnd)/\(totalLength)"
+        )
+        Logger.shared.log("\(logPrefix)[\(requestId)]: MPV warmup cache hit prefixBytes=\(starter.data.count) upstreamRange=\(upstreamRange) responseRange=\(rangeHeader ?? "nil") target=\(logURLSummary(targetURL))", type: logType)
+        return .bridge(CachedPrefixContinuation(
+            responseStatus: rangeHeader == nil ? 200 : 206,
+            responseHeaders: responseHeaders,
+            data: starter.data,
+            upstreamRange: upstreamRange
+        ))
+    }
+
+    private func parseByteRange(_ value: String?) -> (start: Int64, end: Int64?)? {
+        guard let value else { return nil }
+        let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard lower.hasPrefix("bytes=") else { return nil }
+        let body = lower.dropFirst("bytes=".count)
+        guard !body.contains(",") else { return nil }
+        let parts = body.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2,
+              !parts[0].isEmpty,
+              let start = Int64(parts[0]) else {
+            return nil
+        }
+        let end = parts[1].isEmpty ? nil : Int64(parts[1])
+        return (start, end)
+    }
+
+    private func cachedResponseHeaders(contentType: String?, contentLength: Int64, contentRange: String?) -> [String: String] {
+        var headers: [String: String] = [
+            "Content-Length": String(max(0, contentLength)),
+            "Accept-Ranges": "bytes"
+        ]
+        if let contentType, !contentType.isEmpty {
+            headers["Content-Type"] = contentType
+        } else {
+            headers["Content-Type"] = "application/octet-stream"
+        }
+        if let contentRange {
+            headers["Content-Range"] = contentRange
+        }
+        return headers
     }
 
     private func upstreamBodyMode(for http: HTTPURLResponse, targetURL: URL) -> UpstreamBodyMode {
@@ -726,6 +894,7 @@ private final class MPVHeaderProxyCore {
         private let sessionId: String
         private let logType: String
         private let connection: NWConnection
+        private let cachedPrefix: CachedPrefixContinuation?
         private let callbackQueue: OperationQueue
 
         private var urlSession: URLSession?
@@ -750,7 +919,8 @@ private final class MPVHeaderProxyCore {
             targetURL: URL,
             sessionId: String,
             logType: String,
-            connection: NWConnection
+            connection: NWConnection,
+            cachedPrefix: CachedPrefixContinuation? = nil
         ) {
             self.proxy = proxy
             self.request = request
@@ -760,6 +930,7 @@ private final class MPVHeaderProxyCore {
             self.sessionId = sessionId
             self.logType = logType
             self.connection = connection
+            self.cachedPrefix = cachedPrefix
             let callbackQueue = OperationQueue()
             callbackQueue.maxConcurrentOperationCount = 1
             callbackQueue.qualityOfService = .userInitiated
@@ -830,6 +1001,25 @@ private final class MPVHeaderProxyCore {
             case .playlist, .probe:
                 completionHandler(.allow)
             case .stream:
+                if let cachedPrefix, http.statusCode == 206 {
+                    proxy.sendResponseHeaders(connection, statusCode: cachedPrefix.responseStatus, headers: cachedPrefix.responseHeaders) { [weak self] error in
+                        guard let self else { return }
+                        if let error {
+                            Logger.shared.log("\(self.proxy?.logPrefix ?? "MPVHeaderProxy")[\(self.requestId)]: failed to send cached response headers: \(error)", type: self.errorLogType)
+                            completionHandler(.cancel)
+                            self.finish()
+                            return
+                        }
+
+                        self.responseHeadersSent = true
+                        self.sendCachedPrefixBeforeUpstream(cachedPrefix, dataTask: dataTask, completionHandler: completionHandler)
+                    }
+                    return
+                }
+                if cachedPrefix != nil {
+                    Logger.shared.log("\(proxy.logPrefix)[\(requestId)]: MPV warmup cache bypassed because continuation status=\(http.statusCode) target=\(proxy.logURLSummary(targetURL))", type: logType)
+                }
+
                 proxy.sendResponseHeaders(connection, statusCode: http.statusCode, headers: responseHeaders) { [weak self] error in
                     guard let self else { return }
                     if let error {
@@ -958,6 +1148,48 @@ private final class MPVHeaderProxyCore {
 
                 self.responseHeadersSent = true
                 self.streamChunk(initialData, dataTask: dataTask, suspendBeforeSend: false)
+            }
+        }
+
+        private func sendCachedPrefixBeforeUpstream(
+            _ cachedPrefix: CachedPrefixContinuation,
+            dataTask: URLSessionDataTask,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            guard let proxy else {
+                completionHandler(.cancel)
+                dataTask.cancel()
+                finish()
+                return
+            }
+
+            pendingDownstreamSends += 1
+            pendingDownstreamBytes += cachedPrefix.data.count
+            let sendStartedAt = CFAbsoluteTimeGetCurrent()
+            proxy.sendData(cachedPrefix.data, on: connection) { [weak self] error in
+                self?.callbackQueue.addOperation { [weak self] in
+                    guard let self, let proxy = self.proxy else {
+                        completionHandler(.cancel)
+                        dataTask.cancel()
+                        return
+                    }
+
+                    self.pendingDownstreamSends = max(0, self.pendingDownstreamSends - 1)
+                    self.pendingDownstreamBytes = max(0, self.pendingDownstreamBytes - cachedPrefix.data.count)
+                    if let error {
+                        Logger.shared.log("\(proxy.logPrefix)[\(self.requestId)]: cached prefix send failed bytes=\(cachedPrefix.data.count) error=\(error)", type: self.errorLogType)
+                        completionHandler(.cancel)
+                        dataTask.cancel()
+                        self.connection.cancel()
+                        self.finish()
+                        return
+                    }
+
+                    self.streamedByteCount += cachedPrefix.data.count
+                    let sendMs = (CFAbsoluteTimeGetCurrent() - sendStartedAt) * 1000.0
+                    Logger.shared.log("\(proxy.logPrefix)[\(self.requestId)]: sent MPV warmup cached prefix bytes=\(cachedPrefix.data.count) sendMs=\(String(format: "%.0f", sendMs)) upstreamRange=\(cachedPrefix.upstreamRange)", type: self.logType)
+                    completionHandler(.allow)
+                }
             }
         }
 

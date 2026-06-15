@@ -5,6 +5,9 @@
 //  Created by Dawud Osman on 17/11/2025.
 //
 import SwiftUI
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 #if canImport(Network)
 import Network
 #endif
@@ -285,7 +288,7 @@ enum MPVRenderBackend: String, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultBackend: MPVRenderBackend = .openGL
+    static let defaultBackend: MPVRenderBackend = .metal
 }
 
 enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
@@ -382,7 +385,7 @@ struct MPVRenderBackendSupport {
 
     static var settingsDescription: String {
         if metalIsFullySupported {
-            return "Applies to the next player session. Metal uses MPV MoltenVK inline playback with a sample-buffer bridge for PiP; OpenGL remains the fallback."
+            return "Applies to the next player session. Metal is the default MPV renderer and uses MoltenVK inline playback with a sample-buffer bridge for PiP; OpenGL remains the fallback."
         }
         if !metalRendererEnabled {
             return "Applies to the next player session. OpenGL is active in this build."
@@ -472,8 +475,34 @@ enum ExperimentalFeatureState {
         return inApp == "mpv" && usesInternalPlayer
     }
 
+    static var isMetalMPVPlaybackDefault: Bool {
+        guard isMPVPlaybackDefault else { return false }
+        let raw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
+        let requested = MPVRenderBackend(rawValue: raw) ?? .defaultBackend
+        return MPVRenderBackendSupport.effectiveBackend(requested: requested, hasMetalDevice: true) == .metal
+    }
+
+    static var mpvAdvancedPlaybackUnavailableReason: String? {
+        let inApp = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
+        guard inApp == "mpv" else { return "mpv-not-default" }
+
+        let external = UserDefaults.standard.string(forKey: "externalPlayer") ?? ""
+        let usesInternalPlayer = external.isEmpty || external == "none" || external == "Default"
+        guard usesInternalPlayer else { return "external-player-enabled" }
+
+        let raw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
+        let requested = MPVRenderBackend(rawValue: raw) ?? .defaultBackend
+        guard requested == .metal else { return "renderer-not-metal" }
+
+        guard MPVRenderBackendSupport.effectiveBackend(requested: requested, hasMetalDevice: true) == .metal else {
+            return MPVRenderBackendSupport.fallbackReason(requested: requested, hasMetalDevice: true) ?? "metal-renderer-unavailable"
+        }
+
+        return nil
+    }
+
     static var isMPVAdvancedPlaybackAvailable: Bool {
-        isMPVPlaybackDefault
+        mpvAdvancedPlaybackUnavailableReason == nil
     }
 
     static var canUseExperimentalMPVPlayback: Bool {
@@ -640,11 +669,21 @@ final class ExperimentalCloudSyncManager: ObservableObject {
     }
 }
 
+struct ExperimentalMPVPreloadCachedStarter {
+    let data: Data
+    let contentType: String?
+    let totalLength: Int64?
+    let statusCode: Int
+    let isPlaylist: Bool
+}
+
 final class ExperimentalMPVPreloadManager {
     static let shared = ExperimentalMPVPreloadManager()
 
     private let fileManager = FileManager.default
     private let maxStarterBytes = 8 * 1024 * 1024
+    private let maxStarterAge: TimeInterval = 30 * 60
+    private let cacheKeyMigrationDefaultsKey = "experimentalMPVPreloadHashedCacheKeysMigrated"
     private var activeKeys = Set<String>()
     private let lock = NSLock()
 #if canImport(Network)
@@ -665,10 +704,29 @@ final class ExperimentalMPVPreloadManager {
         }
         pathMonitor.start(queue: pathQueue)
 #endif
+        migrateLegacyCacheFileNamesIfNeeded()
     }
 
     var cacheSizeBytes: Int64 {
         directorySize(at: cacheDirectory)
+    }
+
+    func shouldUsePlaybackProxy(for url: URL) -> Bool {
+        playbackProxySkipReason(for: url) == nil
+    }
+
+    func playbackProxySkipReason(for url: URL) -> String? {
+        if let reason = ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason {
+            return reason
+        }
+        guard UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey) else {
+            return "warmup-disabled"
+        }
+        let scheme = url.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else { return "non-http-url" }
+        guard !isLoopbackURL(url) else { return "loopback-proxy-url" }
+        let path = url.pathExtension.lowercased()
+        return isWarmupCompatiblePathExtension(path) ? nil : "unsupported-extension-\(path.isEmpty ? "empty" : path)"
     }
 
     func clearCache() {
@@ -679,8 +737,18 @@ final class ExperimentalMPVPreloadManager {
     }
 
     func noteNextEpisodeCandidate(showId: Int, seasonNumber: Int, episodeNumber: Int) {
-        guard ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable,
-              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
+        if let reason = ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason {
+            Logger.shared.log(
+                "MPV advanced smooth transition skipped show=\(showId) S\(seasonNumber)E\(episodeNumber) reason=\(reason)",
+                type: "MPV"
+            )
+            return
+        }
+        guard UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
+            Logger.shared.log(
+                "MPV advanced smooth transition skipped show=\(showId) S\(seasonNumber)E\(episodeNumber) reason=staging-disabled",
+                type: "MPV"
+            )
             return
         }
         Logger.shared.log(
@@ -690,20 +758,33 @@ final class ExperimentalMPVPreloadManager {
     }
 
     func prewarm(url: URL, headers: [String: String]?, label: String) {
-        guard ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable,
-              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey),
-              shouldPreload(url: url) else {
+        let safeLabel = label.isEmpty ? "unknown" : label
+        let headerKeys = (headers ?? [:]).keys.sorted().joined(separator: ",")
+        if let reason = ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason {
+            Logger.shared.log("MPV warmup skipped for \(safeLabel): \(reason)", type: "MPV")
+            return
+        }
+        if let skipReason = preloadSkipReason(for: url) {
+            Logger.shared.log("MPV warmup skipped for \(safeLabel): \(skipReason)", type: "MPV")
             return
         }
 
-        let key = cacheKey(for: url)
+        if cachedStarter(for: url, headers: headers) != nil {
+            Logger.shared.log("MPV warmup cache already ready for \(safeLabel) target=\(logURLSummary(url)) headerKeys=[\(headerKeys)]", type: "MPV")
+            return
+        }
+
+        let key = cacheKey(for: url, headers: headers)
         lock.lock()
         if activeKeys.contains(key) {
             lock.unlock()
+            Logger.shared.log("MPV warmup coalesced for \(safeLabel) target=\(logURLSummary(url)) headerKeys=[\(headerKeys)]", type: "MPV")
             return
         }
         activeKeys.insert(key)
         lock.unlock()
+
+        Logger.shared.log("MPV warmup started for \(safeLabel) target=\(logURLSummary(url)) key=\(String(key.prefix(8))) headerKeys=[\(headerKeys)] limitBytes=\(currentCacheLimitBytes())", type: "MPV")
 
         Task.detached(priority: .utility) { [weak self] in
             defer {
@@ -715,37 +796,106 @@ final class ExperimentalMPVPreloadManager {
         }
     }
 
-    private func shouldPreload(url: URL) -> Bool {
-        guard url.scheme == "http" || url.scheme == "https" else { return false }
-        guard ProcessInfo.processInfo.isLowPowerModeEnabled == false else { return false }
-        guard ProcessInfo.processInfo.thermalState != .serious,
-              ProcessInfo.processInfo.thermalState != .critical else { return false }
-        guard freeDiskBytes() > 750 * 1024 * 1024 else { return false }
-        guard respectsCurrentNetworkPolicy() else { return false }
-        guard cacheSizeBytes < currentCacheLimitBytes() else { return false }
+    func cachedStarter(for url: URL, headers: [String: String]?) -> ExperimentalMPVPreloadCachedStarter? {
+        let key = cacheKey(for: url, headers: headers)
+        let dataURL = starterURL(forKey: key)
+        let metadataURL = starterMetadataURL(forKey: key)
 
-        let path = url.pathExtension.lowercased()
-        return path == "m3u8" || path == "mp4" || path == "mkv" || path == "mov" || path.isEmpty
+        guard let metadata = try? JSONDecoder().decode(StarterMetadata.self, from: Data(contentsOf: metadataURL)),
+              Date().timeIntervalSince1970 - metadata.storedAt <= maxStarterAge,
+              let data = try? Data(contentsOf: dataURL),
+              !data.isEmpty,
+              data.count == metadata.dataLength else {
+            try? fileManager.removeItem(at: dataURL)
+            try? fileManager.removeItem(at: metadataURL)
+            return nil
+        }
+
+        return ExperimentalMPVPreloadCachedStarter(
+            data: data,
+            contentType: metadata.contentType,
+            totalLength: metadata.totalLength,
+            statusCode: metadata.statusCode,
+            isPlaylist: metadata.isPlaylist
+        )
     }
 
-    private func respectsCurrentNetworkPolicy() -> Bool {
+    func cachedStarter(for url: URL, headers: [String: String]?, waitUpTo timeout: TimeInterval) async -> ExperimentalMPVPreloadCachedStarter? {
+        if let starter = cachedStarter(for: url, headers: headers) {
+            return starter
+        }
+
+        guard timeout > 0 else { return nil }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            if let starter = cachedStarter(for: url, headers: headers) {
+                Logger.shared.log("MPV warmup cache became available target=\(logURLSummary(url)) waitMs=\(Int(timeout * 1000)) bytes=\(starter.data.count)", type: "MPV")
+                return starter
+            }
+        }
+        return nil
+    }
+
+    private func preloadSkipReason(for url: URL) -> String? {
+        guard UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey) else { return "warmup-disabled" }
+        let scheme = url.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else { return "non-http-url" }
+        guard !isLoopbackURL(url) else { return "loopback-proxy-url" }
+        guard ProcessInfo.processInfo.isLowPowerModeEnabled == false else { return "low-power-mode" }
+        guard ProcessInfo.processInfo.thermalState != .serious,
+              ProcessInfo.processInfo.thermalState != .critical else { return "thermal-pressure" }
+        guard freeDiskBytes() > 750 * 1024 * 1024 else { return "low-disk-space" }
+        if let networkSkipReason = currentNetworkPreloadSkipReason() {
+            return networkSkipReason
+        }
+        guard cacheSizeBytes < currentCacheLimitBytes() else { return "cache-limit-reached" }
+
+        let path = url.pathExtension.lowercased()
+        return isWarmupCompatiblePathExtension(path) ? nil : "unsupported-extension-\(path)"
+    }
+
+    private func isWarmupCompatiblePathExtension(_ path: String) -> Bool {
+        path.isEmpty || [
+            "m3u8",
+            "m3u",
+            "mp4",
+            "m4v",
+            "m4s",
+            "mkv",
+            "mov",
+            "ts",
+            "aac",
+            "mp3"
+        ].contains(path)
+    }
+
+    private func isLoopbackURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    private func currentNetworkPreloadSkipReason() -> String? {
 #if canImport(Network)
-        if currentPath?.usesInterfaceType(.cellular) == true {
-            return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
+        guard let currentPath else { return "network-path-pending" }
+        guard currentPath.status == .satisfied else { return "network-unsatisfied" }
+        if currentPath.usesInterfaceType(.cellular),
+           !UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey) {
+            return "cellular-disabled"
         }
 #endif
-        return true
+        return nil
     }
 
     private func currentCacheLimitBytes() -> Int64 {
 #if canImport(Network)
         if currentPath?.usesInterfaceType(.cellular) == true {
             let mb = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
-            return Int64(max(8, mb)) * 1024 * 1024
+            return Int64(max(8, min(mb, 256))) * 1024 * 1024
         }
 #endif
         let mb = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
-        return Int64(max(32, mb)) * 1024 * 1024
+        return Int64(max(32, min(mb, 2048))) * 1024 * 1024
     }
 
     private func writeStarterCache(url: URL, headers: [String: String]?, key: String, label: String) async {
@@ -761,21 +911,302 @@ final class ExperimentalMPVPreloadManager {
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode),
                   !data.isEmpty else {
+                Logger.shared.log("MPV warmup skipped for \(label): empty-or-invalid-response target=\(logURLSummary(url))", type: "MPV")
+                return
+            }
+
+            let contentType = http.value(forHTTPHeaderField: "Content-Type")
+            let rangeInfo = parseContentRange(http.value(forHTTPHeaderField: "Content-Range"))
+            let isPlaylist = isLikelyPlaylist(url: url, contentType: contentType)
+            if isPlaylist {
+                await writeHLSMediaStarterCache(playlistURL: url, data: data, headers: headers, label: label, depth: 0)
+                return
+            }
+
+            let totalLength = rangeInfo?.totalLength
+                ?? (http.expectedContentLength >= 0 ? http.expectedContentLength : nil)
+            let isUsableRangeStarter = http.statusCode == 206 && rangeInfo?.start == 0
+            guard isUsableRangeStarter else {
+                Logger.shared.log("MPV warmup skipped for \(label): upstream-did-not-provide-usable-starter status=\(http.statusCode) range=\(http.value(forHTTPHeaderField: "Content-Range") ?? "nil") target=\(logURLSummary(url))", type: "MPV")
                 return
             }
 
             let trimmed = data.count > maxStarterBytes ? data.prefix(maxStarterBytes) : data[...]
-            let target = cacheDirectory.appendingPathComponent(key).appendingPathExtension("starter")
-            try Data(trimmed).write(to: target, options: .atomic)
-            Logger.shared.log("MPV advanced preload cached \(data.count) bytes for \(label)", type: "MPV")
+            let starterData = Data(trimmed)
+            let target = starterURL(forKey: key)
+            let metadata = StarterMetadata(
+                statusCode: http.statusCode,
+                contentType: contentType,
+                totalLength: totalLength,
+                isPlaylist: false,
+                dataLength: starterData.count,
+                storedAt: Date().timeIntervalSince1970
+            )
+            try starterData.write(to: target, options: .atomic)
+            try JSONEncoder().encode(metadata).write(to: starterMetadataURL(forKey: key), options: .atomic)
+            pruneCacheIfNeeded(limitBytes: currentCacheLimitBytes())
+            Logger.shared.log("MPV warmup cached bytes=\(starterData.count) status=\(http.statusCode) playlist=false totalLength=\(totalLength.map(String.init) ?? "unknown") target=\(logURLSummary(url)) label=\(label)", type: "MPV")
         } catch {
-            Logger.shared.log("MPV advanced preload skipped for \(label): \(error.localizedDescription)", type: "MPV")
+            Logger.shared.log("MPV warmup skipped for \(label): \(error.localizedDescription) target=\(logURLSummary(url))", type: "MPV")
         }
     }
 
-    private func cacheKey(for url: URL) -> String {
-        let raw = url.absoluteString.data(using: .utf8) ?? Data()
-        return raw.map { String(format: "%02x", $0) }.joined().prefix(96).description
+    private func writeHLSMediaStarterCache(
+        playlistURL: URL,
+        data: Data,
+        headers: [String: String]?,
+        label: String,
+        depth: Int
+    ) async {
+        guard depth < 2 else {
+            Logger.shared.log("MPV warmup skipped for \(label): hls-playlist-depth-limit target=\(logURLSummary(playlistURL))", type: "MPV")
+            return
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            Logger.shared.log("MPV warmup skipped for \(label): hls-playlist-not-utf8 target=\(logURLSummary(playlistURL))", type: "MPV")
+            return
+        }
+
+        let plan = hlsWarmupPlan(from: text, playlistURL: playlistURL)
+        if let variantURL = plan.variantURL {
+            do {
+                let (variantData, response) = try await fetchHLSPlaylistData(url: variantURL, headers: headers)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode),
+                      !variantData.isEmpty else {
+                    Logger.shared.log("MPV warmup skipped for \(label): hls-variant-invalid target=\(logURLSummary(variantURL))", type: "MPV")
+                    return
+                }
+                Logger.shared.log("MPV warmup HLS master selected variant target=\(logURLSummary(variantURL)) playlist=\(logURLSummary(playlistURL))", type: "MPV")
+                await writeHLSMediaStarterCache(
+                    playlistURL: variantURL,
+                    data: variantData,
+                    headers: headers,
+                    label: "\(label) HLS variant",
+                    depth: depth + 1
+                )
+            } catch {
+                Logger.shared.log("MPV warmup skipped for \(label): hls-variant-fetch-failed error=\(error.localizedDescription) target=\(logURLSummary(variantURL))", type: "MPV")
+            }
+            return
+        }
+
+        let targets = hlsMediaWarmupTargets(mapURL: plan.mapURL, segmentURL: plan.segmentURL)
+        guard !targets.isEmpty else {
+            Logger.shared.log("MPV warmup skipped for \(label): hls-no-media-target playlist=\(logURLSummary(playlistURL))", type: "MPV")
+            return
+        }
+
+        Logger.shared.log("MPV warmup HLS media targets count=\(targets.count) playlist=\(logURLSummary(playlistURL)) targets=[\(targets.map { logURLSummary($0) }.joined(separator: ","))]", type: "MPV")
+        for target in targets {
+            await writeStarterCache(
+                url: target,
+                headers: headers,
+                key: cacheKey(for: target, headers: headers),
+                label: "\(label) HLS media"
+            )
+        }
+    }
+
+    private func fetchHLSPlaylistData(url: URL, headers: [String: String]?) async throws -> (Data, URLResponse) {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 18)
+        headers?.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        return try await URLSession.shared.data(for: request)
+    }
+
+    private func pruneCacheIfNeeded(limitBytes: Int64) {
+        let directory = cacheDirectory
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        guard var files = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        )?.compactMap({ item -> (url: URL, size: Int64, modified: Date) in
+            guard let url = item as? URL,
+                  let values = try? url.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true,
+                  let fileSize = values.fileSize else {
+                return nil
+            }
+            return (url, Int64(fileSize), values.contentModificationDate ?? .distantPast)
+        }) else {
+            return
+        }
+
+        var total = files.reduce(Int64(0)) { $0 + $1.size }
+        guard total > limitBytes else { return }
+
+        files.sort { $0.modified < $1.modified }
+        for file in files where total > limitBytes {
+            try? fileManager.removeItem(at: file.url)
+            total -= file.size
+        }
+    }
+
+    private func cacheKey(for url: URL, headers: [String: String]?) -> String {
+        let headerSignature = (headers ?? [:])
+            .map { "\($0.key.lowercased()):\($0.value)" }
+            .sorted()
+            .joined(separator: "\n")
+        let raw = Array("\(url.absoluteString)\n\(headerSignature)".utf8)
+#if canImport(CryptoKit)
+        return SHA256.hash(data: Data(raw)).map { String(format: "%02x", $0) }.joined()
+#else
+        let hash = fnv1a64(raw)
+        return String(format: "%016llx", hash)
+#endif
+    }
+
+    private func starterURL(forKey key: String) -> URL {
+        cacheDirectory.appendingPathComponent(key).appendingPathExtension("starter")
+    }
+
+    private func starterMetadataURL(forKey key: String) -> URL {
+        cacheDirectory.appendingPathComponent(key).appendingPathExtension("json")
+    }
+
+    private func logURLSummary(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.query = nil
+        components?.fragment = nil
+        return components?.string ?? "\(url.scheme ?? "unknown")://\(url.host ?? "unknown")\(url.path)"
+    }
+
+    private func hlsWarmupPlan(from text: String, playlistURL: URL) -> HLSWarmupPlan {
+        let baseURL = playlistURL.deletingLastPathComponent()
+        var awaitingVariantURL = false
+        var variantURL: URL?
+        var mapURL: URL?
+        var segmentURL: URL?
+
+        for rawLine in text.components(separatedBy: "\n") {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            if trimmed.hasPrefix("#") {
+                if trimmed.range(of: "#EXT-X-STREAM-INF", options: [.caseInsensitive]) != nil {
+                    awaitingVariantURL = true
+                } else if trimmed.range(of: "#EXT-X-MAP", options: [.caseInsensitive]) != nil,
+                          mapURL == nil,
+                          let reference = hlsURIAttribute(in: trimmed) {
+                    mapURL = resolvedHLSURL(reference, baseURL: baseURL)
+                }
+                continue
+            }
+
+            if awaitingVariantURL {
+                variantURL = resolvedHLSURL(trimmed, baseURL: baseURL)
+                break
+            }
+
+            if segmentURL == nil {
+                segmentURL = resolvedHLSURL(trimmed, baseURL: baseURL)
+            }
+
+            if mapURL != nil, segmentURL != nil {
+                break
+            }
+        }
+
+        return HLSWarmupPlan(variantURL: variantURL, mapURL: mapURL, segmentURL: segmentURL)
+    }
+
+    private func hlsURIAttribute(in line: String) -> String? {
+        guard let keyRange = line.range(of: "URI=", options: [.caseInsensitive]) else { return nil }
+        let valueStart = keyRange.upperBound
+        guard valueStart < line.endIndex else { return nil }
+
+        if line[valueStart] == "\"" {
+            let contentStart = line.index(after: valueStart)
+            guard contentStart <= line.endIndex,
+                  let contentEnd = line[contentStart...].firstIndex(of: "\"") else {
+                return nil
+            }
+            return String(line[contentStart..<contentEnd])
+        }
+
+        let valueEnd = line[valueStart...].firstIndex(of: ",") ?? line.endIndex
+        let value = String(line[valueStart..<valueEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func resolvedHLSURL(_ reference: String, baseURL: URL) -> URL? {
+        let trimmed = reference.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.lowercased().hasPrefix("data:"),
+              let resolved = URL(string: trimmed, relativeTo: baseURL)?.absoluteURL,
+              let scheme = resolved.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+        return resolved
+    }
+
+    private func hlsMediaWarmupTargets(mapURL: URL?, segmentURL: URL?) -> [URL] {
+        var seen = Set<String>()
+        var targets: [URL] = []
+        for url in [mapURL, segmentURL].compactMap({ $0 }) {
+            let key = url.absoluteString
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            targets.append(url)
+        }
+        return targets
+    }
+
+    private func isLikelyPlaylist(url: URL, contentType: String?) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        if ext == "m3u8" || ext == "m3u" {
+            return true
+        }
+        let lower = contentType?.lowercased() ?? ""
+        return lower.contains("mpegurl") || lower.contains("application/vnd.apple.mpegurl")
+    }
+
+    private func parseContentRange(_ value: String?) -> (start: Int64, end: Int64, totalLength: Int64?)? {
+        guard let value else { return nil }
+        let lower = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard lower.hasPrefix("bytes ") else { return nil }
+        let rangeAndTotal = lower.dropFirst("bytes ".count).split(separator: "/", maxSplits: 1).map(String.init)
+        guard rangeAndTotal.count == 2 else { return nil }
+        let bounds = rangeAndTotal[0].split(separator: "-", maxSplits: 1).map(String.init)
+        guard bounds.count == 2,
+              let start = Int64(bounds[0]),
+              let end = Int64(bounds[1]) else {
+            return nil
+        }
+        let total = rangeAndTotal[1] == "*" ? nil : Int64(rangeAndTotal[1])
+        return (start, end, total)
+    }
+
+    private func fnv1a64(_ bytes: [UInt8]) -> UInt64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in bytes {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return hash
+    }
+
+    private func migrateLegacyCacheFileNamesIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: cacheKeyMigrationDefaultsKey) else { return }
+        try? fileManager.removeItem(at: cacheDirectory)
+        UserDefaults.standard.set(true, forKey: cacheKeyMigrationDefaultsKey)
+    }
+
+    private struct StarterMetadata: Codable {
+        let statusCode: Int
+        let contentType: String?
+        let totalLength: Int64?
+        let isPlaylist: Bool
+        let dataLength: Int
+        let storedAt: TimeInterval
+    }
+
+    private struct HLSWarmupPlan {
+        let variantURL: URL?
+        let mapURL: URL?
+        let segmentURL: URL?
     }
 
     private func directorySize(at url: URL) -> Int64 {

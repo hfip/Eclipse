@@ -740,6 +740,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
     }
 
+    private var isMetalMPVRenderer: Bool {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        return metalMPVRenderer != nil
+#else
+        return false
+#endif
+    }
+
     private var mpvRendererName: String {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         if metalMPVRenderer != nil { return "moltenvk" }
@@ -1732,6 +1740,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if vlcRenderer != nil {
             return false
         }
+        guard isMetalMPVRenderer else {
+            return false
+        }
         if !canStartMPVSampleBufferPictureInPicture() {
             return false
         }
@@ -1747,6 +1758,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return false
         }
         return pipController?.isPictureInPictureActive == true
+    }
+
+    private func mpvPictureInPictureControllerState() -> (active: Bool, pending: Bool) {
+        guard vlcRenderer == nil, let pip = pipController else {
+            return (false, false)
+        }
+        return (pip.isPictureInPictureActive, pip.isPictureInPictureStartPending)
     }
 
     private func rendererUpdatePictureInPicturePlaybackState() {
@@ -1812,6 +1830,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func rendererResumeForegroundRendering(reason: String) {
+        let pipState = mpvPictureInPictureControllerState()
+        if pipState.active || pipState.pending {
+            logPictureInPicture("foreground render recovery deferred reason=\(reason) active=\(pipState.active) pending=\(pipState.pending) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+            return
+        }
         renderer.resumeForegroundRendering(reason: reason)
     }
 
@@ -1921,6 +1944,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
             return
         }
+        guard isMetalMPVRenderer else {
+            pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
+            cancelPendingMPVAppExitPictureInPictureStart(reason: "\(reason)-renderer-not-metal")
+            mpvAppExitPiPStartRequested = false
+            logPictureInPicture("MPV app-exit auto PiP automation disabled reason=\(reason) renderer=\(mpvRendererName)")
+            return
+        }
 
         let enabled = Settings.shared.mpvAppExitPictureInPictureEnabled
         pipController?.setCanStartPictureInPictureAutomaticallyFromInline(enabled)
@@ -1933,6 +1963,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func primeMPVAppExitPictureInPictureIfNeeded(source: String) {
         guard isMPVRenderer, !isVLCPlayer else { return }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): renderer-not-metal")
+            return
+        }
         guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
             logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): disabled")
             return
@@ -2385,13 +2419,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             Logger.shared.log("Failed to start \(rendererName) renderer: \(error)", type: "Error")
         }
 
-        if isMPVRenderer {
+        if isMetalMPVRenderer {
             pipController = PiPController(sampleBufferDisplayLayer: displayLayer)
             pipController?.delegate = self
             configureMPVAppExitPictureInPictureAutomation(reason: "viewDidLoad")
         } else {
             pipController = nil
-            logVLCUI("skipping MPV sample-buffer PiPController for VLC renderer", type: "Player")
+            logPictureInPicture("skipping MPV sample-buffer PiPController renderer=\(mpvRendererName)")
         }
         updatePiPButtonVisibility()
         
@@ -2529,7 +2563,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         logSharedPlayerControl("deinit; stopping renderer and restoring state")
         pipController?.delegate = nil
         if pipController?.isPictureInPictureActive == true {
-            pipController?.stopPictureInPicture()
+            pipController?.stopPictureInPicture(source: "player-deinit")
         }
         openSubtitlesFetchTask?.cancel()
         stremioSubtitleFetchTask?.cancel()
@@ -2644,14 +2678,20 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         logVLCUI("load resume prepared pendingSeek=\(secondsText(pendingSeekTime)) progressCached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) launchContext=\(String(describing: playbackLaunchContext))", type: "Progress")
         rendererPrepareInitialSeek(to: pendingSeekTime)
-        let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
-        if isMPVRenderer && ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable {
-            ExperimentalMPVPreloadManager.shared.prewarm(
-                url: playbackRequest.url,
-                headers: playbackRequest.headers ?? headers,
-                label: mediaInfoLabel
-            )
+        if isMPVRenderer {
+            if isMetalMPVRenderer && ExperimentalFeatureState.canUseExperimentalMPVPlayback {
+                Logger.shared.log("[PlayerVC.PlaybackStart] MPV warmup candidate source=resolved-playback-url autoMode=\(UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")) renderer=\(mpvRendererName) target=\(url.absoluteString)", type: "MPV")
+                ExperimentalMPVPreloadManager.shared.prewarm(
+                    url: url,
+                    headers: headers,
+                    label: mediaInfoLabel
+                )
+            } else if UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey) {
+                let reason = isMetalMPVRenderer ? (ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason ?? "advanced-unavailable") : "renderer-not-metal-active"
+                Logger.shared.log("[PlayerVC.PlaybackStart] MPV warmup not started reason=\(reason) renderer=\(mpvRendererName) target=\(url.absoluteString)", type: "MPV")
+            }
         }
+        let playbackRequest = preparePlayerHeaderProxyIfNeeded(originalURL: url, headers: headers)
         if !isVLCPlayer {
             preparePlaybackStartupMonitoring(for: playbackRequest.url, headers: playbackRequest.headers ?? headers ?? [:])
         } else {
@@ -5434,7 +5474,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         threshold: Double
     ) {
         guard isMPVRenderer,
-              ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable,
+              isMetalMPVRenderer,
+              ExperimentalFeatureState.canUseExperimentalMPVPlayback,
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
             return
         }
@@ -5554,7 +5595,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard isRemoteHTTPURL(originalURL), !isLocalProxyURL(originalURL) else { return (originalURL, headers) }
 
         let proxyHeaders = buildProxyHeaders(for: originalURL, baseHeaders: headers ?? [:])
-        Logger.shared.log("[PlayerVC.PlaybackStart] MPV direct HTTP playback target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
+        if isMetalMPVRenderer,
+           ExperimentalMPVPreloadManager.shared.shouldUsePlaybackProxy(for: originalURL) {
+            guard let proxyURL = MPVHeaderProxy.shared.makeProxyURL(for: originalURL, headers: proxyHeaders, logType: "MPV") else {
+                Logger.shared.log("[PlayerVC.PlaybackStart] MPV warmup proxy URL creation failed; using direct HTTP target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
+                return (originalURL, proxyHeaders.isEmpty ? headers : proxyHeaders)
+            }
+
+            Logger.shared.log("[PlayerVC.PlaybackStart] MPV warmup proxy activated target=\(originalURL.absoluteString) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
+            return (proxyURL, nil)
+        }
+
+        let proxySkipReason = isMetalMPVRenderer
+            ? (ExperimentalMPVPreloadManager.shared.playbackProxySkipReason(for: originalURL) ?? "not-requested")
+            : "renderer-not-metal-active"
+        Logger.shared.log("[PlayerVC.PlaybackStart] MPV direct HTTP playback target=\(originalURL.absoluteString) warmupProxySkipped=\(proxySkipReason) renderer=\(mpvRendererName) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
         return (originalURL, proxyHeaders.isEmpty ? headers : proxyHeaders)
     }
 
@@ -7207,7 +7262,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        let mpvAdvancedControlsActive = isMPVRenderer && ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable
+        let mpvAdvancedControlsActive = isMPVRenderer && isMetalMPVRenderer && ExperimentalFeatureState.canUseExperimentalMPVPlayback
         let showRemainingTime = !isMPVRenderer
             || !mpvAdvancedControlsActive
             || (mpvAdvancedControlsActive && UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey))
@@ -7721,7 +7776,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
             self.pipController?.delegate = nil
             if self.pipController?.isPictureInPictureActive == true {
-                self.pipController?.stopPictureInPicture()
+                self.pipController?.stopPictureInPicture(source: "close-tapped")
             }
 
             self.rendererStop()
@@ -7773,7 +7828,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         logPictureInPicture("button tap state active=\(pip.isPictureInPictureActive) possible=\(pip.isPictureInPicturePossible) supported=\(pip.isPictureInPictureSupported) isVLC=\(isVLCPlayer)")
         if pip.isPictureInPictureActive {
             logPictureInPicture("stopping PiP from button")
-            pip.stopPictureInPicture()
+            pip.stopPictureInPicture(source: "button")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak pip] in
                 guard let self, let pip, !pip.isPictureInPictureActive else { return }
                 self.logPictureInPicture("MPV PiP stop timeout reached inactive state; restoring foreground")
@@ -7788,6 +7843,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func startMPVPictureInPictureWhenPossible(source: String) {
         guard isMPVRenderer, !isVLCPlayer else {
             logPictureInPicture("MPV PiP start ignored source=\(source): active renderer is not MPV")
+            return
+        }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV PiP start ignored source=\(source): renderer-not-metal")
             return
         }
         guard let pip = pipController else { return }
@@ -9346,6 +9405,10 @@ extension PlayerViewController: PiPControllerDelegate {
 
     private func scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: String, delay: TimeInterval = 0.35) {
         guard !isVLCPlayer, isMPVRenderer else { return }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): renderer-not-metal")
+            return
+        }
         configureMPVAppExitPictureInPictureAutomation(reason: source)
         guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
             logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): disabled")
@@ -9394,6 +9457,10 @@ extension PlayerViewController: PiPControllerDelegate {
         }
         guard isMPVRenderer else {
             logPictureInPicture("app-exit auto PiP skipped source=\(source): MPV renderer missing")
+            return
+        }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): renderer-not-metal")
             return
         }
         guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
@@ -9462,6 +9529,10 @@ extension PlayerViewController: PiPControllerDelegate {
             logPictureInPicture("VLC app-exit PiP skipped source=scene-will-deactivate: disabled")
             return
         }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV app-exit PiP skipped source=scene-will-deactivate: renderer-not-metal")
+            return
+        }
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         if metalMPVRenderer != nil {
             logPictureInPicture("scene-will-deactivate pending MoltenVK sample-buffer PiP bridge until background confirmation")
@@ -9486,6 +9557,12 @@ extension PlayerViewController: PiPControllerDelegate {
         armBackgroundRecoveryProgressGateIfNeeded(source: "scene-did-enter-background")
         if isVLCPlayer {
             logPictureInPicture("VLC app-exit PiP skipped source=scene-did-enter-background: disabled")
+            return
+        }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV app-exit PiP skipped source=scene-did-enter-background: renderer-not-metal")
+            cancelPendingMPVAppExitPictureInPictureStart(reason: "scene-did-enter-background-renderer-not-metal")
+            scheduleMPVBackgroundAudioFallback(source: "scene-did-enter-background-renderer-not-metal")
             return
         }
         if Thread.isMainThread {
@@ -9563,14 +9640,15 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
             guard let pip = self.pipController else { return }
+            let active = pip.isPictureInPictureActive
+            let pending = pip.isPictureInPictureStartPending
+            guard !active, !pending else {
+                self.logPictureInPicture("will-enter-foreground deferred MPV foreground restore active=\(active) pending=\(pending) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
+                return
+            }
             self.mpvPiPStartAttemptID += 1
             self.mpvAppExitPiPStartRequested = false
-            if pip.isPictureInPictureActive {
-                self.logMPV("Returning to foreground; stopping PiP renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
-                pip.stopPictureInPicture()
-            } else {
-                self.rendererFinishPictureInPicture()
-            }
+            self.rendererFinishPictureInPicture()
         }
     }
 
@@ -9579,15 +9657,16 @@ extension PlayerViewController: PiPControllerDelegate {
             guard let self, self.vlcRenderer == nil else { return }
             self.cancelPendingMPVAppExitPictureInPictureStart(reason: source)
             guard let pip = self.pipController else { return }
+            let active = pip.isPictureInPictureActive
+            let pending = pip.isPictureInPictureStartPending
+            guard !active, !pending else {
+                self.logPictureInPicture("\(source): foreground restore deferred active=\(active) pending=\(pending) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
+                return
+            }
             self.mpvPiPStartAttemptID += 1
             self.mpvAppExitPiPStartRequested = false
-            if pip.isPictureInPictureActive {
-                self.logMPV("\(source): stopping MPV PiP for foreground return renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
-                pip.stopPictureInPicture()
-            } else {
-                self.logMPV("\(source): PiP inactive; restoring MPV foreground render path renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
-                self.rendererFinishPictureInPicture()
-            }
+            self.logMPV("\(source): PiP inactive; restoring MPV foreground render path renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
+            self.rendererFinishPictureInPicture()
         }
     }
 

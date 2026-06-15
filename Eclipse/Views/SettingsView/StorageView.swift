@@ -59,7 +59,7 @@ struct StorageView: View {
             if ExperimentalFeatureState.isEnabledAtLaunch || ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable {
                 Section(
                     header: Text("STORAGE BREAKDOWN"),
-                    footer: Text(ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable ? "MPV preload files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV preload cache actions require MPV as the default in-app player.")
+                    footer: Text(ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable ? "MPV warmup files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV warmup cache actions require MPV as the default in-app player with the Metal renderer.")
                 ) {
                     ForEach(storageBreakdown) { item in
                         HStack {
@@ -78,7 +78,7 @@ struct StorageView: View {
                         ExperimentalMPVPreloadManager.shared.clearCache()
                         refreshCacheSize()
                     } label: {
-                        Text("Clear MPV Preload Cache")
+                        Text("Clear MPV Warmup Cache")
                     }
                     .disabled(!ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable || isLoading || isClearing)
                 }
@@ -257,7 +257,7 @@ struct StorageView: View {
         return [
             StorageBreakdownItem(title: "Document Directory", sizeBytes: calculateDirectorySize(at: documents)),
             StorageBreakdownItem(title: "Image Cache", sizeBytes: calculateNamedCacheSize(in: caches, matching: ["kingfisher", "imagecache", "image-cache"])),
-            StorageBreakdownItem(title: "MPV Preload Cache", sizeBytes: ExperimentalMPVPreloadManager.shared.cacheSizeBytes),
+            StorageBreakdownItem(title: "MPV Warmup Cache", sizeBytes: ExperimentalMPVPreloadManager.shared.cacheSizeBytes),
             StorageBreakdownItem(title: "Downloads / Video Storage", sizeBytes: calculateDirectorySize(at: downloads)),
             StorageBreakdownItem(title: "Subtitle Cache", sizeBytes: calculateFileSize(in: [documents, caches, downloads], extensions: ["srt", "vtt", "ass", "ssa"])),
             StorageBreakdownItem(title: "Service / Plugin / Source Cache", sizeBytes: calculateNamedCacheSize(in: caches, matching: ["service", "plugin", "source", "stremio", "nuvio"])),

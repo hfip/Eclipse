@@ -202,6 +202,33 @@ struct MediaDetailView: View {
         }
     }
 
+    private var experimentalHeroElements: Set<MediaDetailElement> {
+        [.actions, .overview, .details]
+    }
+
+    private var visibleHeroElements: Set<MediaDetailElement> {
+        Set(visibleMediaDetailElements)
+    }
+
+    private var visibleBodyMediaDetailElements: [MediaDetailElement] {
+        guard ExperimentalFeatureState.isEnabledAtLaunch else {
+            return visibleMediaDetailElements
+        }
+        return visibleMediaDetailElements.filter { !experimentalHeroElements.contains($0) }
+    }
+
+    private var shouldShowHeroActions: Bool {
+        visibleHeroElements.contains(.actions)
+    }
+
+    private var shouldShowHeroOverview: Bool {
+        visibleHeroElements.contains(.overview) && currentOverviewText != nil
+    }
+
+    private var shouldShowHeroDetails: Bool {
+        visibleHeroElements.contains(.details)
+    }
+
     private var hasPlayableDownloadForMainButton: Bool {
         guard preferDownloadedMedia else { return false }
         if searchResult.isMovie {
@@ -527,8 +554,8 @@ struct MediaDetailView: View {
                 dominantColor: atmosphereColor,
                 scrollOffset: backgroundScrollOffset,
                 heroHeight: headerHeight,
-                fadeDistance: designMetrics.heroBleedDistance,
-                bleedStrength: designMetrics.heroWashStrength,
+                fadeDistance: designMetrics.heroBleedDistance * 1.15,
+                bleedStrength: designMetrics.heroWashStrength * 1.08,
                 style: theme.atmosphereStyle
             )
         } else if theme.atmosphereStyle == .solid {
@@ -702,7 +729,7 @@ struct MediaDetailView: View {
                 alignment: .leading,
                 spacing: ExperimentalFeatureState.isEnabledAtLaunch ? max(18, designMetrics.sectionSpacing * 0.62) : 16
             ) {
-                ForEach(visibleMediaDetailElements) { element in
+                ForEach(visibleBodyMediaDetailElements) { element in
                     mediaDetailElementView(element)
                 }
 
@@ -715,7 +742,7 @@ struct MediaDetailView: View {
             .background(
                 detailContentBackground
             )
-            .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? -designMetrics.contentTopOverlap : 0)
+            .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? max(18, designMetrics.sectionSpacing * 0.45) : 0)
             .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 28 : 0)
         }
     }
@@ -737,18 +764,52 @@ struct MediaDetailView: View {
     
     @ViewBuilder
     private var gradientOverlay: some View {
-        LinearGradient(
-            gradient: Gradient(stops: [
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.0 : 0.0), location: 0.0),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.25 : 0.16), location: 0.20),
-                .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.62 : 0.42), location: 0.62),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.70 : 1), location: 1.0)
-            ]),
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.heroBottomFadeHeight : 120)
-        .clipShape(RoundedRectangle(cornerRadius: 0))
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.black.opacity(0.42), location: 0.0),
+                            .init(color: Color.black.opacity(0.14), location: 0.48),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: isIPad ? 260 : 210)
+
+                    Spacer(minLength: 0)
+                }
+
+                LinearGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: Color.black.opacity(0.12), location: 0.18),
+                        .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.42 : 0.32), location: 0.42),
+                        .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.78 : 0.66), location: 0.72),
+                        .init(color: EclipseTheme.shared.backgroundBase.opacity(theme.atmosphereStyle == .solid ? 0.24 : 0.76), location: 1.0)
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: max(designMetrics.heroBottomFadeHeight + 150, isIPad ? 680 : 570))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .allowsHitTesting(false)
+        } else {
+            LinearGradient(
+                gradient: Gradient(stops: [
+                    .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.0 : 0.0), location: 0.0),
+                    .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.25 : 0.16), location: 0.20),
+                    .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.62 : 0.42), location: 0.62),
+                    .init(color: atmosphereColor.opacity(1), location: 1.0)
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 0))
+        }
     }
 
     private var detailHeroImageURL: String? {
@@ -773,38 +834,76 @@ struct MediaDetailView: View {
     
     @ViewBuilder
     private var headerSection: some View {
-        VStack(alignment: .center, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 12 : 8) {
-            if let logoURL = logoURL {
-                KFImage(URL(string: logoURL))
-                    .placeholder {
-                        titleText
-                    }
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(
-                        maxWidth: ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 500 : 330) : (isIPad ? 400 : 280),
-                        maxHeight: ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 170 : 125) : (isIPad ? 140 : 100)
-                    )
-                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-            } else {
-                titleText
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            experimentalHeaderSection
+        } else {
+            legacyHeaderSection
+        }
+    }
+
+    @ViewBuilder
+    private var legacyHeaderSection: some View {
+        VStack(alignment: .center, spacing: 8) {
+            titleArtwork
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.bottom, 10)
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private var experimentalHeaderSection: some View {
+        VStack(alignment: .center, spacing: isIPad ? 15 : 12) {
+            titleArtwork
+
+            if shouldShowHeroDetails, let metadata = detailMetadataLine {
+                Text(metadata)
+                    .font(.system(size: isIPad ? 20 : 17, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .padding(.horizontal, isIPad ? 82 : 20)
+                    .shadow(color: .black.opacity(0.70), radius: 8, x: 0, y: 3)
             }
 
-            if ExperimentalFeatureState.isEnabledAtLaunch {
-                if let metadata = detailMetadataLine {
-                    Text(metadata)
-                        .font(.system(size: isIPad ? 20 : 17, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                        .lineLimit(1)
-                        .shadow(color: .black.opacity(0.65), radius: 6, x: 0, y: 3)
-                }
+            if shouldShowHeroActions {
+                experimentalPlayAndBookmarkSection
+                    .padding(.top, isIPad ? 6 : 2)
+            }
 
+            if shouldShowHeroOverview {
+                experimentalHeroSynopsisSection
+                    .padding(.top, isIPad ? 2 : 0)
+            }
+
+            if shouldShowHeroDetails {
                 detailRatingChips
+                    .padding(.top, isIPad ? 2 : 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 58 : 10)
-        .padding(.horizontal, ExperimentalFeatureState.isEnabledAtLaunch ? 28 : 16)
+        .padding(.bottom, isIPad ? 52 : 34)
+    }
+
+    @ViewBuilder
+    private var titleArtwork: some View {
+        if let logoURL = logoURL {
+            KFImage(URL(string: logoURL))
+                .placeholder {
+                    titleText
+                }
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(
+                    maxWidth: ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 520 : 334) : (isIPad ? 400 : 280),
+                    maxHeight: ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 178 : 132) : (isIPad ? 140 : 100)
+                )
+                .shadow(color: .black.opacity(0.52), radius: 6, x: 0, y: 3)
+                .padding(.horizontal, ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 82 : 26) : 0)
+        } else {
+            titleText
+                .padding(.horizontal, ExperimentalFeatureState.isEnabledAtLaunch ? (isIPad ? 82 : 26) : 0)
+        }
     }
     
     @ViewBuilder
@@ -826,7 +925,7 @@ struct MediaDetailView: View {
             guard let value, !value.isEmpty else { return nil }
             return value
         }
-        return parts.isEmpty ? nil : parts.joined(separator: ExperimentalFeatureState.isEnabledAtLaunch ? " - " : " · ")
+        return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
     }
 
     private var detailDate: String? {
@@ -849,7 +948,7 @@ struct MediaDetailView: View {
     private var detailRatingChips: some View {
         let tmdbRating = detailVoteAverage
         if (tmdbRating ?? 0) > 0 || traktRating != nil || (isAnimeShow && animeRating?.source == .myAnimeList) {
-            HStack(spacing: 8) {
+            HStack(spacing: isIPad ? 15 : 11) {
                 if let tmdbRating, tmdbRating > 0 {
                     ratingChip(label: "TMDB", value: String(format: "%.1f", tmdbRating), tint: .cyan)
                 }
@@ -864,34 +963,26 @@ struct MediaDetailView: View {
             }
             .lineLimit(1)
             .minimumScaleFactor(0.74)
-            .padding(.top, 1)
+            .padding(.horizontal, isIPad ? 82 : 24)
         }
     }
 
     private func ratingChip(label: String, value: String, tint: Color) -> some View {
         HStack(spacing: 5) {
             Text(label)
-                .font(.system(size: 11, weight: .heavy))
-                .foregroundColor(tint)
+                .font(.system(size: isIPad ? 12 : 10, weight: .heavy))
+                .foregroundColor(label == "TMDB" ? .white : tint)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(label == "TMDB" ? tint.opacity(0.42) : tint.opacity(0.22))
+                )
             Text(value)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: isIPad ? 21 : 18, weight: .semibold))
                 .foregroundColor(.white)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color.black.opacity(0.22))
-                .background(
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.70)
-                )
-        )
-        .overlay(
-            Capsule()
-                .stroke(Color.white.opacity(0.16), lineWidth: 0.7)
-        )
+        .shadow(color: .black.opacity(0.55), radius: 5, x: 0, y: 2)
     }
     
     @ViewBuilder
@@ -944,14 +1035,35 @@ struct MediaDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var experimentalHeroSynopsisSection: some View {
+        if let overviewText = currentOverviewText {
+            Text(showFullSynopsis ? overviewText : String(overviewText.prefix(220)) + (overviewText.count > 220 ? "..." : ""))
+                .font(.system(size: isIPad ? 21 : 18, weight: .regular))
+                .foregroundColor(.white.opacity(0.92))
+                .lineLimit(showFullSynopsis ? 8 : 4)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, isIPad ? 98 : 28)
+                .shadow(color: .black.opacity(0.60), radius: 7, x: 0, y: 3)
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showFullSynopsis.toggle()
+                    }
+                }
+        }
+    }
+
     private var currentOverviewText: String? {
-        if !synopsis.isEmpty {
-            return synopsis
+        let trimmedSynopsis = synopsis.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSynopsis.isEmpty {
+            return trimmedSynopsis
         }
 
         let overview = searchResult.isMovie ? movieDetail?.overview : tvShowDetail?.overview
-        guard let overview, !overview.isEmpty else { return nil }
-        return overview
+        let trimmedOverview = overview?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmedOverview, !trimmedOverview.isEmpty else { return nil }
+        return trimmedOverview
     }
     
     @ViewBuilder

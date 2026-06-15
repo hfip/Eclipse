@@ -179,17 +179,33 @@ struct GenreSectionWidget: View {
         let radius = isExperimental ? metrics.cardRadius : 14
 
         HStack(spacing: 0) {
-            if let posterURL = items.first?.fullPosterURL {
+            if isExperimental {
+                ZStack(alignment: .leading) {
+                    ForEach(Array(items.prefix(3).enumerated()), id: \.element.stableIdentity) { index, item in
+                        KFImage(URL(string: item.fullPosterURL ?? item.fullBackdropURL ?? ""))
+                            .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
+                            .placeholder { Color.gray.opacity(0.3) }
+                            .resizable()
+                            .aspectRatio(2/3, contentMode: .fill)
+                            .frame(width: posterWidth, height: posterHeight)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .shadow(color: .black.opacity(0.22), radius: 7, x: 0, y: 4)
+                            .offset(x: CGFloat(index) * 9, y: CGFloat(index) * -2)
+                    }
+                }
+                .frame(width: posterWidth + 20, height: posterHeight)
+                .padding(.leading, 14)
+                .padding(.vertical, 10)
+            } else if let posterURL = items.first?.fullPosterURL {
                 KFImage(URL(string: posterURL))
                     .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                     .placeholder { Color.gray.opacity(0.3) }
                     .resizable()
                     .aspectRatio(2/3, contentMode: .fill)
                     .frame(width: posterWidth, height: posterHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: isExperimental ? 12 : 8, style: .continuous))
-                    .padding(.leading, isExperimental ? 14 : 10)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(.leading, 10)
                     .padding(.vertical, 10)
-                    .shadow(color: .black.opacity(isExperimental ? 0.20 : 0), radius: 8, x: 0, y: 4)
             }
             
             Spacer()
@@ -438,51 +454,115 @@ struct FeaturedSpotlightWidget: View {
     let genreName: String
     let tmdbService: TMDBService
     var metrics: ExperimentalMediaDesignMetrics = .current
+
+    private var spotlightTitle: String {
+        let trimmedGenre = genreName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedGenre.isEmpty ? "Popular" : "Popular \u{00B7} \(trimmedGenre)"
+    }
     
     var body: some View {
         let items = widgetData["featured"] ?? []
-        
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 16) {
-                if let spotlight = items.first {
-                    NavigationLink(destination: DiscoverDetailView(
-                        title: "Popular \u{00B7} \(genreName)",
-                        initialItems: items,
-                        heroItem: spotlight,
-                        loadMore: { page in
-                            guard let genre = WidgetGenre.curated.first(where: { $0.name == genreName }) else { return [] }
-                            return (try? await tmdbService.discoverByGenre(genreId: genre.id, mediaType: "tv", page: page)) ?? []
-                        }
-                    )) {
-                        spotlightBanner(spotlight: spotlight)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                
+
+        if let spotlight = items.first {
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                experimentalSpotlightBody(spotlight: spotlight, items: items)
+            } else {
+                legacySpotlightBody(spotlight: spotlight, items: items)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func experimentalSpotlightBody(spotlight: TMDBSearchResult, items: [TMDBSearchResult]) -> some View {
+        let radius = metrics.cardRadius + 10
+        let trailingItems = Array(items.dropFirst().prefix(8))
+
+        VStack(spacing: 0) {
+            NavigationLink(destination: spotlightDestination(items: items)) {
+                experimentalSpotlightBanner(spotlight: spotlight)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            if !trailingItems.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 24 : 14) {
-                        ForEach(Array(items.dropFirst().prefix(8))) { item in
+                    LazyHStack(spacing: isIPad ? 22 : 16) {
+                        ForEach(trailingItems) { item in
                             NavigationLink(destination: MediaDetailView(searchResult: item)) {
-                                spotlightSmallCard(item: item)
+                                spotlightSmallCard(item: item, forceLandscape: true)
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
                     }
                     .padding(.horizontal, isIPad ? 24 : 16)
+                    .padding(.vertical, isIPad ? 26 : 20)
                 }
                 .modifier(ScrollClipModifier())
+                .background(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.24, green: 0.19, blue: 0.16).opacity(0.88),
+                            Color(red: 0.14, green: 0.11, blue: 0.14).opacity(0.82)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             }
-            .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? metrics.sectionSpacing : 24)
         }
+        .background(Color.black.opacity(0.24))
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 0.75)
+        )
+        .shadow(color: .black.opacity(0.34), radius: 24, x: 0, y: 14)
+        .padding(.horizontal, isIPad ? 24 : 16)
+        .padding(.top, metrics.sectionSpacing)
     }
-    
-    @ViewBuilder
-    private func spotlightBanner(spotlight: TMDBSearchResult) -> some View {
-        let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let bannerHeight: CGFloat = isExperimental ? (isIPad ? 330 : 248) : (isIPad ? 280 : 200)
-        let radius = isExperimental ? metrics.cardRadius + 4 : 16
 
-        ZStack(alignment: isExperimental ? .center : .bottomLeading) {
+    @ViewBuilder
+    private func legacySpotlightBody(spotlight: TMDBSearchResult, items: [TMDBSearchResult]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            NavigationLink(destination: spotlightDestination(items: items)) {
+                spotlightBanner(spotlight: spotlight)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 14) {
+                    ForEach(Array(items.dropFirst().prefix(8))) { item in
+                        NavigationLink(destination: MediaDetailView(searchResult: item)) {
+                            spotlightSmallCard(item: item, forceLandscape: false)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, isIPad ? 24 : 16)
+            }
+            .modifier(ScrollClipModifier())
+        }
+        .padding(.top, 24)
+    }
+
+    private func spotlightDestination(items: [TMDBSearchResult]) -> DiscoverDetailView {
+        DiscoverDetailView(
+            title: spotlightTitle,
+            initialItems: items,
+            heroItem: items.first,
+            loadMore: loadFeaturedPage
+        )
+    }
+
+    private func loadFeaturedPage(_ page: Int) async -> [TMDBSearchResult] {
+        guard let genre = WidgetGenre.curated.first(where: { $0.name == genreName }) else { return [] }
+        return (try? await tmdbService.discoverByGenre(genreId: genre.id, mediaType: "tv", page: page)) ?? []
+    }
+
+    @ViewBuilder
+    private func experimentalSpotlightBanner(spotlight: TMDBSearchResult) -> some View {
+        let bannerHeight: CGFloat = isIPad ? 350 : 252
+
+        ZStack(alignment: .center) {
             KFImage(URL(string: spotlight.fullBackdropURL ?? spotlight.fullPosterURL ?? ""))
                 .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: UIScreen.main.bounds.width, height: bannerHeight)))
                 .placeholder {
@@ -492,73 +572,120 @@ struct FeaturedSpotlightWidget: View {
                 .aspectRatio(16/9, contentMode: .fill)
                 .frame(height: bannerHeight)
                 .clipped()
-            
+
             LinearGradient(
-                colors: isExperimental
-                    ? [.clear, .black.opacity(0.18), .black.opacity(0.68)]
-                    : [.clear, .black.opacity(0.7), .black.opacity(0.9)],
+                colors: [.clear, .black.opacity(0.16), .black.opacity(0.58)],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            
-            VStack(alignment: isExperimental ? .center : .leading, spacing: isExperimental ? 8 : 6) {
+
+            VStack(alignment: .center, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "laurel.leading")
-                        .font(isExperimental ? .title2 : .caption)
+                        .font(isIPad ? .title : .title2)
                         .foregroundColor(.white.opacity(0.86))
-                    
-                    Text("Popular \u{00B7} \(genreName)")
-                        .font(isExperimental ? .system(size: isIPad ? 34 : 28, weight: .heavy) : .headline)
+
+                    Text(spotlightTitle)
+                        .font(.system(size: isIPad ? 34 : 28, weight: .heavy))
                         .fontWeight(.bold)
                         .foregroundColor(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
-                    
+
                     Image(systemName: "laurel.trailing")
-                        .font(isExperimental ? .title2 : .caption)
+                        .font(isIPad ? .title : .title2)
                         .foregroundColor(.white.opacity(0.86))
                 }
-                
+
                 Text(spotlight.displayTitle)
-                    .font(isExperimental ? .system(size: isIPad ? 20 : 17, weight: .medium) : .caption)
-                    .foregroundColor(.white.opacity(isExperimental ? 0.78 : 0.7))
+                    .font(.system(size: isIPad ? 20 : 17, weight: .medium))
+                    .foregroundColor(.white.opacity(0.74))
                     .lineLimit(1)
             }
-            .padding(ExperimentalFeatureState.isEnabledAtLaunch ? 22 : 16)
-            .frame(maxWidth: .infinity, alignment: isExperimental ? .center : .leading)
+            .padding(22)
+            .frame(maxWidth: .infinity)
             .background(alignment: .bottom) {
-                if isExperimental {
-                    LinearGradient(
-                        colors: [.clear, Color.black.opacity(0.34)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: bannerHeight * 0.42)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                }
+                LinearGradient(
+                    colors: [.clear, Color.black.opacity(0.36)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: bannerHeight * 0.46)
+                .frame(maxHeight: .infinity, alignment: .bottom)
             }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: bannerHeight)
+    }
+
+    @ViewBuilder
+    private func spotlightBanner(spotlight: TMDBSearchResult) -> some View {
+        let bannerHeight: CGFloat = isIPad ? 280 : 200
+        let radius: CGFloat = 16
+
+        ZStack(alignment: .bottomLeading) {
+            KFImage(URL(string: spotlight.fullBackdropURL ?? spotlight.fullPosterURL ?? ""))
+                .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: UIScreen.main.bounds.width, height: bannerHeight)))
+                .placeholder {
+                    Rectangle().fill(Color.gray.opacity(0.2))
+                }
+                .resizable()
+                .aspectRatio(16/9, contentMode: .fill)
+                .frame(height: bannerHeight)
+                .clipped()
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.7), .black.opacity(0.9)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "laurel.leading")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.86))
+
+                    Text(spotlightTitle)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    Image(systemName: "laurel.trailing")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.86))
+                }
+
+                Text(spotlight.displayTitle)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
         .frame(height: bannerHeight)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .stroke(Color.white.opacity(isExperimental ? 0.14 : 0.1), lineWidth: 0.5)
+                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(isExperimental ? 0.30 : 0), radius: 22, x: 0, y: 12)
+        .shadow(color: .clear, radius: 0, x: 0, y: 0)
         .padding(.horizontal, isIPad ? 24 : 16)
     }
     
     @ViewBuilder
-    private func spotlightSmallCard(item: TMDBSearchResult) -> some View {
-        let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let posterWidth = CGFloat(isExperimental ? 190 : 120) * iPadScale
-        let posterHeight = CGFloat(isExperimental ? 107 : 180) * iPadScale
+    private func spotlightSmallCard(item: TMDBSearchResult, forceLandscape: Bool) -> some View {
+        let isLandscape = ExperimentalFeatureState.isEnabledAtLaunch || forceLandscape
+        let posterWidth = CGFloat(isLandscape ? 176 : 120) * iPadScale
+        let posterHeight = CGFloat(isLandscape ? 99 : 180) * iPadScale
         let posterShadowRadius: CGFloat = isIPad ? 3 : 6
-        let radius = isExperimental ? metrics.cardRadius : 12
+        let radius = isLandscape ? max(metrics.cardRadius - 2, 14) : 12
 
         VStack(alignment: .leading, spacing: 6) {
-            KFImage(URL(string: isExperimental ? (item.fullBackdropURL ?? item.fullPosterURL ?? "") : (item.fullPosterURL ?? "")))
+            KFImage(URL(string: isLandscape ? (item.fullBackdropURL ?? item.fullPosterURL ?? "") : (item.fullPosterURL ?? "")))
                 .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
                 .placeholder {
                     FallbackImageView(
@@ -567,13 +694,13 @@ struct FeaturedSpotlightWidget: View {
                     )
                 }
                 .resizable()
-                .aspectRatio(isExperimental ? 16/9 : 2/3, contentMode: .fill)
+                .aspectRatio(isLandscape ? 16/9 : 2/3, contentMode: .fill)
                 .frame(width: posterWidth, height: posterHeight)
                 .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .shadow(color: .black.opacity(0.25), radius: isExperimental ? 12 : posterShadowRadius, x: 0, y: isExperimental ? 7 : 3)
+                .shadow(color: .black.opacity(0.25), radius: isLandscape ? 12 : posterShadowRadius, x: 0, y: isLandscape ? 7 : 3)
             
             Text(item.displayTitle)
-                .font(.system(size: isExperimental ? 19 : 12, weight: .medium))
+                .font(.system(size: isLandscape ? 18 : 12, weight: .medium))
                 .fontWeight(.medium)
                 .foregroundColor(.white)
                 .lineLimit(1)
@@ -582,8 +709,8 @@ struct FeaturedSpotlightWidget: View {
             HStack(spacing: 4) {
                 if !item.displayDate.isEmpty {
                     let date = item.displayDate
-                    Text(isExperimental ? String(date.prefix(4)) : String(date.prefix(10)))
-                        .font(.system(size: isExperimental ? 15 : 11, weight: .regular))
+                    Text(isLandscape ? String(date.prefix(4)) : String(date.prefix(10)))
+                        .font(.system(size: isLandscape ? 15 : 11, weight: .regular))
                         .foregroundColor(.white.opacity(0.6))
                 }
             }

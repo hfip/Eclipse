@@ -39,6 +39,10 @@ final class PiPController: NSObject {
     var isPictureInPictureActive: Bool {
         return pipController?.isPictureInPictureActive ?? false
     }
+
+    var isPictureInPictureStartPending: Bool {
+        return isStartRequestPending
+    }
     
     var isPictureInPicturePossible: Bool {
         return pipController?.isPictureInPicturePossible ?? false
@@ -110,8 +114,15 @@ final class PiPController: NSObject {
     }
     
     func stopPictureInPicture() {
+        stopPictureInPicture(source: "unspecified")
+    }
+
+    func stopPictureInPicture(source: String) {
+        let wasPending = isStartRequestPending
+        let wasActive = pipController?.isPictureInPictureActive ?? false
+        let wasPossible = pipController?.isPictureInPicturePossible ?? false
         isStartRequestPending = false
-        Logger.shared.log("[PiPController] stop requested active=\(pipController?.isPictureInPictureActive ?? false)", type: "MPV")
+        Logger.shared.log("[PiPController] stop requested source=\(source) active=\(wasActive) possible=\(wasPossible) pending=\(wasPending) layer={\(layerSnapshot())}", type: "MPV")
         pipController?.stopPictureInPicture()
     }
     
@@ -175,12 +186,12 @@ extension PiPController: AVPictureInPictureControllerDelegate {
     
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         isStartRequestPending = false
-        Logger.shared.log("[PiPController] delegate willStop", type: "MPV")
+        Logger.shared.log("[PiPController] delegate willStop active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending) layer={\(layerSnapshot())}", type: "MPV")
         delegate?.pipController(self, willStopPictureInPicture: true)
     }
     
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        Logger.shared.log("[PiPController] delegate didStop active=\(pictureInPictureController.isPictureInPictureActive)", type: "MPV")
+        Logger.shared.log("[PiPController] delegate didStop active=\(pictureInPictureController.isPictureInPictureActive) possible=\(pictureInPictureController.isPictureInPicturePossible) pending=\(isStartRequestPending) layer={\(layerSnapshot())}", type: "MPV")
         delegate?.pipController(self, didStopPictureInPicture: true)
     }
     

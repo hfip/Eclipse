@@ -62,7 +62,7 @@ final class SampleBufferDisplayView: UIView {
     }
     
     func stopPictureInPicture() {
-        pipController?.stopPictureInPicture()
+        pipController?.stopPictureInPicture(source: "sample-buffer-display-view")
     }
     
     var isPictureInPictureSupported: Bool {

@@ -347,6 +347,32 @@ struct PlayerSettingsView: View {
     private let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     private let doubleTapSeekOptions: [Double] = [5, 10, 15, 20, 30, 45, 60]
     private let mpvForegroundFPSOptions: [Int] = [30, 60]
+
+    private var selectedMPVRendererIsMetal: Bool {
+        MPVRenderBackendSupport.effectiveBackend(requested: store.mpvRenderBackend, hasMetalDevice: true) == .metal
+    }
+
+    private var canUseMetalMPVAdvancedSettings: Bool {
+        store.inAppPlayer == .mpv
+            && store.externalPlayer == .none
+            && selectedMPVRendererIsMetal
+    }
+
+    private var mpvAdvancedRequirementMessage: String {
+        if store.inAppPlayer != .mpv {
+            return "MPV advanced features require MPV as the default in-app player."
+        }
+        if store.externalPlayer != .none {
+            return "MPV advanced features require external playback set to Default."
+        }
+        if store.mpvRenderBackend != .metal {
+            return "MPV advanced features require the Metal MPV renderer."
+        }
+        if !MPVRenderBackendSupport.metalIsFullySupported {
+            return "MPV advanced features require the bundled Metal renderer and sample-buffer PiP bridge."
+        }
+        return "MPV advanced features require the Metal MPV renderer."
+    }
     
     var body: some View {
         List {
@@ -755,11 +781,16 @@ struct PlayerSettingsView: View {
                                 .pickerStyle(.menu)
                             }
 
-                            settingsToggleRow(
-                                title: "PiP When Leaving App",
-                                detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
-                                binding: $store.mpvAppExitPictureInPictureEnabled
-                            )
+                            if selectedMPVRendererIsMetal {
+                                settingsToggleRow(
+                                    title: "PiP When Leaving App",
+                                    detail: "Automatically start Picture in Picture when Metal MPV playback moves to the background.",
+                                    binding: $store.mpvAppExitPictureInPictureEnabled
+                                )
+                            } else {
+                                Label("App-exit PiP requires Metal MPV.", systemImage: "lock.fill")
+                                    .foregroundColor(.secondary)
+                            }
 
                     } label: {
                         Label("MPV Rendering", systemImage: "display")
@@ -884,10 +915,10 @@ struct PlayerSettingsView: View {
                         Label("Skip Segments", systemImage: "forward.fill")
                     }
 
-                    if store.inAppPlayer == .mpv, store.externalPlayer == .none {
+                    if canUseMetalMPVAdvancedSettings {
                         experimentalMPVDisclosure
                     } else {
-                        Label("MPV advanced features require MPV as the default in-app player.", systemImage: "lock.fill")
+                        Label(mpvAdvancedRequirementMessage, systemImage: "lock.fill")
                             .foregroundColor(.secondary)
                     }
 
@@ -948,8 +979,8 @@ struct PlayerSettingsView: View {
                 }
                 .eclipseExperimentalSettingsRows()
             } else {
-                Section(header: Text("MPV Advanced Features"), footer: Text("Select MPV as the in-app player and keep external player set to Default to use MPV advanced playback features.")) {
-                    Label("Requires MPV", systemImage: "lock.fill")
+                Section(header: Text("MPV Advanced Features"), footer: Text("Select MPV, keep external playback set to Default, and use the Metal renderer to enable MPV advanced playback features.")) {
+                    Label("Requires Metal MPV", systemImage: "lock.fill")
                         .foregroundColor(.secondary)
                 }
                 .eclipseExperimentalSettingsRows()
@@ -1009,20 +1040,20 @@ struct PlayerSettingsView: View {
     private var experimentalMPVDisclosure: some View {
         DisclosureGroup {
             settingsToggleRow(
-                title: "Partial Preload",
-                detail: "Cache a bounded starter segment for compatible HTTP streams after playback is selected.",
+                title: "Stream Warmup Cache",
+                detail: "Route compatible HTTP streams through a cache-aware MPV proxy that can reuse starter bytes for faster retries and reloads.",
                 binding: $store.experimentalMPVPreloadEnabled
             )
 
             settingsToggleRow(
-                title: "Smooth Next Episode",
-                detail: "Stage the next episode request near the end of MPV playback and fall back to the current flow when unavailable.",
+                title: "Next Episode Staging",
+                detail: "Pre-resolve the next episode preview near the end of MPV playback. Stream selection still uses the normal next-episode flow.",
                 binding: $store.experimentalMPVSmoothTransitionEnabled
             )
 
             settingsToggleRow(
-                title: "Allow Cellular Preload",
-                detail: "Keep off for sideloaded or metered setups unless you explicitly want small starter preloads on cellular.",
+                title: "Allow Cellular Warmup",
+                detail: "Keep off for sideloaded or metered setups unless you explicitly want small stream warmups on cellular.",
                 binding: $store.experimentalMPVPreloadCellularEnabled
             )
 
@@ -1031,7 +1062,7 @@ struct PlayerSettingsView: View {
                     Text("Wi-Fi Cache Limit")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    Text("\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV starter preload cache.")
+                    Text("\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV stream warmup cache.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.leading)
@@ -1048,7 +1079,7 @@ struct PlayerSettingsView: View {
                     Text("Cellular Cache Limit")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    Text("\(store.experimentalMPVPreloadCellularLimitMB) MB for MPV starter preload cache.")
+                    Text("\(store.experimentalMPVPreloadCellularLimitMB) MB for MPV stream warmup cache.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.leading)
