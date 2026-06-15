@@ -1021,7 +1021,7 @@ final class ExperimentalMPVPreloadManager {
             at: directory,
             includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        )?.compactMap({ item -> (url: URL, size: Int64, modified: Date) in
+        )?.compactMap({ item -> (url: URL, size: Int64, modified: Date)? in
             guard let url = item as? URL,
                   let values = try? url.resourceValues(forKeys: Set(keys)),
                   values.isRegularFile == true,
