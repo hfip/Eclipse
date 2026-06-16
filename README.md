@@ -65,7 +65,7 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 
 ## Install
 
-Get the TestFlight build :
+Get the TestFlight build (Recommended for most iOS users, easiest to download and update):
 
 https://testflight.apple.com/join/FDXvrxVg
 
