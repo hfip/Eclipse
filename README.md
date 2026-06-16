@@ -65,6 +65,10 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 
 ## Install
 
+Get the TestFlight build :
+
+https://testflight.apple.com/join/FDXvrxVg
+
 Get the latest release from the releases page:
 
 https://github.com/Soupy-dev/Eclipse/releases
