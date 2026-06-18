@@ -331,8 +331,7 @@ struct MangaDetailView: View {
                             Text("\(score)%")
                         }
                     }
-                    .font(experimental ? .title3 : .subheadline)
-                    .fontWeight(experimental ? .semibold : .regular)
+                    .font(.system(experimental ? .title3 : .subheadline, weight: experimental ? .semibold : .regular))
                     .foregroundColor(.white.opacity(0.82))
                     .multilineTextAlignment(experimental ? .center : .leading)
                 }

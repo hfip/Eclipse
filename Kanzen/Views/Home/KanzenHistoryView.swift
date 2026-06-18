@@ -137,7 +137,7 @@ struct KanzenHistoryView: View {
 
     private func historyRow(for item: (id: Int, progress: MangaProgress)) -> some View {
         let experimental = ExperimentalFeatureState.isEnabledAtLaunch
-        HStack(spacing: experimental ? 14 : 12) {
+        return HStack(spacing: experimental ? 14 : 12) {
             KFImage(URL(string: item.progress.coverURL ?? ""))
                 .placeholder { Rectangle().fill(Color.gray.opacity(0.2)) }
                 .resizable()

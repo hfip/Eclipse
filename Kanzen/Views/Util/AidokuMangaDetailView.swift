@@ -348,8 +348,7 @@ struct AidokuMangaDetailView: View {
                                 .lineLimit(1)
                         }
                     }
-                    .font(experimental ? .title3 : .subheadline)
-                    .fontWeight(experimental ? .semibold : .regular)
+                    .font(.system(experimental ? .title3 : .subheadline, weight: experimental ? .semibold : .regular))
                     .foregroundColor(.white.opacity(0.82))
                     .multilineTextAlignment(experimental ? .center : .leading)
                 }
@@ -409,51 +408,53 @@ struct AidokuMangaDetailView: View {
     }
 
     private func descriptionSection(_ text: String) -> some View {
-        if ExperimentalFeatureState.isEnabledAtLaunch {
-            VStack(alignment: .center, spacing: 8) {
-                Text(cleanedDescription(text))
-                    .font(isIPad ? .title3 : .body)
-                    .lineSpacing(4)
-                    .foregroundColor(.white.opacity(0.86))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(expandedDescription ? nil : 5)
-                    .onTapGesture {
-                        withAnimation { expandedDescription.toggle() }
-                    }
-
-                if !expandedDescription {
-                    Text("More")
-                        .font(.callout.weight(.semibold))
-                        .foregroundColor(.white.opacity(0.68))
+        return Group {
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                VStack(alignment: .center, spacing: 8) {
+                    Text(cleanedDescription(text))
+                        .font(isIPad ? .title3 : .body)
+                        .lineSpacing(4)
+                        .foregroundColor(.white.opacity(0.86))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(expandedDescription ? nil : 5)
                         .onTapGesture {
                             withAnimation { expandedDescription.toggle() }
                         }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .applyLiquidGlassBackground(cornerRadius: designMetrics.cardRadius)
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(cleanedDescription(text))
-                    .font(isIPad ? .title3 : .body)
-                    .lineSpacing(3)
-                    .foregroundColor(.primary.opacity(0.92))
-                    .lineLimit(expandedDescription ? nil : 5)
-                    .onTapGesture {
-                        withAnimation { expandedDescription.toggle() }
-                    }
 
-                if !expandedDescription {
-                    HStack {
-                        Spacer()
+                    if !expandedDescription {
                         Text("More")
-                            .font(.callout)
-                            .foregroundColor(.secondary)
+                            .font(.callout.weight(.semibold))
+                            .foregroundColor(.white.opacity(0.68))
                             .onTapGesture {
                                 withAnimation { expandedDescription.toggle() }
                             }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+                .applyLiquidGlassBackground(cornerRadius: designMetrics.cardRadius)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(cleanedDescription(text))
+                        .font(isIPad ? .title3 : .body)
+                        .lineSpacing(3)
+                        .foregroundColor(.primary.opacity(0.92))
+                        .lineLimit(expandedDescription ? nil : 5)
+                        .onTapGesture {
+                            withAnimation { expandedDescription.toggle() }
+                        }
+
+                    if !expandedDescription {
+                        HStack {
+                            Spacer()
+                            Text("More")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                                .onTapGesture {
+                                    withAnimation { expandedDescription.toggle() }
+                                }
+                        }
                     }
                 }
             }
@@ -462,7 +463,7 @@ struct AidokuMangaDetailView: View {
 
     private func tagsSection(_ tags: [String]) -> some View {
         let experimental = ExperimentalFeatureState.isEnabledAtLaunch
-        ScrollView(.horizontal, showsIndicators: false) {
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(tags, id: \.self) { tag in
                     Text(tag)
