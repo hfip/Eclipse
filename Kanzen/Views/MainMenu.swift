@@ -25,12 +25,23 @@ struct KanzenModeSwitchButton: View {
                 showKanzen = false
             }
         } label: {
-            Image(systemName: "play.rectangle.fill")
-                .font(.headline.weight(.semibold))
-                .foregroundColor(.white)
-                .frame(width: 42, height: 42)
-                .background(Color.accentColor.opacity(0.82))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if ExperimentalFeatureState.isEnabledAtLaunch {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.headline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 42, height: 42)
+                    .applyLiquidGlassBackground(
+                        cornerRadius: 21,
+                        glassTint: Color.white.opacity(0.04)
+                    )
+            } else {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.headline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 42, height: 42)
+                    .background(Color.accentColor.opacity(0.82))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Switch to Media Mode")
@@ -49,8 +60,9 @@ struct KanzenRootHeader<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 12) {
             Text(title)
-                .font(.largeTitle)
-                .fontWeight(.bold)
+                .font(ExperimentalFeatureState.isEnabledAtLaunch ? .system(size: isIPad ? 42 : 34, weight: .heavy) : .largeTitle)
+                .fontWeight(ExperimentalFeatureState.isEnabledAtLaunch ? .heavy : .bold)
+                .foregroundColor(ExperimentalFeatureState.isEnabledAtLaunch ? .white : .primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
 
@@ -61,8 +73,8 @@ struct KanzenRootHeader<Trailing: View>: View {
             KanzenModeSwitchButton()
         }
         .padding(.horizontal, 20)
-        .padding(.top, 10)
-        .padding(.bottom, 2)
+        .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? 16 : 10)
+        .padding(.bottom, ExperimentalFeatureState.isEnabledAtLaunch ? 8 : 2)
     }
 }
 

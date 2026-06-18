@@ -16,6 +16,7 @@ struct KanzenLibraryView: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var isRefreshingSources = false
     @State private var refreshStatus: String?
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
 
     private var bookmarksCollection: MangaLibraryCollection? {
         libraryManager.collections.first { $0.name == "Bookmarks" }
@@ -26,9 +27,10 @@ struct KanzenLibraryView: View {
     }
 
     var body: some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         NavigationView {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: experimental ? designMetrics.sectionSpacing : 24) {
                     KanzenRootHeader("Library") {
                         Button {
                             refreshLibrarySources()
@@ -55,12 +57,13 @@ struct KanzenLibraryView: View {
                     if let bookmarks = bookmarksCollection, !bookmarks.items.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Bookmarks")
-                                .font(.title2)
+                                .font(experimental ? .largeTitle : .title2)
                                 .fontWeight(.bold)
+                                .foregroundColor(experimental ? .white : .primary)
                                 .padding(.horizontal, 16)
 
                             ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(spacing: 12) {
+                                LazyHStack(spacing: experimental ? 16 : 12) {
                                     ForEach(bookmarks.items.sorted(by: { $0.dateAdded < $1.dateAdded })) { item in
                                         NavigationLink(destination: mangaDestination(for: item)) {
                                             bookmarkCard(item)
@@ -83,8 +86,9 @@ struct KanzenLibraryView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Collections")
-                                .font(.title2)
+                                .font(experimental ? .largeTitle : .title2)
                                 .fontWeight(.bold)
+                                .foregroundColor(experimental ? .white : .primary)
                             Spacer()
                             Button {
                                 showCreateCollection = true
@@ -108,7 +112,7 @@ struct KanzenLibraryView: View {
                             .padding(.vertical, 20)
                         } else {
                             ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(spacing: 14) {
+                                LazyHStack(spacing: experimental ? 16 : 14) {
                                     ForEach(userCollections) { collection in
                                         NavigationLink(destination: MangaCollectionDetailView(collection: collection, libraryManager: libraryManager)) {
                                             collectionCard(collection)
@@ -169,14 +173,19 @@ struct KanzenLibraryView: View {
 
     @ViewBuilder
     private func bookmarkCard(_ item: MangaLibraryItem) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        let tunedPosterSize = designMetrics.posterCardSize(isIPad: isIPad)
+        let cardWidth = experimental ? tunedPosterSize.width : 120
+        let cardHeight = experimental ? tunedPosterSize.height : 180
+
+        VStack(alignment: .leading, spacing: experimental ? 8 : 4) {
             KFImage(URL(string: item.coverURL ?? ""))
                 .placeholder { Rectangle().fill(Color.gray.opacity(0.2)) }
                 .resizable()
                 .scaledToFill()
-                .frame(width: 120, height: 180)
+                .frame(width: cardWidth, height: cardHeight)
                 .clipped()
-                .cornerRadius(16)
+                .cornerRadius(experimental ? designMetrics.cardRadius : 16)
                 .overlay(alignment: .topLeading) {
                     unreadBadge(for: item)
                 }
@@ -185,15 +194,16 @@ struct KanzenLibraryView: View {
                 }
 
             Text(item.title)
-                .font(.caption)
+                .font(experimental ? .headline : .caption)
                 .lineLimit(2)
-                .foregroundColor(.primary)
+                .foregroundColor(experimental ? .white : .primary)
         }
-        .frame(width: 120)
+        .frame(width: cardWidth)
     }
 
     @ViewBuilder
     private func mangaGridCard(_ item: MangaLibraryItem) -> some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         VStack(alignment: .leading, spacing: 4) {
             KFImage(URL(string: item.coverURL ?? ""))
                 .placeholder { Rectangle().fill(Color.gray.opacity(0.2)) }
@@ -201,7 +211,7 @@ struct KanzenLibraryView: View {
                 .scaledToFill()
                 .frame(height: 180)
                 .clipped()
-                .cornerRadius(16)
+                .cornerRadius(experimental ? designMetrics.cardRadius : 16)
                 .overlay(alignment: .topLeading) {
                     unreadBadge(for: item)
                 }
@@ -209,19 +219,24 @@ struct KanzenLibraryView: View {
             Text(item.title)
                 .font(.caption)
                 .lineLimit(2)
-                .foregroundColor(.primary)
+                .foregroundColor(experimental ? .white : .primary)
         }
     }
 
     @ViewBuilder
     private func collectionCard(_ collection: MangaLibraryCollection) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        VStack(alignment: .leading, spacing: experimental ? 8 : 6) {
             // 2x2 preview grid
             let previews = Array(collection.items.prefix(4))
             ZStack {
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(EclipseTheme.shared.cardBackground)
+                    .fill(experimental ? Color.white.opacity(0.10) : EclipseTheme.shared.cardBackground)
                     .frame(width: 140, height: 140)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.white.opacity(experimental ? 0.14 : 0), lineWidth: 1)
+                    )
 
                 if previews.isEmpty {
                     Image(systemName: "folder")
@@ -245,14 +260,14 @@ struct KanzenLibraryView: View {
             .frame(width: 140, height: 140)
 
             Text(collection.name)
-                .font(.caption)
+                .font(experimental ? .headline : .caption)
                 .fontWeight(.medium)
                 .lineLimit(1)
-                .foregroundColor(.primary)
+                .foregroundColor(experimental ? .white : .primary)
 
             Text("\(collection.items.count) items")
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundColor(experimental ? .white.opacity(0.62) : .secondary)
         }
         .frame(width: 140)
     }

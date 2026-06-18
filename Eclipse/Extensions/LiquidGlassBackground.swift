@@ -33,14 +33,15 @@ extension View {
     private func oldBackground(cornerRadius: CGFloat, fallbackFill: Color, fallbackMaterial: Material) -> some View {
         #if !os(tvOS)
         if ExperimentalFeatureState.isEnabledAtLaunch {
+            let glassStrength = ExperimentalVisualTuning.current.glassStrength
             self
                 .background(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color(red: 0.17, green: 0.14, blue: 0.24).opacity(0.78),
-                                    Color(red: 0.08, green: 0.08, blue: 0.13).opacity(0.70)
+                                    Color(red: 0.17, green: 0.14, blue: 0.24).opacity(0.50 + 0.28 * glassStrength),
+                                    Color(red: 0.08, green: 0.08, blue: 0.13).opacity(0.46 + 0.24 * glassStrength)
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
@@ -48,7 +49,7 @@ extension View {
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                                .stroke(Color.white.opacity(0.06 + 0.06 * glassStrength), lineWidth: 1)
                         )
                         .background(
                             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

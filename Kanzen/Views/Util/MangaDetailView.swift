@@ -19,6 +19,7 @@ struct MangaDetailView: View {
     @ObservedObject private var libraryManager = MangaLibraryManager.shared
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
     @ObservedObject private var downloadManager = ReaderDownloadManager.shared
+    @ObservedObject private var theme = EclipseTheme.shared
 
     /// Full manga detail fetched from AniList (populated on appear if initial data is sparse)
     @State private var manga: AniListManga
@@ -48,11 +49,36 @@ struct MangaDetailView: View {
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
     private let coverWidth: CGFloat = isIPad ? 150 * iPadScaleSmall : 150
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
 
     private var heroHeight: CGFloat {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return designMetrics.detailHeroHeight(screenHeight: UIScreen.main.bounds.height, isIPad: isIPad)
+        }
         let mediaStyleHeight: CGFloat = isIPad ? 680 : 550
         let rotationSafeLimit = max(isIPad ? 520 : 360, UIScreen.main.bounds.height * 0.78)
         return min(mediaStyleHeight, rotationSafeLimit)
+    }
+
+    private var readerAtmosphereColor: Color {
+        let base = theme.scopedGradientColor(isReaderMode: true)
+        return theme.scopedAtmosphereColor(dominant: base, isReaderMode: true)
+    }
+
+    @ViewBuilder
+    private var readerDetailBackground: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            HeroBleedGradientBackground(
+                dominantColor: readerAtmosphereColor,
+                scrollOffset: scrollOffset,
+                heroHeight: heroHeight,
+                fadeDistance: designMetrics.heroBleedDistance,
+                bleedStrength: designMetrics.heroWashStrength,
+                style: theme.scopedAtmosphereStyle(isReaderMode: true)
+            )
+        } else {
+            GlobalGradientBackground(scrollOffset: scrollOffset)
+        }
     }
 
     private var libraryItem: MangaLibraryItem {
@@ -150,8 +176,9 @@ struct MangaDetailView: View {
     }
 
     var body: some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: experimental ? designMetrics.sectionSpacing : 18) {
                 headerSection
                 primaryActionSection
                     .padding(.horizontal, 16)
@@ -161,7 +188,7 @@ struct MangaDetailView: View {
                         .padding(.horizontal, 16)
                 }
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, experimental ? 40 : 24)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
@@ -175,7 +202,7 @@ struct MangaDetailView: View {
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .kanzenGradientBackground(scrollOffset: scrollOffset)
+        .background(readerDetailBackground.ignoresSafeArea())
         .sheet(isPresented: $showAddToCollection) {
             MangaAddToCollectionView(item: libraryItem)
                 .environmentObject(libraryManager)
@@ -230,43 +257,58 @@ struct MangaDetailView: View {
             let yOffset = min(0, -minY)
             let viewportWidth = geometry.size.width
             let coverURLString = selectedSourceCoverURL ?? manga.coverURL ?? ""
+            let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+            let contentAlignment: Alignment = experimental ? .bottom : .bottomLeading
+            let textAlignment: HorizontalAlignment = experimental ? .center : .leading
+            let posterWidth = experimental ? min(viewportWidth * 0.84, heroHeight * 0.66) : max(viewportWidth - 20, 0)
+            let posterHeight = experimental ? max(heroHeight * 0.74, 270) : max(heroHeight - 26, 260)
+            let titleSize: CGFloat = experimental ? (isIPad ? 48 : 40) : (isIPad ? 40 : 32)
+            let gradientColors: [Color] = experimental ? [
+                Color.black.opacity(0.02),
+                readerAtmosphereColor.opacity(0.16),
+                readerAtmosphereColor.opacity(0.58),
+                Color.black.opacity(0.92)
+            ] : [
+                Color.black.opacity(0.02),
+                Color.black.opacity(0.28),
+                Color.black.opacity(0.98)
+            ]
 
-            ZStack(alignment: .bottomLeading) {
+            ZStack(alignment: contentAlignment) {
                 KFImage(URL(string: coverURLString))
                     .placeholder { Color.black.opacity(0.18) }
                     .resizable()
                     .scaledToFill()
                     .frame(width: viewportWidth, height: stretchedHeight)
                     .clipped()
-                    .blur(radius: 18)
-                    .overlay(Color.black.opacity(0.34))
+                    .blur(radius: experimental ? 14 : 18)
+                    .overlay(Color.black.opacity(experimental ? 0.22 : 0.34))
 
                 KFImage(URL(string: coverURLString))
                     .placeholder { Color.clear }
                     .resizable()
                     .scaledToFit()
-                    .frame(width: max(viewportWidth - 20, 0), height: max(heroHeight - 26, 260), alignment: .center)
+                    .frame(width: posterWidth, height: posterHeight, alignment: .center)
                     .frame(width: viewportWidth, alignment: .center)
-                    .padding(.top, 10)
+                    .clipShape(RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 0, style: .continuous))
+                    .shadow(color: .black.opacity(experimental ? 0.26 : 0), radius: experimental ? 22 : 0, x: 0, y: experimental ? 16 : 0)
+                    .padding(.top, experimental ? 22 : 10)
 
                 LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.02),
-                        Color.black.opacity(0.28),
-                        Color.black.opacity(0.98)
-                    ],
+                    colors: gradientColors,
                     startPoint: .top,
                     endPoint: .bottom
                 )
                 .frame(width: viewportWidth, height: stretchedHeight)
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: textAlignment, spacing: experimental ? 10 : 8) {
                     Text(selectedSourceDisplayTitle)
-                        .font(.system(size: isIPad ? 40 : 32, weight: .bold))
+                        .font(.system(size: titleSize, weight: .bold))
                         .fontWeight(.bold)
                         .foregroundColor(.white)
                         .lineLimit(3)
                         .minimumScaleFactor(0.72)
+                        .multilineTextAlignment(experimental ? .center : .leading)
                         .contextMenu {
                             Button {
                                 UIPasteboard.general.string = selectedSourceDisplayTitle
@@ -289,11 +331,14 @@ struct MangaDetailView: View {
                             Text("\(score)%")
                         }
                     }
-                    .font(.subheadline)
+                    .font(experimental ? .title3 : .subheadline)
+                    .fontWeight(experimental ? .semibold : .regular)
                     .foregroundColor(.white.opacity(0.82))
+                    .multilineTextAlignment(experimental ? .center : .leading)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 18)
+                .frame(maxWidth: experimental ? .infinity : nil, alignment: experimental ? .center : .leading)
+                .padding(.horizontal, experimental ? 30 : 16)
+                .padding(.bottom, experimental ? 36 : 18)
             }
             .frame(width: viewportWidth, height: stretchedHeight)
             .offset(y: yOffset)
@@ -305,21 +350,29 @@ struct MangaDetailView: View {
     @ViewBuilder
     private var primaryActionSection: some View {
         let chapters = selectedChapterGroupForReading()
-        HStack(spacing: 12) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        HStack(spacing: experimental ? 14 : 12) {
             if chapters.isEmpty {
                 Button { } label: {
                     HStack {
                         Image(systemName: "book.fill")
-                            .font(.subheadline)
+                            .font(experimental ? .headline : .subheadline)
                         Text(selectedSource == nil ? "Choose Source" : "Read Now")
-                            .font(.subheadline)
+                            .font(experimental ? .headline : .subheadline)
                             .fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .foregroundColor(.white.opacity(0.6))
-                    .background(Color.accentColor.opacity(0.45))
-                    .cornerRadius(12)
+                    .frame(height: experimental ? 54 : nil)
+                    .padding(.vertical, experimental ? 0 : 12)
+                    .foregroundColor(.white.opacity(experimental ? 0.56 : 0.6))
+                    .background(
+                        RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                            .fill(experimental ? Color.white.opacity(0.12) : Color.accentColor.opacity(0.45))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                            .stroke(Color.white.opacity(experimental ? 0.12 : 0), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(.plain)
                 .disabled(true)
@@ -409,25 +462,52 @@ struct MangaDetailView: View {
             .replacingOccurrences(of: "<br>", with: "\n")
             .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
 
-        VStack(alignment: .leading, spacing: 4) {
-            Text(cleaned)
-                .font(isIPad ? .title3 : .body)
-                .lineSpacing(3)
-                .foregroundColor(.primary.opacity(0.92))
-                .lineLimit(expandedDescription ? nil : 5)
-                .onTapGesture {
-                    withAnimation { expandedDescription.toggle() }
-                }
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            VStack(alignment: .center, spacing: 8) {
+                Text(cleaned)
+                    .font(isIPad ? .title3 : .body)
+                    .lineSpacing(4)
+                    .foregroundColor(.white.opacity(0.86))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(expandedDescription ? nil : 5)
+                    .onTapGesture {
+                        withAnimation { expandedDescription.toggle() }
+                    }
 
-            if !expandedDescription {
-                HStack {
-                    Spacer()
+                if !expandedDescription {
                     Text("More")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
+                        .font(.callout.weight(.semibold))
+                        .foregroundColor(.white.opacity(0.68))
                         .onTapGesture {
                             withAnimation { expandedDescription.toggle() }
                         }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .applyLiquidGlassBackground(cornerRadius: designMetrics.cardRadius)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(cleaned)
+                    .font(isIPad ? .title3 : .body)
+                    .lineSpacing(3)
+                    .foregroundColor(.primary.opacity(0.92))
+                    .lineLimit(expandedDescription ? nil : 5)
+                    .onTapGesture {
+                        withAnimation { expandedDescription.toggle() }
+                    }
+
+                if !expandedDescription {
+                    HStack {
+                        Spacer()
+                        Text("More")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .onTapGesture {
+                                withAnimation { expandedDescription.toggle() }
+                            }
+                    }
                 }
             }
         }
@@ -448,14 +528,19 @@ struct MangaDetailView: View {
 
     @ViewBuilder
     private func genreTag(_ genre: String) -> some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         Text(genre)
-            .font(.footnote)
-            .foregroundColor(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
+            .font(.footnote.weight(experimental ? .semibold : .regular))
+            .foregroundColor(experimental ? .white.opacity(0.9) : .primary)
+            .padding(.horizontal, experimental ? 14 : 12)
+            .padding(.vertical, experimental ? 7 : 5)
+            .background(
+                Capsule()
+                    .fill(experimental ? Color.white.opacity(0.11) : Color.clear)
+            )
             .overlay(
                 Capsule()
-                    .stroke(Color.primary.opacity(0.55), lineWidth: 1)
+                    .stroke(experimental ? Color.white.opacity(0.16) : Color.primary.opacity(0.55), lineWidth: 1)
             )
     }
 
@@ -1004,16 +1089,23 @@ struct MangaDetailView: View {
             } label: {
                 HStack {
                     Image(systemName: hasProgress ? "book.fill" : "play.fill")
-                        .font(.subheadline)
+                        .font(ExperimentalFeatureState.isEnabledAtLaunch ? .headline : .subheadline)
                     Text(hasProgress ? "Continue" : "Read Now")
-                        .font(.subheadline)
+                        .font(ExperimentalFeatureState.isEnabledAtLaunch ? .headline : .subheadline)
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
+                .frame(height: ExperimentalFeatureState.isEnabledAtLaunch ? 54 : nil)
+                .padding(.vertical, ExperimentalFeatureState.isEnabledAtLaunch ? 0 : 12)
                 .foregroundColor(.white)
-                .background(Color.accentColor)
-                .cornerRadius(12)
+                .background(
+                    RoundedRectangle(cornerRadius: ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.cardRadius : 12, style: .continuous)
+                        .fill(ExperimentalFeatureState.isEnabledAtLaunch ? Color.white.opacity(0.18) : Color.accentColor)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.cardRadius : 12, style: .continuous)
+                        .stroke(Color.white.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.18 : 0), lineWidth: 1)
+                )
             }
             .buttonStyle(.plain)
         }

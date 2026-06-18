@@ -151,6 +151,20 @@ struct BackupData: Codable {
     var experimentalHeroBleedLevel: String = ExperimentalHeroBleedLevel.defaultValue.rawValue
     var experimentalHomeCardShape: String = ExperimentalHomeCardShape.defaultValue.rawValue
     var experimentalMultiGradientPalette: String = ExperimentalMultiGradientPalette.defaultValue.rawValue
+    var experimentalHeroHeightScale: Double = ExperimentalVisualTuning.defaultHeroHeightScale
+    var experimentalHeroBleedStrength: Double = ExperimentalVisualTuning.defaultHeroBleedStrength
+    var experimentalHeroFadeDistanceScale: Double = ExperimentalVisualTuning.defaultHeroFadeDistanceScale
+    var experimentalSectionSpacingScale: Double = ExperimentalVisualTuning.defaultSectionSpacingScale
+    var experimentalCardRadiusScale: Double = ExperimentalVisualTuning.defaultCardRadiusScale
+    var experimentalMediaCardScale: Double = ExperimentalVisualTuning.defaultMediaCardScale
+    var experimentalGlassStrength: Double = ExperimentalVisualTuning.defaultGlassStrength
+    var experimentalGradientBaseDarkness: Double = ExperimentalVisualTuning.defaultGradientBaseDarkness
+    var experimentalGradientAccentIntensity: Double = ExperimentalVisualTuning.defaultGradientAccentIntensity
+    var experimentalGradientScrollMotion: Double = ExperimentalVisualTuning.defaultGradientScrollMotion
+    var experimentalGradientUseCustomColors: Bool = false
+    var experimentalGradientColorA: Data?
+    var experimentalGradientColorB: Data?
+    var experimentalGradientColorC: Data?
     var atmosphereStyle: String = AtmosphereStyle.gradient.rawValue
     var atmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue
     var atmosphereSolidColor: Data?
@@ -403,7 +417,7 @@ struct BackupData: Codable {
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, preferDownloadedMedia, alwaysLandscape, aniSkipEnabled, introDBEnabled, introDBAppEnabled, aniSkipAutoSkip, skip85sEnabled, skip85sAlwaysVisible, showNextEpisodeButton, showEpisodeBrowserButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
         case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerCenterTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled, experimentalFeaturesEnabled, experimentalFeaturesLastChangedAt, experimentalMPVPreloadEnabled, experimentalMPVSmoothTransitionEnabled, experimentalMPVPreloadCellularEnabled, experimentalMPVPreloadWifiLimitMB, experimentalMPVPreloadCellularLimitMB, experimentalMPVShowRemainingTime, experimentalMPVPreciseProgress, experimentalMPVIgnoreSpecialSubtitleStyles, experimentalICloudSyncEnabled
         case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, experimentalMediaDesignPreset, experimentalHeroBleedLevel, experimentalHomeCardShape, experimentalMultiGradientPalette, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
+        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, experimentalMediaDesignPreset, experimentalHeroBleedLevel, experimentalHomeCardShape, experimentalMultiGradientPalette, experimentalHeroHeightScale, experimentalHeroBleedStrength, experimentalHeroFadeDistanceScale, experimentalSectionSpacingScale, experimentalCardRadiusScale, experimentalMediaCardScale, experimentalGlassStrength, experimentalGradientBaseDarkness, experimentalGradientAccentIntensity, experimentalGradientScrollMotion, experimentalGradientUseCustomColors, experimentalGradientColorA, experimentalGradientColorB, experimentalGradientColorC, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
         case readingMode, kanzenReaderMode, kanzenReaderModeOverrides, readerDownsampleImages, readerCropBorders, readerDisableQuickActions, readerDisableDoubleTap, readerLiveText, readerHideBarsOnSwipe, readerBackgroundColor, readerOrientation, readerTapZones, readerInvertTapZones, readerAnimatePageTransitions, readerUpscaleImages, readerUpscaleMaxHeight, readerPagesToPreload, readerPagedPageLayout, readerPagedPageOffset, readerPagedPageOffsetOverrides, readerSplitWideImages, readerReverseSplitOrder, readerVerticalInfiniteScroll, readerPillarbox, readerPillarboxAmount, readerPillarboxOrientation, readerOrientationLockEnabled, readerOrientationLockMask, readerReadThresholdPercent
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, backgroundHLSPipelineEnabled, readerDownloadsBackgroundEnabled, readerDownloadsWifiOnly, readerDownloadsParallelLimit, autoUpdateServicesEnabled, servicesAutoModeEnabled, servicesAutoSelectEpisodesEnabled, servicesAutoModeSourceIds, servicesAutoModeSourceOrderIds, servicesAutoModeQualityPreference, githubReleaseAutoCheckEnabled, githubReleaseUpdateAvailable, githubReleaseLatestVersion, githubReleaseURL, githubReleaseShowAlertPending, githubReleaseLastPromptedVersion, filterHorrorContent = "filterHorror", selectedSimilarityAlgorithm, performanceModeEnabled, performanceModeSkipAniListTraversalForAnimeDetails, performanceModeFastAnimeCatalogOverrides
@@ -521,6 +535,20 @@ struct BackupData: Codable {
         experimentalHeroBleedLevel = Self.sanitizedExperimentalHeroBleedLevel(try container.decodeIfPresent(String.self, forKey: .experimentalHeroBleedLevel))
         experimentalHomeCardShape = Self.sanitizedExperimentalHomeCardShape(try container.decodeIfPresent(String.self, forKey: .experimentalHomeCardShape))
         experimentalMultiGradientPalette = Self.sanitizedExperimentalMultiGradientPalette(try container.decodeIfPresent(String.self, forKey: .experimentalMultiGradientPalette))
+        experimentalHeroHeightScale = Self.sanitizedExperimentalHeroHeightScale(try container.decodeIfPresent(Double.self, forKey: .experimentalHeroHeightScale))
+        experimentalHeroBleedStrength = Self.sanitizedExperimentalHeroBleedStrength(try container.decodeIfPresent(Double.self, forKey: .experimentalHeroBleedStrength))
+        experimentalHeroFadeDistanceScale = Self.sanitizedExperimentalHeroFadeDistanceScale(try container.decodeIfPresent(Double.self, forKey: .experimentalHeroFadeDistanceScale))
+        experimentalSectionSpacingScale = Self.sanitizedExperimentalSectionSpacingScale(try container.decodeIfPresent(Double.self, forKey: .experimentalSectionSpacingScale))
+        experimentalCardRadiusScale = Self.sanitizedExperimentalCardRadiusScale(try container.decodeIfPresent(Double.self, forKey: .experimentalCardRadiusScale))
+        experimentalMediaCardScale = Self.sanitizedExperimentalMediaCardScale(try container.decodeIfPresent(Double.self, forKey: .experimentalMediaCardScale))
+        experimentalGlassStrength = Self.sanitizedExperimentalGlassStrength(try container.decodeIfPresent(Double.self, forKey: .experimentalGlassStrength))
+        experimentalGradientBaseDarkness = Self.sanitizedExperimentalGradientBaseDarkness(try container.decodeIfPresent(Double.self, forKey: .experimentalGradientBaseDarkness))
+        experimentalGradientAccentIntensity = Self.sanitizedExperimentalGradientAccentIntensity(try container.decodeIfPresent(Double.self, forKey: .experimentalGradientAccentIntensity))
+        experimentalGradientScrollMotion = Self.sanitizedExperimentalGradientScrollMotion(try container.decodeIfPresent(Double.self, forKey: .experimentalGradientScrollMotion))
+        experimentalGradientUseCustomColors = try container.decodeIfPresent(Bool.self, forKey: .experimentalGradientUseCustomColors) ?? false
+        experimentalGradientColorA = try Self.decodeColorData(from: container, forKey: .experimentalGradientColorA)
+        experimentalGradientColorB = try Self.decodeColorData(from: container, forKey: .experimentalGradientColorB)
+        experimentalGradientColorC = try Self.decodeColorData(from: container, forKey: .experimentalGradientColorC)
         atmosphereStyle = Self.sanitizedAtmosphereStyle(try container.decodeIfPresent(String.self, forKey: .atmosphereStyle))
         atmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(try container.decodeIfPresent(String.self, forKey: .atmosphereSolidColorSource))
         atmosphereSolidColor = try Self.decodeColorData(from: container, forKey: .atmosphereSolidColor)
@@ -768,6 +796,20 @@ struct BackupData: Codable {
         try container.encode(Self.sanitizedExperimentalHeroBleedLevel(experimentalHeroBleedLevel), forKey: .experimentalHeroBleedLevel)
         try container.encode(Self.sanitizedExperimentalHomeCardShape(experimentalHomeCardShape), forKey: .experimentalHomeCardShape)
         try container.encode(Self.sanitizedExperimentalMultiGradientPalette(experimentalMultiGradientPalette), forKey: .experimentalMultiGradientPalette)
+        try container.encode(Self.sanitizedExperimentalHeroHeightScale(experimentalHeroHeightScale), forKey: .experimentalHeroHeightScale)
+        try container.encode(Self.sanitizedExperimentalHeroBleedStrength(experimentalHeroBleedStrength), forKey: .experimentalHeroBleedStrength)
+        try container.encode(Self.sanitizedExperimentalHeroFadeDistanceScale(experimentalHeroFadeDistanceScale), forKey: .experimentalHeroFadeDistanceScale)
+        try container.encode(Self.sanitizedExperimentalSectionSpacingScale(experimentalSectionSpacingScale), forKey: .experimentalSectionSpacingScale)
+        try container.encode(Self.sanitizedExperimentalCardRadiusScale(experimentalCardRadiusScale), forKey: .experimentalCardRadiusScale)
+        try container.encode(Self.sanitizedExperimentalMediaCardScale(experimentalMediaCardScale), forKey: .experimentalMediaCardScale)
+        try container.encode(Self.sanitizedExperimentalGlassStrength(experimentalGlassStrength), forKey: .experimentalGlassStrength)
+        try container.encode(Self.sanitizedExperimentalGradientBaseDarkness(experimentalGradientBaseDarkness), forKey: .experimentalGradientBaseDarkness)
+        try container.encode(Self.sanitizedExperimentalGradientAccentIntensity(experimentalGradientAccentIntensity), forKey: .experimentalGradientAccentIntensity)
+        try container.encode(Self.sanitizedExperimentalGradientScrollMotion(experimentalGradientScrollMotion), forKey: .experimentalGradientScrollMotion)
+        try container.encode(experimentalGradientUseCustomColors, forKey: .experimentalGradientUseCustomColors)
+        try container.encodeIfPresent(experimentalGradientColorA, forKey: .experimentalGradientColorA)
+        try container.encodeIfPresent(experimentalGradientColorB, forKey: .experimentalGradientColorB)
+        try container.encodeIfPresent(experimentalGradientColorC, forKey: .experimentalGradientColorC)
         try container.encode(Self.sanitizedAtmosphereStyle(atmosphereStyle), forKey: .atmosphereStyle)
         try container.encode(Self.sanitizedAtmosphereSolidColorSource(atmosphereSolidColorSource), forKey: .atmosphereSolidColorSource)
         try container.encodeIfPresent(atmosphereSolidColor, forKey: .atmosphereSolidColor)
@@ -948,6 +990,20 @@ struct BackupData: Codable {
         experimentalHeroBleedLevel: String = ExperimentalHeroBleedLevel.defaultValue.rawValue,
         experimentalHomeCardShape: String = ExperimentalHomeCardShape.defaultValue.rawValue,
         experimentalMultiGradientPalette: String = ExperimentalMultiGradientPalette.defaultValue.rawValue,
+        experimentalHeroHeightScale: Double = ExperimentalVisualTuning.defaultHeroHeightScale,
+        experimentalHeroBleedStrength: Double = ExperimentalVisualTuning.defaultHeroBleedStrength,
+        experimentalHeroFadeDistanceScale: Double = ExperimentalVisualTuning.defaultHeroFadeDistanceScale,
+        experimentalSectionSpacingScale: Double = ExperimentalVisualTuning.defaultSectionSpacingScale,
+        experimentalCardRadiusScale: Double = ExperimentalVisualTuning.defaultCardRadiusScale,
+        experimentalMediaCardScale: Double = ExperimentalVisualTuning.defaultMediaCardScale,
+        experimentalGlassStrength: Double = ExperimentalVisualTuning.defaultGlassStrength,
+        experimentalGradientBaseDarkness: Double = ExperimentalVisualTuning.defaultGradientBaseDarkness,
+        experimentalGradientAccentIntensity: Double = ExperimentalVisualTuning.defaultGradientAccentIntensity,
+        experimentalGradientScrollMotion: Double = ExperimentalVisualTuning.defaultGradientScrollMotion,
+        experimentalGradientUseCustomColors: Bool = false,
+        experimentalGradientColorA: Data? = nil,
+        experimentalGradientColorB: Data? = nil,
+        experimentalGradientColorC: Data? = nil,
         atmosphereStyle: String = AtmosphereStyle.gradient.rawValue,
         atmosphereSolidColorSource: String = AtmosphereSolidColorSource.dominant.rawValue,
         atmosphereSolidColor: Data? = nil,
@@ -1123,6 +1179,20 @@ struct BackupData: Codable {
         self.experimentalHeroBleedLevel = Self.sanitizedExperimentalHeroBleedLevel(experimentalHeroBleedLevel)
         self.experimentalHomeCardShape = Self.sanitizedExperimentalHomeCardShape(experimentalHomeCardShape)
         self.experimentalMultiGradientPalette = Self.sanitizedExperimentalMultiGradientPalette(experimentalMultiGradientPalette)
+        self.experimentalHeroHeightScale = Self.sanitizedExperimentalHeroHeightScale(experimentalHeroHeightScale)
+        self.experimentalHeroBleedStrength = Self.sanitizedExperimentalHeroBleedStrength(experimentalHeroBleedStrength)
+        self.experimentalHeroFadeDistanceScale = Self.sanitizedExperimentalHeroFadeDistanceScale(experimentalHeroFadeDistanceScale)
+        self.experimentalSectionSpacingScale = Self.sanitizedExperimentalSectionSpacingScale(experimentalSectionSpacingScale)
+        self.experimentalCardRadiusScale = Self.sanitizedExperimentalCardRadiusScale(experimentalCardRadiusScale)
+        self.experimentalMediaCardScale = Self.sanitizedExperimentalMediaCardScale(experimentalMediaCardScale)
+        self.experimentalGlassStrength = Self.sanitizedExperimentalGlassStrength(experimentalGlassStrength)
+        self.experimentalGradientBaseDarkness = Self.sanitizedExperimentalGradientBaseDarkness(experimentalGradientBaseDarkness)
+        self.experimentalGradientAccentIntensity = Self.sanitizedExperimentalGradientAccentIntensity(experimentalGradientAccentIntensity)
+        self.experimentalGradientScrollMotion = Self.sanitizedExperimentalGradientScrollMotion(experimentalGradientScrollMotion)
+        self.experimentalGradientUseCustomColors = experimentalGradientUseCustomColors
+        self.experimentalGradientColorA = experimentalGradientColorA
+        self.experimentalGradientColorB = experimentalGradientColorB
+        self.experimentalGradientColorC = experimentalGradientColorC
         self.atmosphereStyle = Self.sanitizedAtmosphereStyle(atmosphereStyle)
         self.atmosphereSolidColorSource = Self.sanitizedAtmosphereSolidColorSource(atmosphereSolidColorSource)
         self.atmosphereSolidColor = atmosphereSolidColor
@@ -1330,6 +1400,46 @@ struct BackupData: Codable {
             return ExperimentalMultiGradientPalette.defaultValue.rawValue
         }
         return palette.rawValue
+    }
+
+    static func sanitizedExperimentalHeroHeightScale(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedHeroHeightScale(value)
+    }
+
+    static func sanitizedExperimentalHeroBleedStrength(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedHeroBleedStrength(value)
+    }
+
+    static func sanitizedExperimentalHeroFadeDistanceScale(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedHeroFadeDistanceScale(value)
+    }
+
+    static func sanitizedExperimentalSectionSpacingScale(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedSectionSpacingScale(value)
+    }
+
+    static func sanitizedExperimentalCardRadiusScale(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedCardRadiusScale(value)
+    }
+
+    static func sanitizedExperimentalMediaCardScale(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedMediaCardScale(value)
+    }
+
+    static func sanitizedExperimentalGlassStrength(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedGlassStrength(value)
+    }
+
+    static func sanitizedExperimentalGradientBaseDarkness(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedGradientBaseDarkness(value)
+    }
+
+    static func sanitizedExperimentalGradientAccentIntensity(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedGradientAccentIntensity(value)
+    }
+
+    static func sanitizedExperimentalGradientScrollMotion(_ value: Double?) -> Double {
+        ExperimentalVisualTuning.sanitizedGradientScrollMotion(value)
     }
 
     static func sanitizedAtmosphereStyle(_ value: String?) -> String {
@@ -1817,6 +1927,20 @@ class BackupManager {
         let experimentalHeroBleedLevel = BackupData.sanitizedExperimentalHeroBleedLevel(userDefaults.string(forKey: ExperimentalHeroBleedLevel.storageKey))
         let experimentalHomeCardShape = BackupData.sanitizedExperimentalHomeCardShape(userDefaults.string(forKey: ExperimentalHomeCardShape.storageKey))
         let experimentalMultiGradientPalette = BackupData.sanitizedExperimentalMultiGradientPalette(userDefaults.string(forKey: ExperimentalMultiGradientPalette.storageKey))
+        let experimentalHeroHeightScale = BackupData.sanitizedExperimentalHeroHeightScale(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.heroHeightScaleKey), defaultValue: ExperimentalVisualTuning.defaultHeroHeightScale))
+        let experimentalHeroBleedStrength = BackupData.sanitizedExperimentalHeroBleedStrength(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.heroBleedStrengthKey), defaultValue: ExperimentalVisualTuning.defaultHeroBleedStrength))
+        let experimentalHeroFadeDistanceScale = BackupData.sanitizedExperimentalHeroFadeDistanceScale(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.heroFadeDistanceScaleKey), defaultValue: ExperimentalVisualTuning.defaultHeroFadeDistanceScale))
+        let experimentalSectionSpacingScale = BackupData.sanitizedExperimentalSectionSpacingScale(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.sectionSpacingScaleKey), defaultValue: ExperimentalVisualTuning.defaultSectionSpacingScale))
+        let experimentalCardRadiusScale = BackupData.sanitizedExperimentalCardRadiusScale(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.cardRadiusScaleKey), defaultValue: ExperimentalVisualTuning.defaultCardRadiusScale))
+        let experimentalMediaCardScale = BackupData.sanitizedExperimentalMediaCardScale(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.mediaCardScaleKey), defaultValue: ExperimentalVisualTuning.defaultMediaCardScale))
+        let experimentalGlassStrength = BackupData.sanitizedExperimentalGlassStrength(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.glassStrengthKey), defaultValue: ExperimentalVisualTuning.defaultGlassStrength))
+        let experimentalGradientBaseDarkness = BackupData.sanitizedExperimentalGradientBaseDarkness(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.gradientBaseDarknessKey), defaultValue: ExperimentalVisualTuning.defaultGradientBaseDarkness))
+        let experimentalGradientAccentIntensity = BackupData.sanitizedExperimentalGradientAccentIntensity(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.gradientAccentIntensityKey), defaultValue: ExperimentalVisualTuning.defaultGradientAccentIntensity))
+        let experimentalGradientScrollMotion = BackupData.sanitizedExperimentalGradientScrollMotion(BackupData.optionalDouble(from: userDefaults.object(forKey: ExperimentalVisualTuning.gradientScrollMotionKey), defaultValue: ExperimentalVisualTuning.defaultGradientScrollMotion))
+        let experimentalGradientUseCustomColors = userDefaults.bool(forKey: ExperimentalVisualTuning.gradientUseCustomColorsKey)
+        let experimentalGradientColorA = userDefaults.data(forKey: ExperimentalVisualTuning.gradientColorAKey)
+        let experimentalGradientColorB = userDefaults.data(forKey: ExperimentalVisualTuning.gradientColorBKey)
+        let experimentalGradientColorC = userDefaults.data(forKey: ExperimentalVisualTuning.gradientColorCKey)
         let atmosphereStyle = BackupData.sanitizedAtmosphereStyle(userDefaults.string(forKey: "atmosphereStyle"))
         let atmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(userDefaults.string(forKey: "atmosphereSolidColorSource"))
         let atmosphereSolidColor = userDefaults.data(forKey: "atmosphereSolidColor")
@@ -2089,6 +2213,20 @@ class BackupManager {
             experimentalHeroBleedLevel: experimentalHeroBleedLevel,
             experimentalHomeCardShape: experimentalHomeCardShape,
             experimentalMultiGradientPalette: experimentalMultiGradientPalette,
+            experimentalHeroHeightScale: experimentalHeroHeightScale,
+            experimentalHeroBleedStrength: experimentalHeroBleedStrength,
+            experimentalHeroFadeDistanceScale: experimentalHeroFadeDistanceScale,
+            experimentalSectionSpacingScale: experimentalSectionSpacingScale,
+            experimentalCardRadiusScale: experimentalCardRadiusScale,
+            experimentalMediaCardScale: experimentalMediaCardScale,
+            experimentalGlassStrength: experimentalGlassStrength,
+            experimentalGradientBaseDarkness: experimentalGradientBaseDarkness,
+            experimentalGradientAccentIntensity: experimentalGradientAccentIntensity,
+            experimentalGradientScrollMotion: experimentalGradientScrollMotion,
+            experimentalGradientUseCustomColors: experimentalGradientUseCustomColors,
+            experimentalGradientColorA: experimentalGradientColorA,
+            experimentalGradientColorB: experimentalGradientColorB,
+            experimentalGradientColorC: experimentalGradientColorC,
             atmosphereStyle: atmosphereStyle,
             atmosphereSolidColorSource: atmosphereSolidColorSource,
             atmosphereSolidColor: atmosphereSolidColor,
@@ -2321,6 +2459,20 @@ class BackupManager {
         let experimentalHeroBleedLevel = BackupData.sanitizedExperimentalHeroBleedLevel(json["experimentalHeroBleedLevel"] as? String)
         let experimentalHomeCardShape = BackupData.sanitizedExperimentalHomeCardShape(json["experimentalHomeCardShape"] as? String)
         let experimentalMultiGradientPalette = BackupData.sanitizedExperimentalMultiGradientPalette(json["experimentalMultiGradientPalette"] as? String)
+        let experimentalHeroHeightScale = BackupData.sanitizedExperimentalHeroHeightScale(BackupData.optionalDouble(from: json["experimentalHeroHeightScale"], defaultValue: ExperimentalVisualTuning.defaultHeroHeightScale))
+        let experimentalHeroBleedStrength = BackupData.sanitizedExperimentalHeroBleedStrength(BackupData.optionalDouble(from: json["experimentalHeroBleedStrength"], defaultValue: ExperimentalVisualTuning.defaultHeroBleedStrength))
+        let experimentalHeroFadeDistanceScale = BackupData.sanitizedExperimentalHeroFadeDistanceScale(BackupData.optionalDouble(from: json["experimentalHeroFadeDistanceScale"], defaultValue: ExperimentalVisualTuning.defaultHeroFadeDistanceScale))
+        let experimentalSectionSpacingScale = BackupData.sanitizedExperimentalSectionSpacingScale(BackupData.optionalDouble(from: json["experimentalSectionSpacingScale"], defaultValue: ExperimentalVisualTuning.defaultSectionSpacingScale))
+        let experimentalCardRadiusScale = BackupData.sanitizedExperimentalCardRadiusScale(BackupData.optionalDouble(from: json["experimentalCardRadiusScale"], defaultValue: ExperimentalVisualTuning.defaultCardRadiusScale))
+        let experimentalMediaCardScale = BackupData.sanitizedExperimentalMediaCardScale(BackupData.optionalDouble(from: json["experimentalMediaCardScale"], defaultValue: ExperimentalVisualTuning.defaultMediaCardScale))
+        let experimentalGlassStrength = BackupData.sanitizedExperimentalGlassStrength(BackupData.optionalDouble(from: json["experimentalGlassStrength"], defaultValue: ExperimentalVisualTuning.defaultGlassStrength))
+        let experimentalGradientBaseDarkness = BackupData.sanitizedExperimentalGradientBaseDarkness(BackupData.optionalDouble(from: json["experimentalGradientBaseDarkness"], defaultValue: ExperimentalVisualTuning.defaultGradientBaseDarkness))
+        let experimentalGradientAccentIntensity = BackupData.sanitizedExperimentalGradientAccentIntensity(BackupData.optionalDouble(from: json["experimentalGradientAccentIntensity"], defaultValue: ExperimentalVisualTuning.defaultGradientAccentIntensity))
+        let experimentalGradientScrollMotion = BackupData.sanitizedExperimentalGradientScrollMotion(BackupData.optionalDouble(from: json["experimentalGradientScrollMotion"], defaultValue: ExperimentalVisualTuning.defaultGradientScrollMotion))
+        let experimentalGradientUseCustomColors = json["experimentalGradientUseCustomColors"] as? Bool ?? false
+        let experimentalGradientColorA = BackupData.backupColorData(from: json["experimentalGradientColorA"])
+        let experimentalGradientColorB = BackupData.backupColorData(from: json["experimentalGradientColorB"])
+        let experimentalGradientColorC = BackupData.backupColorData(from: json["experimentalGradientColorC"])
         let atmosphereStyle = BackupData.sanitizedAtmosphereStyle(json["atmosphereStyle"] as? String)
         let atmosphereSolidColorSource = BackupData.sanitizedAtmosphereSolidColorSource(json["atmosphereSolidColorSource"] as? String)
         let atmosphereSolidColor = BackupData.backupColorData(from: json["atmosphereSolidColor"])
@@ -2626,6 +2778,20 @@ class BackupManager {
             experimentalHeroBleedLevel: experimentalHeroBleedLevel,
             experimentalHomeCardShape: experimentalHomeCardShape,
             experimentalMultiGradientPalette: experimentalMultiGradientPalette,
+            experimentalHeroHeightScale: experimentalHeroHeightScale,
+            experimentalHeroBleedStrength: experimentalHeroBleedStrength,
+            experimentalHeroFadeDistanceScale: experimentalHeroFadeDistanceScale,
+            experimentalSectionSpacingScale: experimentalSectionSpacingScale,
+            experimentalCardRadiusScale: experimentalCardRadiusScale,
+            experimentalMediaCardScale: experimentalMediaCardScale,
+            experimentalGlassStrength: experimentalGlassStrength,
+            experimentalGradientBaseDarkness: experimentalGradientBaseDarkness,
+            experimentalGradientAccentIntensity: experimentalGradientAccentIntensity,
+            experimentalGradientScrollMotion: experimentalGradientScrollMotion,
+            experimentalGradientUseCustomColors: experimentalGradientUseCustomColors,
+            experimentalGradientColorA: experimentalGradientColorA,
+            experimentalGradientColorB: experimentalGradientColorB,
+            experimentalGradientColorC: experimentalGradientColorC,
             atmosphereStyle: atmosphereStyle,
             atmosphereSolidColorSource: atmosphereSolidColorSource,
             atmosphereSolidColor: atmosphereSolidColor,
@@ -2822,6 +2988,26 @@ class BackupManager {
         userDefaults.set(BackupData.sanitizedExperimentalHeroBleedLevel(backup.experimentalHeroBleedLevel), forKey: ExperimentalHeroBleedLevel.storageKey)
         userDefaults.set(BackupData.sanitizedExperimentalHomeCardShape(backup.experimentalHomeCardShape), forKey: ExperimentalHomeCardShape.storageKey)
         userDefaults.set(BackupData.sanitizedExperimentalMultiGradientPalette(backup.experimentalMultiGradientPalette), forKey: ExperimentalMultiGradientPalette.storageKey)
+        userDefaults.set(BackupData.sanitizedExperimentalHeroHeightScale(backup.experimentalHeroHeightScale), forKey: ExperimentalVisualTuning.heroHeightScaleKey)
+        userDefaults.set(BackupData.sanitizedExperimentalHeroBleedStrength(backup.experimentalHeroBleedStrength), forKey: ExperimentalVisualTuning.heroBleedStrengthKey)
+        userDefaults.set(BackupData.sanitizedExperimentalHeroFadeDistanceScale(backup.experimentalHeroFadeDistanceScale), forKey: ExperimentalVisualTuning.heroFadeDistanceScaleKey)
+        userDefaults.set(BackupData.sanitizedExperimentalSectionSpacingScale(backup.experimentalSectionSpacingScale), forKey: ExperimentalVisualTuning.sectionSpacingScaleKey)
+        userDefaults.set(BackupData.sanitizedExperimentalCardRadiusScale(backup.experimentalCardRadiusScale), forKey: ExperimentalVisualTuning.cardRadiusScaleKey)
+        userDefaults.set(BackupData.sanitizedExperimentalMediaCardScale(backup.experimentalMediaCardScale), forKey: ExperimentalVisualTuning.mediaCardScaleKey)
+        userDefaults.set(BackupData.sanitizedExperimentalGlassStrength(backup.experimentalGlassStrength), forKey: ExperimentalVisualTuning.glassStrengthKey)
+        userDefaults.set(BackupData.sanitizedExperimentalGradientBaseDarkness(backup.experimentalGradientBaseDarkness), forKey: ExperimentalVisualTuning.gradientBaseDarknessKey)
+        userDefaults.set(BackupData.sanitizedExperimentalGradientAccentIntensity(backup.experimentalGradientAccentIntensity), forKey: ExperimentalVisualTuning.gradientAccentIntensityKey)
+        userDefaults.set(BackupData.sanitizedExperimentalGradientScrollMotion(backup.experimentalGradientScrollMotion), forKey: ExperimentalVisualTuning.gradientScrollMotionKey)
+        userDefaults.set(backup.experimentalGradientUseCustomColors, forKey: ExperimentalVisualTuning.gradientUseCustomColorsKey)
+        if let experimentalGradientColorA = backup.experimentalGradientColorA {
+            userDefaults.set(experimentalGradientColorA, forKey: ExperimentalVisualTuning.gradientColorAKey)
+        }
+        if let experimentalGradientColorB = backup.experimentalGradientColorB {
+            userDefaults.set(experimentalGradientColorB, forKey: ExperimentalVisualTuning.gradientColorBKey)
+        }
+        if let experimentalGradientColorC = backup.experimentalGradientColorC {
+            userDefaults.set(experimentalGradientColorC, forKey: ExperimentalVisualTuning.gradientColorCKey)
+        }
         userDefaults.set(BackupData.sanitizedAtmosphereStyle(backup.atmosphereStyle), forKey: "atmosphereStyle")
         userDefaults.set(BackupData.sanitizedAtmosphereSolidColorSource(backup.atmosphereSolidColorSource), forKey: "atmosphereSolidColorSource")
         if let atmosphereSolidColor = backup.atmosphereSolidColor {

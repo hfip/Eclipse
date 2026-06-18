@@ -248,14 +248,15 @@ struct KanzenGlobalSearchView: View {
     @ViewBuilder
     private var sourceCards: some View {
         let aidokuSources = viewModel.sources.filter(\.isAidoku)
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         if aidokuSources.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "shippingbox")
                     .font(.system(size: 34))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(experimental ? .white.opacity(0.62) : .secondary)
                 Text("No searchable Aidoku sources installed")
                     .font(.headline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(experimental ? .white.opacity(0.78) : .secondary)
                 NavigationLink(destination: AidokuSourcesSettingsView()) {
                     Label("Aidoku Sources", systemImage: "plus.circle")
                 }
@@ -263,8 +264,14 @@ struct KanzenGlobalSearchView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 28)
-            .background(EclipseTheme.shared.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: experimental ? ExperimentalMediaDesignMetrics.current.cardRadius : 12, style: .continuous)
+                    .fill(experimental ? Color.white.opacity(0.10) : EclipseTheme.shared.cardBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: experimental ? ExperimentalMediaDesignMetrics.current.cardRadius : 12, style: .continuous)
+                    .stroke(Color.white.opacity(experimental ? 0.14 : 0), lineWidth: 1)
+            )
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 18)], alignment: .leading, spacing: 18) {
                 ForEach(aidokuSources) { source in
@@ -418,17 +425,22 @@ struct KanzenGlobalSearchView: View {
 
 private struct MangaModuleSearchSectionView: View {
     let section: MangaModuleSearchSection
-    private let posterWidth: CGFloat = isIPad ? 132 * iPadScaleSmall : 132
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
+    private var posterWidth: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch ? designMetrics.posterCardSize(isIPad: isIPad).width : (isIPad ? 132 * iPadScaleSmall : 132)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        VStack(alignment: .leading, spacing: experimental ? 14 : 12) {
             Text(section.source.name)
                 .font(.largeTitle)
-                .fontWeight(.regular)
+                .fontWeight(experimental ? .bold : .regular)
+                .foregroundColor(experimental ? .white : .primary)
                 .lineLimit(1)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
+                LazyHStack(spacing: experimental ? 16 : 12) {
                     ForEach(Array(section.items.prefix(MangaHomeViewModel.maxVisibleItemsPerSection))) { item in
                         NavigationLink(destination: MangaSearchItemDestination(source: section.source, item: item)) {
                             MangaSearchPosterCard(item: item, width: posterWidth)
@@ -468,9 +480,11 @@ private struct MangaSearchItemDestination: View {
 private struct MangaSearchPosterCard: View {
     let item: MangaHomeItem
     let width: CGFloat
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        VStack(alignment: .leading, spacing: experimental ? 8 : 4) {
             KFImage(URL(string: item.imageURL))
                 .placeholder {
                     Rectangle().fill(Color.gray.opacity(0.22))
@@ -480,18 +494,18 @@ private struct MangaSearchPosterCard: View {
                 .scaledToFill()
                 .frame(width: width, height: width * 1.45)
                 .clipped()
-                .cornerRadius(10)
+                .cornerRadius(experimental ? designMetrics.cardRadius : 10)
 
             Text(item.title)
-                .font(.headline)
+                .font(experimental ? .title3.weight(.semibold) : .headline)
                 .lineLimit(1)
-                .foregroundColor(.primary)
+                .foregroundColor(experimental ? .white : .primary)
                 .frame(width: width, alignment: .leading)
 
             if let subtitle = item.subtitle {
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(experimental ? .white.opacity(0.62) : .secondary)
                     .lineLimit(1)
                     .frame(width: width, alignment: .leading)
             }
@@ -501,12 +515,18 @@ private struct MangaSearchPosterCard: View {
 
 private struct MangaSearchSourceCard: View {
     let source: MangaHomeSource
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        VStack(alignment: .leading, spacing: experimental ? 10 : 8) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(EclipseTheme.shared.cardBackground)
+                RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                    .fill(experimental ? Color.white.opacity(0.10) : EclipseTheme.shared.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                            .stroke(Color.white.opacity(experimental ? 0.14 : 0), lineWidth: 1)
+                    )
 
                 KFImage(URL(string: source.iconURL))
                     .placeholder {
@@ -525,7 +545,7 @@ private struct MangaSearchSourceCard: View {
                 .fontWeight(.bold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
-                .foregroundColor(.primary)
+                .foregroundColor(experimental ? .white : .primary)
         }
     }
 }
@@ -932,10 +952,11 @@ private struct KanzenModuleSearchBar: View {
     let onSearch: () -> Void
 
     var body: some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.title2)
-                .foregroundColor(.secondary)
+                .foregroundColor(experimental ? .white.opacity(0.72) : .secondary)
 
             TextField(placeholder, text: $text, onCommit: onSearch)
                 .font(.title2)
@@ -948,15 +969,21 @@ private struct KanzenModuleSearchBar: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(experimental ? .white.opacity(0.62) : .secondary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(Color(.secondarySystemBackground).opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: experimental ? ExperimentalMediaDesignMetrics.current.cardRadius : 12, style: .continuous)
+                .fill(experimental ? Color.white.opacity(0.12) : Color(.secondarySystemBackground).opacity(0.92))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: experimental ? ExperimentalMediaDesignMetrics.current.cardRadius : 12, style: .continuous)
+                .stroke(Color.white.opacity(experimental ? 0.14 : 0), lineWidth: 1)
+        )
     }
 }
 

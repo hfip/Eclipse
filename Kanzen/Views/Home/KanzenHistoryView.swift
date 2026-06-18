@@ -18,15 +18,17 @@ struct KanzenHistoryView: View {
     @State private var contextDetailItem: MangaLibraryItem?
     @State private var showContextDetail = false
     @State private var resumeRequest: KanzenHistoryResumeRequest?
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
 
     private var historyItems: [(id: Int, progress: MangaProgress)] {
         progressManager.recentlyReadMangaIds()
     }
 
     var body: some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         NavigationView {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: experimental ? designMetrics.sectionSpacing : 12) {
                     KanzenRootHeader("History") {
                         if !historyItems.isEmpty {
                             Button("Clear History") {
@@ -134,14 +136,15 @@ struct KanzenHistoryView: View {
     }
 
     private func historyRow(for item: (id: Int, progress: MangaProgress)) -> some View {
-        HStack(spacing: 12) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        HStack(spacing: experimental ? 14 : 12) {
             KFImage(URL(string: item.progress.coverURL ?? ""))
                 .placeholder { Rectangle().fill(Color.gray.opacity(0.2)) }
                 .resizable()
                 .scaledToFill()
-                .frame(width: 50, height: 75)
+                .frame(width: experimental ? 62 : 50, height: experimental ? 92 : 75)
                 .clipped()
-                .cornerRadius(12)
+                .cornerRadius(experimental ? min(designMetrics.cardRadius, 16) : 12)
                 .overlay(alignment: .topTrailing) {
                     if ReaderDownloadManager.shared.isDownloaded(route: item.progress.route) {
                         Image(systemName: "arrow.down.circle.fill")
@@ -156,27 +159,34 @@ struct KanzenHistoryView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.progress.title ?? "Unknown Manga")
-                    .font(.headline)
+                    .font(experimental ? .title3.weight(.semibold) : .headline)
+                    .foregroundColor(experimental ? .white : .primary)
                     .lineLimit(2)
 
                 if let lastCh = item.progress.lastReadChapter {
                     Text("Ch. \(lastCh)")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(experimental ? .white.opacity(0.62) : .secondary)
                 }
 
                 if let date = item.progress.lastReadDate {
                     Text(date, style: .relative)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(experimental ? .white.opacity(0.54) : .secondary)
                 }
             }
 
             Spacer()
         }
-        .padding(12)
-        .background(EclipseTheme.shared.cardBackground)
-        .cornerRadius(12)
+        .padding(experimental ? 14 : 12)
+        .background(
+            RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                .fill(experimental ? Color.white.opacity(0.10) : EclipseTheme.shared.cardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                .stroke(Color.white.opacity(experimental ? 0.14 : 0), lineWidth: 1)
+        )
     }
 
     private func resumeRequest(for item: (id: Int, progress: MangaProgress)) -> KanzenHistoryResumeRequest {

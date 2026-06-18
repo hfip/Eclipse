@@ -90,6 +90,7 @@ struct AidokuMangaDetailView: View {
     @ObservedObject private var libraryManager = MangaLibraryManager.shared
     @ObservedObject private var progressManager = MangaReadingProgressManager.shared
     @ObservedObject private var downloadManager = ReaderDownloadManager.shared
+    @ObservedObject private var theme = EclipseTheme.shared
     @StateObject private var sourceManager = AidokuSourceManager.shared
     @StateObject private var kanzen = KanzenEngine()
     @State private var manga: AidokuRunner.Manga
@@ -104,10 +105,36 @@ struct AidokuMangaDetailView: View {
     @AppStorage(ReaderDetailElement.orderStorageKey) private var readerDetailElementOrder = ReaderDetailElement.defaultOrderRawValue
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
+    private var designMetrics: ExperimentalMediaDesignMetrics { .current }
+
     private var heroHeight: CGFloat {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            return designMetrics.detailHeroHeight(screenHeight: UIScreen.main.bounds.height, isIPad: isIPad)
+        }
         let mediaStyleHeight: CGFloat = isIPad ? 680 : 550
         let rotationSafeLimit = max(isIPad ? 520 : 360, UIScreen.main.bounds.height * 0.78)
         return min(mediaStyleHeight, rotationSafeLimit)
+    }
+
+    private var readerAtmosphereColor: Color {
+        let base = theme.scopedGradientColor(isReaderMode: true)
+        return theme.scopedAtmosphereColor(dominant: base, isReaderMode: true)
+    }
+
+    @ViewBuilder
+    private var readerDetailBackground: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            HeroBleedGradientBackground(
+                dominantColor: readerAtmosphereColor,
+                scrollOffset: scrollOffset,
+                heroHeight: heroHeight,
+                fadeDistance: designMetrics.heroBleedDistance,
+                bleedStrength: designMetrics.heroWashStrength,
+                style: theme.scopedAtmosphereStyle(isReaderMode: true)
+            )
+        } else {
+            GlobalGradientBackground(scrollOffset: scrollOffset)
+        }
     }
 
     private var route: MangaContentRoute {
@@ -151,8 +178,9 @@ struct AidokuMangaDetailView: View {
     }
 
     var body: some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: experimental ? designMetrics.sectionSpacing : 18) {
                 headerSection
                 primaryActionSection
                     .padding(.horizontal, 16)
@@ -162,7 +190,7 @@ struct AidokuMangaDetailView: View {
                         .padding(.horizontal, 16)
                 }
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, experimental ? 40 : 24)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(
@@ -195,7 +223,7 @@ struct AidokuMangaDetailView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .kanzenGradientBackground(scrollOffset: scrollOffset)
+        .background(readerDetailBackground.ignoresSafeArea())
         .sheet(isPresented: $showAddToCollection) {
             MangaAddToCollectionView(item: libraryItem)
                 .environmentObject(libraryManager)
@@ -248,43 +276,58 @@ struct AidokuMangaDetailView: View {
             let stretchedHeight = heroHeight + max(0, minY)
             let yOffset = min(0, -minY)
             let viewportWidth = geometry.size.width
+            let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+            let contentAlignment: Alignment = experimental ? .bottom : .bottomLeading
+            let textAlignment: HorizontalAlignment = experimental ? .center : .leading
+            let posterWidth = experimental ? min(viewportWidth * 0.84, heroHeight * 0.66) : max(viewportWidth - 20, 0)
+            let posterHeight = experimental ? max(heroHeight * 0.74, 270) : max(heroHeight - 26, 260)
+            let titleSize: CGFloat = experimental ? (isIPad ? 48 : 40) : (isIPad ? 40 : 32)
+            let gradientColors: [Color] = experimental ? [
+                Color.black.opacity(0.02),
+                readerAtmosphereColor.opacity(0.16),
+                readerAtmosphereColor.opacity(0.58),
+                Color.black.opacity(0.92)
+            ] : [
+                Color.black.opacity(0.02),
+                Color.black.opacity(0.28),
+                Color.black.opacity(0.98)
+            ]
 
-            ZStack(alignment: .bottomLeading) {
+            ZStack(alignment: contentAlignment) {
                 KFImage(URL(string: coverURL))
                     .placeholder { Color.black.opacity(0.18) }
                     .resizable()
                     .scaledToFill()
                     .frame(width: viewportWidth, height: stretchedHeight)
                     .clipped()
-                    .blur(radius: 18)
-                    .overlay(Color.black.opacity(0.34))
+                    .blur(radius: experimental ? 14 : 18)
+                    .overlay(Color.black.opacity(experimental ? 0.22 : 0.34))
 
                 KFImage(URL(string: coverURL))
                     .placeholder { Color.clear }
                     .resizable()
                     .scaledToFit()
-                    .frame(width: max(viewportWidth - 20, 0), height: max(heroHeight - 26, 260), alignment: .center)
+                    .frame(width: posterWidth, height: posterHeight, alignment: .center)
                     .frame(width: viewportWidth, alignment: .center)
-                    .padding(.top, 10)
+                    .clipShape(RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 0, style: .continuous))
+                    .shadow(color: .black.opacity(experimental ? 0.26 : 0), radius: experimental ? 22 : 0, x: 0, y: experimental ? 16 : 0)
+                    .padding(.top, experimental ? 22 : 10)
 
                 LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.02),
-                        Color.black.opacity(0.28),
-                        Color.black.opacity(0.98)
-                    ],
+                    colors: gradientColors,
                     startPoint: .top,
                     endPoint: .bottom
                 )
                 .frame(width: viewportWidth, height: stretchedHeight)
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: textAlignment, spacing: experimental ? 10 : 8) {
                     Text(manga.title)
-                        .font(.system(size: isIPad ? 40 : 32, weight: .bold))
+                        .font(.system(size: titleSize, weight: .bold))
                         .fontWeight(.bold)
                         .foregroundColor(.white)
                         .lineLimit(3)
                         .minimumScaleFactor(0.72)
+                        .multilineTextAlignment(experimental ? .center : .leading)
                         .contextMenu {
                             Button {
                                 UIPasteboard.general.string = manga.title
@@ -305,11 +348,14 @@ struct AidokuMangaDetailView: View {
                                 .lineLimit(1)
                         }
                     }
-                    .font(.subheadline)
+                    .font(experimental ? .title3 : .subheadline)
+                    .fontWeight(experimental ? .semibold : .regular)
                     .foregroundColor(.white.opacity(0.82))
+                    .multilineTextAlignment(experimental ? .center : .leading)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 18)
+                .frame(maxWidth: experimental ? .infinity : nil, alignment: experimental ? .center : .leading)
+                .padding(.horizontal, experimental ? 30 : 16)
+                .padding(.bottom, experimental ? 36 : 18)
             }
             .frame(width: viewportWidth, height: stretchedHeight)
             .offset(y: yOffset)
@@ -326,7 +372,8 @@ struct AidokuMangaDetailView: View {
     @ViewBuilder
     private var primaryActionSection: some View {
         let chapters = chapterModels()
-        HStack(spacing: 12) {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
+        HStack(spacing: experimental ? 14 : 12) {
             readButton(chapters: chapters)
 
             Button {
@@ -362,42 +409,74 @@ struct AidokuMangaDetailView: View {
     }
 
     private func descriptionSection(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(cleanedDescription(text))
-                .font(isIPad ? .title3 : .body)
-                .lineSpacing(3)
-                .foregroundColor(.primary.opacity(0.92))
-                .lineLimit(expandedDescription ? nil : 5)
-                .onTapGesture {
-                    withAnimation { expandedDescription.toggle() }
-                }
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            VStack(alignment: .center, spacing: 8) {
+                Text(cleanedDescription(text))
+                    .font(isIPad ? .title3 : .body)
+                    .lineSpacing(4)
+                    .foregroundColor(.white.opacity(0.86))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(expandedDescription ? nil : 5)
+                    .onTapGesture {
+                        withAnimation { expandedDescription.toggle() }
+                    }
 
-            if !expandedDescription {
-                HStack {
-                    Spacer()
+                if !expandedDescription {
                     Text("More")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
+                        .font(.callout.weight(.semibold))
+                        .foregroundColor(.white.opacity(0.68))
                         .onTapGesture {
                             withAnimation { expandedDescription.toggle() }
                         }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .applyLiquidGlassBackground(cornerRadius: designMetrics.cardRadius)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(cleanedDescription(text))
+                    .font(isIPad ? .title3 : .body)
+                    .lineSpacing(3)
+                    .foregroundColor(.primary.opacity(0.92))
+                    .lineLimit(expandedDescription ? nil : 5)
+                    .onTapGesture {
+                        withAnimation { expandedDescription.toggle() }
+                    }
+
+                if !expandedDescription {
+                    HStack {
+                        Spacer()
+                        Text("More")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .onTapGesture {
+                                withAnimation { expandedDescription.toggle() }
+                            }
+                    }
                 }
             }
         }
     }
 
     private func tagsSection(_ tags: [String]) -> some View {
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(tags, id: \.self) { tag in
                     Text(tag)
-                        .font(.footnote)
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
+                        .font(.footnote.weight(experimental ? .semibold : .regular))
+                        .foregroundColor(experimental ? .white.opacity(0.9) : .primary)
+                        .padding(.horizontal, experimental ? 14 : 12)
+                        .padding(.vertical, experimental ? 7 : 5)
+                        .background(
+                            Capsule()
+                                .fill(experimental ? Color.white.opacity(0.11) : Color.clear)
+                        )
                         .overlay(
                             Capsule()
-                                .stroke(Color.primary.opacity(0.55), lineWidth: 1)
+                                .stroke(experimental ? Color.white.opacity(0.16) : Color.primary.opacity(0.55), lineWidth: 1)
                         )
                 }
             }
@@ -722,22 +801,30 @@ struct AidokuMangaDetailView: View {
         let lastRead = progressManager.lastReadChapter(for: stableId)
         let readChapters = progressManager.readChapters(for: stableId)
         let target = targetChapterForReading(chapters: chapters, lastRead: lastRead, readChapters: readChapters)
+        let experimental = ExperimentalFeatureState.isEnabledAtLaunch
 
         return Button {
             selectedChapterData = target
         } label: {
             HStack {
                 Image(systemName: "book.fill")
-                    .font(.subheadline)
+                    .font(experimental ? .headline : .subheadline)
                 Text(lastRead == nil && readChapters.isEmpty ? "Read Now" : "Continue")
-                    .font(.subheadline)
+                    .font(experimental ? .headline : .subheadline)
                     .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .frame(height: experimental ? 54 : nil)
+            .padding(.vertical, experimental ? 0 : 12)
             .foregroundColor(.white)
-            .background(Color.accentColor)
-            .cornerRadius(12)
+            .background(
+                RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                    .fill(experimental ? Color.white.opacity(0.18) : Color.accentColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 12, style: .continuous)
+                    .stroke(Color.white.opacity(experimental ? 0.18 : 0), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(target == nil)
@@ -947,13 +1034,26 @@ struct ReaderDetailShareItem: Identifiable {
 }
 
 extension View {
+    @ViewBuilder
     func readerDetailIconButton() -> some View {
-        self
-            .font(.subheadline)
-            .frame(width: 52, height: 44)
-            .foregroundColor(.accentColor)
-            .background(Color.primary.opacity(0.08))
-            .cornerRadius(12)
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            self
+                .font(.headline)
+                .frame(width: 52, height: 52)
+                .foregroundColor(.white)
+                .applyLiquidGlassBackground(cornerRadius: 26)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                )
+        } else {
+            self
+                .font(.subheadline)
+                .frame(width: 52, height: 44)
+                .foregroundColor(.accentColor)
+                .background(Color.primary.opacity(0.08))
+                .cornerRadius(12)
+        }
     }
 }
 #endif

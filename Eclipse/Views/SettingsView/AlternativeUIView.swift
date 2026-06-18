@@ -17,6 +17,20 @@ struct AlternativeUIView: View {
     @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
     @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
     @AppStorage(ExperimentalMultiGradientPalette.storageKey) private var experimentalMultiGradientPalette = ExperimentalMultiGradientPalette.defaultValue.rawValue
+    @AppStorage(ExperimentalVisualTuning.heroHeightScaleKey) private var experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
+    @AppStorage(ExperimentalVisualTuning.heroBleedStrengthKey) private var experimentalHeroBleedStrength = ExperimentalVisualTuning.defaultHeroBleedStrength
+    @AppStorage(ExperimentalVisualTuning.heroFadeDistanceScaleKey) private var experimentalHeroFadeDistanceScale = ExperimentalVisualTuning.defaultHeroFadeDistanceScale
+    @AppStorage(ExperimentalVisualTuning.sectionSpacingScaleKey) private var experimentalSectionSpacingScale = ExperimentalVisualTuning.defaultSectionSpacingScale
+    @AppStorage(ExperimentalVisualTuning.cardRadiusScaleKey) private var experimentalCardRadiusScale = ExperimentalVisualTuning.defaultCardRadiusScale
+    @AppStorage(ExperimentalVisualTuning.mediaCardScaleKey) private var experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
+    @AppStorage(ExperimentalVisualTuning.glassStrengthKey) private var experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
+    @AppStorage(ExperimentalVisualTuning.gradientBaseDarknessKey) private var experimentalGradientBaseDarkness = ExperimentalVisualTuning.defaultGradientBaseDarkness
+    @AppStorage(ExperimentalVisualTuning.gradientAccentIntensityKey) private var experimentalGradientAccentIntensity = ExperimentalVisualTuning.defaultGradientAccentIntensity
+    @AppStorage(ExperimentalVisualTuning.gradientScrollMotionKey) private var experimentalGradientScrollMotion = ExperimentalVisualTuning.defaultGradientScrollMotion
+    @AppStorage(ExperimentalVisualTuning.gradientUseCustomColorsKey) private var experimentalGradientUseCustomColors = false
+    @AppStorage(ExperimentalVisualTuning.gradientColorAKey) private var experimentalGradientColorAData = Data()
+    @AppStorage(ExperimentalVisualTuning.gradientColorBKey) private var experimentalGradientColorBData = Data()
+    @AppStorage(ExperimentalVisualTuning.gradientColorCKey) private var experimentalGradientColorCData = Data()
     
     @StateObject private var accentColorManager = AccentColorManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
@@ -141,10 +155,138 @@ struct AlternativeUIView: View {
                     selection: $experimentalMultiGradientPalette,
                     values: ExperimentalMultiGradientPalette.allCases.map { ($0.rawValue, $0.displayName) }
                 )
+
+                experimentalTuningSliderRow(
+                    title: "Hero Height",
+                    description: "Scale the large banner/detail artwork.",
+                    value: $experimentalHeroHeightScale,
+                    range: 0.75...1.15,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Hero Bleed Strength",
+                    description: "Control how strongly poster color washes into the page.",
+                    value: $experimentalHeroBleedStrength,
+                    range: 0.0...1.5,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Hero Fade Distance",
+                    description: "Control how long the banner atmosphere remains while scrolling.",
+                    value: $experimentalHeroFadeDistanceScale,
+                    range: 0.6...1.6,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Section Spacing",
+                    description: "Tune the vertical rhythm between shelves and cards.",
+                    value: $experimentalSectionSpacingScale,
+                    range: 0.75...1.35,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Card Roundness",
+                    description: "Scale the rounded corners on experimental cards.",
+                    value: $experimentalCardRadiusScale,
+                    range: 0.7...1.4,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Card Size",
+                    description: "Scale home and reader media cards.",
+                    value: $experimentalMediaCardScale,
+                    range: 0.85...1.2,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Glass Strength",
+                    description: "Tune translucent card and control intensity.",
+                    value: $experimentalGlassStrength,
+                    range: 0.0...1.4,
+                    step: 0.05
+                )
+
+                Button(action: resetExperimentalVisualTuning) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Reset Experimental Visuals")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            Text("Restore screenshot-style defaults.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "arrow.counterclockwise")
+                            .foregroundColor(accentColorManager.currentAccentColor)
+                    }
+                }
             } header: {
                 Text("Experimental Design")
             } footer: {
                 Text("Applies to the Experimental UI only. Hero Bleed controls poster color wash; Multi Gradient Palette controls the background that takes over while scrolling.")
+            }
+
+            Section {
+                experimentalTuningSliderRow(
+                    title: "Base Darkness",
+                    description: "Darken or lift the regular multi-gradient background.",
+                    value: $experimentalGradientBaseDarkness,
+                    range: 0.7...1.3,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Accent Intensity",
+                    description: "Control the strength of the colored gradient layers.",
+                    value: $experimentalGradientAccentIntensity,
+                    range: 0.0...1.6,
+                    step: 0.05
+                )
+
+                experimentalTuningSliderRow(
+                    title: "Scroll Motion",
+                    description: "Control how much the gradient drifts while scrolling.",
+                    value: $experimentalGradientScrollMotion,
+                    range: 0.0...1.4,
+                    step: 0.05
+                )
+
+                Toggle("Use Custom Gradient Colors", isOn: $experimentalGradientUseCustomColors)
+                    .tint(accentColorManager.currentAccentColor)
+
+#if !os(tvOS)
+                if experimentalGradientUseCustomColors {
+                    ColorPicker("Color A", selection: experimentalGradientColorBinding(
+                        data: $experimentalGradientColorAData,
+                        fallback: Color(red: 0.16, green: 0.12, blue: 0.19)
+                    ))
+
+                    ColorPicker("Color B", selection: experimentalGradientColorBinding(
+                        data: $experimentalGradientColorBData,
+                        fallback: Color(red: 0.28, green: 0.20, blue: 0.34)
+                    ))
+
+                    ColorPicker("Color C", selection: experimentalGradientColorBinding(
+                        data: $experimentalGradientColorCData,
+                        fallback: Color(red: 0.24, green: 0.14, blue: 0.16)
+                    ))
+                }
+#endif
+            } header: {
+                Text("Multi Gradient")
+            } footer: {
+                Text("These controls refine the background after the banner color fades into the app atmosphere.")
             }
 
             Section {
@@ -369,6 +511,68 @@ struct AlternativeUIView: View {
             }
             .pickerStyle(.menu)
         }
+    }
+
+    private func experimentalTuningSliderRow(
+        title: String,
+        description: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Text(description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+
+                Text(String(format: "%.2f", value.wrappedValue))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+
+            Slider(value: value, in: range, step: step)
+                .tint(accentColorManager.currentAccentColor)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func experimentalGradientColorBinding(data: Binding<Data>, fallback: Color) -> Binding<Color> {
+        Binding(
+            get: {
+                ExperimentalVisualTuning.loadColor(data: data.wrappedValue) ?? fallback
+            },
+            set: { color in
+                data.wrappedValue = ExperimentalVisualTuning.colorData(color) ?? Data()
+            }
+        )
+    }
+
+    private func resetExperimentalVisualTuning() {
+        experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
+        experimentalHeroBleedStrength = ExperimentalVisualTuning.defaultHeroBleedStrength
+        experimentalHeroFadeDistanceScale = ExperimentalVisualTuning.defaultHeroFadeDistanceScale
+        experimentalSectionSpacingScale = ExperimentalVisualTuning.defaultSectionSpacingScale
+        experimentalCardRadiusScale = ExperimentalVisualTuning.defaultCardRadiusScale
+        experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
+        experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
+        experimentalGradientBaseDarkness = ExperimentalVisualTuning.defaultGradientBaseDarkness
+        experimentalGradientAccentIntensity = ExperimentalVisualTuning.defaultGradientAccentIntensity
+        experimentalGradientScrollMotion = ExperimentalVisualTuning.defaultGradientScrollMotion
+        experimentalGradientUseCustomColors = false
+        experimentalGradientColorAData = Data()
+        experimentalGradientColorBData = Data()
+        experimentalGradientColorCData = Data()
     }
 
     private func mediaDetailElementRow(_ element: MediaDetailElement) -> some View {
