@@ -231,12 +231,13 @@ enum NuvioPluginSupport {
     }
 
     static func isDirectHTTPURL(_ value: String?) -> Bool {
-        guard let value,
-              let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme?.lowercased() else {
-            return false
-        }
-        return scheme == "http" || scheme == "https"
+        // Use a scheme prefix check rather than `URL(string:)`, which returns nil for
+        // otherwise-valid stream URLs containing unencoded characters (spaces, `|`, `[]`,
+        // etc.). The reference runtime keeps any non-blank URL; we only additionally
+        // require http(s) because mpv playback goes over HTTP via the header proxy.
+        guard let value else { return false }
+        let lower = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lower.hasPrefix("http://") || lower.hasPrefix("https://")
     }
 
     static func streamID(scraperId: String, sourceId: String, url: String, title: String, index: Int) -> String {

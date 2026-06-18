@@ -21,6 +21,10 @@ final class LibraryManager: ObservableObject {
     private let collectionsKey = "libraryCollections"
     private var collectionCancellables: [UUID: AnyCancellable] = [:]
     private var cancellables = Set<AnyCancellable>()
+
+    /// Set while applying a remote Trakt watchlist pull so the resulting collection
+    /// mutations don't echo straight back up to Trakt.
+    var isApplyingTraktWatchlistSync = false
     
     private init() {
         load()
@@ -64,11 +68,46 @@ final class LibraryManager: ObservableObject {
         guard let index = collections.firstIndex(where: { $0.id == collectionId }),
               !collections[index].items.contains(where: { $0.id == item.id }) else { return }
         collections[index].items.append(item)
+        notifyTraktWatchlistIfNeeded(collectionName: collections[index].name, item: item, added: true)
     }
-    
+
     func removeItem(from collectionId: UUID, item: LibraryItem) {
         guard let index = collections.firstIndex(where: { $0.id == collectionId }) else { return }
+        let existed = collections[index].items.contains { $0.id == item.id }
         collections[index].items.removeAll { $0.id == item.id }
+        if existed {
+            notifyTraktWatchlistIfNeeded(collectionName: collections[index].name, item: item, added: false)
+        }
+    }
+
+    // MARK: - Trakt Watchlist Sync
+
+    private func notifyTraktWatchlistIfNeeded(collectionName: String, item: LibraryItem, added: Bool) {
+        guard !isApplyingTraktWatchlistSync,
+              collectionName == TrackerManager.traktWatchlistCollectionName else { return }
+        TrackerManager.shared.pushTraktWatchlistChange(searchResult: item.searchResult, added: added)
+    }
+
+    /// Merge Trakt watchlist results into the local "Trakt Watchlist" collection without
+    /// deleting anything. Suppresses the push hook so the pull doesn't echo back to Trakt.
+    func applyTraktWatchlistPull(_ results: [TMDBSearchResult]) {
+        guard let index = ensureTraktWatchlistCollectionIndex() else { return }
+        isApplyingTraktWatchlistSync = true
+        defer { isApplyingTraktWatchlistSync = false }
+        for result in results {
+            let item = LibraryItem(searchResult: result)
+            if !collections[index].items.contains(where: { $0.id == item.id }) {
+                collections[index].items.append(item)
+            }
+        }
+    }
+
+    private func ensureTraktWatchlistCollectionIndex() -> Int? {
+        if let idx = collections.firstIndex(where: { $0.name == TrackerManager.traktWatchlistCollectionName }) {
+            return idx
+        }
+        createCollection(name: TrackerManager.traktWatchlistCollectionName, description: "Synced with your Trakt watchlist")
+        return collections.firstIndex(where: { $0.name == TrackerManager.traktWatchlistCollectionName })
     }
     
     func isItemInCollection(_ collectionId: UUID, item: LibraryItem) -> Bool {

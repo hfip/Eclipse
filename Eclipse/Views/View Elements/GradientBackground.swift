@@ -1035,68 +1035,73 @@ enum AtmospherePaletteID: String, CaseIterable, Identifiable {
 enum AppearancePalettes {
     private static func c(_ r: Double, _ g: Double, _ b: Double) -> Color { Color(red: r, green: g, blue: b) }
 
+    // Purple-dominant but genuinely multi-hued: indigo, violet, magenta and
+    // blue blend together so it reads as a multi-gradient, not flat purple.
     static let midnightPurple = AtmospherePalette(
         id: "midnightPurple", displayName: "Midnight Purple",
         mesh: [
-            c(0.075, 0.060, 0.110), c(0.090, 0.066, 0.130), c(0.080, 0.058, 0.115),
-            c(0.110, 0.078, 0.165), c(0.140, 0.092, 0.205), c(0.105, 0.074, 0.160),
-            c(0.120, 0.080, 0.180), c(0.150, 0.094, 0.225), c(0.115, 0.078, 0.172),
-            c(0.060, 0.050, 0.090), c(0.072, 0.056, 0.105), c(0.058, 0.048, 0.088)
+            c(0.105, 0.070, 0.210), c(0.165, 0.085, 0.235), c(0.085, 0.090, 0.240),
+            c(0.195, 0.082, 0.215), c(0.180, 0.110, 0.300), c(0.095, 0.110, 0.285),
+            c(0.150, 0.080, 0.215), c(0.130, 0.100, 0.270), c(0.080, 0.100, 0.235),
+            c(0.065, 0.052, 0.110), c(0.078, 0.060, 0.130), c(0.055, 0.055, 0.105)
         ],
         verticalStops: [
-            .init(color: c(0.090, 0.068, 0.135), location: 0.0),
-            .init(color: c(0.140, 0.092, 0.205), location: 0.42),
-            .init(color: c(0.072, 0.056, 0.105), location: 1.0)
+            .init(color: c(0.130, 0.085, 0.235), location: 0.0),
+            .init(color: c(0.175, 0.105, 0.285), location: 0.40),
+            .init(color: c(0.070, 0.058, 0.120), location: 1.0)
         ],
-        topWash: c(0.34, 0.22, 0.52)
+        topWash: c(0.42, 0.22, 0.58)
     )
 
+    // Blue-dominant with teal and indigo accents.
     static let nocturne = AtmospherePalette(
         id: "nocturne", displayName: "Nocturne",
         mesh: [
-            c(0.055, 0.062, 0.095), c(0.066, 0.074, 0.120), c(0.058, 0.064, 0.100),
-            c(0.078, 0.092, 0.150), c(0.098, 0.114, 0.190), c(0.074, 0.090, 0.146),
-            c(0.086, 0.098, 0.165), c(0.104, 0.120, 0.205), c(0.082, 0.096, 0.160),
-            c(0.046, 0.052, 0.082), c(0.056, 0.064, 0.098), c(0.044, 0.050, 0.080)
+            c(0.060, 0.095, 0.205), c(0.080, 0.125, 0.255), c(0.060, 0.105, 0.225),
+            c(0.072, 0.150, 0.270), c(0.100, 0.165, 0.320), c(0.070, 0.135, 0.300),
+            c(0.060, 0.120, 0.235), c(0.090, 0.140, 0.295), c(0.070, 0.105, 0.260),
+            c(0.048, 0.060, 0.120), c(0.058, 0.072, 0.140), c(0.044, 0.058, 0.110)
         ],
         verticalStops: [
-            .init(color: c(0.066, 0.074, 0.120), location: 0.0),
-            .init(color: c(0.098, 0.114, 0.190), location: 0.42),
-            .init(color: c(0.050, 0.056, 0.088), location: 1.0)
+            .init(color: c(0.078, 0.125, 0.255), location: 0.0),
+            .init(color: c(0.095, 0.155, 0.305), location: 0.40),
+            .init(color: c(0.050, 0.062, 0.125), location: 1.0)
         ],
-        topWash: c(0.22, 0.30, 0.56)
+        topWash: c(0.20, 0.42, 0.62)
     )
 
+    // Wine / magenta dominant with violet accents.
     static let velvet = AtmospherePalette(
         id: "velvet", displayName: "Velvet",
         mesh: [
-            c(0.090, 0.058, 0.082), c(0.110, 0.066, 0.098), c(0.092, 0.056, 0.082),
-            c(0.140, 0.078, 0.120), c(0.175, 0.094, 0.150), c(0.135, 0.076, 0.118),
-            c(0.150, 0.082, 0.130), c(0.185, 0.098, 0.158), c(0.142, 0.080, 0.126),
-            c(0.072, 0.050, 0.072), c(0.086, 0.058, 0.084), c(0.070, 0.048, 0.070)
+            c(0.165, 0.060, 0.140), c(0.205, 0.080, 0.180), c(0.140, 0.070, 0.165),
+            c(0.225, 0.080, 0.205), c(0.245, 0.105, 0.260), c(0.165, 0.085, 0.225),
+            c(0.185, 0.070, 0.180), c(0.165, 0.095, 0.245), c(0.125, 0.075, 0.190),
+            c(0.085, 0.050, 0.105), c(0.095, 0.062, 0.125), c(0.072, 0.050, 0.100)
         ],
         verticalStops: [
-            .init(color: c(0.110, 0.066, 0.098), location: 0.0),
-            .init(color: c(0.175, 0.094, 0.150), location: 0.42),
-            .init(color: c(0.078, 0.052, 0.076), location: 1.0)
+            .init(color: c(0.205, 0.080, 0.180), location: 0.0),
+            .init(color: c(0.235, 0.100, 0.250), location: 0.40),
+            .init(color: c(0.082, 0.052, 0.105), location: 1.0)
         ],
-        topWash: c(0.50, 0.22, 0.40)
+        topWash: c(0.55, 0.20, 0.46)
     )
 
+    // Teal / green dominant drifting into violet.
     static let mutedAurora = AtmospherePalette(
         id: "mutedAurora", displayName: "Muted Aurora",
         mesh: [
-            c(0.052, 0.078, 0.086), c(0.062, 0.092, 0.100), c(0.058, 0.072, 0.094),
-            c(0.072, 0.110, 0.120), c(0.090, 0.130, 0.150), c(0.082, 0.100, 0.150),
-            c(0.080, 0.112, 0.140), c(0.098, 0.126, 0.180), c(0.092, 0.100, 0.170),
-            c(0.048, 0.066, 0.082), c(0.058, 0.078, 0.098), c(0.052, 0.064, 0.090)
+            c(0.050, 0.130, 0.140), c(0.070, 0.165, 0.180), c(0.065, 0.125, 0.205),
+            c(0.072, 0.185, 0.200), c(0.095, 0.205, 0.240), c(0.110, 0.140, 0.265),
+            c(0.075, 0.155, 0.205), c(0.095, 0.165, 0.250), c(0.110, 0.120, 0.265),
+            c(0.048, 0.072, 0.115), c(0.058, 0.090, 0.135), c(0.052, 0.072, 0.120)
         ],
         verticalStops: [
-            .init(color: c(0.062, 0.092, 0.100), location: 0.0),
-            .init(color: c(0.090, 0.128, 0.160), location: 0.42),
-            .init(color: c(0.052, 0.068, 0.090), location: 1.0)
+            .init(color: c(0.070, 0.165, 0.185), location: 0.0),
+            .init(color: c(0.100, 0.185, 0.245), location: 0.40),
+            .init(color: c(0.050, 0.072, 0.120), location: 1.0)
         ],
-        topWash: c(0.20, 0.46, 0.48)
+        topWash: c(0.16, 0.52, 0.54)
     )
 
     static func base(for id: AtmospherePaletteID) -> AtmospherePalette {

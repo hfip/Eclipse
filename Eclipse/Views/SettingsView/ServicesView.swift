@@ -256,6 +256,7 @@ struct ServicesView: View {
             } footer: {
                 Text("Automatically check for service updates when the app is opened.")
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
 
             Section {
@@ -338,6 +339,7 @@ struct ServicesView: View {
             } footer: {
                 Text("Auto-Select Episodes also applies when choosing a source manually. Auto Mode checks enabled sources from top to bottom. Drag to set priority, and turn Auto Quality off when you want to choose stream quality yourself.")
             }
+            .eclipseExperimentalSettingsRows()
 
             Section(header: unifiedSectionHeader) {
                 if serviceManager.services.isEmpty && stremioManager.addons.isEmpty {
@@ -357,6 +359,7 @@ struct ServicesView: View {
                     .onMove(perform: moveUnifiedItems)
                 }
             }
+            .eclipseExperimentalSettingsRows()
         }
     }
 

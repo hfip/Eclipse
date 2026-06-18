@@ -12,8 +12,20 @@ import SwiftSoup
 @MainActor
 enum NuvioPluginRuntime {
     private static let timeoutSeconds: TimeInterval = 60
-    private static let maxFetchBodyBytes = 256 * 1024
+    // Truncate by character count on an already-decoded string (matching the Nuvio
+    // reference runtime) instead of slicing raw bytes — slicing bytes could split a
+    // multi-byte UTF-8 sequence and, combined with a strict decode, collapse the whole
+    // body to "" so multi-step scrapers found nothing. Generous limit for large pages/JSON.
+    private static let maxFetchBodyChars = 1024 * 1024
+    // Defensive cap on how many raw bytes we decode, so a plugin that accidentally
+    // fetches a huge payload can't blow up memory while building the string.
+    private static let maxFetchBodyDecodeBytes = 4 * 1024 * 1024
     private static let maxHeaderValueCharacters = 8 * 1024
+    // Stable desktop User-Agent used only when a plugin doesn't set its own. Scraper
+    // sites frequently serve different/blocked content to the rotating (often mobile)
+    // app User-Agent, so plugins need a predictable desktop identity like the reference.
+    private static let defaultDesktopUserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
     static func execute(
         code: String,
@@ -239,15 +251,18 @@ enum NuvioPluginRuntime {
         var request = URLRequest(url: url)
         request.httpMethod = method.isEmpty ? "GET" : method.uppercased()
         request.timeoutInterval = 30
-        request.setValue(URLSession.randomUserAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("1", forHTTPHeaderField: "DNT")
-        request.setValue("1", forHTTPHeaderField: "Sec-GPC")
         for (key, value) in headers {
             let headerName = key.trimmingCharacters(in: .whitespacesAndNewlines)
             let headerValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !headerName.isEmpty && !headerValue.isEmpty {
                 request.setValue(String(headerValue.prefix(maxHeaderValueCharacters)), forHTTPHeaderField: headerName)
             }
+        }
+        // Mirror the reference runtime: only inject a default desktop User-Agent when the
+        // plugin didn't provide one (request headers override the session's rotating UA),
+        // and don't force DNT/Sec-GPC — some hosts vary or block responses based on them.
+        if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(defaultDesktopUserAgent, forHTTPHeaderField: "User-Agent")
         }
         if let body, !body.isEmpty, request.httpMethod != "GET" {
             request.httpBody = Data(body.utf8)
@@ -258,8 +273,7 @@ enum NuvioPluginRuntime {
         Logger.shared.log("Nuvio plugin fetch provider=\(scraperName) target=\(ServiceSandboxState.redactedURL(url.absoluteString))", type: "Plugin")
         let (data, response) = try await session.data(for: request)
         let httpResponse = response as? HTTPURLResponse
-        let bodyData = data.count > maxFetchBodyBytes ? data.prefix(maxFetchBodyBytes) : data[...]
-        let text = String(data: Data(bodyData), encoding: .utf8) ?? ""
+        let text = decodeResponseBody(data)
         var responseHeaders: [String: String] = [:]
         httpResponse?.allHeaderFields.forEach { key, value in
             let headerName = String(describing: key)
@@ -275,6 +289,21 @@ enum NuvioPluginRuntime {
             "headers": responseHeaders,
             "body": text
         ]
+    }
+
+    /// Decode a response body for plugin consumption. Uses lossy UTF-8 decoding over the
+    /// full payload so a multi-byte boundary or a non-UTF-8 byte never collapses the entire
+    /// body to an empty string (the previous strict `String(data:encoding:) ?? ""` silently
+    /// emptied any response > 256 KB, which made multi-step scrapers "find nothing"). The
+    /// raw decode is bounded for memory, then the result is truncated by character count.
+    private static func decodeResponseBody(_ data: Data) -> String {
+        guard !data.isEmpty else { return "" }
+        let limited = data.count > maxFetchBodyDecodeBytes ? Data(data.prefix(maxFetchBodyDecodeBytes)) : data
+        var text = String(decoding: limited, as: UTF8.self)
+        if text.count > maxFetchBodyChars {
+            text = String(text.prefix(maxFetchBodyChars)) + "\n...[truncated]"
+        }
+        return text
     }
 
     private static func parseStreams(
@@ -405,8 +434,11 @@ enum NuvioPluginRuntime {
     private static func invocationCode(tmdbId: String, mediaType: String, season: Int?, episode: Int?) -> String {
         let tmdbLiteral = jsonLiteral(tmdbId) ?? "\"\(tmdbId)\""
         let mediaTypeLiteral = jsonLiteral(mediaType) ?? "\"\(mediaType)\""
-        let seasonLiteral = season.map(String.init) ?? "null"
-        let episodeLiteral = episode.map(String.init) ?? "null"
+        // Pass `undefined` (not `null`) for movies so plugins that rely on default
+        // parameter values — `getStreams(id, type, season = 1, ...)` — behave like they
+        // do under the reference runtime; defaults only apply for `undefined`.
+        let seasonLiteral = season.map(String.init) ?? "undefined"
+        let episodeLiteral = episode.map(String.init) ?? "undefined"
         return """
         (function() {
             var getStreams = (globalThis.__nuvio_module && globalThis.__nuvio_module.exports && globalThis.__nuvio_module.exports.getStreams) || globalThis.getStreams;
@@ -873,17 +905,30 @@ private final class NuvioCheerioBridge {
     }
 
     func select(handle: Int, selector: String) -> [Int] {
+        let normalized = NuvioCheerioBridge.normalizeSelector(selector)
         do {
             if let document = documents[handle] {
-                return try document.select(selector).array().map(register)
+                return try document.select(normalized).array().map(register)
             }
             if let element = elements[handle] {
-                return try element.select(selector).array().map(register)
+                return try element.select(normalized).array().map(register)
             }
         } catch {
             Logger.shared.log("Nuvio cheerio selector failed selector=\(selector) error=\(error.localizedDescription)", type: "Plugin")
         }
         return []
+    }
+
+    // jQuery/cheerio plugins commonly write `:contains("text")` / `:contains('text')`,
+    // but SwiftSoup (like jsoup) expects the argument unquoted: `:contains(text)`.
+    // Strip the quotes so those selectors match instead of throwing. Mirrors the
+    // reference runtime's `containsRegex` normalization.
+    private static let containsRegex = try? NSRegularExpression(pattern: ":contains\\((\"|')(.*?)\\1\\)")
+
+    private static func normalizeSelector(_ selector: String) -> String {
+        guard let regex = containsRegex, selector.contains(":contains(") else { return selector }
+        let range = NSRange(selector.startIndex..., in: selector)
+        return regex.stringByReplacingMatches(in: selector, options: [], range: range, withTemplate: ":contains($2)")
     }
 
     func text(handle: Int) -> String {

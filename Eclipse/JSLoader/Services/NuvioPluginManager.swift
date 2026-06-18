@@ -38,12 +38,16 @@ final class NuvioPluginManager: ObservableObject {
         NuvioPluginStore().load()
     }
 
-    nonisolated static func restorePersistedBackupState(_ restored: NuvioStoredPluginsState) {
+    nonisolated static func restorePersistedBackupState(
+        _ restored: NuvioStoredPluginsState,
+        refreshRepositories: Bool = false
+    ) {
         let sanitized = sanitizedStoredState(restored)
         NuvioPluginStore().save(sanitized)
         Task { @MainActor in
             shared.load()
             shared.syncAutoModeSources()
+            await shared.refreshRestoredRepositoriesIfNeeded(force: refreshRepositories)
         }
     }
 
@@ -163,7 +167,10 @@ final class NuvioPluginManager: ObservableObject {
         ensureLoaded()
         guard state.pluginsEnabled else { return [] }
         let activeScrapers = state.scrapers.filter { scraper in
-            scraper.enabled && scraper.manifestEnabled && (type.map(scraper.supportsType) ?? true)
+            scraper.enabled &&
+            scraper.manifestEnabled &&
+            !scraper.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            (type.map(scraper.supportsType) ?? true)
         }
         return NuvioPluginSupport.sourceGroups(
             scrapers: activeScrapers,
@@ -175,6 +182,9 @@ final class NuvioPluginManager: ObservableObject {
     func testScraper(_ scraperId: String) async throws -> [NuvioPluginStream] {
         ensureLoaded()
         guard let scraper = state.scrapers.first(where: { $0.id == scraperId }) else {
+            throw NuvioPluginError.providerNotFound
+        }
+        guard !scraper.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NuvioPluginError.providerNotFound
         }
         let mediaType = scraper.supportsType("movie") ? "movie" : "tv"
@@ -404,6 +414,19 @@ final class NuvioPluginManager: ObservableObject {
         }
     }
 
+    private func refreshRestoredRepositoriesIfNeeded(force: Bool) async {
+        ensureLoaded()
+        let hasPlaceholderScrapers = state.scrapers.contains {
+            $0.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard force || (!state.repositories.isEmpty && (state.scrapers.isEmpty || hasPlaceholderScrapers)) else {
+            return
+        }
+
+        Logger.shared.log("Nuvio plugins refreshing restored repositories count=\(state.repositories.count)", type: "Plugin")
+        await refreshAll()
+    }
+
     private func syncAutoModeSources() {
         guard state.pluginsEnabled else { return }
         for source in activeSources {
@@ -464,8 +487,7 @@ final class NuvioPluginManager: ObservableObject {
         let scrapers = restored.scrapers.filter { scraper in
             repositoryURLs.contains(scraper.repositoryUrl) &&
             !scraper.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !scraper.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !scraper.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !scraper.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         return NuvioStoredPluginsState(
             pluginsEnabled: restored.pluginsEnabled,

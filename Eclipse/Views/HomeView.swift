@@ -115,7 +115,7 @@ struct HomeView: View {
                         dominant: ambientColor,
                         hasHeroBleed: true,
                         heroHeight: heroHeight,
-                        fadeDistance: heroHeight * 0.9
+                        fadeDistance: heroHeight * 0.6
                     ),
                     scrollOffset: backgroundScrollOffset
                 )
@@ -280,6 +280,18 @@ struct HomeView: View {
     
     @ViewBuilder
     private var heroSection: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch, let hero = homeViewModel.heroContent {
+            NavigationLink(destination: MediaDetailView(searchResult: hero)) {
+                heroSectionBody
+            }
+            .buttonStyle(.plain)
+        } else {
+            heroSectionBody
+        }
+    }
+
+    @ViewBuilder
+    private var heroSectionBody: some View {
         ZStack(alignment: .bottom) {
             StretchyHeaderView(
                 backdropURL: currentHeroImageURL,
@@ -290,10 +302,14 @@ struct HomeView: View {
                     homeViewModel.ambientColor = color
                 }
             )
-            
+
             heroGradientOverlay
             heroContentInfo
         }
+    }
+
+    private var heroBlendColor: Color {
+        theme.heroBlendColor(dominant: ambientColor)
     }
     
     @ViewBuilder
@@ -303,10 +319,10 @@ struct HomeView: View {
         // keeps the original heavier wash.
         LinearGradient(
             gradient: Gradient(stops: ExperimentalFeatureState.isEnabledAtLaunch ? [
-                .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: Color.black.opacity(0.10), location: 0.30),
-                .init(color: ambientColor.opacity(0.45), location: 0.66),
-                .init(color: ambientColor.opacity(0.85), location: 1.0)
+                .init(color: heroBlendColor.opacity(0.0), location: 0.0),
+                .init(color: Color.black.opacity(0.10), location: 0.28),
+                .init(color: heroBlendColor.opacity(0.50), location: 0.64),
+                .init(color: heroBlendColor.opacity(0.94), location: 1.0)
             ] : [
                 .init(color: ambientColor.opacity(0.0), location: 0.0),
                 .init(color: Color.black.opacity(0.26), location: 0.18),
@@ -369,14 +385,18 @@ struct HomeView: View {
 
     @ViewBuilder
     private var heroPagerDots: some View {
-        HStack(spacing: isIPad ? 15 : 12) {
-            ForEach(0..<9, id: \.self) { index in
-                Circle()
-                    .fill(Color.white.opacity(index == 0 ? 0.95 : 0.38))
-                    .frame(width: isIPad ? 11 : 9, height: isIPad ? 11 : 9)
+        let count = min(homeViewModel.heroCarouselCount, 12)
+        if heroBannerBehavior == HeroBannerBehavior.carousel.rawValue && count > 1 {
+            let current = min(homeViewModel.heroCarouselCurrentIndex, count - 1)
+            HStack(spacing: isIPad ? 15 : 12) {
+                ForEach(Array(0..<count), id: \.self) { index in
+                    Circle()
+                        .fill(Color.white.opacity(index == current ? 0.95 : 0.38))
+                        .frame(width: isIPad ? 11 : 9, height: isIPad ? 11 : 9)
+                }
             }
+            .padding(.top, 2)
         }
-        .padding(.top, 2)
     }
 
     @ViewBuilder

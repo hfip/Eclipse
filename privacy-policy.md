@@ -27,7 +27,7 @@ Eclipse may store app data locally on your device so the app can function. This 
 - Locally saved logs that you can choose to export.
 - Authentication tokens for third-party services you choose to connect.
 
-This data is stored by the app on your device and is not sent to the developer.
+This data is stored by the app on your device and is not sent to the developer. If you enable iCloud Sync in a supported build, selected app data, including tracker connection data needed to keep those accounts connected, may be stored in your personal iCloud account.
 
 ## Third-Party Services
 

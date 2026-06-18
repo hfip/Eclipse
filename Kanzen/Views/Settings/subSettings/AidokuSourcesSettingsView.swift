@@ -91,6 +91,7 @@ struct AidokuSourcesSettingsView: View {
                 }
                 .disabled(sourceManager.isRefreshing || isBusy)
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
 
             Section(header: Text("Installed Sources"), footer: Text("Disabled or hidden mature sources do not appear on Discover or Search.")) {
@@ -124,6 +125,7 @@ struct AidokuSourcesSettingsView: View {
                     Label("Import .aix Package", systemImage: "square.and.arrow.down")
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
 
             Section(header: Text("Available Sources")) {
@@ -145,6 +147,7 @@ struct AidokuSourcesSettingsView: View {
                     }
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
         }
         .navigationTitle("Aidoku Sources")

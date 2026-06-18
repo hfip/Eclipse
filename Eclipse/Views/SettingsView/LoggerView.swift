@@ -30,7 +30,7 @@ struct LogEntry: Identifiable {
         case "debug":
             return .gray
         default:
-            return .primary
+            return .white
         }
     }
     
@@ -88,44 +88,64 @@ struct LoggerView: View {
     }
     
     var body: some View {
-        List {
-            EclipseScrollTracker()
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-                .eclipseHideListRowSeparator()
+        ScrollView {
+            VStack(spacing: 20) {
+                GlassSection {
+                    GlassDetailRow(icon: "line.3.horizontal.decrease.circle", iconColor: .blue, title: "Category") {
+                        Menu {
+                            ForEach(availableCategories, id: \.self) { category in
+                                Button {
+                                    selectedCategory = category
+                                } label: {
+                                    if selectedCategory == category {
+                                        Label(category, systemImage: "checkmark")
+                                    } else {
+                                        Text(category)
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(selectedCategory)
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.6))
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.white.opacity(0.4))
+                            }
+                        }
+                    }
+                }
 
-            Picker("Category", selection: $selectedCategory) {
-                ForEach(availableCategories, id: \.self) { category in
-                    Text(category).tag(category)
+                if filteredLogs.isEmpty {
+                    EclipseEmptyState(
+                        icon: "doc.text",
+                        title: "No logs found",
+                        message: "Logs will appear here as the app records activity."
+                    )
+                    .padding(.top, 32)
+                } else {
+                    GlassSection {
+                        VStack(spacing: 0) {
+                            ForEach(Array(filteredLogs.enumerated()), id: \.element.id) { index, log in
+                                LogEntryRow(log: log)
+                                    .id(log.id)
+
+                                if index < filteredLogs.count - 1 {
+                                    GlassDivider(leadingInset: 16)
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            .pickerStyle(.menu)
-            .listRowBackground(Color.clear)
-            .eclipseHideListRowSeparator()
-
-            if filteredLogs.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 50))
-                        .foregroundColor(.secondary)
-
-                    Text("No logs found")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 20)
-                .listRowBackground(Color.clear)
-                .eclipseHideListRowSeparator()
-            } else {
-                ForEach(filteredLogs) { log in
-                    LogEntryRow(log: log)
-                        .id(log.id)
-                }
-            }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
+            .background(EclipseScrollTracker())
         }
         .navigationTitle(NSLocalizedString("Logs", comment: ""))
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
@@ -213,11 +233,12 @@ struct LogEntryRow: View {
                         
                         Text(DateFormatter.logTimeFormatter.string(from: log.timestamp))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.5))
                     }
-                    
+
                     Text(log.message)
                         .font(.body)
+                        .foregroundColor(.white.opacity(0.9))
                         .lineLimit(isExpanded ? nil : 3)
                         .animation(.easeInOut(duration: 0.2), value: isExpanded)
                     
@@ -234,7 +255,8 @@ struct LogEntryRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
         .onTapGesture {
             if log.message.count > 100 {

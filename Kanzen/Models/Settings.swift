@@ -540,6 +540,7 @@ final class ExperimentalCloudSyncManager: ObservableObject {
     @Published private(set) var lastSyncDate: Date?
 
     private static let snapshotFileName = "EclipseExperimentalSync.json"
+    private static let lastSeenRemoteModificationKey = "experimentalICloudSyncLastSeenRemoteModificationAt"
     private var lastAutomaticSync: Date?
 
     private init() {}
@@ -556,7 +557,13 @@ final class ExperimentalCloudSyncManager: ObservableObject {
         }
 
         lastAutomaticSync = Date()
-        pushLocalSnapshot(reason: reason)
+        syncSnapshot(reason: reason)
+    }
+
+    func syncSnapshot(reason: String = "manual") {
+        runSyncTask(statusPrefix: "Synced") {
+            try Self.reconcileSnapshot(reason: reason)
+        }
     }
 
     func pushLocalSnapshot(reason: String = "manual") {
@@ -604,8 +611,22 @@ final class ExperimentalCloudSyncManager: ObservableObject {
             throw SyncError.snapshotEncodingFailed
         }
         try data.write(to: url, options: .atomic)
+        markRemoteSnapshotSeen(at: url, fallbackDate: Date())
         Logger.shared.log("Experimental iCloud snapshot pushed reason=\(reason) bytes=\(data.count)", type: "iCloud")
         return Date()
+#else
+        throw SyncError.unavailable
+#endif
+    }
+
+    private static func reconcileSnapshot(reason: String) throws -> Date {
+#if os(iOS)
+        let url = try snapshotURL()
+        if hasUnseenRemoteSnapshot(at: url) {
+            Logger.shared.log("Experimental iCloud snapshot restoring newer remote reason=\(reason)", type: "iCloud")
+            return try restoreRemoteSnapshot()
+        }
+        return try writeLocalSnapshot(reason: reason)
 #else
         throw SyncError.unavailable
 #endif
@@ -621,6 +642,7 @@ final class ExperimentalCloudSyncManager: ObservableObject {
         guard BackupManager.shared.restoreExperimentalCloudSnapshot(from: data) else {
             throw SyncError.snapshotRestoreFailed
         }
+        markRemoteSnapshotSeen(at: url, fallbackDate: Date())
         Logger.shared.log("Experimental iCloud snapshot restored bytes=\(data.count)", type: "iCloud")
         return Date()
 #else
@@ -637,6 +659,26 @@ final class ExperimentalCloudSyncManager: ObservableObject {
         let documents = container.appendingPathComponent("Documents", isDirectory: true)
         try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
         return documents.appendingPathComponent(snapshotFileName)
+    }
+
+    private static func hasUnseenRemoteSnapshot(at url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let modificationDate = remoteModificationDate(at: url) else {
+            return false
+        }
+
+        let lastSeen = UserDefaults.standard.double(forKey: lastSeenRemoteModificationKey)
+        guard lastSeen > 0 else { return true }
+        return modificationDate.timeIntervalSince1970 > lastSeen + 1
+    }
+
+    private static func markRemoteSnapshotSeen(at url: URL, fallbackDate: Date) {
+        let modificationDate = remoteModificationDate(at: url) ?? fallbackDate
+        UserDefaults.standard.set(modificationDate.timeIntervalSince1970, forKey: lastSeenRemoteModificationKey)
+    }
+
+    private static func remoteModificationDate(at url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
     }
 #endif
 

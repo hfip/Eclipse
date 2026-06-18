@@ -1100,7 +1100,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         currentMode = .pictureInPicture
         logMPV("PiP prepare entered OpenGL-backed mode id=\(pipTransitionID) \(pipDebugSnapshot())")
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.isRunning, !self.isStopping, self.currentMode == .pictureInPicture else { return }
             // Keep the inline GL surface visible while PiP is being primed. If
             // AVKit refuses to start PiP, the user should see a frozen frame at
             // worst, not a black player.
@@ -1131,7 +1131,7 @@ final class MPVNativeRenderer: PlayerRenderer {
         pipBridge.reset(removingDisplayedImage: true)
         currentMode = .openGL
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.isRunning, !self.isStopping, self.currentMode == .openGL else { return }
             self.displayLayer.isHidden = true
             self.displayLayer.opacity = 0.0
             self.displayLayer.zPosition = -1
@@ -3689,10 +3689,14 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         }
 
         DispatchQueue.main.async { [weak self] in
-            self?.displayLayer.isHidden = false
-            self?.displayLayer.opacity = 1.0
-            self?.displayLayer.zPosition = -1
-            self?.metalView.isHidden = false
+            guard let self,
+                  self.isRunning,
+                  !self.isStopping,
+                  self.isPreparingPiPBridge || self.isUsingPiPBridge else { return }
+            self.displayLayer.isHidden = false
+            self.displayLayer.opacity = 1.0
+            self.displayLayer.zPosition = -1
+            self.metalView.isHidden = false
         }
         pipBridge.prepareForPictureInPictureStart()
     }
@@ -3737,11 +3741,15 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             }
         }
         DispatchQueue.main.async { [weak self] in
-            self?.displayLayer.isHidden = true
-            self?.displayLayer.opacity = 0.0
-            self?.displayLayer.zPosition = -1
-            self?.metalView.isHidden = false
-            self?.metalView.setNeedsLayout()
+            guard let self,
+                  self.isRunning,
+                  !self.isUsingPiPBridge,
+                  !self.isPreparingPiPBridge else { return }
+            self.displayLayer.isHidden = true
+            self.displayLayer.opacity = 0.0
+            self.displayLayer.zPosition = -1
+            self.metalView.isHidden = false
+            self.metalView.setNeedsLayout()
         }
     }
 
@@ -3775,7 +3783,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         }
         pipBridge.activatePictureInPictureLayer()
         DispatchQueue.main.async { [weak self] in
-            self?.metalView.isHidden = true
+            guard let self, self.isRunning, self.isUsingPiPBridge else { return }
+            self.metalView.isHidden = true
         }
     }
 

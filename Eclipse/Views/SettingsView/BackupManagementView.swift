@@ -41,70 +41,102 @@ struct BackupManagementView: View {
     @State private var showDocumentPicker = false
     @State private var showBackupExporter = false
     @State private var selectedBackupURL: URL? = nil
+    @State private var selectedBackupIsTemporary = false
     @State private var backupFileToExport: Data? = nil
     @State private var backupFileName = ""
+    @State private var showAlternateDocumentPicker = false
     
     var body: some View {
-        List {
-            Section {
-                Button(action: createBackup) {
-                    HStack {
-                        Label("Create Backup", systemImage: "arrow.up.doc")
-                        Spacer()
-                        if isProcessing {
-                            ProgressView()
-                                .scaleEffect(0.8)
+        ScrollView {
+            VStack(spacing: 22) {
+                GlassSection(header: "Export") {
+                    Button(action: createBackup) {
+                        GlassDetailRow(icon: "arrow.up.doc.fill", iconColor: .teal, title: "Create Backup") {
+                            if isProcessing {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(.white.opacity(0.6))
+                            } else {
+                                EmptyView()
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(isProcessing)
                 }
-                .disabled(isProcessing)
-                .foregroundColor(.primary)
-            } header: {
-                Text("Export")
-            } footer: {
-                Text("Create a backup file containing all your collections, settings, watch progress, tracker logins including MAL, and service configurations.")
+                GlassSectionFooter("Create a backup file containing all your collections, settings, watch progress, tracker logins including MAL, and service configurations.")
+
+                GlassSection(header: "Import") {
+                    VStack(spacing: 0) {
+                        Button(action: { showDocumentPicker = true }) {
+                            GlassDetailRow(icon: "arrow.down.doc.fill", iconColor: .blue, title: "Import Backup") {
+                                if isProcessing {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .tint(.white.opacity(0.6))
+                                } else {
+                                    EmptyView()
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isProcessing)
+
+                        GlassDivider()
+
+                        Button(action: { showAlternateDocumentPicker = true }) {
+                            GlassDetailRow(icon: "arrow.down.doc", iconColor: .indigo, title: "Alternative Import Backup") {
+                                if isProcessing {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .tint(.white.opacity(0.6))
+                                } else {
+                                    EmptyView()
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isProcessing)
+                    }
+                }
+                GlassSectionFooter("Restore all data from a previously saved backup file. This will overwrite your current settings and progress.")
+
+                if !backupMessage.isEmpty {
+                    GlassSection {
+                        HStack(spacing: 10) {
+                            Image(systemName: backupMessage.contains("Success") || backupMessage.contains("created") ? "checkmark.circle.fill" : "info.circle.fill")
+                                .foregroundColor(backupMessage.contains("Success") || backupMessage.contains("created") ? .green : .blue)
+                            Text(backupMessage)
+                                .font(.footnote)
+                                .foregroundColor(.white.opacity(0.8))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                }
             }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
             .background(EclipseScrollTracker())
-            
-            Section {
-                Button(action: { showDocumentPicker = true }) {
-                    HStack {
-                        Label("Import Backup", systemImage: "arrow.down.doc")
-                        Spacer()
-                        if isProcessing {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        }
-                    }
-                }
-                .disabled(isProcessing)
-                .foregroundColor(.primary)
-            } header: {
-                Text("Import")
-            } footer: {
-                Text("Restore all data from a previously saved backup file. This will overwrite your current settings and progress.")
-            }
-            
-            if !backupMessage.isEmpty {
-                Section {
-                    HStack {
-                        Image(systemName: backupMessage.contains("Success") || backupMessage.contains("created") ? "checkmark.circle" : "info.circle")
-                            .foregroundColor(backupMessage.contains("Success") || backupMessage.contains("created") ? .green : .blue)
-                        Text(backupMessage)
-                            .font(.footnote)
-                    }
-                }
-            }
         }
         .navigationTitle("Backup & Import")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         #if !os(tvOS)
         .fileImporter(
             isPresented: $showDocumentPicker,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImportResult(result, mode: .direct)
+        }
+        .fileImporter(
+            isPresented: $showAlternateDocumentPicker,
             allowedContentTypes: BackupDocument.importableContentTypes,
             allowsMultipleSelection: false
         ) { result in
-            handleImportResult(result)
+            handleImportResult(result, mode: .coordinatedCopy)
         }
         .fileExporter(
             isPresented: $showBackupExporter,
@@ -172,7 +204,12 @@ struct BackupManagementView: View {
     }
     
     #if !os(tvOS)
-    private func handleImportResult(_ result: Result<[URL], Error>) {
+    private enum ImportMode {
+        case direct
+        case coordinatedCopy
+    }
+
+    private func handleImportResult(_ result: Result<[URL], Error>, mode: ImportMode) {
         switch result {
         case .success(let urls):
             guard let selectedFile = urls.first else {
@@ -183,7 +220,14 @@ struct BackupManagementView: View {
 
             do {
                 clearSelectedBackup()
-                self.selectedBackupURL = try prepareSelectedBackupForRestore(from: selectedFile)
+                switch mode {
+                case .direct:
+                    self.selectedBackupURL = selectedFile
+                    self.selectedBackupIsTemporary = false
+                case .coordinatedCopy:
+                    self.selectedBackupURL = try prepareSelectedBackupForRestore(from: selectedFile)
+                    self.selectedBackupIsTemporary = true
+                }
                 // Ask for confirmation before restoring
                 showRestoreConfirmation = true
             } catch {
@@ -210,14 +254,29 @@ struct BackupManagementView: View {
         isProcessing = true
         backupMessage = ""
         showRestoreConfirmation = false
+        let shouldUseSecurityScope = !selectedBackupIsTemporary
+        let shouldRemoveBackupAfterRestore = selectedBackupIsTemporary
         
         DispatchQueue.global(qos: .userInitiated).async {
+            var accessGranted = false
+            if shouldUseSecurityScope {
+                accessGranted = backupURL.startAccessingSecurityScopedResource()
+            }
+            defer {
+                if accessGranted {
+                    backupURL.stopAccessingSecurityScopedResource()
+                }
+                if shouldRemoveBackupAfterRestore {
+                    try? FileManager.default.removeItem(at: backupURL)
+                }
+            }
+
             let success = BackupManager.shared.restoreBackup(from: backupURL)
-            try? FileManager.default.removeItem(at: backupURL)
             
             DispatchQueue.main.async {
                 isProcessing = false
                 selectedBackupURL = nil
+                selectedBackupIsTemporary = false
                 if success {
                     backupMessage = "Backup restored successfully! Please restart the app to see all changes."
                 } else {
@@ -229,10 +288,11 @@ struct BackupManagementView: View {
     }
 
     private func clearSelectedBackup() {
-        if let selectedBackupURL {
+        if selectedBackupIsTemporary, let selectedBackupURL {
             try? FileManager.default.removeItem(at: selectedBackupURL)
         }
         selectedBackupURL = nil
+        selectedBackupIsTemporary = false
     }
 
     #if !os(tvOS)

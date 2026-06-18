@@ -56,6 +56,7 @@ struct CatalogsSettingsView: View {
             } footer: {
                 Text("Enable/disable content catalogs and drag to reorder them. The order here determines the order on your home screen. Stremio catalog addons may reduce performance or have visual inconsistencies.")
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
         }
         .navigationTitle("Catalogs")

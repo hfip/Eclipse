@@ -16,9 +16,9 @@ enum ExternalPlayer: String, CaseIterable, Identifiable {
     case senPlayer = "SenPlayer"
     case tracy = "TracyPlayer"
     case vidHub = "VidHub"
-    
+
     var id: String { rawValue }
-    
+
     func schemeURL(for urlString: String) -> URL? {
         let url = urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString
         switch self {
@@ -45,7 +45,7 @@ enum ExternalPlayer: String, CaseIterable, Identifiable {
 enum InAppPlayer: String, CaseIterable, Identifiable {
     case normal = "Normal"
     case mpv = "mpv"
-    
+
     var id: String { rawValue }
 
     var displayName: String {
@@ -66,15 +66,15 @@ final class PlayerSettingsStore: ObservableObject {
     @Published var holdSpeed: Double {
         didSet { UserDefaults.standard.set(holdSpeed, forKey: "holdSpeedPlayer") }
     }
-    
+
     @Published var externalPlayer: ExternalPlayer {
         didSet { UserDefaults.standard.set(externalPlayer.rawValue, forKey: "externalPlayer") }
     }
-    
+
     @Published var landscapeOnly: Bool {
         didSet { UserDefaults.standard.set(landscapeOnly, forKey: "alwaysLandscape") }
     }
-    
+
     @Published var inAppPlayer: InAppPlayer {
         didSet { UserDefaults.standard.set(inAppPlayer.rawValue, forKey: "inAppPlayer") }
     }
@@ -229,12 +229,12 @@ final class PlayerSettingsStore: ObservableObject {
 
         let savedSpeed = UserDefaults.standard.double(forKey: "holdSpeedPlayer")
         self.holdSpeed = savedSpeed > 0 ? savedSpeed : 2.0
-        
+
         let raw = UserDefaults.standard.string(forKey: "externalPlayer") ?? ExternalPlayer.none.rawValue
         self.externalPlayer = ExternalPlayer(rawValue: raw) ?? .none
-        
+
         self.landscapeOnly = UserDefaults.standard.bool(forKey: "alwaysLandscape")
-        
+
         let inAppRaw = UserDefaults.standard.string(forKey: "inAppPlayer") ?? InAppPlayer.mpv.rawValue
         let normalizedInAppRaw = Settings.normalizedInAppPlayer(inAppRaw)
         if normalizedInAppRaw != inAppRaw {
@@ -344,9 +344,12 @@ struct PlayerSettingsView: View {
     @State private var subtitleStrokeWidth: Double = 1.0
     @State private var subtitleFontSizePresetName: String = "Medium"
     @State private var subtitleVerticalOffset: Double = -6.0
+    @State private var expandedGroups: Set<String> = []
     private let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     private let doubleTapSeekOptions: [Double] = [5, 10, 15, 20, 30, 45, 60]
     private let mpvForegroundFPSOptions: [Int] = [30, 60]
+
+    private var accent: Color { accentColorManager.currentAccentColor }
 
     private var selectedMPVRendererIsMetal: Bool {
         MPVRenderBackendSupport.effectiveBackend(requested: store.mpvRenderBackend, hasMetalDevice: true) == .metal
@@ -373,621 +376,468 @@ struct PlayerSettingsView: View {
         }
         return "MPV advanced features require the Metal MPV renderer."
     }
-    
+
     var body: some View {
-        List {
-            Section(header: Text("Default Player"), footer: Text("This settings work exclusively with the Default media player.")) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Default Playback Speed")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("Speed used when a video starts.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer()
-
-                    Picker("", selection: $store.defaultPlaybackSpeed) {
-                        ForEach(playbackSpeedOptions, id: \.self) { speed in
-                            Text(formatSpeed(speed)).tag(speed)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
+        ScrollView {
+            VStack(spacing: 22) {
+                // MARK: - Default Player
+                VStack(spacing: 8) {
+                    GlassSection(header: "Default Player") {
+                        VStack(spacing: 0) {
+                            GlassDetailRow(title: "Default Playback Speed", subtitle: "Speed used when a video starts.") {
+                                Picker("", selection: $store.defaultPlaybackSpeed) {
+                                    ForEach(playbackSpeedOptions, id: \.self) { speed in
+                                        Text(formatSpeed(speed)).tag(speed)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .tint(.white.opacity(0.7))
+                            }
 
 #if !os(tvOS)
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(format: "Hold Speed: %.1fx", store.holdSpeed))
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("Value of long-press speed playback in the player.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    Spacer()
-                    
-                    Stepper(value: $store.holdSpeed, in: 0.1...3, step: 0.1) {}
-                }
+                            GlassDivider(leadingInset: 16)
+                            GlassDetailRow(title: String(format: "Hold Speed: %.1fx", store.holdSpeed), subtitle: "Value of long-press speed playback in the player.") {
+                                Stepper("", value: $store.holdSpeed, in: 0.1...3, step: 0.1)
+                                    .labelsHidden()
+                            }
 #endif
-                
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Force Landscape")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("Force landscape orientation in the video player.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    Spacer()
-                    
-                    Toggle("", isOn: $store.landscapeOnly)
-                        .tint(accentColorManager.currentAccentColor)
-                }
-            }
-            .eclipseExperimentalSettingsRows()
-            .disabled(store.externalPlayer != .none)
-            .background(EclipseScrollTracker())
-            
-            Section(header: Text("Media Player")) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Media Player")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("The app must be installed and accept the provided scheme.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    Picker("", selection: $store.externalPlayer) {
-                        ForEach(ExternalPlayer.allCases) { player in
-                            Text(player.rawValue).tag(player)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-                
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("In-App Player")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("Select the internal player software.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    Picker("", selection: $store.inAppPlayer) {
-                        ForEach(InAppPlayer.allCases) { p in
-                            Text(p.displayName).tag(p)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
 
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Prefer Downloaded Episodes")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("When a matching download exists, play it from detail pages instead of streaming.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $store.preferDownloadedMedia)
-                        .tint(accentColorManager.currentAccentColor)
-                }
-            }
-            .eclipseExperimentalSettingsRows()
-            
-            if store.inAppPlayer == .mpv {
-                Section(header: Text("MPV Player"), footer: Text("In-app playback, subtitle, and gesture settings.")) {
-                    DisclosureGroup {
-                        settingsToggleRow(
-                            title: "Enable Subtitles by Default",
-                            detail: "Automatically load and display subtitles when available.",
-                            binding: Binding(
-                                get: { UserDefaults.standard.bool(forKey: "enableSubtitlesByDefault") },
-                                set: { UserDefaults.standard.set($0, forKey: "enableSubtitlesByDefault") }
-                            )
-                        )
-
-                        NavigationLink(destination: PlayerLanguageSelectionView(
-                            title: "Default Subtitle Language",
-                            selectedLanguage: Binding(
-                                get: { UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng" },
-                                set: { UserDefaults.standard.set($0, forKey: "defaultSubtitleLanguage") }
-                            )
-                        )) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Default Subtitle Language")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Language preference for subtitles.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                Text(getLanguageName(UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng"))
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
+                            GlassDivider(leadingInset: 16)
+                            GlassDetailRow(title: "Force Landscape", subtitle: "Force landscape orientation in the video player.") {
+                                Toggle("", isOn: $store.landscapeOnly)
+                                    .labelsHidden()
+                                    .tint(accent)
                             }
                         }
-
-                        NavigationLink(destination: PlayerLanguageSelectionView(
-                            title: "Preferred Anime Audio",
-                            selectedLanguage: Binding(
-                                get: { UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn" },
-                                set: { UserDefaults.standard.set($0, forKey: "preferredAnimeAudioLanguage") }
-                            )
-                        )) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Preferred Anime Audio")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Audio language for anime content.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                Text(getLanguageName(UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn"))
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
-                            }
-                        }
-                    } label: {
-                        Label("Subtitle Defaults", systemImage: "captions.bubble")
                     }
+                    .disabled(store.externalPlayer != .none)
 
-                    DisclosureGroup {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Subtitle Text Color")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
+                    GlassSectionFooter("This setting works exclusively with the Default media player.")
+                }
 
-                                    Text("Default color for in-app subtitle rendering.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                Picker("", selection: subtitleTextColorBinding) {
-                                    ForEach(subtitleTextColorOptions.map(\.name), id: \.self) { name in
-                                        Text(name).tag(name)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Subtitle Stroke Color")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Outline color for in-app subtitle rendering.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                Picker("", selection: subtitleStrokeColorBinding) {
-                                    ForEach(subtitleStrokeColorOptions.map(\.name), id: \.self) { name in
-                                        Text(name).tag(name)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(String(format: "Subtitle Stroke Width: %.1f", subtitleStrokeWidthBinding.wrappedValue))
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Outline thickness for in-app subtitle rendering.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-#if os(tvOS)
-                                Picker("", selection: subtitleStrokeWidthBinding) {
-                                    Text("0.0").tag(0.0)
-                                    Text("0.5").tag(0.5)
-                                    Text("1.0").tag(1.0)
-                                    Text("1.5").tag(1.5)
-                                    Text("2.0").tag(2.0)
-                                }
-                                .pickerStyle(.menu)
-#else
-                                Stepper("", value: subtitleStrokeWidthBinding, in: 0.0...2.0, step: 0.5)
-#endif
-                            }
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Subtitle Font Size")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Named size presets for in-app subtitle rendering.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                Picker("", selection: subtitleFontSizePresetBinding) {
-                                    ForEach(subtitleFontSizeOptions.map(\.name), id: \.self) { name in
-                                        Text(name).tag(name)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(String(format: "Subtitle Vertical Offset: %.0f", subtitleVerticalOffsetBinding.wrappedValue))
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Numeric offset for subtitle height. Higher values place subtitles lower on screen.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-#if os(tvOS)
-                                Picker("", selection: subtitleVerticalOffsetBinding) {
-                                    ForEach(Array(stride(from: -24, through: 24, by: 2)), id: \.self) { value in
-                                        Text("\(value)").tag(Double(value))
-                                    }
-                                }
-                                .pickerStyle(.menu)
-#else
-                                Stepper("", value: subtitleVerticalOffsetBinding, in: -24...24, step: 1)
-#endif
-                            }
-
-                            Button(action: resetPlayerSubtitleStyleDefaults) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Reset Subtitle Style")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-
-                                        Text("Restore default subtitle text color, stroke, width, and font size.")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .multilineTextAlignment(.leading)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: "arrow.counterclockwise")
-                                        .foregroundColor(accentColorManager.currentAccentColor)
-                                }
-                            }
-                    } label: {
-                        Label("Subtitle Appearance", systemImage: "textformat.size")
-                    }
-
-                    DisclosureGroup {
-                            if MPVRenderBackendSupport.metalIsFullySupported {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Render Backend")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-
-                                        Text(MPVRenderBackendSupport.settingsDescription)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .multilineTextAlignment(.leading)
-
-                                        Text(MPVRenderBackendSupport.settingsStatusLine)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .multilineTextAlignment(.leading)
-                                    }
-
-                                    Spacer()
-
-                                    Picker("", selection: $store.mpvRenderBackend) {
-                                        ForEach(MPVRenderBackend.allCases) { backend in
-                                            Text(backend.displayName).tag(backend)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Metal Quality")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-
-                                        Text(store.mpvMetalQualityProfile.settingsDescription)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .multilineTextAlignment(.leading)
-                                    }
-
-                                    Spacer()
-
-                                    Picker("", selection: $store.mpvMetalQualityProfile) {
-                                        ForEach(MPVMetalQualityProfile.allCases) { profile in
-                                            Text(profile.displayName).tag(profile)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                            }
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Inline Frame Rate")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("Most media will look normal in 30 fps, but in the rare case of 60fps media, switch this to 60 fps.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.leading)
-                                }
-
-                                Spacer()
-
-                                Picker("", selection: $store.mpvForegroundFPS) {
-                                    ForEach(mpvForegroundFPSOptions, id: \.self) { fps in
-                                        Text("\(fps) fps").tag(fps)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-
-                            settingsToggleRow(
-                                title: "PiP When Leaving App",
-                                detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
-                                binding: $store.mpvAppExitPictureInPictureEnabled
-                            )
-
-                    } label: {
-                        Label("MPV Rendering", systemImage: "display")
-                    }
-
-                    DisclosureGroup {
-                        settingsToggleRow(
-                            title: "Brightness Gesture",
-                            detail: "Use a left-side vertical drag for screen brightness.",
-                            binding: $store.playerBrightnessGestureEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "Volume Gesture",
-                            detail: "Use a right-side vertical drag for system volume.",
-                            binding: $store.playerVolumeGestureEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "Two-Finger Play/Pause",
-                            detail: "Toggle play and pause with a two-finger tap.",
-                            binding: $store.playerTwoFingerTapPlayPauseEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "Center-Tap Play/Pause",
-                            detail: "Tap the center of the video to play or pause without opening controls.",
-                            binding: $store.playerCenterTapPlayPauseEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "Double-Tap Seek",
-                            detail: "Double-tap the left or right side of the video to seek.",
-                            binding: $store.playerDoubleTapSeekEnabled
-                        )
-
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Seek Amount")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                Text("Seek \(Int(store.playerDoubleTapSeekSeconds)) seconds with skip buttons, PiP, and double-tap when enabled.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.leading)
-                            }
-
-                            Spacer()
-
-#if os(tvOS)
-                            Picker("", selection: $store.playerDoubleTapSeekSeconds) {
-                                ForEach(doubleTapSeekOptions, id: \.self) { seconds in
-                                    Text("\(Int(seconds))s").tag(seconds)
+                // MARK: - Media Player
+                GlassSection(header: "Media Player") {
+                    VStack(spacing: 0) {
+                        GlassDetailRow(title: "Media Player", subtitle: "The app must be installed and accept the provided scheme.") {
+                            Picker("", selection: $store.externalPlayer) {
+                                ForEach(ExternalPlayer.allCases) { player in
+                                    Text(player.rawValue).tag(player)
                                 }
                             }
                             .pickerStyle(.menu)
-#else
-                            Stepper("", value: $store.playerDoubleTapSeekSeconds, in: 5...60, step: 5)
-                                .frame(width: 100)
-#endif
+                            .tint(.white.opacity(0.7))
                         }
-                    } label: {
-                        Label("Playback Gestures", systemImage: "hand.draw")
-                    }
 
-                    DisclosureGroup {
-                        settingsToggleRow(
-                            title: "OpenSubtitles",
-                            detail: "Enable subtitle search through the Stremio OpenSubtitles v3 add-on.",
-                            binding: $store.playerOpenSubtitlesEnabled
-                        )
+                        GlassDivider(leadingInset: 16)
 
-                        if store.playerOpenSubtitlesEnabled {
-                            settingsToggleRow(
-                                title: "Use as Auto Fallback",
-                                detail: "When auto subtitles are on, search OpenSubtitles if the selected language is missing locally.",
-                                binding: $store.playerOpenSubtitlesAutoFallbackEnabled
-                            )
-                        }
-                    } label: {
-                        Label("OpenSubtitles", systemImage: "globe")
-                    }
-
-                    DisclosureGroup {
-                        settingsToggleRow(
-                            title: "AniSkip",
-                            detail: "Fetch skip segments from AniSkip for anime content.",
-                            binding: $store.aniSkipEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "TheIntroDB",
-                            detail: "Fetch skip segments from TheIntroDB for all content.",
-                            binding: $store.introDBEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "IntroDB",
-                            detail: "Fetch skip segments from introdb.app using IMDb IDs when other skip sources return nothing.",
-                            binding: $store.introDBAppEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "Auto Skip",
-                            detail: "Automatically skip intros, outros, recaps, and previews when detected. A skip button is always shown regardless of this setting.",
-                            binding: $store.aniSkipAutoSkip
-                        )
-
-                        settingsToggleRow(
-                            title: "Skip 85s Fallback",
-                            detail: "Show a skip 85 seconds button when no skip data is returned for the current episode.",
-                            binding: $store.skip85sEnabled
-                        )
-
-                        settingsToggleRow(
-                            title: "Always Show Skip 85s",
-                            detail: "Keep the Skip 85s button visible even when skip segments are available.",
-                            binding: $store.skip85sAlwaysVisible
-                        )
-                    } label: {
-                        Label("Skip Segments", systemImage: "forward.fill")
-                    }
-
-                    if canUseMetalMPVAdvancedSettings {
-                        experimentalMPVDisclosure
-                    } else {
-                        Label(mpvAdvancedRequirementMessage, systemImage: "lock.fill")
-                            .foregroundColor(.secondary)
-                    }
-
-                    DisclosureGroup {
-                        settingsToggleRow(
-                            title: "Episode Browser Button",
-                            detail: "Show the episode drawer button over the player.",
-                            binding: $store.showEpisodeBrowserButton
-                        )
-
-                        settingsToggleRow(
-                            title: "Show Next Episode Button",
-                            detail: "Display a button near the end of an episode to quickly open stream search for the next episode.",
-                            binding: $store.showNextEpisodeButton
-                        )
-
-                        if store.showNextEpisodeButton {
-                            settingsToggleRow(
-                                title: "Use Episode Poster",
-                                detail: "Show the next episode image, number, and title when available.",
-                                binding: $store.showNextEpisodePosterButton
-                            )
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Appearance Threshold")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-
-                                    Text("How far into the episode (%) before the button appears. Default is 90%.")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.leading)
+                        GlassDetailRow(title: "In-App Player", subtitle: "Select the internal player software.") {
+                            Picker("", selection: $store.inAppPlayer) {
+                                ForEach(InAppPlayer.allCases) { p in
+                                    Text(p.displayName).tag(p)
                                 }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(.white.opacity(0.7))
+                        }
 
-                                Spacer()
+                        GlassDivider(leadingInset: 16)
 
-                                Text("\(Int(store.nextEpisodeThreshold * 100))%")
-                                    .foregroundColor(.secondary)
-                                    .font(.subheadline)
+                        GlassDetailRow(title: "Prefer Downloaded Episodes", subtitle: "When a matching download exists, play it from detail pages instead of streaming.") {
+                            Toggle("", isOn: $store.preferDownloadedMedia)
+                                .labelsHidden()
+                                .tint(accent)
+                        }
+                    }
+                }
 
-#if os(tvOS)
-                                Picker("", selection: $store.nextEpisodeThreshold) {
-                                    ForEach(Array(stride(from: 0.50, through: 0.99, by: 0.05)), id: \.self) { value in
-                                        Text("\(Int(value * 100))%").tag(value)
+                // MARK: - MPV Player
+                if store.inAppPlayer == .mpv {
+                    VStack(spacing: 8) {
+                        GlassSection(header: "MPV Player") {
+                            VStack(spacing: 0) {
+                                subtitleDefaultsGroup
+                                GlassDivider()
+                                subtitleAppearanceGroup
+                                GlassDivider()
+                                mpvRenderingGroup
+                                GlassDivider()
+                                gesturesGroup
+                                GlassDivider()
+                                openSubtitlesGroup
+                                GlassDivider()
+                                skipSegmentsGroup
+                                GlassDivider()
+                                if canUseMetalMPVAdvancedSettings {
+                                    experimentalMPVDisclosure
+                                } else {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "lock.fill")
+                                            .foregroundColor(.white.opacity(0.5))
+                                        Text(mpvAdvancedRequirementMessage)
+                                            .font(.caption)
+                                            .foregroundColor(.white.opacity(0.5))
+                                        Spacer(minLength: 0)
                                     }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
                                 }
-                                .pickerStyle(.menu)
-#else
-                                Stepper("", value: $store.nextEpisodeThreshold, in: 0.50...0.99, step: 0.05)
-                                    .frame(width: 100)
-#endif
+                                GlassDivider()
+                                nextEpisodeGroup
                             }
                         }
-                    } label: {
-                        Label("Next Episode", systemImage: "forward.end.fill")
+                        GlassSectionFooter("In-app playback, subtitle, and gesture settings.")
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        GlassSection(header: "MPV Advanced Features") {
+                            HStack(spacing: 10) {
+                                Image(systemName: "lock.fill")
+                                    .foregroundColor(.white.opacity(0.5))
+                                Text("Requires Metal MPV")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                        }
+                        GlassSectionFooter("Select MPV, keep external playback set to Default, and use the Metal renderer to enable MPV advanced playback features.")
                     }
                 }
-                .eclipseExperimentalSettingsRows()
-            } else {
-                Section(header: Text("MPV Advanced Features"), footer: Text("Select MPV, keep external playback set to Default, and use the Metal renderer to enable MPV advanced playback features.")) {
-                    Label("Requires Metal MPV", systemImage: "lock.fill")
-                        .foregroundColor(.secondary)
-                }
-                .eclipseExperimentalSettingsRows()
             }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
+            .background(EclipseScrollTracker())
         }
         .navigationTitle("Media Player")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         .onAppear {
             refreshPlayerSubtitleStyleStateFromDefaults()
         }
     }
-    
+
+    // MARK: - MPV disclosure groups
+
+    @ViewBuilder
+    private var subtitleDefaultsGroup: some View {
+        disclosureHeader("Subtitle Defaults", icon: "captions.bubble", iconColor: .blue, key: "subDefaults")
+        if isExpanded("subDefaults") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(
+                title: "Enable Subtitles by Default",
+                detail: "Automatically load and display subtitles when available.",
+                binding: Binding(
+                    get: { UserDefaults.standard.bool(forKey: "enableSubtitlesByDefault") },
+                    set: { UserDefaults.standard.set($0, forKey: "enableSubtitlesByDefault") }
+                )
+            )
+
+            GlassDivider(leadingInset: 16)
+
+            NavigationLink(destination: PlayerLanguageSelectionView(
+                title: "Default Subtitle Language",
+                selectedLanguage: Binding(
+                    get: { UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng" },
+                    set: { UserDefaults.standard.set($0, forKey: "defaultSubtitleLanguage") }
+                )
+            )) {
+                GlassDetailRow(title: "Default Subtitle Language", subtitle: "Language preference for subtitles.") {
+                    valueChevron(getLanguageName(UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng"))
+                }
+            }
+            .buttonStyle(.plain)
+
+            GlassDivider(leadingInset: 16)
+
+            NavigationLink(destination: PlayerLanguageSelectionView(
+                title: "Preferred Anime Audio",
+                selectedLanguage: Binding(
+                    get: { UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn" },
+                    set: { UserDefaults.standard.set($0, forKey: "preferredAnimeAudioLanguage") }
+                )
+            )) {
+                GlassDetailRow(title: "Preferred Anime Audio", subtitle: "Audio language for anime content.") {
+                    valueChevron(getLanguageName(UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn"))
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var subtitleAppearanceGroup: some View {
+        disclosureHeader("Subtitle Appearance", icon: "textformat.size", iconColor: .purple, key: "subAppearance")
+        if isExpanded("subAppearance") {
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Subtitle Text Color", subtitle: "Default color for in-app subtitle rendering.") {
+                Picker("", selection: subtitleTextColorBinding) {
+                    ForEach(subtitleTextColorOptions.map(\.name), id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+            }
+
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Subtitle Stroke Color", subtitle: "Outline color for in-app subtitle rendering.") {
+                Picker("", selection: subtitleStrokeColorBinding) {
+                    ForEach(subtitleStrokeColorOptions.map(\.name), id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+            }
+
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: String(format: "Subtitle Stroke Width: %.1f", subtitleStrokeWidthBinding.wrappedValue), subtitle: "Outline thickness for in-app subtitle rendering.") {
+#if os(tvOS)
+                Picker("", selection: subtitleStrokeWidthBinding) {
+                    Text("0.0").tag(0.0)
+                    Text("0.5").tag(0.5)
+                    Text("1.0").tag(1.0)
+                    Text("1.5").tag(1.5)
+                    Text("2.0").tag(2.0)
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+#else
+                Stepper("", value: subtitleStrokeWidthBinding, in: 0.0...2.0, step: 0.5)
+                    .labelsHidden()
+#endif
+            }
+
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Subtitle Font Size", subtitle: "Named size presets for in-app subtitle rendering.") {
+                Picker("", selection: subtitleFontSizePresetBinding) {
+                    ForEach(subtitleFontSizeOptions.map(\.name), id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+            }
+
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: String(format: "Subtitle Vertical Offset: %.0f", subtitleVerticalOffsetBinding.wrappedValue), subtitle: "Numeric offset for subtitle height. Higher values place subtitles lower on screen.") {
+#if os(tvOS)
+                Picker("", selection: subtitleVerticalOffsetBinding) {
+                    ForEach(Array(stride(from: -24, through: 24, by: 2)), id: \.self) { value in
+                        Text("\(value)").tag(Double(value))
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+#else
+                Stepper("", value: subtitleVerticalOffsetBinding, in: -24...24, step: 1)
+                    .labelsHidden()
+#endif
+            }
+
+            GlassDivider(leadingInset: 16)
+            Button(action: resetPlayerSubtitleStyleDefaults) {
+                GlassDetailRow(icon: "arrow.counterclockwise", iconColor: .orange, title: "Reset Subtitle Style", subtitle: "Restore default subtitle text color, stroke, width, and font size.") {
+                    EmptyView()
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var mpvRenderingGroup: some View {
+        disclosureHeader("MPV Rendering", icon: "display", iconColor: .cyan, key: "rendering")
+        if isExpanded("rendering") {
+            GlassDivider(leadingInset: 16)
+            if MPVRenderBackendSupport.metalIsFullySupported {
+                GlassDetailRow(title: "Render Backend", subtitle: "\(MPVRenderBackendSupport.settingsDescription)\n\(MPVRenderBackendSupport.settingsStatusLine)") {
+                    Picker("", selection: $store.mpvRenderBackend) {
+                        ForEach(MPVRenderBackend.allCases) { backend in
+                            Text(backend.displayName).tag(backend)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.white.opacity(0.7))
+                }
+
+                GlassDivider(leadingInset: 16)
+                GlassDetailRow(title: "Metal Quality", subtitle: store.mpvMetalQualityProfile.settingsDescription) {
+                    Picker("", selection: $store.mpvMetalQualityProfile) {
+                        ForEach(MPVMetalQualityProfile.allCases) { profile in
+                            Text(profile.displayName).tag(profile)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.white.opacity(0.7))
+                }
+
+                GlassDivider(leadingInset: 16)
+            }
+
+            GlassDetailRow(title: "Inline Frame Rate", subtitle: "Most media will look normal in 30 fps, but in the rare case of 60fps media, switch this to 60 fps.") {
+                Picker("", selection: $store.mpvForegroundFPS) {
+                    ForEach(mpvForegroundFPSOptions, id: \.self) { fps in
+                        Text("\(fps) fps").tag(fps)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+            }
+
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(
+                title: "PiP When Leaving App",
+                detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
+                binding: $store.mpvAppExitPictureInPictureEnabled
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var gesturesGroup: some View {
+        disclosureHeader("Playback Gestures", icon: "hand.draw", iconColor: .green, key: "gestures")
+        if isExpanded("gestures") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Brightness Gesture", detail: "Use a left-side vertical drag for screen brightness.", binding: $store.playerBrightnessGestureEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Volume Gesture", detail: "Use a right-side vertical drag for system volume.", binding: $store.playerVolumeGestureEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Two-Finger Play/Pause", detail: "Toggle play and pause with a two-finger tap.", binding: $store.playerTwoFingerTapPlayPauseEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Center-Tap Play/Pause", detail: "Tap the center of the video to play or pause without opening controls.", binding: $store.playerCenterTapPlayPauseEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Double-Tap Seek", detail: "Double-tap the left or right side of the video to seek.", binding: $store.playerDoubleTapSeekEnabled)
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Seek Amount", subtitle: "Seek \(Int(store.playerDoubleTapSeekSeconds)) seconds with skip buttons, PiP, and double-tap when enabled.") {
+#if os(tvOS)
+                Picker("", selection: $store.playerDoubleTapSeekSeconds) {
+                    ForEach(doubleTapSeekOptions, id: \.self) { seconds in
+                        Text("\(Int(seconds))s").tag(seconds)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+#else
+                Stepper("", value: $store.playerDoubleTapSeekSeconds, in: 5...60, step: 5)
+                    .labelsHidden()
+#endif
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var openSubtitlesGroup: some View {
+        disclosureHeader("OpenSubtitles", icon: "globe", iconColor: .indigo, key: "openSubs")
+        if isExpanded("openSubs") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "OpenSubtitles", detail: "Enable subtitle search through the Stremio OpenSubtitles v3 add-on.", binding: $store.playerOpenSubtitlesEnabled)
+
+            if store.playerOpenSubtitlesEnabled {
+                GlassDivider(leadingInset: 16)
+                settingsToggleRow(title: "Use as Auto Fallback", detail: "When auto subtitles are on, search OpenSubtitles if the selected language is missing locally.", binding: $store.playerOpenSubtitlesAutoFallbackEnabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var skipSegmentsGroup: some View {
+        disclosureHeader("Skip Segments", icon: "forward.fill", iconColor: .pink, key: "skip")
+        if isExpanded("skip") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "AniSkip", detail: "Fetch skip segments from AniSkip for anime content.", binding: $store.aniSkipEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "TheIntroDB", detail: "Fetch skip segments from TheIntroDB for all content.", binding: $store.introDBEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "IntroDB", detail: "Fetch skip segments from introdb.app using IMDb IDs when other skip sources return nothing.", binding: $store.introDBAppEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Auto Skip", detail: "Automatically skip intros, outros, recaps, and previews when detected. A skip button is always shown regardless of this setting.", binding: $store.aniSkipAutoSkip)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Skip 85s Fallback", detail: "Show a skip 85 seconds button when no skip data is returned for the current episode.", binding: $store.skip85sEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Always Show Skip 85s", detail: "Keep the Skip 85s button visible even when skip segments are available.", binding: $store.skip85sAlwaysVisible)
+        }
+    }
+
+    @ViewBuilder
+    private var nextEpisodeGroup: some View {
+        disclosureHeader("Next Episode", icon: "forward.end.fill", iconColor: .yellow, key: "nextEp")
+        if isExpanded("nextEp") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Episode Browser Button", detail: "Show the episode drawer button over the player.", binding: $store.showEpisodeBrowserButton)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Show Next Episode Button", detail: "Display a button near the end of an episode to quickly open stream search for the next episode.", binding: $store.showNextEpisodeButton)
+
+            if store.showNextEpisodeButton {
+                GlassDivider(leadingInset: 16)
+                settingsToggleRow(title: "Use Episode Poster", detail: "Show the next episode image, number, and title when available.", binding: $store.showNextEpisodePosterButton)
+
+                GlassDivider(leadingInset: 16)
+                GlassDetailRow(title: "Appearance Threshold", subtitle: "How far into the episode (%) before the button appears. Default is 90%.") {
+                    HStack(spacing: 8) {
+                        Text("\(Int(store.nextEpisodeThreshold * 100))%")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.5))
+#if os(tvOS)
+                        Picker("", selection: $store.nextEpisodeThreshold) {
+                            ForEach(Array(stride(from: 0.50, through: 0.99, by: 0.05)), id: \.self) { value in
+                                Text("\(Int(value * 100))%").tag(value)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white.opacity(0.7))
+#else
+                        Stepper("", value: $store.nextEpisodeThreshold, in: 0.50...0.99, step: 0.05)
+                            .labelsHidden()
+#endif
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func isExpanded(_ key: String) -> Bool {
+        expandedGroups.contains(key)
+    }
+
+    private func toggleGroup(_ key: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedGroups.contains(key) {
+                expandedGroups.remove(key)
+            } else {
+                expandedGroups.insert(key)
+            }
+        }
+    }
+
+    private func disclosureHeader(_ title: String, icon: String, iconColor: Color, key: String) -> some View {
+        Button {
+            toggleGroup(key)
+        } label: {
+            GlassDetailRow(icon: icon, iconColor: iconColor, title: title) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.4))
+                    .rotationEffect(.degrees(isExpanded(key) ? 90 : 0))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func valueChevron(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(text)
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.5))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white.opacity(0.3))
+        }
+    }
+
     private func getLanguageName(_ code: String) -> String {
         let languages: [String: String] = [
             "eng": "English",
@@ -1013,98 +863,39 @@ struct PlayerSettingsView: View {
     }
 
     private func settingsToggleRow(title: String, detail: String, binding: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.leading)
-            }
-
-            Spacer()
-
+        GlassDetailRow(title: title, subtitle: detail) {
             Toggle("", isOn: binding)
+                .labelsHidden()
                 .tint(accentColorManager.currentAccentColor)
         }
     }
 
+    @ViewBuilder
     private var experimentalMPVDisclosure: some View {
-        DisclosureGroup {
-            settingsToggleRow(
-                title: "Stream Warmup Cache",
-                detail: "Route compatible HTTP streams through a cache-aware MPV proxy that can reuse starter bytes for faster retries and reloads.",
-                binding: $store.experimentalMPVPreloadEnabled
-            )
-
-            settingsToggleRow(
-                title: "Next Episode Staging",
-                detail: "Pre-resolve the next episode preview near the end of MPV playback. Stream selection still uses the normal next-episode flow.",
-                binding: $store.experimentalMPVSmoothTransitionEnabled
-            )
-
-            settingsToggleRow(
-                title: "Allow Cellular Warmup",
-                detail: "Keep off for sideloaded or metered setups unless you explicitly want small stream warmups on cellular.",
-                binding: $store.experimentalMPVPreloadCellularEnabled
-            )
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Wi-Fi Cache Limit")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    Text("\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV stream warmup cache.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer()
-
+        disclosureHeader("MPV Advanced", icon: "sparkles", iconColor: .purple, key: "experimental")
+        if isExpanded("experimental") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Stream Warmup Cache", detail: "Route compatible HTTP streams through a cache-aware MPV proxy that can reuse starter bytes for faster retries and reloads.", binding: $store.experimentalMPVPreloadEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Next Episode Staging", detail: "Pre-resolve the next episode preview near the end of MPV playback. Stream selection still uses the normal next-episode flow.", binding: $store.experimentalMPVSmoothTransitionEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Allow Cellular Warmup", detail: "Keep off for sideloaded or metered setups unless you explicitly want small stream warmups on cellular.", binding: $store.experimentalMPVPreloadCellularEnabled)
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Wi-Fi Cache Limit", subtitle: "\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV stream warmup cache.") {
                 Stepper("", value: $store.experimentalMPVPreloadWifiLimitMB, in: 32...2048, step: 32)
-                    .frame(width: 100)
+                    .labelsHidden()
             }
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Cellular Cache Limit")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    Text("\(store.experimentalMPVPreloadCellularLimitMB) MB for MPV stream warmup cache.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer()
-
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Cellular Cache Limit", subtitle: "\(store.experimentalMPVPreloadCellularLimitMB) MB for MPV stream warmup cache.") {
                 Stepper("", value: $store.experimentalMPVPreloadCellularLimitMB, in: 8...256, step: 8)
-                    .frame(width: 100)
+                    .labelsHidden()
             }
-
-            settingsToggleRow(
-                title: "Show Remaining Time",
-                detail: "Use remaining time in MPV player controls where supported.",
-                binding: $store.experimentalMPVShowRemainingTime
-            )
-
-            settingsToggleRow(
-                title: "Precise Progress Adjustment",
-                detail: "Use finer slider updates for MPV progress adjustments.",
-                binding: $store.experimentalMPVPreciseProgress
-            )
-
-            settingsToggleRow(
-                title: "Ignore Special Subtitle Styles",
-                detail: "Prefer app subtitle styling over embedded ASS effects when MPV exposes compatible tracks.",
-                binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles
-            )
-        } label: {
-            Label("MPV Advanced", systemImage: "sparkles")
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Show Remaining Time", detail: "Use remaining time in MPV player controls where supported.", binding: $store.experimentalMPVShowRemainingTime)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Precise Progress Adjustment", detail: "Use finer slider updates for MPV progress adjustments.", binding: $store.experimentalMPVPreciseProgress)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Ignore Special Subtitle Styles", detail: "Prefer app subtitle styling over embedded ASS effects when MPV exposes compatible tracks.", binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles)
         }
     }
 

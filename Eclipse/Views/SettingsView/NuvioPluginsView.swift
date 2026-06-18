@@ -7,21 +7,30 @@ import SwiftUI
 
 struct NuvioPluginsView: View {
     @StateObject private var manager = NuvioPluginManager.shared
+    @StateObject private var accentColorManager = AccentColorManager.shared
     @State private var repositoryURL = ""
     @State private var isAddingRepository = false
     @State private var isRefreshingAll = false
     @State private var testingProviderID: String?
     @State private var alert: PluginAlert?
 
+    private var accent: Color { accentColorManager.currentAccentColor }
+
     var body: some View {
-        List {
-            overviewSection
-            addRepositorySection
-            repositoriesSection
-            providersSection
+        ScrollView {
+            VStack(spacing: 22) {
+                overviewSection
+                addRepositorySection
+                repositoriesSection
+                providersSection
+            }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
+            .background(EclipseScrollTracker())
         }
         .navigationTitle("Plugins")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         .toolbar {
 #if !os(tvOS)
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -47,72 +56,98 @@ struct NuvioPluginsView: View {
     }
 
     private var overviewSection: some View {
-        Section {
-            Toggle("Plugins Enabled", isOn: Binding(
-                get: { manager.pluginsEnabled },
-                set: { manager.setPluginsEnabled($0) }
-            ))
+        VStack(spacing: 8) {
+            GlassSection {
+                VStack(spacing: 0) {
+                    GlassDetailRow(icon: "puzzlepiece.extension.fill", iconColor: .mint, title: "Plugins Enabled") {
+                        Toggle("", isOn: Binding(
+                            get: { manager.pluginsEnabled },
+                            set: { manager.setPluginsEnabled($0) }
+                        ))
+                        .labelsHidden()
+                        .tint(accent)
+                    }
 
-            Toggle("Group Streams by Repository", isOn: Binding(
-                get: { manager.groupStreamsByRepository },
-                set: { manager.setGroupStreamsByRepository($0) }
-            ))
+                    GlassDivider()
 
-            HStack {
-                Label("Repositories", systemImage: "shippingbox")
-                Spacer()
-                Text("\(manager.repositories.count)")
-                    .foregroundColor(.secondary)
+                    GlassDetailRow(icon: "square.stack.3d.up.fill", iconColor: .purple, title: "Group Streams by Repository") {
+                        Toggle("", isOn: Binding(
+                            get: { manager.groupStreamsByRepository },
+                            set: { manager.setGroupStreamsByRepository($0) }
+                        ))
+                        .labelsHidden()
+                        .tint(accent)
+                    }
+
+                    GlassDivider()
+
+                    GlassDetailRow(icon: "shippingbox.fill", iconColor: .orange, title: "Repositories") {
+                        Text("\(manager.repositories.count)")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+
+                    GlassDivider()
+
+                    GlassDetailRow(icon: "puzzlepiece.extension", iconColor: .cyan, title: "Providers") {
+                        Text("\(manager.scrapers.count)")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                }
             }
-
-            HStack {
-                Label("Providers", systemImage: "puzzlepiece.extension")
-                Spacer()
-                Text("\(manager.scrapers.count)")
-                    .foregroundColor(.secondary)
-            }
-        } footer: {
-            Text("Enabled plugin providers appear in manual stream results and Services Auto Mode.")
+            GlassSectionFooter("Enabled plugin providers appear in manual stream results and Services Auto Mode.")
         }
     }
 
     private var addRepositorySection: some View {
-        Section {
-            TextField("Repository URL", text: $repositoryURL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+        GlassSection(header: "Add Repository") {
+            VStack(spacing: 0) {
+                TextField("Repository URL", text: $repositoryURL)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .foregroundColor(.white)
+                    .tint(accent)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
 
-            Button {
-                addRepository()
-            } label: {
-                HStack {
-                    Label("Install Repository", systemImage: "plus.circle")
-                    Spacer()
-                    if isAddingRepository {
-                        ProgressView()
+                GlassDivider(leadingInset: 16)
+
+                Button {
+                    addRepository()
+                } label: {
+                    GlassDetailRow(icon: "plus.circle.fill", iconColor: .green, title: "Install Repository") {
+                        if isAddingRepository {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white.opacity(0.6))
+                        } else {
+                            EmptyView()
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                .disabled(repositoryURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingRepository)
             }
-            .disabled(repositoryURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingRepository)
-        } header: {
-            Text("Add Repository")
         }
     }
 
     @ViewBuilder
     private var repositoriesSection: some View {
-        Section {
+        GlassSection(header: "Repositories") {
             if manager.repositories.isEmpty {
-                Text("No plugin repositories installed")
-                    .foregroundColor(.secondary)
+                emptyText("No plugin repositories installed")
             } else {
-                ForEach(manager.repositories) { repository in
-                    repositoryRow(repository)
+                VStack(spacing: 0) {
+                    ForEach(Array(manager.repositories.enumerated()), id: \.element.id) { index, repository in
+                        repositoryRow(repository)
+                        if index < manager.repositories.count - 1 {
+                            GlassDivider(leadingInset: 16)
+                        }
+                    }
                 }
             }
-        } header: {
-            Text("Repositories")
         }
     }
 
@@ -123,18 +158,19 @@ struct NuvioPluginsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(repository.name)
                         .font(.headline)
+                        .foregroundColor(.white)
                     Text(repository.hostLabel)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.5))
                     if let version = repository.version, !version.isEmpty {
                         Text("Version \(version)")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.45))
                     }
                     if let description = repository.description, !description.isEmpty {
                         Text(description)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.5))
                             .lineLimit(2)
                     }
                 }
@@ -143,6 +179,7 @@ struct NuvioPluginsView: View {
 
                 if repository.isRefreshing {
                     ProgressView()
+                        .tint(.white.opacity(0.6))
                 }
             }
 
@@ -155,7 +192,7 @@ struct NuvioPluginsView: View {
             HStack {
                 Label("\(repository.scraperCount) provider\(repository.scraperCount == 1 ? "" : "s")", systemImage: "puzzlepiece.extension")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.white.opacity(0.5))
 
                 Spacer()
 
@@ -163,6 +200,7 @@ struct NuvioPluginsView: View {
                     refreshRepository(repository)
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .foregroundColor(accent)
                 }
                 .buttonStyle(.borderless)
                 .disabled(repository.isRefreshing)
@@ -171,26 +209,30 @@ struct NuvioPluginsView: View {
                     manager.removeRepository(repository.manifestUrl)
                 } label: {
                     Image(systemName: "trash")
+                        .foregroundColor(.red)
                 }
                 .buttonStyle(.borderless)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     @ViewBuilder
     private var providersSection: some View {
-        Section {
+        GlassSection(header: "Providers") {
             if manager.scrapers.isEmpty {
-                Text("No plugin providers installed")
-                    .foregroundColor(.secondary)
+                emptyText("No plugin providers installed")
             } else {
-                ForEach(sortedScrapers) { scraper in
-                    providerRow(scraper)
+                VStack(spacing: 0) {
+                    ForEach(Array(sortedScrapers.enumerated()), id: \.element.id) { index, scraper in
+                        providerRow(scraper)
+                        if index < sortedScrapers.count - 1 {
+                            GlassDivider(leadingInset: 16)
+                        }
+                    }
                 }
             }
-        } header: {
-            Text("Providers")
         }
     }
 
@@ -200,15 +242,16 @@ struct NuvioPluginsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(scraper.name)
                         .font(.headline)
+                        .foregroundColor(.white)
                     if !scraper.description.isEmpty {
                         Text(scraper.description)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.5))
                             .lineLimit(2)
                     }
                     Text(providerSubtitle(for: scraper))
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.45))
                 }
 
                 Spacer()
@@ -218,6 +261,7 @@ struct NuvioPluginsView: View {
                     set: { manager.toggleScraper(scraper.id, enabled: $0) }
                 ))
                 .labelsHidden()
+                .tint(accent)
                 .disabled(!scraper.manifestEnabled)
             }
 
@@ -226,9 +270,10 @@ struct NuvioPluginsView: View {
                     Text(type.uppercased())
                         .font(.caption2)
                         .fontWeight(.semibold)
+                        .foregroundColor(.white.opacity(0.8))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.16))
+                        .background(Color.white.opacity(0.12))
                         .cornerRadius(5)
                 }
 
@@ -250,15 +295,27 @@ struct NuvioPluginsView: View {
                 } label: {
                     if testingProviderID == scraper.id {
                         ProgressView()
+                            .tint(.white.opacity(0.6))
                     } else {
                         Image(systemName: "play.circle")
+                            .foregroundColor(accent)
                     }
                 }
                 .buttonStyle(.borderless)
                 .disabled(testingProviderID != nil || !scraper.enabled)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func emptyText(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundColor(.white.opacity(0.5))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
     }
 
     private var sortedScrapers: [NuvioPluginScraper] {

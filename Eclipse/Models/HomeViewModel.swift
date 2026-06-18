@@ -21,6 +21,11 @@ final class HomeViewModel: ObservableObject {
     private var heroCarouselItems: [TMDBSearchResult] = []
     private var heroCarouselIndex = 0
     private var heroLaunchSelectionCatalogId: String?
+
+    /// Number of items in the hero carousel (for pager dots).
+    var heroCarouselCount: Int { heroCarouselItems.count }
+    /// Current index within the hero carousel (for pager dots).
+    var heroCarouselCurrentIndex: Int { min(heroCarouselIndex, max(0, heroCarouselItems.count - 1)) }
     private var activeLoadTask: Task<Void, Never>?
     
     init() {

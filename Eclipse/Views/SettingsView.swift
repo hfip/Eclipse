@@ -14,10 +14,8 @@ struct SettingsView: View {
     @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
     @AppStorage("githubReleaseURL") private var githubReleaseURL = ""
     @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
-    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = true
     @AppStorage(PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey) private var skipAniListTraversalForAnimeDetails = false
 
-    @StateObject private var algorithmManager = AlgorithmManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
     @AppStorage("showKanzen") private var showKanzen: Bool = false
     @AppStorage("hideSplashScreen") private var hideSplashScreen = false
@@ -62,7 +60,7 @@ struct SettingsView: View {
         ("no-NO", "Norwegian"),
         ("fi-FI", "Finnish")
     ]
-    
+
     var body: some View {
         #if os(tvOS)
             HStack(spacing: 0) {
@@ -135,14 +133,7 @@ struct SettingsView: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        
-                        GlassDivider()
-                        
-                        NavigationLink(destination: TMDBFiltersView()) {
-                            GlassSettingsRow(icon: "line.3.horizontal.decrease.circle", iconColor: .orange, title: "Content Filters")
-                        }
-                        .buttonStyle(.plain)
-                        
+
                         GlassDivider()
 
                         NavigationLink(destination: PerformanceModeSettingsView()) {
@@ -169,50 +160,18 @@ struct SettingsView: View {
 
                         GlassDivider()
 
-                        NavigationLink(destination: ExperimentalFeaturesSettingsView()) {
-                            GlassSettingsRow(icon: "sparkles", iconColor: .purple, title: "Experimental Features") {
-                                HStack(spacing: 4) {
-                                    Text(experimentalFeaturesEnabled ? (ExperimentalFeatureState.isEnabledAtLaunch ? "On" : "Restart") : "Off")
-                                        .font(.subheadline)
-                                        .foregroundColor(.white.opacity(0.5))
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.3))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-
-                        GlassDivider()
-                        
-                        NavigationLink(destination: AlgorithmSelectionView()) {
-                            GlassSettingsRow(icon: "magnifyingglass", iconColor: .cyan, title: "Matching Algorithm") {
-                                HStack(spacing: 4) {
-                                    Text(algorithmManager.selectedAlgorithm.displayName)
-                                        .font(.subheadline)
-                                        .foregroundColor(.white.opacity(0.5))
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.3))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        
-                        GlassDivider()
-                        
                         NavigationLink(destination: PlayerSettingsView()) {
                             GlassSettingsRow(icon: "play.fill", iconColor: .white, title: "Media Player")
                         }
                         .buttonStyle(.plain)
-                        
+
                         GlassDivider()
-                        
+
                         NavigationLink(destination: AlternativeUIView()) {
                             GlassSettingsRow(icon: "paintbrush.fill", iconColor: .purple, title: "Appearance")
                         }
                         .buttonStyle(.plain)
-                        
+
                         GlassDivider()
 
                         NavigationLink(destination: ScheduleSettingsView()) {
@@ -230,19 +189,19 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
 
                         GlassDivider()
-                        
+
                         NavigationLink(destination: CatalogsSettingsView()) {
                             GlassSettingsRow(icon: "square.grid.2x2", iconColor: .green, title: "Catalogs")
                         }
                         .buttonStyle(.plain)
-                        
+
                         GlassDivider()
-                        
+
                         NavigationLink(destination: ServicesView()) {
                             GlassSettingsRow(icon: "server.rack", iconColor: .indigo, title: "Services")
                         }
                         .buttonStyle(.plain)
-                        
+
                         GlassDivider()
 
                         NavigationLink(destination: NuvioPluginsView()) {
@@ -251,14 +210,14 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
 
                         GlassDivider()
-                        
+
                         NavigationLink(destination: TrackersSettingsView()) {
                             GlassSettingsRow(icon: "chart.bar.fill", iconColor: .pink, title: "Trackers")
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                
+
                 // MARK: - Data
                 GlassSection(header: "Data") {
                     VStack(spacing: 0) {
@@ -266,9 +225,9 @@ struct SettingsView: View {
                             GlassSettingsRow(icon: "internaldrive", iconColor: .gray, title: "Storage")
                         }
                         .buttonStyle(.plain)
-                        
+
                         GlassDivider()
-                        
+
                         NavigationLink(destination: BackupManagementView()) {
                             GlassSettingsRow(icon: "arrow.triangle.2.circlepath", iconColor: .teal, title: "Backup & Restore")
                         }
@@ -286,16 +245,16 @@ struct SettingsView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        
+
                         GlassDivider()
-                        
+
                         NavigationLink(destination: LoggerView()) {
                             GlassSettingsRow(icon: "doc.text", iconColor: .yellow, title: "Logger")
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                
+
                 // MARK: - Others
                 GlassSection(header: "Others") {
                     VStack(spacing: 0) {
@@ -378,7 +337,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                
+
                 // MARK: - Version Info
                 VStack(spacing: 4) {
                     Text("Eclipse v\(Bundle.main.appVersion) (\(Bundle.main.buildNumber))")
@@ -401,7 +360,7 @@ struct SettingsView: View {
         .eclipseDarkToolbar()
         #endif
     }
-    
+
     // Keep tvOS list-based layout as fallback
     @ViewBuilder
     private var settingsListContent: some View {
@@ -414,33 +373,14 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            NavigationLink(destination: TMDBFiltersView()) {
-                Text("Content Filters")
-            }
             NavigationLink(destination: PerformanceModeSettingsView()) {
                 Text("Performance Mode")
-            }
-            NavigationLink(destination: ExperimentalFeaturesSettingsView()) {
-                Text("Experimental Features")
             }
             Toggle("Hide Splash Screen", isOn: $hideSplashScreen)
         } header: {
             Text("TMDB Settings")
         }
-        
-        Section {
-            NavigationLink(destination: AlgorithmSelectionView()) {
-                HStack {
-                    Text("Matching Algorithm")
-                    Spacer()
-                    Text(algorithmManager.selectedAlgorithm.displayName)
-                        .foregroundColor(.secondary)
-                }
-            }
-        } header: {
-            Text("Search Settings")
-        }
-        
+
         Section {
             NavigationLink(destination: PlayerSettingsView()) { Text("Media Player") }
             NavigationLink(destination: AlternativeUIView()) { Text("Appearance") }
@@ -450,7 +390,7 @@ struct SettingsView: View {
             NavigationLink(destination: NuvioPluginsView()) { Text("Plugins") }
             NavigationLink(destination: TrackersSettingsView()) { Text("Trackers") }
         }
-        
+
         Section {
             NavigationLink(destination: StorageView()) { Text("Storage") }
 #if os(iOS)
@@ -482,7 +422,7 @@ struct SettingsView: View {
                 Text("App Updates")
             }
         }
-        
+
         Section {
             Text("Switch to Reader Mode")
                 .onTapGesture { showKanzen = true }
@@ -518,37 +458,42 @@ struct SettingsView: View {
 
 struct ScheduleSettingsView: View {
     @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
+    @StateObject private var accentColorManager = AccentColorManager.shared
 
-    private var selectedMode: Binding<ScheduleMode> {
-        Binding(
-            get: { ScheduleMode.sanitized(defaultScheduleModeRaw) },
-            set: { defaultScheduleModeRaw = $0.rawValue }
-        )
+    private var selectedMode: ScheduleMode {
+        ScheduleMode.sanitized(defaultScheduleModeRaw)
     }
 
     var body: some View {
-        List {
-            Section {
-                Picker("Default schedule", selection: selectedMode) {
-                    ForEach(ScheduleMode.allCases) { mode in
-                        VStack(alignment: .leading) {
-                            Text(mode.displayName)
-                            Text(mode.description)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+        ScrollView {
+            VStack(spacing: 22) {
+                GlassSection(header: "Schedule Tab") {
+                    VStack(spacing: 0) {
+                        ForEach(Array(ScheduleMode.allCases.enumerated()), id: \.element.id) { index, mode in
+                            GlassSelectionRow(
+                                title: mode.displayName,
+                                subtitle: mode.description,
+                                isSelected: selectedMode == mode,
+                                accent: accentColorManager.currentAccentColor
+                            ) {
+                                defaultScheduleModeRaw = mode.rawValue
+                            }
+
+                            if index < ScheduleMode.allCases.count - 1 {
+                                GlassDivider(leadingInset: 16)
+                            }
                         }
-                        .tag(mode)
                     }
                 }
-                .pickerStyle(.inline)
-            } header: {
-                Text("Schedule Tab")
-            } footer: {
-                Text("Choose which schedule opens first when you select the Schedule tab. You can still switch modes inside the tab.")
+
+                GlassSectionFooter("Choose which schedule opens first when you select the Schedule tab. You can still switch modes inside the tab.")
             }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
         .navigationTitle("Schedule")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
     }
 }
 
@@ -559,40 +504,82 @@ struct LegalNoticeView: View {
     let privacyPolicyURL: URL
 
     var body: some View {
-        List {
-            Section("License") {
-                Text("Eclipse is released under the GNU General Public License version 3.")
-                Link("View GPLv3 License", destination: licenseURL)
-            }
+        ScrollView {
+            VStack(spacing: 22) {
+                GlassSection(header: "License") {
+                    VStack(spacing: 0) {
+                        infoText("Eclipse is released under the GNU General Public License version 3.")
+                        GlassDivider(leadingInset: 16)
+                        linkRow(title: "View GPLv3 License", icon: "doc.plaintext.fill", color: .blue, url: licenseURL)
+                    }
+                }
 
-            Section("Privacy") {
-                Text("Eclipse's privacy policy explains what data the app stores locally and how optional third-party services are handled.")
-                Link("Privacy Policy", destination: privacyPolicyURL)
-            }
+                GlassSection(header: "Privacy") {
+                    VStack(spacing: 0) {
+                        infoText("Eclipse's privacy policy explains what data the app stores locally and how optional third-party services are handled.")
+                        GlassDivider(leadingInset: 16)
+                        linkRow(title: "Privacy Policy", icon: "hand.raised.fill", color: .teal, url: privacyPolicyURL)
+                    }
+                }
 
-            Section("Source") {
-                Text("Eclipse is a GPL-licensed media app with substantial original changes by Soupy-dev.")
-                Link("Eclipse Source Code", destination: sourceCodeURL)
-                Link("Original Upstream Project", destination: originalProjectURL)
-            }
+                GlassSection(header: "Source") {
+                    VStack(spacing: 0) {
+                        infoText("Eclipse is a GPL-licensed media app with substantial original changes by Soupy-dev.")
+                        GlassDivider(leadingInset: 16)
+                        linkRow(title: "Eclipse Source Code", icon: "chevron.left.forwardslash.chevron.right", color: .cyan, url: sourceCodeURL)
+                        GlassDivider()
+                        linkRow(title: "Original Upstream Project", icon: "arrow.up.right.square.fill", color: .indigo, url: originalProjectURL)
+                    }
+                }
 
-            Section("Credits") {
-                Text("Reader mode includes Aidoku source compatibility work inspired by the Aidoku project.")
-                Link("Aidoku/Aidoku", destination: URL(string: "https://github.com/Aidoku/Aidoku")!)
-            }
+                GlassSection(header: "Credits") {
+                    VStack(spacing: 0) {
+                        infoText("Reader mode includes Aidoku source compatibility work inspired by the Aidoku project.")
+                        GlassDivider(leadingInset: 16)
+                        linkRow(title: "Aidoku/Aidoku", icon: "book.fill", color: .orange, url: URL(string: "https://github.com/Aidoku/Aidoku")!)
+                    }
+                }
 
-            Section("Warranty") {
-                Text("This program comes with no warranty, to the extent permitted by law.")
+                GlassSection(header: "Warranty") {
+                    infoText("This program comes with no warranty, to the extent permitted by law.")
+                }
             }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
         .navigationTitle("Legal & Source")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
+    }
+
+    private func infoText(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundColor(.white.opacity(0.7))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+    }
+
+    private func linkRow(title: String, icon: String, color: Color, url: URL) -> some View {
+        Link(destination: url) {
+            GlassDetailRow(icon: icon, iconColor: color, title: title) {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.3))
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
 struct PerformanceModeSettingsView: View {
     @ObservedObject private var catalogManager = CatalogManager.shared
     @AppStorage(PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey) private var skipAniListTraversalForAnimeDetails = false
+    @StateObject private var accentColorManager = AccentColorManager.shared
+
+    private var accent: Color { accentColorManager.currentAccentColor }
 
     private var performanceModeBinding: Binding<Bool> {
         Binding(
@@ -601,167 +588,185 @@ struct PerformanceModeSettingsView: View {
         )
     }
 
+    private var animeCatalogs: [Catalog] {
+        catalogManager.catalogs.filter { PerformanceModeSettings.isAnimeCatalog($0) }
+    }
+
     var body: some View {
-        List {
-            Section {
-                Toggle("Performance Mode", isOn: performanceModeBinding)
-            } footer: {
-                Text("Performance Mode keeps anime-heavy home catalogs on the faster AniList-backed path and locks those anime catalog rows to their performance-safe source. Detail pages still load full metadata when opened.")
-            }
+        ScrollView {
+            VStack(spacing: 22) {
+                GlassSection {
+                    GlassDetailRow(icon: "bolt.fill", iconColor: .yellow, title: "Performance Mode") {
+                        Toggle("", isOn: performanceModeBinding)
+                            .labelsHidden()
+                            .tint(accent)
+                    }
+                }
+                GlassSectionFooter("Performance Mode keeps anime-heavy home catalogs on the faster AniList-backed path and locks those anime catalog rows to their performance-safe source. Detail pages still load full metadata when opened.")
 
-            Section {
-                Toggle("Skip AniList Traversal for Anime Details", isOn: $skipAniListTraversalForAnimeDetails)
-            } footer: {
-                Text("Some anime services, season mappings, specials, OVAs, and tracker matching may be less accurate or unavailable.")
-            }
+                GlassSection {
+                    GlassDetailRow(icon: "hare.fill", iconColor: .orange, title: "Skip AniList Traversal for Anime Details") {
+                        Toggle("", isOn: $skipAniListTraversalForAnimeDetails)
+                            .labelsHidden()
+                            .tint(accent)
+                    }
+                }
+                GlassSectionFooter("Some anime services, season mappings, specials, OVAs, and tracker matching may be less accurate or unavailable.")
 
-            Section("Affected Catalogs") {
-                ForEach(catalogManager.catalogs.filter { PerformanceModeSettings.isAnimeCatalog($0) }) { catalog in
-                    HStack {
-                        Label(catalog.name, systemImage: "bolt.fill")
-                        Spacer()
-                        Text(catalogManager.isCatalogEffectivelyEnabled(catalog) ? "Enabled" : "Hidden")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                if !animeCatalogs.isEmpty {
+                    GlassSection(header: "Affected Catalogs") {
+                        VStack(spacing: 0) {
+                            ForEach(Array(animeCatalogs.enumerated()), id: \.element.id) { index, catalog in
+                                GlassDetailRow(icon: "bolt.fill", iconColor: .yellow, title: catalog.name) {
+                                    Text(catalogManager.isCatalogEffectivelyEnabled(catalog) ? "Enabled" : "Hidden")
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.5))
+                                }
+
+                                if index < animeCatalogs.count - 1 {
+                                    GlassDivider()
+                                }
+                            }
+                        }
                     }
                 }
             }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
         .navigationTitle("Performance Mode")
-        .eclipseSettingsStyle()
-    }
-}
-
-struct ExperimentalFeaturesSettingsView: View {
-    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = true
-    @State private var showRestartAlert = false
-
-    private var experimentalFeaturesBinding: Binding<Bool> {
-        Binding(
-            get: { experimentalFeaturesEnabled },
-            set: { newValue in
-                ExperimentalFeatureState.setStoredValue(newValue)
-                experimentalFeaturesEnabled = newValue
-                showRestartAlert = true
-            }
-        )
-    }
-
-    var body: some View {
-        List {
-            Section {
-                Toggle("Experimental Features", isOn: experimentalFeaturesBinding)
-            } footer: {
-                Text("Experimental Features enables interface and playback work that is still being validated. The switch is stored immediately, but the active feature set is chosen when Eclipse launches.")
-            }
-
-            Section("Current Launch") {
-                Label(
-                    ExperimentalFeatureState.isEnabledAtLaunch ? "Experimental features are active" : "Standard features are active",
-                    systemImage: ExperimentalFeatureState.isEnabledAtLaunch ? "checkmark.circle.fill" : "circle"
-                )
-
-                if experimentalFeaturesEnabled != ExperimentalFeatureState.isEnabledAtLaunch {
-                    Label("Restart required to apply the stored setting", systemImage: "arrow.clockwise")
-                        .foregroundColor(.orange)
-                }
-            }
-
-            if ExperimentalFeatureState.isEnabledAtLaunch {
-                Section("Available Experimental Settings") {
-                    NavigationLink(destination: ExperimentalCloudSyncView()) {
-                        Label("iCloud Sync", systemImage: "icloud")
-                    }
-                }
-            }
-        }
-        .navigationTitle("Experimental Features")
-        .eclipseSettingsStyle()
-        .alert("Restart Required", isPresented: $showRestartAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Experimental features are applied only at app launch. Restart Eclipse to switch the active interface.")
-        }
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
     }
 }
 
 struct ExperimentalCloudSyncView: View {
     @AppStorage(ExperimentalFeatureState.iCloudSyncEnabledKey) private var iCloudSyncEnabled = false
     @StateObject private var cloudSyncManager = ExperimentalCloudSyncManager.shared
+    @StateObject private var accentColorManager = AccentColorManager.shared
 
     private var availability: ExperimentalCloudSyncAvailability {
         ExperimentalCloudSyncAvailability.current
     }
 
+    private var accent: Color { accentColorManager.currentAccentColor }
+
+    private var includedData: [(String, String)] {
+        [
+            ("Settings", "gearshape"),
+            ("Libraries and collections", "books.vertical"),
+            ("Watch and read progress", "play.rectangle"),
+            ("Catalogs, services, addons, and plugins", "server.rack"),
+            ("Tracker connections and preferences", "chart.bar")
+        ]
+    }
+
     var body: some View {
-        List {
-            Section {
-                HStack(spacing: 14) {
-                    Image(systemName: availability.isAvailable ? "checkmark.circle.fill" : "slash.circle")
-                        .font(.title2)
-                        .foregroundColor(availability.isAvailable ? .green : .orange)
+        ScrollView {
+            VStack(spacing: 22) {
+                GlassSection {
+                    HStack(spacing: 14) {
+                        Image(systemName: availability.isAvailable ? "checkmark.circle.fill" : "slash.circle")
+                            .font(.title2)
+                            .foregroundColor(availability.isAvailable ? .green : .orange)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(availability.statusTitle)
-                            .font(.headline)
-                        Text(availability.statusMessage)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(availability.statusTitle)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text(availability.statusMessage)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.55))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+
+                GlassSection(header: "Experimental") {
+                    VStack(spacing: 0) {
+                        GlassDetailRow(icon: "icloud.fill", iconColor: .blue, title: "Sync with iCloud") {
+                            Toggle("", isOn: $iCloudSyncEnabled)
+                                .labelsHidden()
+                                .tint(accent)
+                                .disabled(!availability.isAvailable)
+                        }
+
+                        GlassDivider()
+
+                        Button {
+                            cloudSyncManager.syncSnapshot(reason: "manual")
+                        } label: {
+                            GlassDetailRow(icon: "icloud.and.arrow.up", iconColor: .cyan, title: "Sync Now") {
+                                if cloudSyncManager.isSyncing {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .tint(.white.opacity(0.6))
+                                } else {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!availability.isAvailable || !iCloudSyncEnabled || cloudSyncManager.isSyncing)
+
+                        GlassDivider()
+
+                        Button {
+                            cloudSyncManager.restoreRemoteSnapshot()
+                        } label: {
+                            GlassDetailRow(icon: "icloud.and.arrow.down", iconColor: .indigo, title: "Restore from iCloud") {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.3))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!availability.isAvailable || !iCloudSyncEnabled || cloudSyncManager.isSyncing)
+
+                        if !cloudSyncManager.lastStatusMessage.isEmpty {
+                            GlassDivider(leadingInset: 16)
+                            Text(cloudSyncManager.lastStatusMessage)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.55))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                        }
                     }
                 }
-                .padding(.vertical, 4)
-            }
 
-            Section {
-                Toggle("Sync with iCloud", isOn: $iCloudSyncEnabled)
-                    .disabled(!availability.isAvailable)
-
-                if !availability.isAvailable {
-                    Text("This build will keep settings, libraries, progress, and source definitions local.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                if availability.isAvailable {
+                    GlassSectionFooter("Downloaded media, preload caches, images, logs, temporary files, and unsafe source secrets are excluded.")
+                } else {
+                    GlassSectionFooter("This build will keep settings, libraries, progress, and source definitions local.")
                 }
 
-                Button {
-                    cloudSyncManager.pushLocalSnapshot(reason: "manual")
-                } label: {
-                    if cloudSyncManager.isSyncing {
-                        ProgressView()
-                    } else {
-                        Label("Sync Now", systemImage: "icloud.and.arrow.up")
+                GlassSection(header: "Included Data") {
+                    VStack(spacing: 0) {
+                        ForEach(Array(includedData.enumerated()), id: \.offset) { index, item in
+                            GlassDetailRow(icon: item.1, iconColor: .blue, title: item.0) {
+                                EmptyView()
+                            }
+
+                            if index < includedData.count - 1 {
+                                GlassDivider()
+                            }
+                        }
                     }
                 }
-                .disabled(!availability.isAvailable || !iCloudSyncEnabled || cloudSyncManager.isSyncing)
-
-                Button {
-                    cloudSyncManager.restoreRemoteSnapshot()
-                } label: {
-                    Label("Restore from iCloud", systemImage: "icloud.and.arrow.down")
-                }
-                .disabled(!availability.isAvailable || !iCloudSyncEnabled || cloudSyncManager.isSyncing)
-
-                if !cloudSyncManager.lastStatusMessage.isEmpty {
-                    Text(cloudSyncManager.lastStatusMessage)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            } header: {
-                Text("Experimental")
-            } footer: {
-                Text("Downloaded media, preload caches, images, logs, temporary files, and unsafe tokens are excluded.")
             }
-
-            Section("Included Data") {
-                Label("Settings", systemImage: "gearshape")
-                Label("Libraries and collections", systemImage: "books.vertical")
-                Label("Watch and read progress", systemImage: "play.rectangle")
-                Label("Catalogs and safe source definitions", systemImage: "server.rack")
-                Label("Tracker preferences", systemImage: "chart.bar")
-            }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
         }
         .navigationTitle("iCloud Sync")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         .onAppear {
             if !availability.isAvailable, iCloudSyncEnabled {
                 iCloudSyncEnabled = false
@@ -769,7 +774,7 @@ struct ExperimentalCloudSyncView: View {
         }
         .onChange(of: iCloudSyncEnabled) { enabled in
             if enabled {
-                cloudSyncManager.pushLocalSnapshot(reason: "enabled")
+                cloudSyncManager.syncSnapshot(reason: "enabled")
             }
         }
     }
@@ -779,7 +784,7 @@ struct LanguageSelectionView: View {
     @StateObject private var accentColorManager = AccentColorManager.shared
     @Binding var selectedLanguage: String
     let languages: [(String, String)]
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -803,7 +808,7 @@ struct LanguageSelectionView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            
+
                             if index < languages.count - 1 {
                                 Rectangle()
                                     .fill(EclipseTheme.shared.separatorColor)

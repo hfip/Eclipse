@@ -11,7 +11,8 @@ struct PlayerLanguageSelectionView: View {
     let title: String
     @Binding var selectedLanguage: String
     @Environment(\.dismiss) private var dismiss
-    
+    @StateObject private var accentColorManager = AccentColorManager.shared
+
     let languages: [(code: String, name: String)] = [
         ("eng", "English"),
         ("jpn", "Japanese"),
@@ -34,31 +35,36 @@ struct PlayerLanguageSelectionView: View {
         ("nor", "Norwegian"),
         ("nld", "Dutch")
     ]
-    
+
     var body: some View {
-        List {
-            ForEach(languages, id: \.code) { language in
-                HStack {
-                    Text(language.name)
-                    
-                    Spacer()
-                    
-                    if selectedLanguage == language.code {
-                        Image(systemName: "checkmark")
-                            .foregroundColor(.accentColor)
-                            .font(.system(size: 17, weight: .semibold))
+        ScrollView {
+            VStack(spacing: 20) {
+                GlassSection {
+                    VStack(spacing: 0) {
+                        ForEach(Array(languages.enumerated()), id: \.element.code) { index, language in
+                            GlassSelectionRow(
+                                title: language.name,
+                                isSelected: selectedLanguage == language.code,
+                                accent: accentColorManager.currentAccentColor
+                            ) {
+                                selectedLanguage = language.code
+                                dismiss()
+                            }
+
+                            if index < languages.count - 1 {
+                                GlassDivider(leadingInset: 16)
+                            }
+                        }
                     }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    selectedLanguage = language.code
-                    dismiss()
-                }
             }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
             .background(EclipseScrollTracker())
         }
         .navigationTitle(title)
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif

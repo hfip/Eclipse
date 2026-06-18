@@ -72,6 +72,13 @@ struct TrackerState: Codable {
     var traktPublicCatalogsEnabled: Bool = false
     var traktCommentsEnabled: Bool = false
     var traktRelatedEnabled: Bool = false
+    // Map anime episodes onto Trakt's flattened/absolute episode numbering when the
+    // direct TMDB season/episode lookup can't resolve a Trakt episode. Default on:
+    // it only augments the failure path and never changes already-working scrobbles.
+    var traktAnimeEpisodeMapping: Bool = true
+    // Keep the local "Trakt Watchlist" collection mirrored with the Trakt watchlist
+    // (additive pull, two-way add/remove). Off by default — opt-in.
+    var traktWatchlistSync: Bool = false
     var lastSyncDate: Date?
 
     enum CodingKeys: String, CodingKey {
@@ -84,6 +91,8 @@ struct TrackerState: Codable {
         case traktPublicCatalogsEnabled
         case traktCommentsEnabled
         case traktRelatedEnabled
+        case traktAnimeEpisodeMapping
+        case traktWatchlistSync
         case lastSyncDate
     }
 
@@ -100,6 +109,8 @@ struct TrackerState: Codable {
         traktPublicCatalogsEnabled = try container.decodeIfPresent(Bool.self, forKey: .traktPublicCatalogsEnabled) ?? false
         traktCommentsEnabled = try container.decodeIfPresent(Bool.self, forKey: .traktCommentsEnabled) ?? false
         traktRelatedEnabled = try container.decodeIfPresent(Bool.self, forKey: .traktRelatedEnabled) ?? false
+        traktAnimeEpisodeMapping = try container.decodeIfPresent(Bool.self, forKey: .traktAnimeEpisodeMapping) ?? true
+        traktWatchlistSync = try container.decodeIfPresent(Bool.self, forKey: .traktWatchlistSync) ?? false
         lastSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastSyncDate)
     }
 

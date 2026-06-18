@@ -392,6 +392,24 @@ struct TrackersSettingsView: View {
                     set: { trackerManager.setTraktCommentsEnabled($0) }
                 )
             )
+
+            traktToggleRow(
+                title: "Anime Episode Mapping",
+                subtitle: "When seasons don't line up, match anime episodes to Trakt using absolute numbering so scrobbles still land.",
+                isOn: Binding(
+                    get: { trackerManager.trackerState.traktAnimeEpisodeMapping },
+                    set: { trackerManager.setTraktAnimeEpisodeMapping($0) }
+                )
+            )
+
+            traktToggleRow(
+                title: "Sync Trakt Watchlist",
+                subtitle: "Mirror the \u{201C}Trakt Watchlist\u{201D} collection with your Trakt watchlist. Adds you make sync both ways; pulled items are only ever added, never deleted.",
+                isOn: Binding(
+                    get: { trackerManager.trackerState.traktWatchlistSync },
+                    set: { trackerManager.setTraktWatchlistSync($0) }
+                )
+            )
         }
         .padding()
         .background(Color.gray.opacity(0.1))

@@ -121,27 +121,10 @@ struct GenreSectionWidget: View {
     var metrics: ExperimentalMediaDesignMetrics = .current
     
     private let genres = WidgetGenre.curated
-    private var columns: [GridItem] {
-        if isIPad {
-            return [
-                GridItem(.flexible(), spacing: 14),
-                GridItem(.flexible(), spacing: 14),
-                GridItem(.flexible(), spacing: 14)
-            ]
-        } else {
-            return [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ]
-        }
-    }
-    
+
     var body: some View {
-        let availableGenres = genres.filter { genre in
-            let items = widgetData["genre_\(genre.id)"] ?? []
-            return !items.isEmpty
-        }
-        
+        let availableGenres = genres.filter { !(widgetData["genre_\($0.id)"] ?? []).isEmpty }
+
         if !availableGenres.isEmpty {
             VStack(alignment: .leading, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 16) {
                 Text("Category")
@@ -149,23 +132,26 @@ struct GenreSectionWidget: View {
                     .fontWeight(.bold)
                     .foregroundColor(.white)
                     .padding(.horizontal, isIPad ? 24 : 16)
-                
-                LazyVGrid(columns: columns, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 16 : 12) {
-                    ForEach(Array(availableGenres.prefix(6))) { genre in
-                        let items = widgetData["genre_\(genre.id)"] ?? []
-                        NavigationLink(destination: DiscoverDetailView(
-                            title: genre.name,
-                            initialItems: items,
-                            loadMore: { page in
-                                (try? await tmdbService.discoverByGenre(genreId: genre.id, page: page)) ?? []
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 22 : 16) {
+                        ForEach(availableGenres) { genre in
+                            let items = widgetData["genre_\(genre.id)"] ?? []
+                            NavigationLink(destination: DiscoverDetailView(
+                                title: genre.name,
+                                initialItems: items,
+                                loadMore: { page in
+                                    (try? await tmdbService.discoverByGenre(genreId: genre.id, page: page)) ?? []
+                                }
+                            )) {
+                                genreCard(genre: genre, items: items)
                             }
-                        )) {
-                            genreCard(genre: genre, items: items)
+                            .buttonStyle(PlainButtonStyle())
                         }
-                        .buttonStyle(PlainButtonStyle())
                     }
+                    .padding(.horizontal, isIPad ? 24 : 16)
                 }
-                .padding(.horizontal, isIPad ? 24 : 16)
+                .modifier(ScrollClipModifier())
             }
             .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? metrics.sectionSpacing : 24)
         }
@@ -174,58 +160,49 @@ struct GenreSectionWidget: View {
     @ViewBuilder
     private func genreCard(genre: WidgetGenre, items: [TMDBSearchResult]) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let posterWidth = CGFloat(isExperimental ? 72 : 60) * iPadScale
-        let posterHeight = CGFloat(isExperimental ? 92 : 80) * iPadScale
-        let radius = isExperimental ? metrics.cardRadius : 14
+        let posterWidth: CGFloat = isExperimental ? (isIPad ? 124 : 96) : (isIPad ? 100 : 80)
+        let posterHeight: CGFloat = isExperimental ? (isIPad ? 178 : 142) : (isIPad ? 150 : 120)
+        let availableWidth = max(UIScreen.main.bounds.width - 44, 280)
+        let maxCardWidth: CGFloat = isIPad ? 430 : 318
+        let cardWidth: CGFloat = isExperimental ? min(maxCardWidth, availableWidth) : (isIPad ? 340 : 260)
+        let cardHeight: CGFloat = isExperimental ? (isIPad ? 214 : 168) : (isIPad ? 190 : 160)
+        let radius = isExperimental ? metrics.cardRadius : 16
 
-        HStack(spacing: 0) {
-            if isExperimental {
-                ZStack(alignment: .leading) {
-                    ForEach(Array(items.prefix(3).enumerated()), id: \.element.stableIdentity) { index, item in
-                        KFImage(URL(string: item.fullPosterURL ?? item.fullBackdropURL ?? ""))
-                            .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
-                            .placeholder { Color.gray.opacity(0.3) }
-                            .resizable()
-                            .aspectRatio(2/3, contentMode: .fill)
-                            .frame(width: posterWidth, height: posterHeight)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .shadow(color: .black.opacity(0.22), radius: 7, x: 0, y: 4)
-                            .offset(x: CGFloat(index) * 9, y: CGFloat(index) * -2)
-                    }
+        ZStack(alignment: .leading) {
+            HStack(spacing: -20) {
+                Spacer()
+                ForEach(Array(items.prefix(3).enumerated()), id: \.element.id) { index, item in
+                    KFImage(URL(string: item.fullPosterURL ?? item.fullBackdropURL ?? ""))
+                        .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
+                        .placeholder { Color.gray.opacity(0.3) }
+                        .resizable()
+                        .aspectRatio(2/3, contentMode: .fill)
+                        .frame(width: posterWidth, height: posterHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: isExperimental ? 13 : 10, style: .continuous))
+                        .rotationEffect(.degrees(Double(index - 1) * 5))
+                        .offset(y: index == 1 ? -5 : 5)
+                        .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 5)
                 }
-                .frame(width: posterWidth + 20, height: posterHeight)
-                .padding(.leading, 14)
-                .padding(.vertical, 10)
-            } else if let posterURL = items.first?.fullPosterURL {
-                KFImage(URL(string: posterURL))
-                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: posterWidth, height: posterHeight)))
-                    .placeholder { Color.gray.opacity(0.3) }
-                    .resizable()
-                    .aspectRatio(2/3, contentMode: .fill)
-                    .frame(width: posterWidth, height: posterHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .padding(.leading, 10)
-                    .padding(.vertical, 10)
             }
-            
-            Spacer()
-            
+            .padding(.trailing, isExperimental ? 20 : 12)
+            .padding(.vertical, 12)
+
             Text(genre.name)
-                .font(isExperimental ? .system(size: isIPad ? 22 : 19, weight: .bold) : .subheadline)
-                .fontWeight(.bold)
+                .font(isExperimental ? .system(size: isIPad ? 32 : 27, weight: .heavy) : .title2)
+                .fontWeight(.heavy)
                 .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .padding(.trailing, isExperimental ? 18 : 14)
-                .layoutPriority(1)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                .frame(width: cardWidth * 0.5, alignment: .leading)
+                .padding(.leading, isExperimental ? 24 : 16)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: CGFloat(isExperimental ? 100 : 80) * iPadScale)
+        .frame(width: cardWidth, height: cardHeight)
         .background(
             LinearGradient(
                 colors: isExperimental
-                    ? [Color.black.opacity(0.54), Color(red: 0.15, green: 0.10, blue: 0.13).opacity(metrics.glassOpacity)]
-                    : [Color.yellow.opacity(0.15), Color.orange.opacity(0.08)],
+                    ? [Color.black.opacity(0.58), Color(red: 0.12, green: 0.10, blue: 0.15).opacity(metrics.glassOpacity)]
+                    : [Color.white.opacity(0.12), Color.white.opacity(0.04)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -233,9 +210,9 @@ struct GenreSectionWidget: View {
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .stroke(Color.white.opacity(isExperimental ? 0.12 : 0.08), lineWidth: 0.5)
+                .stroke(Color.white.opacity(isExperimental ? 0.12 : 0.1), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(isExperimental ? 0.20 : 0), radius: 14, x: 0, y: 8)
+        .shadow(color: .black.opacity(isExperimental ? 0.28 : 0), radius: 18, x: 0, y: 10)
     }
 }
 
@@ -247,27 +224,9 @@ struct CompanySectionWidget: View {
     var metrics: ExperimentalMediaDesignMetrics = .current
     
     private let companies = WidgetCompany.curated
-    private var columns: [GridItem] {
-        if isIPad {
-            return [
-                GridItem(.flexible(), spacing: 14),
-                GridItem(.flexible(), spacing: 14),
-                GridItem(.flexible(), spacing: 14)
-            ]
-        } else {
-            return [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ]
-        }
-    }
-    
     var body: some View {
-        let availableCompanies = companies.filter { company in
-            let items = widgetData["company_\(company.id)"] ?? []
-            return !items.isEmpty
-        }
-        
+        let availableCompanies = companies.filter { !(widgetData["company_\($0.id)"] ?? []).isEmpty }
+
         if !availableCompanies.isEmpty {
             VStack(alignment: .leading, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 18 : 16) {
                 Text("Company")
@@ -275,23 +234,26 @@ struct CompanySectionWidget: View {
                     .fontWeight(.bold)
                     .foregroundColor(.white)
                     .padding(.horizontal, isIPad ? 24 : 16)
-                
-                LazyVGrid(columns: columns, spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 16 : 12) {
-                    ForEach(Array(availableCompanies.prefix(4))) { company in
-                        let items = widgetData["company_\(company.id)"] ?? []
-                        NavigationLink(destination: DiscoverDetailView(
-                            title: company.name,
-                            initialItems: items,
-                            loadMore: { page in
-                                (try? await tmdbService.discoverByCompany(companyId: company.id, page: page)) ?? []
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 22 : 16) {
+                        ForEach(availableCompanies) { company in
+                            let items = widgetData["company_\(company.id)"] ?? []
+                            NavigationLink(destination: DiscoverDetailView(
+                                title: company.name,
+                                initialItems: items,
+                                loadMore: { page in
+                                    (try? await tmdbService.discoverByCompany(companyId: company.id, page: page)) ?? []
+                                }
+                            )) {
+                                companyCard(company: company, items: items)
                             }
-                        )) {
-                            companyCard(company: company, items: items)
+                            .buttonStyle(PlainButtonStyle())
                         }
-                        .buttonStyle(PlainButtonStyle())
                     }
+                    .padding(.horizontal, isIPad ? 24 : 16)
                 }
-                .padding(.horizontal, isIPad ? 24 : 16)
+                .modifier(ScrollClipModifier())
             }
             .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? metrics.sectionSpacing : 24)
         }
@@ -300,41 +262,41 @@ struct CompanySectionWidget: View {
     @ViewBuilder
     private func companyCard(company: WidgetCompany, items: [TMDBSearchResult]) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let backdropWidth: CGFloat = isIPad ? 360 : 260
-        let backdropHeight: CGFloat = isExperimental ? (isIPad ? 138 : 116) : 100
+        let cardWidth: CGFloat = isExperimental ? (isIPad ? 340 : 264) : (isIPad ? 300 : 232)
+        let cardHeight: CGFloat = isExperimental ? (isIPad ? 150 : 124) : 104
         let radius = isExperimental ? metrics.cardRadius : 14
 
         ZStack {
             if let backdropURL = items.first?.fullBackdropURL {
                 KFImage(URL(string: backdropURL))
-                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: backdropWidth, height: backdropHeight)))
+                    .setProcessor(DownsamplingImageProcessor(size: homeImageDecodeSize(width: cardWidth, height: cardHeight)))
                     .placeholder { Color.gray.opacity(0.15) }
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(height: backdropHeight)
+                    .frame(width: cardWidth, height: cardHeight)
                     .clipped()
-                    .overlay(Color.black.opacity(isExperimental ? 0.38 : 0.55))
+                    .overlay(Color.black.opacity(isExperimental ? 0.42 : 0.55))
             } else {
-                Color.black.opacity(isExperimental ? 0.52 : 0.06)
+                Color.black.opacity(isExperimental ? 0.52 : 0.2)
             }
-            
+
             Text(company.name)
                 .font(isExperimental ? .system(size: isIPad ? 28 : 22, weight: .heavy) : (isIPad ? .title3 : .headline))
                 .fontWeight(.heavy)
                 .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .multilineTextAlignment(.center)
                 .padding(.horizontal, 14)
                 .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 2)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: backdropHeight * iPadScale)
+        .frame(width: cardWidth, height: cardHeight)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .stroke(Color.white.opacity(isExperimental ? 0.12 : 0.08), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(isExperimental ? 0.22 : 0), radius: 16, x: 0, y: 8)
+        .shadow(color: .black.opacity(isExperimental ? 0.24 : 0), radius: 16, x: 0, y: 8)
     }
 }
 

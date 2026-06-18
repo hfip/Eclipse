@@ -200,11 +200,215 @@ struct GlassSection<Content: View>: View {
 // MARK: - Glass Divider
 
 struct GlassDivider: View {
+    /// Leading inset. Defaults to 54 so the rule starts after a row icon;
+    /// pass 16 for icon-less rows.
+    var leadingInset: CGFloat = 54
+
     var body: some View {
         Rectangle()
             .fill(EclipseTheme.shared.separatorColor)
             .frame(height: 0.5)
-            .padding(.leading, 54)
+            .padding(.leading, leadingInset)
+    }
+}
+
+// MARK: - Shared settings row pieces
+//
+// Building blocks for glass settings sub-menus so every screen shares the same
+// row anatomy as the main Settings page (icon bubble, white title, secondary
+// detail). Use these instead of native List rows when rebuilding a sub-menu.
+
+/// The rounded icon bubble used on the left of settings rows.
+struct GlassRowIcon: View {
+    let icon: String
+    var iconColor: Color = .white
+
+    var body: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 36, height: 36)
+                .background(
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [iconColor.opacity(0.82), Color.white.opacity(0.12)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 1))
+                )
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(iconColor)
+                .frame(width: 32, height: 32)
+                .background(iconColor.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}
+
+/// A settings row with an optional icon, a title, an optional multi-line
+/// subtitle and arbitrary trailing content (toggle, menu, value text, …).
+struct GlassDetailRow<Trailing: View>: View {
+    let icon: String?
+    let iconColor: Color
+    let title: String
+    let subtitle: String?
+    let trailing: () -> Trailing
+
+    init(
+        icon: String? = nil,
+        iconColor: Color = .white,
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.icon = icon
+        self.iconColor = iconColor
+        self.title = title
+        self.subtitle = subtitle
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let icon {
+                GlassRowIcon(icon: icon, iconColor: iconColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(ExperimentalFeatureState.isEnabledAtLaunch ? .body.weight(.medium) : .body)
+                    .foregroundColor(.white)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.5))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+}
+
+/// A glass slider row with a title, optional subtitle and a live value readout.
+struct GlassSliderRow: View {
+    let title: String
+    var subtitle: String? = nil
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double = 0.05
+    var tint: Color = .white
+    var valueFormat: String = "%.2f"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                        .foregroundColor(.white)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.5))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer()
+                Text(String(format: valueFormat, value))
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.6))
+                    .monospacedDigit()
+            }
+#if os(tvOS)
+            Stepper("", value: $value, in: range, step: step)
+                .labelsHidden()
+#else
+            Slider(value: $value, in: range, step: step)
+                .tint(tint)
+#endif
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+}
+
+/// A selectable (checkmark) row used by inline pickers like language or mode.
+struct GlassSelectionRow: View {
+    var icon: String? = nil
+    var iconColor: Color = .white
+    let title: String
+    var subtitle: String? = nil
+    let isSelected: Bool
+    var accent: Color = .accentColor
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                if let icon {
+                    GlassRowIcon(icon: icon, iconColor: iconColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(ExperimentalFeatureState.isEnabledAtLaunch ? .body.weight(.medium) : .body)
+                        .foregroundColor(.white)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.5))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Spacer(minLength: 12)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(accent)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Caption text shown beneath a `GlassSection`, mirroring a List section footer.
+struct GlassSectionFooter: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(.white.opacity(0.45))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.top, -2)
     }
 }
 

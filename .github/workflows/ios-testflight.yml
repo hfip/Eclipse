@@ -27,6 +27,7 @@ jobs:
       APP_NAME: ${{ vars.IOS_APP_NAME || 'Eclipse' }}
       BUNDLE_IDENTIFIER: ${{ vars.IOS_BUNDLE_IDENTIFIER || 'app.Eclipse.Soupy' }}
       DEVELOPMENT_TEAM: ${{ vars.IOS_DEVELOPMENT_TEAM || 'ANMK3Y568U' }}
+      ICLOUD_CONTAINER_ID: ${{ vars.IOS_ICLOUD_CONTAINER_ID || 'iCloud.Eclipse.Soupy' }}
       PROJECT_PATH: Eclipse.xcodeproj
       SCHEME: Eclipse
 
@@ -97,7 +98,7 @@ jobs:
             printf 'BUNDLE_IDENTIFIER = %s\n' "$BUNDLE_IDENTIFIER"
             printf 'DEVELOPMENT_TEAM = %s\n' "$DEVELOPMENT_TEAM"
             printf '%s\n' 'CODE_SIGN_ENTITLEMENTS = Eclipse/Eclipse.entitlements'
-            printf '%s\n' 'ICLOUD_CONTAINER_ID ='
+            printf 'ICLOUD_CONTAINER_ID = %s\n' "$ICLOUD_CONTAINER_ID"
             printf 'TMDB_API_KEY = %s\n' "${TMDB_API_KEY:-}"
             printf 'ANILIST_CLIENT_ID = %s\n' "${ANILIST_CLIENT_ID:-}"
             printf 'ANILIST_CLIENT_SECRET = %s\n' "${ANILIST_CLIENT_SECRET:-}"
@@ -147,6 +148,20 @@ jobs:
 
           if [ "$PROFILE_APP_ID" != "$EXPECTED_APP_ID" ]; then
             echo "::error::Provisioning profile app id '$PROFILE_APP_ID' does not match '$EXPECTED_APP_ID'."
+            exit 1
+          fi
+
+          if [ -n "$ICLOUD_CONTAINER_ID" ]; then
+            PROFILE_ICLOUD_CONTAINERS=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.icloud-container-identifiers" "$PROFILE_PLIST" 2>/dev/null || true)
+            if ! printf '%s\n' "$PROFILE_ICLOUD_CONTAINERS" | grep -Fq "$ICLOUD_CONTAINER_ID"; then
+              echo "::error::Provisioning profile '$PROFILE_NAME' does not include iCloud container '$ICLOUD_CONTAINER_ID'. Enable iCloud on the App ID, configure the container, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
+              exit 1
+            fi
+          fi
+
+          PROFILE_INCREASED_MEMORY=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.kernel.increased-memory-limit" "$PROFILE_PLIST" 2>/dev/null || true)
+          if [ "$PROFILE_INCREASED_MEMORY" != "true" ]; then
+            echo "::error::Provisioning profile '$PROFILE_NAME' does not include Increased Memory Limit. Enable the capability on the App ID, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
             exit 1
           fi
 

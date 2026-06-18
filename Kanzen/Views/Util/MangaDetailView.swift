@@ -65,15 +65,21 @@ struct MangaDetailView: View {
         return theme.scopedAtmosphereColor(dominant: base, isReaderMode: true)
     }
 
+    /// Muted bleed color for reader detail so the top / overscroll area shows a
+    /// deep tone that matches the multi-gradient instead of a vivid purple band.
+    private var readerBleedColor: Color {
+        readerAtmosphereColor.atmosphereScaled(0.55)
+    }
+
     @ViewBuilder
     private var readerDetailBackground: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
             AtmosphereBackdrop(
                 input: theme.atmosphereInput(
-                    dominant: readerAtmosphereColor,
+                    dominant: readerBleedColor,
                     hasHeroBleed: true,
                     heroHeight: heroHeight,
-                    fadeDistance: heroHeight * 0.95,
+                    fadeDistance: heroHeight * 0.62,
                     isReaderMode: true
                 ),
                 scrollOffset: scrollOffset
@@ -266,10 +272,10 @@ struct MangaDetailView: View {
             let posterHeight = experimental ? max(heroHeight * 0.74, 270) : max(heroHeight - 26, 260)
             let titleSize: CGFloat = experimental ? (isIPad ? 48 : 40) : (isIPad ? 40 : 32)
             let gradientColors: [Color] = experimental ? [
-                Color.black.opacity(0.02),
-                readerAtmosphereColor.opacity(0.16),
-                readerAtmosphereColor.opacity(0.58),
-                Color.black.opacity(0.92)
+                Color.black.opacity(0.04),
+                readerBleedColor.opacity(0.30),
+                readerBleedColor.opacity(0.74),
+                readerBleedColor.opacity(0.97)
             ] : [
                 Color.black.opacity(0.02),
                 Color.black.opacity(0.28),

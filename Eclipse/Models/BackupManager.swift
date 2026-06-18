@@ -283,10 +283,6 @@ struct BackupData: Codable {
     func redactedForExperimentalCloudSync() -> BackupData {
         var snapshot = self
 
-        // Keep tracker preferences, but never sync OAuth tokens or connected-account secrets.
-        snapshot.trackerState.accounts = []
-        snapshot.trackerState.lastSyncDate = nil
-
         snapshot.services = services.compactMap { service in
             guard let safeURL = Self.cloudSafeURLString(service.url),
                   !Self.containsCloudUnsafeSecret(service.jsonMetadata),
@@ -331,8 +327,30 @@ struct BackupData: Codable {
                     errorMessage: nil
                 )
             }
-            // Scraper code can embed credentials or device-local assumptions. Repositories are enough to rehydrate safely.
-            plugins.scrapers = []
+            let repositoryURLs = Set(plugins.repositories.map(\.manifestUrl))
+            plugins.scrapers = plugins.scrapers.compactMap { scraper in
+                guard repositoryURLs.contains(scraper.repositoryUrl),
+                      !scraper.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !scraper.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+
+                return NuvioPluginScraper(
+                    id: scraper.id,
+                    repositoryUrl: scraper.repositoryUrl,
+                    name: scraper.name,
+                    description: scraper.description,
+                    version: scraper.version,
+                    filename: scraper.filename,
+                    supportedTypes: scraper.supportedTypes,
+                    enabled: scraper.enabled,
+                    manifestEnabled: scraper.manifestEnabled,
+                    logo: scraper.logo.flatMap(Self.cloudSafeURLString),
+                    contentLanguage: scraper.contentLanguage,
+                    formats: scraper.formats,
+                    code: ""
+                )
+            }
             snapshot.nuvioPlugins = plugins
         }
 
@@ -1792,7 +1810,7 @@ class BackupManager {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let snapshot = try decoder.decode(BackupData.self, from: data).redactedForExperimentalCloudSync()
-            return applyBackupData(snapshot)
+            return applyBackupData(snapshot, refreshCloudSources: true)
         } catch {
             Logger.shared.log("Failed to restore experimental iCloud snapshot: \(error.localizedDescription)", type: "iCloud")
             return false
@@ -2884,7 +2902,7 @@ class BackupManager {
     }
     
     /// Applies backup data to all managers and UserDefaults
-    private func applyBackupData(_ backup: BackupData) -> Bool {
+    private func applyBackupData(_ backup: BackupData, refreshCloudSources: Bool = false) -> Bool {
         let trackerManager = TrackerManager.shared
         trackerManager.setBackupRestoreSyncSuppressed(true)
         defer {
@@ -3201,7 +3219,7 @@ class BackupManager {
         // Restore Nuvio plugins only when the backup explicitly contains this field.
         // Older backups did not know about plugins, so they must not wipe current plugin repositories.
         if let nuvioPlugins = backup.nuvioPlugins {
-            NuvioPluginManager.restorePersistedBackupState(nuvioPlugins)
+            NuvioPluginManager.restorePersistedBackupState(nuvioPlugins, refreshRepositories: refreshCloudSources)
         }
 
         // Restore manga library collections

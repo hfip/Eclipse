@@ -262,6 +262,17 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 24, coordinateSpace: .local)
+                .onEnded { value in
+                    // Swipe right (the direction it slid in from) to dismiss.
+                    if value.translation.width > 110 && abs(value.translation.height) < 70 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                            showingSettings = false
+                        }
+                    }
+                }
+        )
     }
 
     private func publishScenePhase(_ phase: ScenePhase) {

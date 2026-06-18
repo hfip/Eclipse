@@ -63,10 +63,10 @@ struct contentView: View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
             AtmosphereBackdrop(
                 input: theme.atmosphereInput(
-                    dominant: readerAtmosphereColor,
+                    dominant: readerAtmosphereColor.atmosphereScaled(0.55),
                     hasHeroBleed: true,
                     heroHeight: heroHeight,
-                    fadeDistance: heroHeight * 0.95,
+                    fadeDistance: heroHeight * 0.62,
                     isReaderMode: true
                 ),
                 scrollOffset: scrollOffset

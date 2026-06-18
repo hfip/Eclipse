@@ -41,12 +41,13 @@ struct AlternativeUIView: View {
         List {
             previewSection
             themeSection
-            atmosphereSection
+                .eclipseExperimentalSettingsRows()
             interfaceSection
+                .eclipseExperimentalSettingsRows()
             advancedSection
-            heroBannerSection
-            displayOptionsSection
+                .eclipseExperimentalSettingsRows()
             mediaDetailSection
+                .eclipseExperimentalSettingsRows()
         }
         .navigationTitle("Appearance")
         .eclipseSettingsStyle()
@@ -89,6 +90,20 @@ struct AlternativeUIView: View {
             }
             .padding(.vertical, 4)
 
+#if !os(tvOS)
+            if theme.appearancePaletteRaw == AtmospherePaletteID.custom.rawValue {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Custom palette colors blend into a multi-gradient. Pick three.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    ColorPicker("Color 1", selection: customColorBinding(0))
+                    ColorPicker("Color 2", selection: customColorBinding(1))
+                    ColorPicker("Color 3", selection: customColorBinding(2))
+                }
+                .padding(.vertical, 2)
+            }
+#endif
+
             settingRow(
                 title: "Background Style",
                 description: "Multi-gradient blends smoothly; Classic uses a single-color gradient; Solid is flat."
@@ -120,40 +135,34 @@ struct AlternativeUIView: View {
                 }
 #endif
             }
+
+            if theme.atmosphereStyle != .solid {
+                sliderRow(
+                    title: "Color Bleed",
+                    description: "How strongly the banner color washes down the page.",
+                    value: $theme.bleedStrength,
+                    range: AppearanceConfig.bleedRange,
+                    step: 0.05
+                )
+
+                sliderRow(
+                    title: "Background Intensity",
+                    description: "Lighten or deepen the overall background.",
+                    value: $theme.backgroundIntensity,
+                    range: AppearanceConfig.intensityRange,
+                    step: 0.05
+                )
+
+                sliderRow(
+                    title: "Motion",
+                    description: "How much the background drifts while scrolling.",
+                    value: $theme.atmosphereMotion,
+                    range: AppearanceConfig.motionRange,
+                    step: 0.05
+                )
+            }
         } header: {
             Text("Theme")
-        }
-    }
-
-    // MARK: - Atmosphere sliders
-
-    private var atmosphereSection: some View {
-        Section {
-            sliderRow(
-                title: "Color Bleed",
-                description: "How strongly the banner color washes down the page.",
-                value: $theme.bleedStrength,
-                range: AppearanceConfig.bleedRange,
-                step: 0.05
-            )
-
-            sliderRow(
-                title: "Background Intensity",
-                description: "Lighten or deepen the overall background.",
-                value: $theme.backgroundIntensity,
-                range: AppearanceConfig.intensityRange,
-                step: 0.05
-            )
-
-            sliderRow(
-                title: "Motion",
-                description: "How much the background drifts while scrolling.",
-                value: $theme.atmosphereMotion,
-                range: AppearanceConfig.motionRange,
-                step: 0.05
-            )
-        } header: {
-            Text("Atmosphere")
         }
     }
 
@@ -212,12 +221,6 @@ struct AlternativeUIView: View {
     private var advancedSection: some View {
         Section {
             DisclosureGroup("Advanced") {
-#if !os(tvOS)
-                if theme.appearancePaletteRaw == AtmospherePaletteID.custom.rawValue {
-                    customColorPickers
-                }
-#endif
-
                 pickerRow(
                     title: "Layout Density",
                     description: "Controls hero scale, spacing and card sizing.",
@@ -272,6 +275,38 @@ struct AlternativeUIView: View {
                     step: 0.05
                 )
 
+                pickerRow(
+                    title: "Hero Banner",
+                    description: "The home catalogue used for the large banner.",
+                    selection: $heroBannerCatalogId,
+                    values: catalogManager.catalogs.sorted { $0.order < $1.order }.map { ($0.id, $0.name) }
+                )
+
+                settingRow(title: "Hero Behavior", description: "When the banner changes.") {
+                    Picker("", selection: $heroBannerBehavior) {
+                        ForEach(HeroBannerBehavior.allCases) { behavior in
+                            Text(behavior.displayName).tag(behavior.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                toggleRow(
+                    title: "Alternative Season Menu",
+                    description: "Dropdown menus instead of horizontal scrolls for seasons, specials and OVAs.",
+                    isOn: $useSeasonMenu
+                )
+                toggleRow(
+                    title: "Horizontal Episode List",
+                    description: "Use a horizontal instead of vertical episode list.",
+                    isOn: $horizontalEpisodeList
+                )
+                toggleRow(
+                    title: "Classic Schedule Layout",
+                    description: "Original full schedule list instead of the day picker.",
+                    isOn: $useClassicScheduleUI
+                )
+
                 Button(action: resetAppearance) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -291,71 +326,6 @@ struct AlternativeUIView: View {
             }
         } footer: {
             Text("Advanced controls let you fine-tune or recreate the classic look. Custom palette colors appear here when the Custom palette is selected.")
-        }
-    }
-
-#if !os(tvOS)
-    @ViewBuilder
-    private var customColorPickers: some View {
-        ColorPicker("Color A", selection: customColorBinding(0))
-        ColorPicker("Color B", selection: customColorBinding(1))
-        ColorPicker("Color C", selection: customColorBinding(2))
-    }
-#endif
-
-    // MARK: - Hero banner
-
-    private var heroBannerSection: some View {
-        Section {
-            settingRow(
-                title: "Hero Banner Catalogue",
-                description: "The home catalogue used for the large banner."
-            ) {
-                Picker("", selection: $heroBannerCatalogId) {
-                    ForEach(catalogManager.catalogs.sorted { $0.order < $1.order }) { catalog in
-                        Text(catalog.name).tag(catalog.id)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
-
-            settingRow(
-                title: "Hero Banner Behavior",
-                description: "When the banner changes."
-            ) {
-                Picker("", selection: $heroBannerBehavior) {
-                    ForEach(HeroBannerBehavior.allCases) { behavior in
-                        Text(behavior.displayName).tag(behavior.rawValue)
-                    }
-                }
-                .pickerStyle(.menu)
-            }
-        } header: {
-            Text("Hero Banner")
-        }
-    }
-
-    // MARK: - Display options
-
-    private var displayOptionsSection: some View {
-        Section {
-            toggleRow(
-                title: "Alternative Season Menu",
-                description: "Use dropdown menus instead of horizontal scrolls for seasons, specials and OVAs.",
-                isOn: $useSeasonMenu
-            )
-            toggleRow(
-                title: "Horizontal Episode List",
-                description: "Use a horizontal list instead of the vertical episode list.",
-                isOn: $horizontalEpisodeList
-            )
-            toggleRow(
-                title: "Classic Schedule Layout",
-                description: "Use the original full schedule list instead of the compact day picker.",
-                isOn: $useClassicScheduleUI
-            )
-        } header: {
-            Text("Display Options")
         }
     }
 

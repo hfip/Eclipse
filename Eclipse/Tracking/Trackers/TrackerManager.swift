@@ -308,6 +308,21 @@ final class TrackerManager: NSObject, ObservableObject {
         saveTrackerState()
     }
 
+    func setTraktAnimeEpisodeMapping(_ enabled: Bool) {
+        trackerState.traktAnimeEpisodeMapping = enabled
+        saveTrackerState()
+    }
+
+    func setTraktWatchlistSync(_ enabled: Bool) {
+        trackerState.traktWatchlistSync = enabled
+        saveTrackerState()
+        if enabled {
+            // Pull current Trakt watchlist into the local collection so the two sides
+            // line up the moment the user opts in. Push happens on future edits.
+            refreshTraktWatchlistCollection()
+        }
+    }
+
     func hasConnectedAccount(_ service: TrackerService) -> Bool {
         trackerState.getAccount(for: service) != nil
     }
@@ -2012,12 +2027,19 @@ final class TrackerManager: NSObject, ObservableObject {
                         await syncToMyAnimeList(account: account, showId: showId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: progress)
                     }
                 case .trakt:
-                    if let resolved = resolvedTraktEpisodeNumbers(
+                    let resolvedTrakt = resolvedTraktEpisodeNumbers(
                         seasonNumber: seasonNumber,
                         episodeNumber: episodeNumber,
                         playbackContext: playbackContext
-                    ) {
-                        await syncToTrakt(account: account, showId: showId, seasonNumber: resolved.season, episodeNumber: resolved.episode, progress: progress)
+                    )
+                    if resolvedTrakt != nil || canUseTraktAnimeFallback(playbackContext) {
+                        await syncToTrakt(
+                            account: account,
+                            showId: showId,
+                            resolved: resolvedTrakt,
+                            progress: progress,
+                            playbackContext: playbackContext
+                        )
                     }
                 }
             }
@@ -2416,21 +2438,24 @@ final class TrackerManager: NSObject, ObservableObject {
             return
         }
 
-        guard let resolved = resolvedTraktEpisodeNumbers(
+        let resolved = resolvedTraktEpisodeNumbers(
             seasonNumber: seasonNumber,
             episodeNumber: episodeNumber,
             playbackContext: playbackContext
-        ) else { return }
+        )
+        guard resolved != nil || canUseTraktAnimeFallback(playbackContext) else { return }
 
-        let key = "episode|\(showId)|\(resolved.season)|\(resolved.episode)"
+        let keySeason = resolved?.season ?? seasonNumber
+        let keyEpisode = resolved?.episode ?? episodeNumber
+        let key = "episode|\(showId)|\(keySeason)|\(keyEpisode)"
         guard shouldStartTraktPlaybackSync(key: key, force: force) else { return }
         Task {
             await syncToTrakt(
                 account: account,
                 showId: showId,
-                seasonNumber: resolved.season,
-                episodeNumber: resolved.episode,
-                progress: progress
+                resolved: resolved,
+                progress: progress,
+                playbackContext: playbackContext
             )
         }
     }
@@ -3209,19 +3234,23 @@ final class TrackerManager: NSObject, ObservableObject {
                 ]
 
             case .episode(let showId, let seasonNumber, let episodeNumber, _, _, _):
-                guard let resolved = resolvedTraktEpisodeNumbers(
+                let resolved = resolvedTraktEpisodeNumbers(
                     seasonNumber: seasonNumber,
                     episodeNumber: episodeNumber,
                     playbackContext: playbackContext
-                ) else { return false }
+                )
+                // When the direct TMDB mapping is unavailable, only proceed if the anime
+                // absolute-number fallback can supply an episode (never for specials).
+                // With the setting off this collapses to the original skip behaviour.
+                guard resolved != nil || canUseTraktAnimeFallback(playbackContext) else { return false }
                 guard let traktId = await getTraktIdFromTmdbId(showId, mediaType: .show) else {
                     Logger.shared.log("Skipping Trakt scrobble \(action.rawValue); no Trakt show ID for TMDB \(showId)", type: "Tracker")
                     return false
                 }
-                guard let traktEpisodeId = await getTraktEpisodeId(
+                guard let traktEpisodeId = await resolveTraktEpisodeIdForSync(
                     showTraktId: traktId,
-                    seasonNumber: resolved.season,
-                    episodeNumber: resolved.episode,
+                    resolved: resolved,
+                    playbackContext: playbackContext,
                     account: refreshedAccount
                 ) else { return false }
                 payload = [
@@ -3249,25 +3278,27 @@ final class TrackerManager: NSObject, ObservableObject {
         }
     }
 
-    private func syncToTrakt(account: TrackerAccount, showId: Int, seasonNumber: Int, episodeNumber: Int, progress: Double) async {
+    private func syncToTrakt(account: TrackerAccount, showId: Int, resolved: (season: Int, episode: Int)?, progress: Double, playbackContext: EpisodePlaybackContext?) async {
         do {
             let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
             guard let traktId = await getTraktIdFromTmdbId(showId, mediaType: .show) else {
                 Logger.shared.log("Could not find Trakt ID for TMDB show ID \(showId)", type: "Tracker")
                 return
             }
-            guard let traktEpisodeId = await getTraktEpisodeId(
+            guard let traktEpisodeId = await resolveTraktEpisodeIdForSync(
                 showTraktId: traktId,
-                seasonNumber: seasonNumber,
-                episodeNumber: episodeNumber,
+                resolved: resolved,
+                playbackContext: playbackContext,
                 account: refreshedAccount
             ) else {
                 return
             }
 
+            let logSeason = resolved?.season ?? -1
+            let logEpisode = resolved?.episode ?? (playbackContext?.animeAbsoluteEpisodeNumber ?? -1)
             let traktProgress = progress <= 1.0 ? progress * 100.0 : progress
             guard traktProgress >= 85 else {
-                await scrobblePause(account: refreshedAccount, traktEpisodeId: traktEpisodeId, seasonNumber: seasonNumber, episodeNumber: episodeNumber, progress: traktProgress)
+                await scrobblePause(account: refreshedAccount, traktEpisodeId: traktEpisodeId, seasonNumber: logSeason, episodeNumber: logEpisode, progress: traktProgress)
                 return
             }
 
@@ -3282,7 +3313,7 @@ final class TrackerManager: NSObject, ObservableObject {
             ]
             let data = try await postTraktJSON(path: "sync/history", account: refreshedAccount, payload: payload)
             Logger.shared.log("Trakt sync response: \(String(data: data, encoding: .utf8) ?? "<non-utf8>")", type: "Tracker")
-            Logger.shared.log("Synced to Trakt: S\(seasonNumber)E\(episodeNumber) (watched)", type: "Tracker")
+            Logger.shared.log("Synced to Trakt: S\(logSeason)E\(logEpisode) (watched)", type: "Tracker")
         } catch {
             Logger.shared.log("Failed to sync to Trakt: \(error.localizedDescription)", type: "Error")
         }
@@ -3502,6 +3533,93 @@ final class TrackerManager: NSObject, ObservableObject {
             Logger.shared.log("Failed to resolve Trakt episode ID for show \(showTraktId) S\(seasonNumber)E\(episodeNumber): \(error.localizedDescription)", type: "Error")
             return nil
         }
+    }
+
+    private struct TraktSeasonWithEpisodes: Decodable {
+        let number: Int
+        let episodes: [TraktEpisode]?
+    }
+
+    /// Anime / absolute-numbering fallback. Trakt frequently flattens an anime into a
+    /// single season with absolute episode numbering while TMDB splits it into seasons,
+    /// so the direct `/seasons/{s}/episodes/{e}` lookup 404s. Here we map the known
+    /// absolute episode number onto Trakt's own flattened, season-ordered episode list.
+    /// Mirrors NuvioMobile's episode-mapping service (global-index strategy).
+    private func traktFlattenedEpisodeId(showTraktId: Int, absoluteEpisodeNumber: Int, account: TrackerAccount) async -> Int? {
+        guard absoluteEpisodeNumber > 0 else { return nil }
+        let cacheKey = "episode-abs|\(showTraktId)|\(absoluteEpisodeNumber)"
+        if let cached = traktMediaIdCacheQueue.sync(execute: { traktMediaIdCache[cacheKey] }) {
+            return cached
+        }
+
+        do {
+            let data = try await fetchTraktPlaybackData(
+                path: "shows/\(showTraktId)/seasons?extended=episodes",
+                account: account
+            )
+            let seasons = try JSONDecoder().decode([TraktSeasonWithEpisodes].self, from: data)
+            // Exclude specials (season 0) and order by (season, episode) so position N
+            // matches absolute episode N.
+            let ordered = seasons
+                .filter { $0.number > 0 }
+                .sorted { $0.number < $1.number }
+                .flatMap { ($0.episodes ?? []).sorted { $0.number < $1.number } }
+
+            guard absoluteEpisodeNumber <= ordered.count else {
+                Logger.shared.log("Trakt absolute episode \(absoluteEpisodeNumber) out of range (\(ordered.count) episodes) for show \(showTraktId)", type: "Tracker")
+                return nil
+            }
+            guard let traktEpisodeId = ordered[absoluteEpisodeNumber - 1].ids?.trakt else { return nil }
+            traktMediaIdCacheQueue.sync {
+                traktMediaIdCache[cacheKey] = traktEpisodeId
+            }
+            Logger.shared.log("Resolved Trakt episode via absolute mapping: show \(showTraktId) abs#\(absoluteEpisodeNumber) -> episode \(traktEpisodeId)", type: "Tracker")
+            return traktEpisodeId
+        } catch {
+            Logger.shared.log("Trakt absolute episode mapping failed for show \(showTraktId) abs#\(absoluteEpisodeNumber): \(error.localizedDescription)", type: "Error")
+            return nil
+        }
+    }
+
+    /// Resolve a Trakt episode id for scrobble/sync. Tries the direct TMDB
+    /// season/episode lookup first (unchanged behaviour); only when that yields nothing
+    /// AND the anime episode-mapping setting is on does it fall back to absolute-number
+    /// mapping. Returns nil (skip) for specials or when no reliable mapping exists.
+    private func resolveTraktEpisodeIdForSync(
+        showTraktId: Int,
+        resolved: (season: Int, episode: Int)?,
+        playbackContext: EpisodePlaybackContext?,
+        account: TrackerAccount
+    ) async -> Int? {
+        if let resolved,
+           let directId = await getTraktEpisodeId(
+                showTraktId: showTraktId,
+                seasonNumber: resolved.season,
+                episodeNumber: resolved.episode,
+                account: account
+           ) {
+            return directId
+        }
+
+        guard trackerState.traktAnimeEpisodeMapping,
+              let context = playbackContext,
+              !context.isSpecial,
+              let absolute = context.animeAbsoluteEpisodeNumber else {
+            return nil
+        }
+        return await traktFlattenedEpisodeId(
+            showTraktId: showTraktId,
+            absoluteEpisodeNumber: absolute,
+            account: account
+        )
+    }
+
+    /// Whether the anime absolute-number fallback can supply a Trakt episode when the
+    /// direct TMDB mapping is unavailable (never for specials).
+    private func canUseTraktAnimeFallback(_ playbackContext: EpisodePlaybackContext?) -> Bool {
+        trackerState.traktAnimeEpisodeMapping
+            && playbackContext?.isSpecial != true
+            && playbackContext?.animeAbsoluteEpisodeNumber != nil
     }
 
     private func traktDate(from raw: String) -> Date? {
@@ -5751,6 +5869,80 @@ final class TrackerManager: NSObject, ObservableObject {
                     malImportError = "Import failed: \(error.localizedDescription)"
                     Logger.shared.log("MAL import failed: \(error.localizedDescription)", type: "Error")
                 }
+            }
+        }
+    }
+
+    // MARK: - Trakt Watchlist Sync
+
+    static let traktWatchlistCollectionName = "Trakt Watchlist"
+
+    /// Mirror a local "Trakt Watchlist" collection change up to the Trakt watchlist.
+    /// Called from LibraryManager when the user adds/removes an item in that collection.
+    /// No-op unless watchlist sync is enabled and a Trakt account is connected; the
+    /// backup-restore + remote-apply guards prevent echo loops from import/pull writes.
+    func pushTraktWatchlistChange(searchResult: TMDBSearchResult, added: Bool) {
+        guard trackerState.syncEnabled,
+              trackerState.traktWatchlistSync,
+              !isBackupRestoreSyncSuppressed(),
+              let account = trackerState.getAccount(for: .trakt),
+              searchResult.id > 0 else { return }
+
+        let mediaKey = searchResult.isMovie ? "movies" : "shows"
+        let tmdbId = searchResult.id
+        let path = added ? "sync/watchlist" : "sync/watchlist/remove"
+        let payload: [String: Any] = [mediaKey: [["ids": ["tmdb": tmdbId]]]]
+
+        Task {
+            do {
+                let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+                _ = try await postTraktJSON(path: path, account: refreshedAccount, payload: payload)
+                Logger.shared.log("Trakt watchlist \(added ? "add" : "remove") tmdb=\(tmdbId) type=\(mediaKey)", type: "Tracker")
+            } catch {
+                Logger.shared.log("Failed Trakt watchlist \(added ? "add" : "remove") tmdb=\(tmdbId): \(error.localizedDescription)", type: "Error")
+            }
+        }
+    }
+
+    /// Pull the Trakt watchlist into the local "Trakt Watchlist" collection. Additive:
+    /// never deletes local items (matches Eclipse's "import never downgrades" rule), so a
+    /// removal made on another device won't surprise-delete a local entry.
+    func refreshTraktWatchlistCollection() {
+        guard trackerState.syncEnabled,
+              trackerState.traktWatchlistSync,
+              let account = trackerState.getAccount(for: .trakt) else { return }
+
+        Task {
+            do {
+                let refreshedAccount = try await refreshedTraktAccountIfNeeded(account)
+                async let showPages = fetchAllTraktPages(path: "users/me/watchlist/shows?extended=full", account: refreshedAccount)
+                async let moviePages = fetchAllTraktPages(path: "users/me/watchlist/movies?extended=full", account: refreshedAccount)
+                let (showsRaw, moviesRaw) = try await (showPages, moviePages)
+
+                let decoder = JSONDecoder()
+                let watchlistShows = try showsRaw.flatMap { try decoder.decode([TraktWatchlistShowResponse].self, from: $0) }
+                let watchlistMovies = try moviesRaw.flatMap { try decoder.decode([TraktWatchlistMovieResponse].self, from: $0) }
+                let showIds = Array(Set(watchlistShows.compactMap { $0.show.ids.tmdb }))
+                let movieIds = Array(Set(watchlistMovies.compactMap { $0.movie.ids.tmdb }))
+
+                var results: [TMDBSearchResult] = []
+                for id in showIds {
+                    if let detail = try? await TMDBService.shared.getTVShowDetails(id: id) {
+                        results.append(Self.tmdbSearchResult(from: detail))
+                    }
+                }
+                for id in movieIds {
+                    if let detail = try? await TMDBService.shared.getMovieDetails(id: id) {
+                        results.append(Self.tmdbSearchResult(from: detail))
+                    }
+                }
+
+                await MainActor.run {
+                    LibraryManager.shared.applyTraktWatchlistPull(results)
+                }
+                Logger.shared.log("Trakt watchlist pull: \(results.count) items merged into \(Self.traktWatchlistCollectionName)", type: "Tracker")
+            } catch {
+                Logger.shared.log("Failed to refresh Trakt watchlist: \(error.localizedDescription)", type: "Error")
             }
         }
     }

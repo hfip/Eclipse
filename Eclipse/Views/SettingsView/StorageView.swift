@@ -20,99 +20,145 @@ struct StorageView: View {
     @State private var isClearing: Bool = false
     @State private var showConfirmClear: Bool = false
     @State private var errorMessage: String?
-    
+
     @AppStorage("autoClearCacheEnabled") private var autoClearCacheEnabled = false
     @AppStorage("autoClearCacheThresholdMB") private var autoClearCacheThresholdMB: Double = 500
-    
+
+    @StateObject private var accentColorManager = AccentColorManager.shared
+
+    private var accent: Color { accentColorManager.currentAccentColor }
+
     private let cacheThresholdOptions: [Double] = [100, 250, 500, 1000, 2000, 5000]
     
     var body: some View {
-        List {
-            Section(header: Text("APP CACHE"), footer: Text("Cache includes images and other temporary files that can be removed.")) {
-                HStack {
-                    Text("Cache Size")
-                    Spacer()
-                    if isLoading {
-                        ProgressView()
-                    } else {
-                        Text(formattedCacheSize)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                Button(role: .destructive) {
-                    showConfirmClear = true
-                } label: {
-                    if isClearing {
-                        HStack {
-                            ProgressView()
-                            Text("Clearing Cache...")
-                        }
-                    } else {
-                        Text("Clear Cache")
-                    }
-                }
-                .disabled(isClearing || (isLoading && cacheSizeBytes == 0))
-            }
-            .background(EclipseScrollTracker())
-
-            if ExperimentalFeatureState.isEnabledAtLaunch || ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable {
-                Section(
-                    header: Text("STORAGE BREAKDOWN"),
-                    footer: Text(ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable ? "MPV warmup files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV warmup cache actions require MPV as the default in-app player with the Metal renderer.")
-                ) {
-                    ForEach(storageBreakdown) { item in
-                        HStack {
-                            Text(item.title)
-                            Spacer()
+        ScrollView {
+            VStack(spacing: 22) {
+                GlassSection(header: "App Cache") {
+                    VStack(spacing: 0) {
+                        GlassDetailRow(icon: "externaldrive.fill", iconColor: .gray, title: "Cache Size") {
                             if isLoading {
                                 ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(.white.opacity(0.6))
                             } else {
-                                Text(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file))
-                                    .foregroundColor(.secondary)
+                                Text(formattedCacheSize)
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
                             }
                         }
-                    }
 
-                    Button(role: .destructive) {
-                        ExperimentalMPVPreloadManager.shared.clearCache()
-                        refreshCacheSize()
-                    } label: {
-                        Text("Clear MPV Warmup Cache")
-                    }
-                    .disabled(!ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable || isLoading || isClearing)
-                }
-            }
-            
-            Section(header: Text("AUTO-CLEAR CACHE"), footer: Text("Automatically clear cache when it exceeds the specified size.")) {
-                Toggle("Enable Auto-Clear", isOn: $autoClearCacheEnabled)
-                
-                if autoClearCacheEnabled {
-                    HStack {
-                        Text("Threshold")
-                        Spacer()
-                        Picker("", selection: $autoClearCacheThresholdMB) {
-                            ForEach(cacheThresholdOptions, id: \.self) { value in
-                                Text(formatThreshold(value)).tag(value)
+                        GlassDivider()
+
+                        Button {
+                            showConfirmClear = true
+                        } label: {
+                            GlassDetailRow(icon: "trash.fill", iconColor: .red, title: isClearing ? "Clearing Cache..." : "Clear Cache") {
+                                if isClearing {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .tint(.white.opacity(0.6))
+                                } else {
+                                    EmptyView()
+                                }
                             }
                         }
-                        .pickerStyle(.menu)
+                        .buttonStyle(.plain)
+                        .disabled(isClearing || (isLoading && cacheSizeBytes == 0))
                     }
-                    
-                    Text("Cache will be cleared when size exceeds \(formatThreshold(autoClearCacheThresholdMB))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                }
+                GlassSectionFooter("Cache includes images and other temporary files that can be removed.")
+
+                if ExperimentalFeatureState.isEnabledAtLaunch || ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable {
+                    GlassSection(header: "Storage Breakdown") {
+                        VStack(spacing: 0) {
+                            ForEach(storageBreakdown) { item in
+                                GlassDetailRow(icon: "doc.fill", iconColor: .blue, title: item.title) {
+                                    if isLoading {
+                                        ProgressView()
+                                            .progressViewStyle(.circular)
+                                            .tint(.white.opacity(0.6))
+                                    } else {
+                                        Text(ByteCountFormatter.string(fromByteCount: item.sizeBytes, countStyle: .file))
+                                            .font(.subheadline)
+                                            .foregroundColor(.white.opacity(0.5))
+                                    }
+                                }
+                                GlassDivider()
+                            }
+
+                            Button(role: .destructive) {
+                                ExperimentalMPVPreloadManager.shared.clearCache()
+                                refreshCacheSize()
+                            } label: {
+                                GlassDetailRow(icon: "trash", iconColor: .red, title: "Clear MPV Warmup Cache") {
+                                    EmptyView()
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable || isLoading || isClearing)
+                        }
+                    }
+                    GlassSectionFooter(ExperimentalFeatureState.isMPVAdvancedPlaybackAvailable ? "MPV warmup files are temporary cache data and are excluded from downloads, backup, and iCloud." : "MPV warmup cache actions require MPV as the default in-app player with the Metal renderer.")
+                }
+
+                GlassSection(header: "Auto-Clear Cache") {
+                    VStack(spacing: 0) {
+                        GlassDetailRow(icon: "clock.arrow.circlepath", iconColor: .orange, title: "Enable Auto-Clear") {
+                            Toggle("", isOn: $autoClearCacheEnabled)
+                                .labelsHidden()
+                                .tint(accent)
+                        }
+
+                        if autoClearCacheEnabled {
+                            GlassDivider()
+
+                            GlassDetailRow(icon: "gauge.with.dots.needle.bottom.50percent", iconColor: .yellow, title: "Threshold", subtitle: "Cache will be cleared when size exceeds \(formatThreshold(autoClearCacheThresholdMB)).") {
+                                Menu {
+                                    ForEach(cacheThresholdOptions, id: \.self) { value in
+                                        Button {
+                                            autoClearCacheThresholdMB = value
+                                        } label: {
+                                            if autoClearCacheThresholdMB == value {
+                                                Label(formatThreshold(value), systemImage: "checkmark")
+                                            } else {
+                                                Text(formatThreshold(value))
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(formatThreshold(autoClearCacheThresholdMB))
+                                            .font(.subheadline)
+                                            .foregroundColor(.white.opacity(0.6))
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundColor(.white.opacity(0.4))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                GlassSectionFooter("Automatically clear cache when it exceeds the specified size.")
+
+                if let errorMessage {
+                    GlassSection(header: "Error") {
+                        Text(errorMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                    }
                 }
             }
-            
-            if let errorMessage {
-                Section(header: Text("ERROR")) {
-                    Text(errorMessage).foregroundColor(.red)
-                }
-            }
+            .padding(.top, 16)
+            .padding(.bottom, 32)
+            .background(EclipseScrollTracker())
         }
         .navigationTitle("Storage")
-        .eclipseSettingsStyle()
+        .background(SettingsGradientBackground().ignoresSafeArea())
+        .eclipseDarkToolbar()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: refreshCacheSize) {

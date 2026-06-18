@@ -159,6 +159,10 @@ struct MediaDetailView: View {
         theme.atmosphereColor(dominant: ambientColor)
     }
 
+    private var heroBlendColor: Color {
+        theme.heroBlendColor(dominant: ambientColor)
+    }
+
     private var designMetrics: ExperimentalMediaDesignMetrics {
         ExperimentalMediaDesignMetrics(
             preset: ExperimentalMediaDesignPreset(rawValue: experimentalDesignPreset) ?? ExperimentalMediaDesignPreset.defaultValue,
@@ -555,7 +559,7 @@ struct MediaDetailView: View {
                     dominant: ambientColor,
                     hasHeroBleed: true,
                     heroHeight: headerHeight,
-                    fadeDistance: headerHeight * 0.95
+                    fadeDistance: headerHeight * 0.62
                 ),
                 scrollOffset: backgroundScrollOffset
             )
@@ -786,9 +790,9 @@ struct MediaDetailView: View {
                     gradient: Gradient(stops: [
                         .init(color: .clear, location: 0.0),
                         .init(color: Color.black.opacity(0.10), location: 0.20),
-                        .init(color: ambientColor.opacity(0.34), location: 0.46),
-                        .init(color: ambientColor.opacity(0.66), location: 0.74),
-                        .init(color: ambientColor.opacity(0.88), location: 1.0)
+                        .init(color: heroBlendColor.opacity(0.36), location: 0.46),
+                        .init(color: heroBlendColor.opacity(0.70), location: 0.74),
+                        .init(color: heroBlendColor.opacity(0.94), location: 1.0)
                     ]),
                     startPoint: .top,
                     endPoint: .bottom

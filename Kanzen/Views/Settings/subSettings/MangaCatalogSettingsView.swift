@@ -74,6 +74,7 @@ struct MangaCatalogSettingsView: View {
                     }
                 }
             }
+            .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
         }
         .navigationTitle("Home Sources")

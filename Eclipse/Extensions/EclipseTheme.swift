@@ -370,6 +370,29 @@ class EclipseTheme: ObservableObject {
         )
     }
 
+    /// A single representative color of the current background, used to fade a
+    /// hero image's bottom into the backdrop (so dark posters don't leave a
+    /// black box over the multi-gradient).
+    func atmosphereBackdropColor(isReaderMode: Bool? = nil) -> Color {
+        let intensity = scopedBackgroundIntensity(isReaderMode: isReaderMode)
+        switch atmosphereBackgroundMode(isReaderMode: isReaderMode) {
+        case .solid:
+            return scopedAtmosphereColor(dominant: scopedGradientColor(isReaderMode: isReaderMode), isReaderMode: isReaderMode)
+        case .classicGradient:
+            return scopedGradientColor(isReaderMode: isReaderMode).atmosphereScaled(intensity)
+        case .multiGradient:
+            let palette = scopedPalette(isReaderMode: isReaderMode)
+            let base = palette.mesh.indices.contains(4) ? palette.mesh[4] : backgroundBase
+            return base.atmosphereScaled(intensity)
+        }
+    }
+
+    /// The hero-bottom blend color: the poster's color when it is usable,
+    /// otherwise the backdrop color so the image dissolves into the background.
+    func heroBlendColor(dominant: Color?, isReaderMode: Bool? = nil) -> Color {
+        Self.usableDominant(dominant) ?? atmosphereBackdropColor(isReaderMode: isReaderMode)
+    }
+
     /// Treat near-black extracted colors as "no bleed" so the app gradient is
     /// not muddied before a real poster color is available.
     static func usableDominant(_ color: Color?) -> Color? {
