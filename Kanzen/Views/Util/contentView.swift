@@ -339,7 +339,7 @@ struct contentView: View {
 
                         Text(parentModule?.moduleData.novel == true ? "Light Novel" : "Manga")
                     }
-                    .font(.system(experimental ? .title3 : .subheadline, weight: experimental ? .semibold : .regular))
+                    .font(.system(size: experimental ? (isIPad ? 24 : 20) : 15, weight: experimental ? .semibold : .regular))
                     .foregroundColor(.white.opacity(0.82))
                     .multilineTextAlignment(experimental ? .center : .leading)
                 }

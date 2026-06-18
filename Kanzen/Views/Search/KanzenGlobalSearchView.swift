@@ -434,8 +434,7 @@ private struct MangaModuleSearchSectionView: View {
         let experimental = ExperimentalFeatureState.isEnabledAtLaunch
         VStack(alignment: .leading, spacing: experimental ? 14 : 12) {
             Text(section.source.name)
-                .font(.largeTitle)
-                .fontWeight(experimental ? .bold : .regular)
+                .font(experimental ? Font.system(size: 34, weight: .bold) : Font.largeTitle)
                 .foregroundColor(experimental ? .white : .primary)
                 .lineLimit(1)
 
