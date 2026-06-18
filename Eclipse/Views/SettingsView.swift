@@ -14,7 +14,7 @@ struct SettingsView: View {
     @AppStorage("githubReleaseLatestVersion") private var githubReleaseLatestVersion = ""
     @AppStorage("githubReleaseURL") private var githubReleaseURL = ""
     @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
-    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = false
+    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = true
     @AppStorage(PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey) private var skipAniListTraversalForAnimeDetails = false
 
     @StateObject private var algorithmManager = AlgorithmManager.shared
@@ -633,7 +633,7 @@ struct PerformanceModeSettingsView: View {
 }
 
 struct ExperimentalFeaturesSettingsView: View {
-    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = false
+    @AppStorage(ExperimentalFeatureState.enabledKey) private var experimentalFeaturesEnabled = true
     @State private var showRestartAlert = false
 
     private var experimentalFeaturesBinding: Binding<Bool> {

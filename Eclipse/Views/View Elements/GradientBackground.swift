@@ -436,10 +436,9 @@ struct SettingsGradientBackground: View {
 #if !os(tvOS)
         let style = theme.scopedAtmosphereStyle()
         if style.isMultiGradient {
-            ExperimentalGradientBackground(
-                dominantColor: theme.scopedGradientColor(),
-                scrollOffset: 0,
-                style: style
+            AtmosphereBackdrop(
+                input: theme.atmosphereInput(dominant: nil, hasHeroBleed: false, heroHeight: 0, fadeDistance: 1),
+                scrollOffset: 0
             )
         } else {
             legacyBackground
@@ -506,7 +505,10 @@ struct GlobalGradientBackground: View {
 #if !os(tvOS)
         let style = theme.scopedAtmosphereStyle()
         if style.isMultiGradient {
-            ExperimentalGradientBackground(dominantColor: overrideColor, scrollOffset: scrollOffset, style: style)
+            AtmosphereBackdrop(
+                input: theme.atmosphereInput(dominant: overrideColor, hasHeroBleed: false, heroHeight: 0, fadeDistance: 1),
+                scrollOffset: scrollOffset
+            )
         } else {
             legacyBackground
         }
@@ -883,3 +885,534 @@ struct ExperimentalGradientBackground: View {
 }
 
 #endif
+
+// MARK: - Eclipse Design Tokens
+//
+// A single source of truth for spacing, radius, type, and shadow so every
+// screen reads from the same scale instead of re-inventing values inline.
+
+enum EclipseSpacing {
+    static let xs: CGFloat = 6
+    static let s: CGFloat = 10
+    static let m: CGFloat = 16
+    static let l: CGFloat = 24
+    static let xl: CGFloat = 32
+}
+
+enum EclipseRadius {
+    /// The shared card radius, sourced from the active design metrics.
+    static var card: CGFloat { ExperimentalMediaDesignMetrics.current.cardRadius }
+    static let chip: CGFloat = 10
+    static let control: CGFloat = 14
+    static let hero: CGFloat = 20
+}
+
+enum EclipseType {
+    static func screenTitle(_ pad: Bool = false) -> Font { .system(size: isIPad ? 34 : 28, weight: .heavy) }
+    static var sectionHeader: Font { .system(size: isIPad ? 24 : 21, weight: .bold) }
+    static var cardTitle: Font { .system(size: isIPad ? 19 : 17, weight: .semibold) }
+    static var cardSubtitle: Font { .system(size: isIPad ? 15 : 14, weight: .regular) }
+    static var badge: Font { .system(size: 11, weight: .bold) }
+}
+
+enum EclipseShadowTier {
+    case subtle
+    case standard
+    case elevated
+    case floating
+
+    var radius: CGFloat {
+        switch self {
+        case .subtle: return 8
+        case .standard: return 14
+        case .elevated: return 18
+        case .floating: return 26
+        }
+    }
+
+    var yOffset: CGFloat {
+        switch self {
+        case .subtle: return 4
+        case .standard: return 8
+        case .elevated: return 10
+        case .floating: return 14
+        }
+    }
+
+    var opacity: Double {
+        switch self {
+        case .subtle: return 0.20
+        case .standard: return 0.26
+        case .elevated: return 0.30
+        case .floating: return 0.34
+        }
+    }
+}
+
+extension View {
+    /// Apply one of the four shared elevation tiers.
+    func eclipseShadow(_ tier: EclipseShadowTier = .standard) -> some View {
+        shadow(color: Color.black.opacity(tier.opacity), radius: tier.radius, x: 0, y: tier.yOffset)
+    }
+}
+
+// MARK: - Modern Atmosphere System
+//
+// Replaces the broken multi-layer ExperimentalGradientBackground / HeroBleed
+// stack with a single compositor (AtmosphereBackdrop) that renders the app
+// gradient and the scroll-driven banner bleed in one coordinate space sharing
+// one parallax offset, so they can never seam or produce bright spots.
+
+extension Color {
+    /// Scales a color for the Background Intensity control. `intensity == 1`
+    /// returns the color unchanged; `< 1` darkens and `> 1` lifts it (clamped).
+    func atmosphereScaled(_ intensity: Double) -> Color {
+        guard intensity != 1.0 else { return self }
+        #if canImport(UIKit)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a) else { return self }
+        let f = CGFloat(intensity)
+        return Color(
+            red: Double(min(max(r * f, 0), 1)),
+            green: Double(min(max(g * f, 0), 1)),
+            blue: Double(min(max(b * f, 0), 1)),
+            opacity: Double(a)
+        )
+        #else
+        return self
+        #endif
+    }
+}
+
+/// A curated dark multi-gradient palette. Mesh colors are kept inside a tight
+/// luminance band so the rendered background has no bright spots.
+struct AtmospherePalette: Equatable {
+    let id: String
+    let displayName: String
+    /// 12 colors, row-major 3 columns × 4 rows, for the iOS 18 MeshGradient.
+    let mesh: [Color]
+    /// Vertical stops for the iOS 15–17 fallback (top → bottom).
+    let verticalStops: [Gradient.Stop]
+    /// Soft top wash for the fallback's top-anchored radial.
+    let topWash: Color
+
+    func meshColors(intensity: Double) -> [Color] {
+        intensity == 1.0 ? mesh : mesh.map { $0.atmosphereScaled(intensity) }
+    }
+
+    func scaledVerticalStops(intensity: Double) -> [Gradient.Stop] {
+        intensity == 1.0 ? verticalStops : verticalStops.map {
+            Gradient.Stop(color: $0.color.atmosphereScaled(intensity), location: $0.location)
+        }
+    }
+}
+
+enum AtmospherePaletteID: String, CaseIterable, Identifiable {
+    case midnightPurple
+    case nocturne
+    case velvet
+    case mutedAurora
+    case custom
+
+    var id: String { rawValue }
+    static var defaultValue: AtmospherePaletteID { .midnightPurple }
+
+    var displayName: String {
+        switch self {
+        case .midnightPurple: return "Midnight Purple"
+        case .nocturne: return "Nocturne"
+        case .velvet: return "Velvet"
+        case .mutedAurora: return "Muted Aurora"
+        case .custom: return "Custom"
+        }
+    }
+
+    static func from(_ raw: String?) -> AtmospherePaletteID {
+        AtmospherePaletteID(rawValue: raw ?? "") ?? .defaultValue
+    }
+}
+
+enum AppearancePalettes {
+    private static func c(_ r: Double, _ g: Double, _ b: Double) -> Color { Color(red: r, green: g, blue: b) }
+
+    static let midnightPurple = AtmospherePalette(
+        id: "midnightPurple", displayName: "Midnight Purple",
+        mesh: [
+            c(0.075, 0.060, 0.110), c(0.090, 0.066, 0.130), c(0.080, 0.058, 0.115),
+            c(0.110, 0.078, 0.165), c(0.140, 0.092, 0.205), c(0.105, 0.074, 0.160),
+            c(0.120, 0.080, 0.180), c(0.150, 0.094, 0.225), c(0.115, 0.078, 0.172),
+            c(0.060, 0.050, 0.090), c(0.072, 0.056, 0.105), c(0.058, 0.048, 0.088)
+        ],
+        verticalStops: [
+            .init(color: c(0.090, 0.068, 0.135), location: 0.0),
+            .init(color: c(0.140, 0.092, 0.205), location: 0.42),
+            .init(color: c(0.072, 0.056, 0.105), location: 1.0)
+        ],
+        topWash: c(0.34, 0.22, 0.52)
+    )
+
+    static let nocturne = AtmospherePalette(
+        id: "nocturne", displayName: "Nocturne",
+        mesh: [
+            c(0.055, 0.062, 0.095), c(0.066, 0.074, 0.120), c(0.058, 0.064, 0.100),
+            c(0.078, 0.092, 0.150), c(0.098, 0.114, 0.190), c(0.074, 0.090, 0.146),
+            c(0.086, 0.098, 0.165), c(0.104, 0.120, 0.205), c(0.082, 0.096, 0.160),
+            c(0.046, 0.052, 0.082), c(0.056, 0.064, 0.098), c(0.044, 0.050, 0.080)
+        ],
+        verticalStops: [
+            .init(color: c(0.066, 0.074, 0.120), location: 0.0),
+            .init(color: c(0.098, 0.114, 0.190), location: 0.42),
+            .init(color: c(0.050, 0.056, 0.088), location: 1.0)
+        ],
+        topWash: c(0.22, 0.30, 0.56)
+    )
+
+    static let velvet = AtmospherePalette(
+        id: "velvet", displayName: "Velvet",
+        mesh: [
+            c(0.090, 0.058, 0.082), c(0.110, 0.066, 0.098), c(0.092, 0.056, 0.082),
+            c(0.140, 0.078, 0.120), c(0.175, 0.094, 0.150), c(0.135, 0.076, 0.118),
+            c(0.150, 0.082, 0.130), c(0.185, 0.098, 0.158), c(0.142, 0.080, 0.126),
+            c(0.072, 0.050, 0.072), c(0.086, 0.058, 0.084), c(0.070, 0.048, 0.070)
+        ],
+        verticalStops: [
+            .init(color: c(0.110, 0.066, 0.098), location: 0.0),
+            .init(color: c(0.175, 0.094, 0.150), location: 0.42),
+            .init(color: c(0.078, 0.052, 0.076), location: 1.0)
+        ],
+        topWash: c(0.50, 0.22, 0.40)
+    )
+
+    static let mutedAurora = AtmospherePalette(
+        id: "mutedAurora", displayName: "Muted Aurora",
+        mesh: [
+            c(0.052, 0.078, 0.086), c(0.062, 0.092, 0.100), c(0.058, 0.072, 0.094),
+            c(0.072, 0.110, 0.120), c(0.090, 0.130, 0.150), c(0.082, 0.100, 0.150),
+            c(0.080, 0.112, 0.140), c(0.098, 0.126, 0.180), c(0.092, 0.100, 0.170),
+            c(0.048, 0.066, 0.082), c(0.058, 0.078, 0.098), c(0.052, 0.064, 0.090)
+        ],
+        verticalStops: [
+            .init(color: c(0.062, 0.092, 0.100), location: 0.0),
+            .init(color: c(0.090, 0.128, 0.160), location: 0.42),
+            .init(color: c(0.052, 0.068, 0.090), location: 1.0)
+        ],
+        topWash: c(0.20, 0.46, 0.48)
+    )
+
+    static func base(for id: AtmospherePaletteID) -> AtmospherePalette {
+        switch id {
+        case .midnightPurple: return midnightPurple
+        case .nocturne: return nocturne
+        case .velvet: return velvet
+        case .mutedAurora: return mutedAurora
+        case .custom: return midnightPurple
+        }
+    }
+
+    static func resolved(id: AtmospherePaletteID, customColors: [Color]) -> AtmospherePalette {
+        id == .custom ? custom(customColors) : base(for: id)
+    }
+
+    static func custom(_ colors: [Color]) -> AtmospherePalette {
+        let a = colors.indices.contains(0) ? colors[0] : c(0.16, 0.12, 0.20)
+        let b = colors.indices.contains(1) ? colors[1] : c(0.26, 0.16, 0.34)
+        let cc = colors.indices.contains(2) ? colors[2] : c(0.20, 0.12, 0.16)
+        let aD = a.atmosphereScaled(0.5)
+        let bMid = b.atmosphereScaled(0.62)
+        let bD = b.atmosphereScaled(0.5)
+        let cD = cc.atmosphereScaled(0.46)
+        let deep = c(0.058, 0.050, 0.080)
+        return AtmospherePalette(
+            id: "custom", displayName: "Custom",
+            mesh: [
+                aD, a.atmosphereScaled(0.56), aD,
+                bD, bMid, bD,
+                cD, cc.atmosphereScaled(0.52), cD,
+                deep, deep, deep
+            ],
+            verticalStops: [
+                .init(color: aD, location: 0.0),
+                .init(color: bMid, location: 0.42),
+                .init(color: deep, location: 1.0)
+            ],
+            topWash: a
+        )
+    }
+}
+
+/// Persistence keys, clamps and one-time legacy migration for the appearance
+/// controls. Values are owned here and persisted by EclipseTheme.
+enum AppearanceConfig {
+    static let paletteKey = "appearancePalette"
+    static let bleedStrengthKey = "appearanceBleedStrength"
+    static let backgroundIntensityKey = "appearanceBackgroundIntensity"
+    static let motionKey = "appearanceMotion"
+    static let customColorsKey = "appearanceCustomColors"
+    static let readerPaletteKey = "readerAppearancePalette"
+    static let readerBleedStrengthKey = "readerAppearanceBleedStrength"
+    static let readerBackgroundIntensityKey = "readerAppearanceBackgroundIntensity"
+    static let readerMotionKey = "readerAppearanceMotion"
+    static let readerCustomColorsKey = "readerAppearanceCustomColors"
+    private static let migratedKey = "appearanceMigratedV1"
+
+    static let defaultBleedStrength = 1.0
+    static let defaultBackgroundIntensity = 1.0
+    static let defaultMotion = 1.0
+
+    static let bleedRange: ClosedRange<Double> = 0.0...1.2
+    static let intensityRange: ClosedRange<Double> = 0.6...1.3
+    static let motionRange: ClosedRange<Double> = 0.0...1.2
+
+    static func clampBleed(_ v: Double) -> Double { v.isFinite ? min(max(v, bleedRange.lowerBound), bleedRange.upperBound) : defaultBleedStrength }
+    static func clampIntensity(_ v: Double) -> Double { v.isFinite ? min(max(v, intensityRange.lowerBound), intensityRange.upperBound) : defaultBackgroundIntensity }
+    static func clampMotion(_ v: Double) -> Double { v.isFinite ? min(max(v, motionRange.lowerBound), motionRange.upperBound) : defaultMotion }
+
+    static let defaultCustomColors: [Color] = [
+        Color(red: 0.16, green: 0.12, blue: 0.20),
+        Color(red: 0.26, green: 0.16, blue: 0.34),
+        Color(red: 0.20, green: 0.12, blue: 0.16)
+    ]
+
+    static func encodeColors(_ colors: [Color]) -> Data? {
+        #if canImport(UIKit)
+        let uiColors = colors.map { UIColor($0) }
+        return try? NSKeyedArchiver.archivedData(withRootObject: uiColors, requiringSecureCoding: true)
+        #else
+        return nil
+        #endif
+    }
+
+    static func decodeColors(_ data: Data?) -> [Color]? {
+        #if canImport(UIKit)
+        guard let data, !data.isEmpty,
+              let uiColors = try? NSKeyedUnarchiver.unarchivedArrayOfObjects(ofClass: UIColor.self, from: data),
+              !uiColors.isEmpty else { return nil }
+        return uiColors.map { Color($0) }
+        #else
+        return nil
+        #endif
+    }
+
+    /// Map the previous experimental tuning keys onto the new appearance model
+    /// once, so upgrading users keep their look.
+    static func migrateIfNeeded(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: migratedKey) else { return }
+        defaults.set(true, forKey: migratedKey)
+
+        if defaults.object(forKey: paletteKey) == nil,
+           let oldPalette = defaults.string(forKey: "experimentalMultiGradientPalette") {
+            let mapped: String
+            switch oldPalette {
+            case "eclipse": mapped = AtmospherePaletteID.midnightPurple.rawValue
+            case "nocturne": mapped = AtmospherePaletteID.nocturne.rawValue
+            case "velvet": mapped = AtmospherePaletteID.velvet.rawValue
+            case "auroraMuted": mapped = AtmospherePaletteID.mutedAurora.rawValue
+            default: mapped = AtmospherePaletteID.midnightPurple.rawValue
+            }
+            defaults.set(mapped, forKey: paletteKey)
+        }
+
+        if defaults.object(forKey: bleedStrengthKey) == nil,
+           defaults.object(forKey: "experimentalHeroBleedStrength") != nil {
+            defaults.set(clampBleed(defaults.double(forKey: "experimentalHeroBleedStrength")), forKey: bleedStrengthKey)
+        }
+
+        if defaults.object(forKey: backgroundIntensityKey) == nil,
+           let darkness = defaults.object(forKey: "experimentalGradientBaseDarkness") as? Double {
+            defaults.set(clampIntensity(darkness), forKey: backgroundIntensityKey)
+        }
+
+        if defaults.object(forKey: motionKey) == nil,
+           defaults.object(forKey: "experimentalGradientScrollMotion") != nil {
+            defaults.set(clampMotion(defaults.double(forKey: "experimentalGradientScrollMotion")), forKey: motionKey)
+        }
+
+        if defaults.bool(forKey: "experimentalGradientUseCustomColors"),
+           defaults.string(forKey: paletteKey) != AtmospherePaletteID.custom.rawValue {
+            let a = ExperimentalVisualTuning.loadColor(key: "experimentalGradientColorA")
+            let b = ExperimentalVisualTuning.loadColor(key: "experimentalGradientColorB")
+            let cc = ExperimentalVisualTuning.loadColor(key: "experimentalGradientColorC")
+            if let a, let b, let cc, let data = encodeColors([a, b, cc]) {
+                defaults.set(data, forKey: customColorsKey)
+                defaults.set(AtmospherePaletteID.custom.rawValue, forKey: paletteKey)
+            }
+        }
+    }
+}
+
+enum AtmosphereBackgroundMode: Equatable {
+    case multiGradient
+    case classicGradient
+    case solid
+}
+
+/// Everything required to render an atmosphere. A value type so SwiftUI can
+/// diff it cheaply and EclipseTheme can build it for any screen.
+struct AtmosphereInput: Equatable {
+    var mode: AtmosphereBackgroundMode
+    var palette: AtmospherePalette
+    var classicColor: Color
+    var baseColor: Color
+    var dominant: Color?
+    var hasHeroBleed: Bool
+    var heroHeight: CGFloat
+    var fadeDistance: CGFloat
+    var bleedStrength: Double
+    var backgroundIntensity: Double
+    var motion: Double
+}
+
+struct AtmosphereBackdrop: View {
+    var input: AtmosphereInput
+    var scrollOffset: CGFloat = 0
+
+    private var fadeProgress: Double {
+        guard input.fadeDistance > 0 else { return 1 }
+        let t = Double(max(0, min(scrollOffset / input.fadeDistance, 1)))
+        return t * t * (3 - 2 * t)
+    }
+
+    private var bleedAlpha: Double {
+        guard input.hasHeroBleed, input.dominant != nil else { return 0 }
+        return max(0, input.bleedStrength * (1 - fadeProgress))
+    }
+
+    private var parallax: CGFloat {
+        -scrollOffset * 0.06 * CGFloat(max(0, input.motion))
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                AtmosphereBaseLayer(input: input, size: geo.size)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .offset(y: parallax)
+
+                if let dominant = input.dominant, bleedAlpha > 0.001 {
+                    AtmosphereBleedLayer(
+                        color: dominant,
+                        alpha: bleedAlpha,
+                        heroHeight: input.heroHeight,
+                        containerSize: geo.size
+                    )
+                    .offset(y: parallax)
+                    .allowsHitTesting(false)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .clipped()
+        .animation(.easeInOut(duration: 0.35), value: input.dominant)
+    }
+}
+
+private struct AtmosphereBaseLayer: View {
+    let input: AtmosphereInput
+    let size: CGSize
+
+    @ViewBuilder
+    var body: some View {
+        switch input.mode {
+        case .solid:
+            input.classicColor
+        case .classicGradient:
+            classicGradient
+        case .multiGradient:
+            AtmosphereMeshLayer(palette: input.palette, intensity: input.backgroundIntensity, size: size)
+        }
+    }
+
+    private var classicGradient: some View {
+        let accent = input.classicColor.atmosphereScaled(input.backgroundIntensity)
+        return LinearGradient(
+            stops: [
+                .init(color: input.baseColor, location: 0.0),
+                .init(color: accent.opacity(0.70), location: 0.08),
+                .init(color: accent.opacity(0.35), location: 0.22),
+                .init(color: input.baseColor, location: 0.55),
+                .init(color: input.baseColor, location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
+
+private struct AtmosphereMeshLayer: View {
+    let palette: AtmospherePalette
+    let intensity: Double
+    let size: CGSize
+
+    @ViewBuilder
+    var body: some View {
+        if #available(iOS 18.0, tvOS 18.0, macOS 15.0, *) {
+            MeshGradient(
+                width: 3,
+                height: 4,
+                points: AtmosphereMeshLayer.points,
+                colors: palette.meshColors(intensity: intensity)
+            )
+        } else {
+            AtmosphereFallbackLayer(palette: palette, intensity: intensity, size: size)
+        }
+    }
+
+    static let points: [SIMD2<Float>] = [
+        SIMD2<Float>(0.0, 0.0), SIMD2<Float>(0.5, 0.0), SIMD2<Float>(1.0, 0.0),
+        SIMD2<Float>(0.0, 0.33), SIMD2<Float>(0.46, 0.30), SIMD2<Float>(1.0, 0.34),
+        SIMD2<Float>(0.0, 0.66), SIMD2<Float>(0.54, 0.70), SIMD2<Float>(1.0, 0.66),
+        SIMD2<Float>(0.0, 1.0), SIMD2<Float>(0.5, 1.0), SIMD2<Float>(1.0, 1.0)
+    ]
+}
+
+private struct AtmosphereFallbackLayer: View {
+    let palette: AtmospherePalette
+    let intensity: Double
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                stops: palette.scaledVerticalStops(intensity: intensity),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            RadialGradient(
+                colors: [palette.topWash.atmosphereScaled(intensity).opacity(0.16), .clear],
+                center: UnitPoint(x: 0.5, y: 0.0),
+                startRadius: 0,
+                endRadius: max(size.width, size.height) * 0.95
+            )
+        }
+    }
+}
+
+private struct AtmosphereBleedLayer: View {
+    let color: Color
+    let alpha: Double
+    let heroHeight: CGFloat
+    let containerSize: CGSize
+
+    var body: some View {
+        // The hero image is opaque and covers the top, so hold the bleed at
+        // near-full strength through the hero, then fade it out over the tail
+        // below — that is the part that actually reads as "color bleeding down".
+        let tail = max(containerSize.height * 0.55, 220)
+        let h = max(heroHeight + tail, 1)
+        let holdEnd = min(max(heroHeight / h, 0.05), 0.9)
+        return LinearGradient(
+            stops: [
+                .init(color: color.opacity(0.95 * alpha), location: 0.0),
+                .init(color: color.opacity(0.88 * alpha), location: holdEnd * 0.7),
+                .init(color: color.opacity(0.72 * alpha), location: holdEnd),
+                .init(color: color.opacity(0.40 * alpha), location: holdEnd + (1 - holdEnd) * 0.35),
+                .init(color: color.opacity(0.14 * alpha), location: holdEnd + (1 - holdEnd) * 0.70),
+                .init(color: .clear, location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: h)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}

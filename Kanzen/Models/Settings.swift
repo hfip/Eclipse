@@ -433,16 +433,18 @@ enum ExperimentalFeatureState {
     static let mpvIgnoreSpecialSubtitleStylesKey = "experimentalMPVIgnoreSpecialSubtitleStyles"
     static let iCloudSyncEnabledKey = "experimentalICloudSyncEnabled"
 
-    private(set) static var isEnabledAtLaunch: Bool = UserDefaults.standard.bool(forKey: enabledKey)
+    // Modern interface is the default. Use object(forKey:) so a fresh install
+    // (key unset, before registerDefaults runs) still resolves to `true`.
+    private(set) static var isEnabledAtLaunch: Bool = (UserDefaults.standard.object(forKey: enabledKey) as? Bool) ?? true
 
     static func configureLaunchState(defaults: UserDefaults = .standard) {
         registerDefaults(defaults: defaults)
-        isEnabledAtLaunch = defaults.bool(forKey: enabledKey)
+        isEnabledAtLaunch = (defaults.object(forKey: enabledKey) as? Bool) ?? true
     }
 
     static func registerDefaults(defaults: UserDefaults = .standard) {
         defaults.register(defaults: [
-            enabledKey: false,
+            enabledKey: true,
             mpvPreloadEnabledKey: true,
             mpvSmoothTransitionEnabledKey: true,
             mpvPreloadCellularEnabledKey: false,

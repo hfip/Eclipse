@@ -100,16 +100,11 @@ struct KanzenLibraryView: View {
                         .padding(.horizontal, 16)
 
                         if userCollections.isEmpty {
-                            VStack(spacing: 8) {
-                                Image(systemName: "folder")
-                                    .font(.title)
-                                    .foregroundColor(.secondary)
-                                Text("No collections yet")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 20)
+                            EclipseEmptyState(
+                                icon: "folder",
+                                title: "No collections yet",
+                                message: "Create a collection to organize your manga."
+                            )
                         } else {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 LazyHStack(spacing: experimental ? 16 : 14) {
@@ -132,20 +127,11 @@ struct KanzenLibraryView: View {
                     }
 
                     if (bookmarksCollection?.items.isEmpty ?? true) && userCollections.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "books.vertical")
-                                .font(.system(size: 40))
-                                .foregroundColor(.secondary)
-                            Text("Your library is empty")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-                            Text("Bookmark manga from the Home or Search tabs to see them here.")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
+                        EclipseEmptyState(
+                            icon: "books.vertical",
+                            title: "Your library is empty",
+                            message: "Bookmark manga from the Home or Search tabs to see them here."
+                        )
                     }
                 }
                 .padding(.vertical, 8)

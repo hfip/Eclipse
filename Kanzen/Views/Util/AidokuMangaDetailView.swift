@@ -124,13 +124,15 @@ struct AidokuMangaDetailView: View {
     @ViewBuilder
     private var readerDetailBackground: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            HeroBleedGradientBackground(
-                dominantColor: readerAtmosphereColor,
-                scrollOffset: scrollOffset,
-                heroHeight: heroHeight,
-                fadeDistance: designMetrics.heroBleedDistance,
-                bleedStrength: designMetrics.heroWashStrength,
-                style: theme.scopedAtmosphereStyle(isReaderMode: true)
+            AtmosphereBackdrop(
+                input: theme.atmosphereInput(
+                    dominant: readerAtmosphereColor,
+                    hasHeroBleed: true,
+                    heroHeight: heroHeight,
+                    fadeDistance: heroHeight * 0.95,
+                    isReaderMode: true
+                ),
+                scrollOffset: scrollOffset
             )
         } else {
             GlobalGradientBackground(scrollOffset: scrollOffset)

@@ -106,7 +106,57 @@ class EclipseTheme: ObservableObject {
     @Published var readerAtmosphereSolidColor: Color {
         didSet { saveColor(readerAtmosphereSolidColor, key: "readerAtmosphereSolidColor") }
     }
-    
+
+    // MARK: - Appearance (modern atmosphere)
+
+    @Published var appearancePaletteRaw: String {
+        didSet { UserDefaults.standard.set(appearancePaletteRaw, forKey: AppearanceConfig.paletteKey) }
+    }
+
+    @Published var readerAppearancePaletteRaw: String {
+        didSet { UserDefaults.standard.set(readerAppearancePaletteRaw, forKey: AppearanceConfig.readerPaletteKey) }
+    }
+
+    @Published var bleedStrength: Double {
+        didSet { UserDefaults.standard.set(bleedStrength, forKey: AppearanceConfig.bleedStrengthKey) }
+    }
+
+    @Published var readerBleedStrength: Double {
+        didSet { UserDefaults.standard.set(readerBleedStrength, forKey: AppearanceConfig.readerBleedStrengthKey) }
+    }
+
+    @Published var backgroundIntensity: Double {
+        didSet { UserDefaults.standard.set(backgroundIntensity, forKey: AppearanceConfig.backgroundIntensityKey) }
+    }
+
+    @Published var readerBackgroundIntensity: Double {
+        didSet { UserDefaults.standard.set(readerBackgroundIntensity, forKey: AppearanceConfig.readerBackgroundIntensityKey) }
+    }
+
+    @Published var atmosphereMotion: Double {
+        didSet { UserDefaults.standard.set(atmosphereMotion, forKey: AppearanceConfig.motionKey) }
+    }
+
+    @Published var readerAtmosphereMotion: Double {
+        didSet { UserDefaults.standard.set(readerAtmosphereMotion, forKey: AppearanceConfig.readerMotionKey) }
+    }
+
+    @Published var customPaletteColors: [Color] {
+        didSet {
+            if let data = AppearanceConfig.encodeColors(customPaletteColors) {
+                UserDefaults.standard.set(data, forKey: AppearanceConfig.customColorsKey)
+            }
+        }
+    }
+
+    @Published var readerCustomPaletteColors: [Color] {
+        didSet {
+            if let data = AppearanceConfig.encodeColors(readerCustomPaletteColors) {
+                UserDefaults.standard.set(data, forKey: AppearanceConfig.readerCustomColorsKey)
+            }
+        }
+    }
+
     // MARK: - Constants
     
     let cardCornerRadius: CGFloat = 16
@@ -160,6 +210,7 @@ class EclipseTheme: ObservableObject {
     // MARK: - Init
     
     private init() {
+        AppearanceConfig.migrateIfNeeded()
         let styleRaw = UserDefaults.standard.string(forKey: "atmosphereStyle") ?? Self.defaultAtmosphereStyle.rawValue
         let sourceRaw = UserDefaults.standard.string(forKey: "atmosphereSolidColorSource") ?? AtmosphereSolidColorSource.dominant.rawValue
         let readerStyleRaw = UserDefaults.standard.string(forKey: "readerAtmosphereStyle") ?? styleRaw
@@ -176,6 +227,41 @@ class EclipseTheme: ObservableObject {
         self.readerAtmosphereSolidColorSource = AtmosphereSolidColorSource(rawValue: readerSourceRaw) ?? .dominant
         self.atmosphereSolidColor = Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
         self.readerAtmosphereSolidColor = Self.loadColor(key: "readerAtmosphereSolidColor") ?? Self.loadColor(key: "atmosphereSolidColor") ?? Self.gradientPresets[0].color
+
+        let defaults = UserDefaults.standard
+        self.appearancePaletteRaw = defaults.string(forKey: AppearanceConfig.paletteKey) ?? AtmospherePaletteID.defaultValue.rawValue
+        self.readerAppearancePaletteRaw = defaults.string(forKey: AppearanceConfig.readerPaletteKey)
+            ?? defaults.string(forKey: AppearanceConfig.paletteKey)
+            ?? AtmospherePaletteID.defaultValue.rawValue
+        self.bleedStrength = defaults.object(forKey: AppearanceConfig.bleedStrengthKey) != nil
+            ? AppearanceConfig.clampBleed(defaults.double(forKey: AppearanceConfig.bleedStrengthKey))
+            : AppearanceConfig.defaultBleedStrength
+        self.readerBleedStrength = defaults.object(forKey: AppearanceConfig.readerBleedStrengthKey) != nil
+            ? AppearanceConfig.clampBleed(defaults.double(forKey: AppearanceConfig.readerBleedStrengthKey))
+            : (defaults.object(forKey: AppearanceConfig.bleedStrengthKey) != nil
+                ? AppearanceConfig.clampBleed(defaults.double(forKey: AppearanceConfig.bleedStrengthKey))
+                : AppearanceConfig.defaultBleedStrength)
+        self.backgroundIntensity = defaults.object(forKey: AppearanceConfig.backgroundIntensityKey) != nil
+            ? AppearanceConfig.clampIntensity(defaults.double(forKey: AppearanceConfig.backgroundIntensityKey))
+            : AppearanceConfig.defaultBackgroundIntensity
+        self.readerBackgroundIntensity = defaults.object(forKey: AppearanceConfig.readerBackgroundIntensityKey) != nil
+            ? AppearanceConfig.clampIntensity(defaults.double(forKey: AppearanceConfig.readerBackgroundIntensityKey))
+            : (defaults.object(forKey: AppearanceConfig.backgroundIntensityKey) != nil
+                ? AppearanceConfig.clampIntensity(defaults.double(forKey: AppearanceConfig.backgroundIntensityKey))
+                : AppearanceConfig.defaultBackgroundIntensity)
+        self.atmosphereMotion = defaults.object(forKey: AppearanceConfig.motionKey) != nil
+            ? AppearanceConfig.clampMotion(defaults.double(forKey: AppearanceConfig.motionKey))
+            : AppearanceConfig.defaultMotion
+        self.readerAtmosphereMotion = defaults.object(forKey: AppearanceConfig.readerMotionKey) != nil
+            ? AppearanceConfig.clampMotion(defaults.double(forKey: AppearanceConfig.readerMotionKey))
+            : (defaults.object(forKey: AppearanceConfig.motionKey) != nil
+                ? AppearanceConfig.clampMotion(defaults.double(forKey: AppearanceConfig.motionKey))
+                : AppearanceConfig.defaultMotion)
+        self.customPaletteColors = AppearanceConfig.decodeColors(defaults.data(forKey: AppearanceConfig.customColorsKey))
+            ?? AppearanceConfig.defaultCustomColors
+        self.readerCustomPaletteColors = AppearanceConfig.decodeColors(defaults.data(forKey: AppearanceConfig.readerCustomColorsKey))
+            ?? AppearanceConfig.decodeColors(defaults.data(forKey: AppearanceConfig.customColorsKey))
+            ?? AppearanceConfig.defaultCustomColors
     }
 
     private static var defaultAtmosphereStyle: AtmosphereStyle {
@@ -207,7 +293,97 @@ class EclipseTheme: ObservableObject {
         }
         return atmosphereColor(dominant: dominant)
     }
-    
+
+    // MARK: - Appearance scoping
+
+    private func usesReaderScope(_ isReaderMode: Bool?) -> Bool {
+        let readerMode = isReaderMode ?? UserDefaults.standard.bool(forKey: "showKanzen")
+        return readerMode && !globalAppearanceEnabled
+    }
+
+    func scopedPaletteID(isReaderMode: Bool? = nil) -> AtmospherePaletteID {
+        AtmospherePaletteID.from(usesReaderScope(isReaderMode) ? readerAppearancePaletteRaw : appearancePaletteRaw)
+    }
+
+    func scopedCustomColors(isReaderMode: Bool? = nil) -> [Color] {
+        usesReaderScope(isReaderMode) ? readerCustomPaletteColors : customPaletteColors
+    }
+
+    func scopedPalette(isReaderMode: Bool? = nil) -> AtmospherePalette {
+        AppearancePalettes.resolved(
+            id: scopedPaletteID(isReaderMode: isReaderMode),
+            customColors: scopedCustomColors(isReaderMode: isReaderMode)
+        )
+    }
+
+    func scopedBleedStrength(isReaderMode: Bool? = nil) -> Double {
+        AppearanceConfig.clampBleed(usesReaderScope(isReaderMode) ? readerBleedStrength : bleedStrength)
+    }
+
+    func scopedBackgroundIntensity(isReaderMode: Bool? = nil) -> Double {
+        AppearanceConfig.clampIntensity(usesReaderScope(isReaderMode) ? readerBackgroundIntensity : backgroundIntensity)
+    }
+
+    func scopedMotion(isReaderMode: Bool? = nil) -> Double {
+        AppearanceConfig.clampMotion(usesReaderScope(isReaderMode) ? readerAtmosphereMotion : atmosphereMotion)
+    }
+
+    func atmosphereBackgroundMode(isReaderMode: Bool? = nil) -> AtmosphereBackgroundMode {
+        switch scopedAtmosphereStyle(isReaderMode: isReaderMode) {
+        case .solid: return .solid
+        case .gradient: return .classicGradient
+        case .multiGradient, .aurora, .ember: return .multiGradient
+        }
+    }
+
+    /// Build the compositor input for any screen. `dominant` is the extracted
+    /// banner/poster color (nil or near-black is treated as "no bleed").
+    func atmosphereInput(
+        dominant: Color?,
+        hasHeroBleed: Bool,
+        heroHeight: CGFloat,
+        fadeDistance: CGFloat,
+        isReaderMode: Bool? = nil
+    ) -> AtmosphereInput {
+        let usableDominant = Self.usableDominant(dominant)
+        let mode = atmosphereBackgroundMode(isReaderMode: isReaderMode)
+        let accent = scopedGradientColor(isReaderMode: isReaderMode)
+        let classicColor: Color
+        switch mode {
+        case .solid:
+            classicColor = scopedAtmosphereColor(dominant: usableDominant ?? accent, isReaderMode: isReaderMode)
+        case .classicGradient, .multiGradient:
+            classicColor = accent
+        }
+        return AtmosphereInput(
+            mode: mode,
+            palette: scopedPalette(isReaderMode: isReaderMode),
+            classicColor: classicColor,
+            baseColor: backgroundBase,
+            dominant: hasHeroBleed ? usableDominant : nil,
+            hasHeroBleed: hasHeroBleed,
+            heroHeight: heroHeight,
+            fadeDistance: fadeDistance,
+            bleedStrength: scopedBleedStrength(isReaderMode: isReaderMode),
+            backgroundIntensity: scopedBackgroundIntensity(isReaderMode: isReaderMode),
+            motion: scopedMotion(isReaderMode: isReaderMode)
+        )
+    }
+
+    /// Treat near-black extracted colors as "no bleed" so the app gradient is
+    /// not muddied before a real poster color is available.
+    static func usableDominant(_ color: Color?) -> Color? {
+        guard let color else { return nil }
+        #if canImport(UIKit)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) else { return color }
+        if max(r, max(g, b)) < 0.06 { return nil }
+        return color
+        #else
+        return color
+        #endif
+    }
+
     // MARK: - Persistence
     
     private func saveColor(_ color: Color, key: String) {

@@ -110,13 +110,14 @@ struct HomeView: View {
     private var homeContent: some View {
         ZStack {
             if ExperimentalFeatureState.isEnabledAtLaunch {
-                HeroBleedGradientBackground(
-                    dominantColor: atmosphereColor,
-                    scrollOffset: backgroundScrollOffset,
-                    heroHeight: heroHeight,
-                    fadeDistance: designMetrics.heroBleedDistance,
-                    bleedStrength: designMetrics.heroWashStrength,
-                    style: theme.atmosphereStyle
+                AtmosphereBackdrop(
+                    input: theme.atmosphereInput(
+                        dominant: ambientColor,
+                        hasHeroBleed: true,
+                        heroHeight: heroHeight,
+                        fadeDistance: heroHeight * 0.9
+                    ),
+                    scrollOffset: backgroundScrollOffset
                 )
                 .ignoresSafeArea(.all)
             } else {
@@ -297,12 +298,20 @@ struct HomeView: View {
     
     @ViewBuilder
     private var heroGradientOverlay: some View {
+        // Modern: fade the (opaque) hero image into the banner's own color so it
+        // joins seamlessly with the AtmosphereBackdrop bleed underneath. Legacy
+        // keeps the original heavier wash.
         LinearGradient(
-            gradient: Gradient(stops: [
+            gradient: Gradient(stops: ExperimentalFeatureState.isEnabledAtLaunch ? [
                 .init(color: ambientColor.opacity(0.0), location: 0.0),
-                .init(color: Color.black.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.16 : 0.26), location: 0.18),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.34 : 0.72), location: 0.58),
-                .init(color: atmosphereColor.opacity(ExperimentalFeatureState.isEnabledAtLaunch ? 0.82 : 1), location: 1.0)
+                .init(color: Color.black.opacity(0.10), location: 0.30),
+                .init(color: ambientColor.opacity(0.45), location: 0.66),
+                .init(color: ambientColor.opacity(0.85), location: 1.0)
+            ] : [
+                .init(color: ambientColor.opacity(0.0), location: 0.0),
+                .init(color: Color.black.opacity(0.26), location: 0.18),
+                .init(color: atmosphereColor.opacity(0.72), location: 0.58),
+                .init(color: atmosphereColor.opacity(1), location: 1.0)
             ]),
             startPoint: .top,
             endPoint: .bottom

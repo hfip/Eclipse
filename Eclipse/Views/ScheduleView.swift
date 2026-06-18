@@ -138,38 +138,26 @@ struct ScheduleView: View {
     }
     
     private func errorView(_ message: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 50))
-                .foregroundColor(.orange)
-            Text(message)
-                .font(.headline)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-                .padding(.horizontal)
-            Button("Retry") {
+        EclipseEmptyState(
+            icon: "exclamationmark.triangle",
+            title: "Couldn't Load Schedule",
+            message: message,
+            actionTitle: "Retry",
+            action: {
                 Task {
                     await viewModel.loadSchedule(mode: selectedScheduleMode, localTimeZone: showLocalScheduleTime, forceRefresh: true)
                 }
             }
-            .buttonStyle(.bordered)
-            .tint(accentColorManager.currentAccentColor)
-        }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
+
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "calendar")
-                .font(.system(size: 50))
-                .foregroundColor(.secondary)
-            Text("No Upcoming Episodes")
-                .font(.title2)
-                .fontWeight(.bold)
-            Text("No \(selectedScheduleMode.displayName.lowercased()) episodes scheduled in the next week.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
+        EclipseEmptyState(
+            icon: "calendar",
+            title: "No Upcoming Episodes",
+            message: "No \(selectedScheduleMode.displayName.lowercased()) episodes scheduled in the next week."
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
@@ -310,25 +298,35 @@ struct ScheduleView: View {
 
     private func dayChip(_ bucket: DayBucket) -> some View {
         let selected = selectedBucket.map { scheduleCalendar.isDate($0.date, inSameDayAs: bucket.date) } ?? false
+        let isToday = scheduleCalendar.isDate(bucket.date, inSameDayAs: Date())
 
         return Button {
             selectedScheduleDate = bucket.date
         } label: {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 Text(shortDay(bucket.date))
                     .font(.caption.weight(.semibold))
 
                 Text(dayNumber(bucket.date))
-                    .font(.headline.weight(.bold))
+                    .font(.system(size: 20, weight: .bold))
 
                 Text("\(bucket.items.count)")
                     .font(.caption2.weight(.semibold))
-                    .foregroundColor(selected ? .black.opacity(0.7) : .secondary)
+                    .foregroundColor(selected ? .black.opacity(0.65) : .white.opacity(0.5))
             }
             .foregroundColor(selected ? .black : .white)
-            .frame(width: 62, height: 72)
-            .background(selected ? accentColorManager.currentAccentColor : EclipseTheme.shared.cardBackground)
-            .cornerRadius(10)
+            .frame(width: 64, height: 80)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(selected ? accentColorManager.currentAccentColor : Color.white.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(
+                        isToday && !selected ? accentColorManager.currentAccentColor.opacity(0.6) : Color.white.opacity(0.08),
+                        lineWidth: 1
+                    )
+            )
         }
         .buttonStyle(.plain)
     }
@@ -457,53 +455,123 @@ struct ScheduleView: View {
         HStack(spacing: 12) {
             schedulePoster(urlString: item.coverImage)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text(item.title)
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white)
                     .lineLimit(2)
 
-                Text(formatLabel(for: item))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    formatTypeBadge(for: item)
+                    Text(episodeOnlyLabel(for: item))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.62))
+                        .lineLimit(1)
+                }
             }
 
             Spacer(minLength: 8)
 
-            Text(formattedTime(for: item))
-                .font(.caption.weight(.semibold))
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 4) {
+                    Image(systemName: item.isStreamingRelease ? "play.circle.fill" : "clock")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(formattedTime(for: item))
+                        .font(.caption.weight(.semibold))
+                }
                 .foregroundColor(.white)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 9)
                 .padding(.vertical, 5)
-                .background(Color.white.opacity(0.12))
-                .cornerRadius(8)
+                .background(Capsule().fill(Color.white.opacity(0.12)))
+
+                if let countdown = countdownLabel(for: item) {
+                    Text(countdown)
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+            }
         }
-        .padding(10)
-        .background(EclipseTheme.shared.cardBackground)
-        .cornerRadius(10)
+        .padding(12)
+        .glassCard(cornerRadius: EclipseRadius.card)
     }
 
     @ViewBuilder
     private func schedulePoster(urlString: String?) -> some View {
-        if let urlString, let url = URL(string: urlString) {
-            KFImage(url)
-                .resizable()
-                .placeholder {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
+        Group {
+            if let urlString, let url = URL(string: urlString) {
+                KFImage(url)
+                    .resizable()
+                    .placeholder {
+                        Rectangle().fill(Color.white.opacity(0.08))
+                    }
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(Color.white.opacity(0.08))
+                    .overlay(Image(systemName: "tv").foregroundColor(.white.opacity(0.4)))
+            }
+        }
+        .frame(width: 58 * iPadScaleSmall, height: 84 * iPadScaleSmall)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Helpers
+
+    private func episodeOnlyLabel(for item: ScheduleEntry) -> String {
+        if item.source != .anime {
+            if let season = item.season, item.episode > 0 {
+                return "S\(season) · Ep \(item.episode)"
+            }
+            return item.episode > 0 ? "Ep \(item.episode)" : "New episode"
+        }
+        return item.episode > 0 ? "Ep \(item.episode)" : "New"
+    }
+
+    @ViewBuilder
+    private func formatTypeBadge(for item: ScheduleEntry) -> some View {
+        if item.source == .anime,
+           let raw = item.format?.uppercased(),
+           ["MOVIE", "OVA", "ONA", "SPECIAL", "MUSIC"].contains(raw) {
+            let label: String = {
+                switch raw {
+                case "MOVIE": return "Movie"
+                case "OVA": return "OVA"
+                case "ONA": return "ONA"
+                case "SPECIAL": return "Special"
+                case "MUSIC": return "Music"
+                default: return raw.capitalized
                 }
-                .aspectRatio(contentMode: .fill)
-                .frame(width: 54 * iPadScaleSmall, height: 76 * iPadScaleSmall)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        } else {
-            Rectangle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(width: 54 * iPadScaleSmall, height: 76 * iPadScaleSmall)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }()
+            EclipseStatusBadge(text: label, tint: formatTint(raw))
         }
     }
-    
-    // MARK: - Helpers
+
+    private func formatTint(_ raw: String) -> Color {
+        switch raw {
+        case "MOVIE": return Color(red: 0.85, green: 0.42, blue: 0.22)
+        case "OVA", "ONA": return Color(red: 0.38, green: 0.50, blue: 0.86)
+        case "SPECIAL": return Color(red: 0.68, green: 0.40, blue: 0.80)
+        case "MUSIC": return Color(red: 0.20, green: 0.70, blue: 0.58)
+        default: return .gray
+        }
+    }
+
+    private func countdownLabel(for item: ScheduleEntry) -> String? {
+        guard item.hasKnownAiringTime else { return nil }
+        let interval = item.airingAt.timeIntervalSinceNow
+        if interval <= 0 { return "Aired" }
+        let hours = Int(interval / 3600)
+        if hours < 1 {
+            let minutes = max(1, Int(interval / 60))
+            return "in \(minutes)m"
+        }
+        if hours < 24 { return "in \(hours)h" }
+        return "in \(hours / 24)d"
+    }
     
     private func formatLabel(for item: ScheduleEntry) -> String {
         if item.source != .anime {

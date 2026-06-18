@@ -121,22 +121,11 @@ struct DownloadsView: View {
     // MARK: - Empty State
     
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 64))
-                .foregroundColor(.secondary.opacity(0.5))
-            
-            Text("No Downloads")
-                .font(.title2)
-                .fontWeight(.semibold)
-                .foregroundColor(.secondary)
-            
-            Text("Download movies and episodes to watch offline.\nUse the download button on any media page.")
-                .font(.subheadline)
-                .foregroundColor(.secondary.opacity(0.7))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-        }
+        EclipseEmptyState(
+            icon: "arrow.down.circle",
+            title: "No Downloads",
+            message: "Download movies and episodes to watch offline. Use the download button on any media page."
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
@@ -145,21 +134,11 @@ struct DownloadsView: View {
     @ViewBuilder
     private var downloadsList: some View {
         if activeDownloads.isEmpty && failedDownloads.isEmpty {
-            VStack(spacing: 16) {
-                Image(systemName: "checkmark.circle")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary.opacity(0.5))
-                
-                Text("No Active Downloads")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                
-                Text("Completed downloads can be found\nin the Library tab.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary.opacity(0.7))
-                    .multilineTextAlignment(.center)
-            }
+            EclipseEmptyState(
+                icon: "checkmark.circle",
+                title: "No Active Downloads",
+                message: "Completed downloads can be found in the Library tab."
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
@@ -243,26 +222,26 @@ struct DownloadsView: View {
     // MARK: - Section Header
     
     private func sectionHeader(_ title: String, count: Int) -> some View {
-        HStack {
-            Text(title)
-                .font(.title3)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-            
-            Text("\(count)")
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(Color.gray.opacity(0.3))
-                .cornerRadius(12)
-            
-            Spacer()
+        EclipseSectionHeader(title: title, count: count)
+            .padding(.horizontal)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private func statusBadge(for status: DownloadStatus) -> some View {
+        switch status {
+        case .downloading:
+            EclipseStatusBadge(text: "Downloading", systemImage: "arrow.down", tint: .blue)
+        case .queued:
+            EclipseStatusBadge(text: "Queued", systemImage: "clock", tint: .orange)
+        case .paused:
+            EclipseStatusBadge(text: "Paused", systemImage: "pause.fill", tint: .gray)
+        case .failed:
+            EclipseStatusBadge(text: "Failed", systemImage: "exclamationmark.triangle.fill", tint: .red)
+        case .completed:
+            EclipseStatusBadge(text: "Completed", systemImage: "checkmark", tint: .green)
         }
-        .padding(.horizontal)
-        .padding(.top, 16)
-        .padding(.bottom, 4)
     }
     
     // MARK: - Active Download Row
@@ -271,48 +250,43 @@ struct DownloadsView: View {
         HStack(spacing: 12) {
             posterImage(url: item.posterURL)
             
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(item.displayTitle)
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .lineLimit(2)
                     .foregroundColor(.white)
-                
-                if item.status == .downloading {
+
+                statusBadge(for: item.status)
+
+                if item.status == .downloading || item.status == .paused {
                     ProgressView(value: item.progress)
-                        .tint(.blue)
-                    
+                        .tint(item.status == .paused ? Color.gray : Color.blue)
+
                     HStack {
                         Text("\(Int(item.progress * 100))%")
                             .font(.caption2)
-                            .foregroundColor(.blue)
-                        
+                            .foregroundColor(.white.opacity(0.7))
+
                         Spacer()
-                        
+
                         Text(item.formattedSize)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                } else if item.status == .queued {
-                    Text(item.error ?? "Queued")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                } else if item.status == .paused {
-                    ProgressView(value: item.progress)
-                        .tint(.gray)
-                    
-                    Text("Paused • \(Int(item.progress * 100))%")
+                } else if item.status == .queued, let detail = item.error, !detail.isEmpty {
+                    Text(detail)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             Spacer()
-            
+
             downloadActionButtons(item)
         }
-        .padding(10)
-        .applyLiquidGlassBackground(cornerRadius: 16)
+        .padding(12)
+        .glassCard(cornerRadius: 16)
         .contextMenu {
             if item.status == .downloading {
                 Button(action: { downloadManager.pauseDownload(id: item.id) }) {
@@ -386,21 +360,23 @@ struct DownloadsView: View {
         HStack(spacing: 12) {
             posterImage(url: item.posterURL)
             
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(item.displayTitle)
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .lineLimit(2)
                     .foregroundColor(.white)
-                
+
+                statusBadge(for: .failed)
+
                 Text(item.error ?? "Unknown error")
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.red.opacity(0.85))
                     .lineLimit(2)
             }
-            
+
             Spacer()
-            
+
             Button(action: {
                 downloadManager.resumeDownload(id: item.id)
             }) {
@@ -410,8 +386,8 @@ struct DownloadsView: View {
                     .frame(width: 36, height: 36)
             }
         }
-        .padding(10)
-        .applyLiquidGlassBackground(cornerRadius: 16)
+        .padding(12)
+        .glassCard(cornerRadius: 16)
         .contextMenu {
             Button(action: { downloadManager.resumeDownload(id: item.id) }) {
                 Label("Retry", systemImage: "arrow.clockwise")
@@ -494,18 +470,22 @@ struct DownloadsView: View {
     private func posterImage(url: String?) -> some View {
         KFImage(URL(string: url ?? ""))
             .placeholder {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.gray.opacity(0.3))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
                     .overlay(
                         Image(systemName: "film")
                             .font(.title3)
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.4))
                     )
             }
             .resizable()
             .aspectRatio(2/3, contentMode: .fill)
-            .frame(width: 55 * iPadScaleSmall, height: 82 * iPadScaleSmall)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .frame(width: 60 * iPadScaleSmall, height: 90 * iPadScaleSmall)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
     }
     
     // MARK: - Library View (Grouped by Show/Season)
@@ -566,21 +546,11 @@ struct DownloadsView: View {
     private var libraryView: some View {
         Group {
             if completedDownloads.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "rectangle.stack")
-                        .font(.system(size: 48))
-                        .foregroundColor(.secondary.opacity(0.5))
-                    
-                    Text("No Downloaded Content")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
-                    
-                    Text("Completed downloads will appear here\ngrouped by show and season.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary.opacity(0.7))
-                        .multilineTextAlignment(.center)
-                }
+                EclipseEmptyState(
+                    icon: "rectangle.stack",
+                    title: "No Downloaded Content",
+                    message: "Completed downloads will appear here grouped by show and season."
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {

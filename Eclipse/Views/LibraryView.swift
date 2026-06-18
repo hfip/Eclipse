@@ -51,21 +51,12 @@ struct LibraryView: View {
     
     private var bookmarksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                HStack(spacing: 8) {
-                    Text("Bookmarks")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                }
-                Spacer()
-                if let bookmarksCollection = libraryManager.collections.first(where: { $0.name == "Bookmarks" }) {
-                    Text("\(bookmarksCollection.items.count) items")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
+            EclipseSectionHeader(
+                title: "Bookmarks",
+                count: libraryManager.collections.first(where: { $0.name == "Bookmarks" })?.items.count
+            )
             .padding(.horizontal)
-            
+
             if let bookmarksCollection = libraryManager.collections.first(where: { $0.name == "Bookmarks" }),
                !bookmarksCollection.items.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -84,37 +75,23 @@ struct LibraryView: View {
                     .padding(.horizontal)
                 }
             } else {
-                VStack {
-                    Image(systemName: "bookmark")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text("No bookmarks yet")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 8)
-                    Text("Bookmark items to see them here")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+                EclipseEmptyState(
+                    icon: "bookmark",
+                    title: "No bookmarks yet",
+                    message: "Bookmark items to see them here."
+                )
             }
         }
     }
-    
+
     private var collectionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Collections")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                Spacer()
-                Text("\(libraryManager.collections.filter { $0.name != "Bookmarks" }.count) collections")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            EclipseSectionHeader(
+                title: "Collections",
+                count: libraryManager.collections.filter { $0.name != "Bookmarks" }.count
+            )
             .padding(.horizontal)
-            
+
             let nonBookmarkCollections = libraryManager.collections.filter { $0.name != "Bookmarks" }
             
             if !nonBookmarkCollections.isEmpty {
@@ -130,22 +107,11 @@ struct LibraryView: View {
                     .padding(.horizontal)
                 }
             } else {
-                VStack {
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text("No collections yet")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 8)
-                    Text("Create collections to organize your media")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+                EclipseEmptyState(
+                    icon: "folder.badge.plus",
+                    title: "No collections yet",
+                    message: "Create collections to organize your media."
+                )
             }
         }
     }

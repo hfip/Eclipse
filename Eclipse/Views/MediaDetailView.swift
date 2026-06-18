@@ -550,13 +550,14 @@ struct MediaDetailView: View {
     @ViewBuilder
     private var detailBackground: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            HeroBleedGradientBackground(
-                dominantColor: atmosphereColor,
-                scrollOffset: backgroundScrollOffset,
-                heroHeight: headerHeight,
-                fadeDistance: designMetrics.heroBleedDistance * 1.15,
-                bleedStrength: designMetrics.heroWashStrength * 1.08,
-                style: theme.atmosphereStyle
+            AtmosphereBackdrop(
+                input: theme.atmosphereInput(
+                    dominant: ambientColor,
+                    hasHeroBleed: true,
+                    heroHeight: headerHeight,
+                    fadeDistance: headerHeight * 0.95
+                ),
+                scrollOffset: backgroundScrollOffset
             )
         } else if theme.atmosphereStyle == .solid {
             atmosphereColor
@@ -784,10 +785,10 @@ struct MediaDetailView: View {
                 LinearGradient(
                     gradient: Gradient(stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: Color.black.opacity(0.12), location: 0.18),
-                        .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.42 : 0.32), location: 0.42),
-                        .init(color: atmosphereColor.opacity(theme.atmosphereStyle == .solid ? 0.78 : 0.66), location: 0.72),
-                        .init(color: EclipseTheme.shared.backgroundBase.opacity(theme.atmosphereStyle == .solid ? 0.24 : 0.76), location: 1.0)
+                        .init(color: Color.black.opacity(0.10), location: 0.20),
+                        .init(color: ambientColor.opacity(0.34), location: 0.46),
+                        .init(color: ambientColor.opacity(0.66), location: 0.74),
+                        .init(color: ambientColor.opacity(0.88), location: 1.0)
                     ]),
                     startPoint: .top,
                     endPoint: .bottom

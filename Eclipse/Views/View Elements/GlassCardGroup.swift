@@ -207,3 +207,139 @@ struct GlassDivider: View {
             .padding(.leading, 54)
     }
 }
+
+// MARK: - Shared design-system components
+//
+// Reusable pieces consumed by Home, Media Detail, Downloads, Schedule and the
+// libraries so every screen shares one card / badge / empty-state language.
+
+extension View {
+    /// Wrap content in the shared glass treatment at the token card radius.
+    func glassCard(cornerRadius: CGFloat? = nil) -> some View {
+        applyLiquidGlassBackground(cornerRadius: cornerRadius ?? EclipseRadius.card)
+    }
+}
+
+/// A consistent section header (title + optional count + optional chevron).
+struct EclipseSectionHeader: View {
+    let title: String
+    var count: Int? = nil
+    var showsChevron: Bool = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(EclipseType.sectionHeader)
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.6))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+            }
+
+            Spacer(minLength: 0)
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+        }
+    }
+}
+
+/// A small status / format pill (Downloading, Paused, OVA, etc.).
+struct EclipseStatusBadge: View {
+    let text: String
+    var systemImage: String? = nil
+    var tint: Color = .white
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 10, weight: .bold))
+            }
+            Text(text)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(tint.opacity(0.85)))
+    }
+}
+
+/// A consistent empty-state block with an optional call to action.
+struct EclipseEmptyState: View {
+    let icon: String
+    let title: String
+    let message: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 46, weight: .regular))
+                .foregroundColor(.white.opacity(0.5))
+
+            Text(title)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+
+            if let actionTitle, let action {
+                Button(action: action) {
+                    Text(actionTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 32)
+        .padding(.vertical, 28)
+    }
+}
+
+/// A circular progress ring with a centered percentage, for downloads.
+struct DownloadProgressRing: View {
+    var progress: Double
+    var tint: Color = .white
+    var size: CGFloat = 36
+    var lineWidth: CGFloat = 3
+
+    private var clamped: CGFloat { CGFloat(max(0, min(progress, 1))) }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.16), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: clamped)
+                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text("\(Int(clamped * 100))")
+                .font(.system(size: size * 0.30, weight: .semibold))
+                .foregroundColor(.white)
+        }
+        .frame(width: size, height: size)
+    }
+}

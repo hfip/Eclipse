@@ -3,200 +3,260 @@
 //  Sora
 //
 //  Created by Francesco on 20/08/25.
+//  Reworked for the modern Eclipse appearance system.
 //
 
 import SwiftUI
 
 struct AlternativeUIView: View {
+    // Retained display options
     @AppStorage("seasonMenu") private var useSeasonMenu = false
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList = false
     @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
     @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
     @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
+
+    // Retained layout knobs (feed ExperimentalMediaDesignMetrics)
     @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
-    @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
     @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
-    @AppStorage(ExperimentalMultiGradientPalette.storageKey) private var experimentalMultiGradientPalette = ExperimentalMultiGradientPalette.defaultValue.rawValue
-    @AppStorage(ExperimentalVisualTuning.heroHeightScaleKey) private var experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
-    @AppStorage(ExperimentalVisualTuning.heroBleedStrengthKey) private var experimentalHeroBleedStrength = ExperimentalVisualTuning.defaultHeroBleedStrength
-    @AppStorage(ExperimentalVisualTuning.heroFadeDistanceScaleKey) private var experimentalHeroFadeDistanceScale = ExperimentalVisualTuning.defaultHeroFadeDistanceScale
     @AppStorage(ExperimentalVisualTuning.sectionSpacingScaleKey) private var experimentalSectionSpacingScale = ExperimentalVisualTuning.defaultSectionSpacingScale
     @AppStorage(ExperimentalVisualTuning.cardRadiusScaleKey) private var experimentalCardRadiusScale = ExperimentalVisualTuning.defaultCardRadiusScale
     @AppStorage(ExperimentalVisualTuning.mediaCardScaleKey) private var experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
     @AppStorage(ExperimentalVisualTuning.glassStrengthKey) private var experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
-    @AppStorage(ExperimentalVisualTuning.gradientBaseDarknessKey) private var experimentalGradientBaseDarkness = ExperimentalVisualTuning.defaultGradientBaseDarkness
-    @AppStorage(ExperimentalVisualTuning.gradientAccentIntensityKey) private var experimentalGradientAccentIntensity = ExperimentalVisualTuning.defaultGradientAccentIntensity
-    @AppStorage(ExperimentalVisualTuning.gradientScrollMotionKey) private var experimentalGradientScrollMotion = ExperimentalVisualTuning.defaultGradientScrollMotion
-    @AppStorage(ExperimentalVisualTuning.gradientUseCustomColorsKey) private var experimentalGradientUseCustomColors = false
-    @AppStorage(ExperimentalVisualTuning.gradientColorAKey) private var experimentalGradientColorAData = Data()
-    @AppStorage(ExperimentalVisualTuning.gradientColorBKey) private var experimentalGradientColorBData = Data()
-    @AppStorage(ExperimentalVisualTuning.gradientColorCKey) private var experimentalGradientColorCData = Data()
-    
+    @AppStorage(ExperimentalVisualTuning.heroHeightScaleKey) private var experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
+
+    // Interface (modern vs classic) — restart applied gate
+    @AppStorage(ExperimentalFeatureState.enabledKey) private var modernInterfaceEnabled = true
+    @State private var showRestartAlert = false
+
     @StateObject private var accentColorManager = AccentColorManager.shared
     @StateObject private var catalogManager = CatalogManager.shared
     @ObservedObject private var theme = EclipseTheme.shared
     @State private var mediaDetailElements = MediaDetailElement.orderedElements()
     @State private var hiddenMediaDetailElements = MediaDetailElement.hiddenElements()
-    
+
+    private var accent: Color { accentColorManager.currentAccentColor }
+
     var body: some View {
         List {
-            Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Global Appearance")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
+            previewSection
+            themeSection
+            atmosphereSection
+            interfaceSection
+            advancedSection
+            heroBannerSection
+            displayOptionsSection
+            mediaDetailSection
+        }
+        .navigationTitle("Appearance")
+        .eclipseSettingsStyle()
+        .onAppear(perform: reloadMediaDetailElements)
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("The interface style is applied when Eclipse launches. Restart the app to switch between the Modern and Classic layouts.")
+        }
+    }
 
-                        Text("Share appearance changes between media and reader mode.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
+    // MARK: - Live preview
 
-                    Spacer()
+    private var previewSection: some View {
+        Section {
+            AppearancePreviewCard()
+                .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+    }
 
-                    Toggle("", isOn: $theme.globalAppearanceEnabled)
-                        .tint(accentColorManager.currentAccentColor)
-                }
+    // MARK: - Theme
 
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Accent Color")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("This affects buttons, links, and other interactive elements.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-#if !os(tvOS)
-                    ColorPicker("", selection: $accentColorManager.currentAccentColor)
-                        .onChangeComp(of: accentColorManager.currentAccentColor) { _, newColor in
-                            accentColorManager.saveAccentColor(newColor)
+    private var themeSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Palette")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(AtmospherePaletteID.allCases) { id in
+                            paletteSwatch(id)
                         }
-#endif
+                    }
+                    .padding(.vertical, 2)
                 }
-            } header: {
-                Text("Interface")
             }
-            .background(EclipseScrollTracker())
-            
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Settings Theme Color")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("Changes the gradient background color in Settings screens.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    HStack(spacing: 12) {
-                        ForEach(EclipseTheme.gradientPresets, id: \.name) { preset in
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    theme.settingsGradientColor = preset.color
-                                }
-                            } label: {
-                                Circle()
-                                    .fill(preset.color)
-                                    .frame(width: 32, height: 32)
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(Color.white, lineWidth: colorsMatch(preset.color, theme.settingsGradientColor) ? 2.5 : 0)
-                                    )
-                                    .scaleEffect(colorsMatch(preset.color, theme.settingsGradientColor) ? 1.15 : 1.0)
-                                    .animation(.easeInOut(duration: 0.2), value: theme.settingsGradientColor)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        
-                        Spacer()
-                        
-#if !os(tvOS)
-                        ColorPicker("", selection: $theme.settingsGradientColor)
-                            .labelsHidden()
-#endif
-                    }
+            .padding(.vertical, 4)
+
+            settingRow(
+                title: "Background Style",
+                description: "Multi-gradient blends smoothly; Classic uses a single-color gradient; Solid is flat."
+            ) {
+                Picker("", selection: backgroundStyleBinding) {
+                    Text("Multi Gradient").tag(AtmosphereStyle.multiGradient)
+                    Text("Classic Gradient").tag(AtmosphereStyle.gradient)
+                    Text("Solid Color").tag(AtmosphereStyle.solid)
                 }
-            } header: {
-                Text("Settings Theme")
+                .pickerStyle(.menu)
             }
 
-            Section {
-                experimentalDesignPickerRow(
-                    title: "Design Preset",
-                    description: "Controls experimental hero scale, section spacing, cards, and glass.",
+            if theme.atmosphereStyle == .solid {
+                settingRow(
+                    title: "Solid Color Source",
+                    description: "Use the poster's color where available, or a custom color everywhere."
+                ) {
+                    Picker("", selection: $theme.atmosphereSolidColorSource) {
+                        ForEach(AtmosphereSolidColorSource.allCases) { source in
+                            Text(source.displayName).tag(source)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+#if !os(tvOS)
+                if theme.atmosphereSolidColorSource == .custom {
+                    ColorPicker("Custom Background Color", selection: $theme.atmosphereSolidColor)
+                }
+#endif
+            }
+        } header: {
+            Text("Theme")
+        }
+    }
+
+    // MARK: - Atmosphere sliders
+
+    private var atmosphereSection: some View {
+        Section {
+            sliderRow(
+                title: "Color Bleed",
+                description: "How strongly the banner color washes down the page.",
+                value: $theme.bleedStrength,
+                range: AppearanceConfig.bleedRange,
+                step: 0.05
+            )
+
+            sliderRow(
+                title: "Background Intensity",
+                description: "Lighten or deepen the overall background.",
+                value: $theme.backgroundIntensity,
+                range: AppearanceConfig.intensityRange,
+                step: 0.05
+            )
+
+            sliderRow(
+                title: "Motion",
+                description: "How much the background drifts while scrolling.",
+                value: $theme.atmosphereMotion,
+                range: AppearanceConfig.motionRange,
+                step: 0.05
+            )
+        } header: {
+            Text("Atmosphere")
+        }
+    }
+
+    // MARK: - Interface & scope
+
+    private var interfaceSection: some View {
+        Section {
+            settingRow(
+                title: "Interface",
+                description: "Modern is the redesigned look. Classic restores the original layout (requires restart)."
+            ) {
+                Picker("", selection: interfaceBinding) {
+                    Text("Modern").tag(true)
+                    Text("Classic").tag(false)
+                }
+                .pickerStyle(.menu)
+            }
+
+            if modernInterfaceEnabled != ExperimentalFeatureState.isEnabledAtLaunch {
+                Label("Restart required to apply the interface change", systemImage: "arrow.clockwise")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            toggleRow(
+                title: "Global Appearance",
+                description: "Share appearance changes between media and reader mode.",
+                isOn: $theme.globalAppearanceEnabled
+            )
+
+#if !os(tvOS)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Accent Color")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text("Affects buttons, links and other interactive elements.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                ColorPicker("", selection: $accentColorManager.currentAccentColor)
+                    .labelsHidden()
+                    .onChangeComp(of: accentColorManager.currentAccentColor) { _, newColor in
+                        accentColorManager.saveAccentColor(newColor)
+                    }
+            }
+#endif
+        } header: {
+            Text("Interface & Scope")
+        }
+    }
+
+    // MARK: - Advanced
+
+    private var advancedSection: some View {
+        Section {
+            DisclosureGroup("Advanced") {
+#if !os(tvOS)
+                if theme.appearancePaletteRaw == AtmospherePaletteID.custom.rawValue {
+                    customColorPickers
+                }
+#endif
+
+                pickerRow(
+                    title: "Layout Density",
+                    description: "Controls hero scale, spacing and card sizing.",
                     selection: $experimentalDesignPreset,
                     values: ExperimentalMediaDesignPreset.allCases.map { ($0.rawValue, $0.displayName) }
                 )
 
-                experimentalDesignPickerRow(
-                    title: "Hero Bleed",
-                    description: "Controls how strongly poster color washes into the page.",
-                    selection: $experimentalHeroBleedLevel,
-                    values: ExperimentalHeroBleedLevel.allCases.map { ($0.rawValue, $0.displayName) }
-                )
-
-                experimentalDesignPickerRow(
+                pickerRow(
                     title: "Card Shape",
-                    description: "Controls whether home shelves prefer backdrop or poster art.",
+                    description: "Whether home shelves prefer backdrop or poster art.",
                     selection: $experimentalHomeCardShape,
                     values: ExperimentalHomeCardShape.allCases.map { ($0.rawValue, $0.displayName) }
                 )
 
-                experimentalDesignPickerRow(
-                    title: "Multi Gradient Palette",
-                    description: "Controls the regular background once the hero color fades out.",
-                    selection: $experimentalMultiGradientPalette,
-                    values: ExperimentalMultiGradientPalette.allCases.map { ($0.rawValue, $0.displayName) }
-                )
-
-                experimentalTuningSliderRow(
-                    title: "Hero Height",
-                    description: "Scale the large banner/detail artwork.",
+                sliderRow(
+                    title: "Hero Size",
+                    description: "Scale the large banner / detail artwork.",
                     value: $experimentalHeroHeightScale,
                     range: 0.75...1.15,
                     step: 0.05
                 )
 
-                experimentalTuningSliderRow(
-                    title: "Hero Bleed Strength",
-                    description: "Control how strongly poster color washes into the page.",
-                    value: $experimentalHeroBleedStrength,
-                    range: 0.0...1.5,
-                    step: 0.05
-                )
-
-                experimentalTuningSliderRow(
-                    title: "Hero Fade Distance",
-                    description: "Control how long the banner atmosphere remains while scrolling.",
-                    value: $experimentalHeroFadeDistanceScale,
-                    range: 0.6...1.6,
-                    step: 0.05
-                )
-
-                experimentalTuningSliderRow(
+                sliderRow(
                     title: "Section Spacing",
-                    description: "Tune the vertical rhythm between shelves and cards.",
+                    description: "Vertical rhythm between shelves.",
                     value: $experimentalSectionSpacingScale,
                     range: 0.75...1.35,
                     step: 0.05
                 )
 
-                experimentalTuningSliderRow(
+                sliderRow(
                     title: "Card Roundness",
-                    description: "Scale the rounded corners on experimental cards.",
+                    description: "Corner radius of cards.",
                     value: $experimentalCardRadiusScale,
                     range: 0.7...1.4,
                     step: 0.05
                 )
 
-                experimentalTuningSliderRow(
+                sliderRow(
                     title: "Card Size",
                     description: "Scale home and reader media cards.",
                     value: $experimentalMediaCardScale,
@@ -204,306 +264,257 @@ struct AlternativeUIView: View {
                     step: 0.05
                 )
 
-                experimentalTuningSliderRow(
+                sliderRow(
                     title: "Glass Strength",
-                    description: "Tune translucent card and control intensity.",
+                    description: "Translucent card and control intensity.",
                     value: $experimentalGlassStrength,
                     range: 0.0...1.4,
                     step: 0.05
                 )
 
-                Button(action: resetExperimentalVisualTuning) {
+                Button(action: resetAppearance) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Reset Experimental Visuals")
+                            Text("Reset Appearance")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
-
-                            Text("Restore screenshot-style defaults.")
+                            Text("Restore the default theme and layout values.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.leading)
                         }
-
                         Spacer()
-
                         Image(systemName: "arrow.counterclockwise")
-                            .foregroundColor(accentColorManager.currentAccentColor)
+                            .foregroundColor(accent)
                     }
                 }
-            } header: {
-                Text("Experimental Design")
-            } footer: {
-                Text("Applies to the Experimental UI only. Hero Bleed controls poster color wash; Multi Gradient Palette controls the background that takes over while scrolling.")
             }
-
-            Section {
-                experimentalTuningSliderRow(
-                    title: "Base Darkness",
-                    description: "Darken or lift the regular multi-gradient background.",
-                    value: $experimentalGradientBaseDarkness,
-                    range: 0.7...1.3,
-                    step: 0.05
-                )
-
-                experimentalTuningSliderRow(
-                    title: "Accent Intensity",
-                    description: "Control the strength of the colored gradient layers.",
-                    value: $experimentalGradientAccentIntensity,
-                    range: 0.0...1.6,
-                    step: 0.05
-                )
-
-                experimentalTuningSliderRow(
-                    title: "Scroll Motion",
-                    description: "Control how much the gradient drifts while scrolling.",
-                    value: $experimentalGradientScrollMotion,
-                    range: 0.0...1.4,
-                    step: 0.05
-                )
-
-                Toggle("Use Custom Gradient Colors", isOn: $experimentalGradientUseCustomColors)
-                    .tint(accentColorManager.currentAccentColor)
-
-#if !os(tvOS)
-                if experimentalGradientUseCustomColors {
-                    ColorPicker("Color A", selection: experimentalGradientColorBinding(
-                        data: $experimentalGradientColorAData,
-                        fallback: Color(red: 0.16, green: 0.12, blue: 0.19)
-                    ))
-
-                    ColorPicker("Color B", selection: experimentalGradientColorBinding(
-                        data: $experimentalGradientColorBData,
-                        fallback: Color(red: 0.28, green: 0.20, blue: 0.34)
-                    ))
-
-                    ColorPicker("Color C", selection: experimentalGradientColorBinding(
-                        data: $experimentalGradientColorCData,
-                        fallback: Color(red: 0.24, green: 0.14, blue: 0.16)
-                    ))
-                }
-#endif
-            } header: {
-                Text("Multi Gradient")
-            } footer: {
-                Text("These controls refine the background after the banner color fades into the app atmosphere.")
-            }
-
-            Section {
-                ForEach(mediaDetailElements) { element in
-                    mediaDetailElementRow(element)
-                }
-                .onMove(perform: moveMediaDetailElements)
-
-                Button(action: resetMediaDetailElements) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Reset Media Detail Layout")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-
-                            Text("Restore the default order and visibility.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-
-                        Spacer()
-
-                        Image(systemName: "arrow.counterclockwise")
-                            .foregroundColor(accentColorManager.currentAccentColor)
-                    }
-                }
-            } header: {
-                Text("Media Detail Page")
-            } footer: {
-                Text("Drag rows to change their order. Hidden rows will not appear on media detail pages. Episodes only appear for series.")
-            }
-            .environment(\.editMode, .constant(.active))
-
-            Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Alternative Season Menu")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("Use dropdown menus instead of horizontal scrolls for seasons, specials, and OVAs.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    Spacer()
-                    
-                    Toggle("", isOn: $useSeasonMenu)
-                        .tint(accentColorManager.currentAccentColor)
-                }
-                
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Horizontal Episode list ")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        Text("Use Horizontal list instead of vertical episode list")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                    
-                    Spacer()
-                    
-                    Toggle("", isOn: $horizontalEpisodeList)
-                        .tint(accentColorManager.currentAccentColor)
-                }
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Classic Schedule Layout")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("Use the original full schedule list instead of the compact day picker.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $useClassicScheduleUI)
-                        .tint(accentColorManager.currentAccentColor)
-                }
-            } header: {
-                Text("DISPLAY OPTIONS")
-            } footer: {
-                Text("Classic schedule keeps the old all-days list. The alternative season menu uses dropdowns instead of horizontal scrolls for selecting seasons, specials, and OVAs.")
-            }
-
-            Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Hero Banner Catalogue")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("Choose the home catalogue used for the large banner.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Picker("", selection: $heroBannerCatalogId) {
-                        ForEach(catalogManager.catalogs.sorted { $0.order < $1.order }) { catalog in
-                            Text(catalog.name).tag(catalog.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Hero Banner Behavior")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("Control when the banner changes.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Picker("", selection: $heroBannerBehavior) {
-                        ForEach(HeroBannerBehavior.allCases) { behavior in
-                            Text(behavior.displayName).tag(behavior.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-            } header: {
-                Text("Hero Banner")
-            }
-
-            Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Atmosphere Style")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Text("Choose the app background atmosphere.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Picker("", selection: $theme.atmosphereStyle) {
-                        ForEach(AtmosphereStyle.allCases) { style in
-                            Text(style.displayName).tag(style)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
-                if theme.atmosphereStyle == .solid {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Solid Color Source")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-
-                            Text("Use poster color where available, or a custom color everywhere.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-
-                        Picker("", selection: $theme.atmosphereSolidColorSource) {
-                            ForEach(AtmosphereSolidColorSource.allCases) { source in
-                                Text(source.displayName).tag(source)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-
-#if !os(tvOS)
-                    if theme.atmosphereSolidColorSource == .custom {
-                        ColorPicker("Custom Atmosphere Color", selection: $theme.atmosphereSolidColor)
-                    }
-#endif
-                }
-            } header: {
-                Text("Atmosphere")
-            } footer: {
-                Text("Gradient keeps the classic poster-colored look. Multi Gradient, Aurora, and Ember use layered palettes that blend with poster colors as you scroll. Solid Color replaces the gradient atmosphere with the poster's dominant color or your chosen color.")
-            }
+        } footer: {
+            Text("Advanced controls let you fine-tune or recreate the classic look. Custom palette colors appear here when the Custom palette is selected.")
         }
-        .navigationTitle("Appearance")
-        .eclipseSettingsStyle()
-        .onAppear(perform: reloadMediaDetailElements)
     }
 
-    private func experimentalDesignPickerRow(
+#if !os(tvOS)
+    @ViewBuilder
+    private var customColorPickers: some View {
+        ColorPicker("Color A", selection: customColorBinding(0))
+        ColorPicker("Color B", selection: customColorBinding(1))
+        ColorPicker("Color C", selection: customColorBinding(2))
+    }
+#endif
+
+    // MARK: - Hero banner
+
+    private var heroBannerSection: some View {
+        Section {
+            settingRow(
+                title: "Hero Banner Catalogue",
+                description: "The home catalogue used for the large banner."
+            ) {
+                Picker("", selection: $heroBannerCatalogId) {
+                    ForEach(catalogManager.catalogs.sorted { $0.order < $1.order }) { catalog in
+                        Text(catalog.name).tag(catalog.id)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            settingRow(
+                title: "Hero Banner Behavior",
+                description: "When the banner changes."
+            ) {
+                Picker("", selection: $heroBannerBehavior) {
+                    ForEach(HeroBannerBehavior.allCases) { behavior in
+                        Text(behavior.displayName).tag(behavior.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        } header: {
+            Text("Hero Banner")
+        }
+    }
+
+    // MARK: - Display options
+
+    private var displayOptionsSection: some View {
+        Section {
+            toggleRow(
+                title: "Alternative Season Menu",
+                description: "Use dropdown menus instead of horizontal scrolls for seasons, specials and OVAs.",
+                isOn: $useSeasonMenu
+            )
+            toggleRow(
+                title: "Horizontal Episode List",
+                description: "Use a horizontal list instead of the vertical episode list.",
+                isOn: $horizontalEpisodeList
+            )
+            toggleRow(
+                title: "Classic Schedule Layout",
+                description: "Use the original full schedule list instead of the compact day picker.",
+                isOn: $useClassicScheduleUI
+            )
+        } header: {
+            Text("Display Options")
+        }
+    }
+
+    // MARK: - Media detail layout
+
+    private var mediaDetailSection: some View {
+        Section {
+            ForEach(mediaDetailElements) { element in
+                mediaDetailElementRow(element)
+            }
+            .onMove(perform: moveMediaDetailElements)
+
+            Button(action: resetMediaDetailElements) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Reset Media Detail Layout")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text("Restore the default order and visibility.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundColor(accent)
+                }
+            }
+        } header: {
+            Text("Media Detail Page")
+        } footer: {
+            Text("Drag rows to change their order. Hidden rows will not appear on media detail pages. Episodes only appear for series.")
+        }
+        .environment(\.editMode, .constant(.active))
+    }
+
+    // MARK: - Bindings
+
+    private var backgroundStyleBinding: Binding<AtmosphereStyle> {
+        Binding(
+            get: {
+                switch theme.atmosphereStyle {
+                case .gradient: return .gradient
+                case .solid: return .solid
+                default: return .multiGradient
+                }
+            },
+            set: { theme.atmosphereStyle = $0 }
+        )
+    }
+
+    private var interfaceBinding: Binding<Bool> {
+        Binding(
+            get: { modernInterfaceEnabled },
+            set: { newValue in
+                ExperimentalFeatureState.setStoredValue(newValue)
+                modernInterfaceEnabled = newValue
+                showRestartAlert = true
+            }
+        )
+    }
+
+#if !os(tvOS)
+    private func customColorBinding(_ index: Int) -> Binding<Color> {
+        Binding(
+            get: {
+                let colors = theme.customPaletteColors
+                if colors.indices.contains(index) { return colors[index] }
+                if AppearanceConfig.defaultCustomColors.indices.contains(index) { return AppearanceConfig.defaultCustomColors[index] }
+                return .purple
+            },
+            set: { newColor in
+                var colors = theme.customPaletteColors
+                while colors.count <= index { colors.append(.purple) }
+                colors[index] = newColor
+                theme.customPaletteColors = colors
+            }
+        )
+    }
+#endif
+
+    // MARK: - Swatch
+
+    private func paletteSwatch(_ id: AtmospherePaletteID) -> some View {
+        let palette = AppearancePalettes.resolved(id: id, customColors: theme.customPaletteColors)
+        let selected = theme.appearancePaletteRaw == id.rawValue
+        return Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                theme.appearancePaletteRaw = id.rawValue
+            }
+        } label: {
+            VStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(LinearGradient(stops: palette.verticalStops, startPoint: .top, endPoint: .bottom))
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .strokeBorder(selected ? accent : Color.white.opacity(0.14), lineWidth: selected ? 2.5 : 1)
+                    )
+                    .scaleEffect(selected ? 1.05 : 1.0)
+
+                Text(id.displayName)
+                    .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                    .foregroundColor(selected ? .white : .white.opacity(0.6))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: 62)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Row helpers
+
+    private func settingRow<Trailing: View>(
         title: String,
         description: String,
-        selection: Binding<String>,
-        values: [(String, String)]
+        @ViewBuilder trailing: () -> Trailing
     ) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.subheadline)
                     .fontWeight(.medium)
-
                 Text(description)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.leading)
             }
-
             Spacer()
+            trailing()
+        }
+    }
 
+    private func toggleRow(title: String, description: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(accent)
+        }
+    }
+
+    private func pickerRow(
+        title: String,
+        description: String,
+        selection: Binding<String>,
+        values: [(String, String)]
+    ) -> some View {
+        settingRow(title: title, description: description) {
             Picker("", selection: selection) {
                 ForEach(values, id: \.0) { option in
                     Text(option.1).tag(option.0)
@@ -513,7 +524,7 @@ struct AlternativeUIView: View {
         }
     }
 
-    private func experimentalTuningSliderRow(
+    private func sliderRow(
         title: String,
         description: String,
         value: Binding<Double>,
@@ -526,53 +537,21 @@ struct AlternativeUIView: View {
                     Text(title)
                         .font(.subheadline)
                         .fontWeight(.medium)
-
                     Text(description)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.leading)
                 }
-
                 Spacer()
-
                 Text(String(format: "%.2f", value.wrappedValue))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .monospacedDigit()
             }
-
             Slider(value: value, in: range, step: step)
-                .tint(accentColorManager.currentAccentColor)
+                .tint(accent)
         }
         .padding(.vertical, 2)
-    }
-
-    private func experimentalGradientColorBinding(data: Binding<Data>, fallback: Color) -> Binding<Color> {
-        Binding(
-            get: {
-                ExperimentalVisualTuning.loadColor(data: data.wrappedValue) ?? fallback
-            },
-            set: { color in
-                data.wrappedValue = ExperimentalVisualTuning.colorData(color) ?? Data()
-            }
-        )
-    }
-
-    private func resetExperimentalVisualTuning() {
-        experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
-        experimentalHeroBleedStrength = ExperimentalVisualTuning.defaultHeroBleedStrength
-        experimentalHeroFadeDistanceScale = ExperimentalVisualTuning.defaultHeroFadeDistanceScale
-        experimentalSectionSpacingScale = ExperimentalVisualTuning.defaultSectionSpacingScale
-        experimentalCardRadiusScale = ExperimentalVisualTuning.defaultCardRadiusScale
-        experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
-        experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
-        experimentalGradientBaseDarkness = ExperimentalVisualTuning.defaultGradientBaseDarkness
-        experimentalGradientAccentIntensity = ExperimentalVisualTuning.defaultGradientAccentIntensity
-        experimentalGradientScrollMotion = ExperimentalVisualTuning.defaultGradientScrollMotion
-        experimentalGradientUseCustomColors = false
-        experimentalGradientColorAData = Data()
-        experimentalGradientColorBData = Data()
-        experimentalGradientColorCData = Data()
     }
 
     private func mediaDetailElementRow(_ element: MediaDetailElement) -> some View {
@@ -581,28 +560,26 @@ struct AlternativeUIView: View {
                 Text(element.displayName)
                     .font(.subheadline)
                     .fontWeight(.medium)
-
                 Text(element.settingsDescription)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.leading)
-
                 Text(hiddenMediaDetailElements.contains(element) ? "Hidden" : "Visible")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-
             Spacer()
-
             Toggle("", isOn: Binding(
                 get: { !hiddenMediaDetailElements.contains(element) },
                 set: { setMediaDetailElement(element, visible: $0) }
             ))
             .labelsHidden()
-            .tint(accentColorManager.currentAccentColor)
+            .tint(accent)
         }
         .padding(.vertical, 4)
     }
+
+    // MARK: - Actions
 
     private func reloadMediaDetailElements() {
         mediaDetailElements = MediaDetailElement.orderedElements()
@@ -629,14 +606,58 @@ struct AlternativeUIView: View {
         MediaDetailElement.saveOrder(mediaDetailElements)
         MediaDetailElement.saveHiddenElements(hiddenMediaDetailElements)
     }
-    
-    private func colorsMatch(_ a: Color, _ b: Color) -> Bool {
-        let uiA = UIColor(a)
-        let uiB = UIColor(b)
-        var rA: CGFloat = 0, gA: CGFloat = 0, bA: CGFloat = 0, aA: CGFloat = 0
-        var rB: CGFloat = 0, gB: CGFloat = 0, bB: CGFloat = 0, aB: CGFloat = 0
-        uiA.getRed(&rA, green: &gA, blue: &bA, alpha: &aA)
-        uiB.getRed(&rB, green: &gB, blue: &bB, alpha: &aB)
-        return abs(rA - rB) < 0.02 && abs(gA - gB) < 0.02 && abs(bA - bB) < 0.02
+
+    private func resetAppearance() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            theme.appearancePaletteRaw = AtmospherePaletteID.defaultValue.rawValue
+            theme.bleedStrength = AppearanceConfig.defaultBleedStrength
+            theme.backgroundIntensity = AppearanceConfig.defaultBackgroundIntensity
+            theme.atmosphereMotion = AppearanceConfig.defaultMotion
+            theme.customPaletteColors = AppearanceConfig.defaultCustomColors
+        }
+        experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
+        experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
+        experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
+        experimentalSectionSpacingScale = ExperimentalVisualTuning.defaultSectionSpacingScale
+        experimentalCardRadiusScale = ExperimentalVisualTuning.defaultCardRadiusScale
+        experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
+        experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
+    }
+}
+
+// MARK: - Live preview card
+
+private struct AppearancePreviewCard: View {
+    @ObservedObject private var theme = EclipseTheme.shared
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            AtmosphereBackdrop(
+                input: theme.atmosphereInput(
+                    dominant: Color(red: 0.52, green: 0.24, blue: 0.66),
+                    hasHeroBleed: true,
+                    heroHeight: 92,
+                    fadeDistance: 150
+                ),
+                scrollOffset: 0
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Preview")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white.opacity(0.7))
+                Text("Banner color bleeds, then the background takes over")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(2)
+            }
+            .padding(14)
+        }
+        .frame(height: 188)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
