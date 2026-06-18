@@ -11,12 +11,9 @@ import Kingfisher
 struct CollectionDetailView: View {
     @ObservedObject var collection: LibraryCollection
     @Environment(\.heroNamespace) private var heroNamespace
-    @State private var scrollOffset: CGFloat = 0
     
     var body: some View {
         ScrollView {
-            EclipseScrollTracker()
-
             if collection.items.isEmpty {
                 VStack {
                     Image(systemName: collection.name == "Bookmarks" ? "bookmark" : "folder")
@@ -72,9 +69,7 @@ struct CollectionDetailView: View {
                 .padding()
             }
         }
-        .coordinateSpace(name: "eclipseGradientScroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
         .navigationTitle(collection.name)
-        .background(SettingsGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .background(SettingsGradientBackground().ignoresSafeArea())
     }
 }

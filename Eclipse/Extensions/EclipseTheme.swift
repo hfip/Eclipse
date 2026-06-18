@@ -345,16 +345,11 @@ extension View {
 // MARK: - Auto-tracking gradient modifier
 
 private struct EclipseAutoGradientModifier: ViewModifier {
-    @State private var scrollOffset: CGFloat = 0
-
     func body(content: Content) -> some View {
         content
             .coordinateSpace(name: "eclipseGradientScroll")
-            .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                scrollOffset = value
-            }
             .background(
-                SettingsGradientBackground(scrollOffset: scrollOffset)
+                SettingsGradientBackground()
                     .ignoresSafeArea()
             )
     }

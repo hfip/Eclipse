@@ -28,8 +28,6 @@ struct TrackersSettingsView: View {
     @State private var traktListSortHow = "asc"
     @State private var traktListError: String?
 
-    @State private var scrollOffset: CGFloat = 0
-
     private let traktListSortOptions: [TraktListSortOption] = [
         TraktListSortOption(id: "rank", name: "List Rank"),
         TraktListSortOption(id: "added", name: "Recently Added"),
@@ -183,18 +181,8 @@ struct TrackersSettingsView: View {
             .padding(.vertical)
             .frame(maxWidth: isIPad ? 700 : .infinity)
             .frame(maxWidth: .infinity)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: -geo.frame(in: .named("trackersScroll")).origin.y
-                    )
-                }
-            )
         }
-        .coordinateSpace(name: "trackersScroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
-        .background(SettingsGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .background(SettingsGradientBackground().ignoresSafeArea())
         .navigationTitle("Trackers")
         #if !os(tvOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -684,7 +672,7 @@ private struct TrackerSyncToolsSheet: View {
                 }
                 .padding()
             }
-            .background(SettingsGradientBackground(scrollOffset: 0).ignoresSafeArea())
+            .background(SettingsGradientBackground().ignoresSafeArea())
             .navigationTitle("Sync Tools")
             #if !os(tvOS)
             .navigationBarTitleDisplayMode(.inline)

@@ -12,7 +12,6 @@ struct ReaderDownloadsSettingsView: View {
     @State private var selectedTab: ReaderDownloadsTab = .queue
     @State private var showingDeleteAll = false
     @State private var showingDeleteFailed = false
-    @State private var scrollOffset: CGFloat = 0
     @AppStorage("readerDownloadsBackgroundEnabled") private var backgroundDownloadsEnabled = true
     @AppStorage("readerDownloadsWifiOnly") private var wifiOnly = false
     @AppStorage("readerDownloadsParallelLimit") private var parallelLimit = 2
@@ -48,18 +47,8 @@ struct ReaderDownloadsSettingsView: View {
             }
             .padding(.top, 16)
             .padding(.bottom, 32)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: -geo.frame(in: .named("readerDownloadsScroll")).origin.y
-                    )
-                }
-            )
         }
-        .coordinateSpace(name: "readerDownloadsScroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
-        .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .background(GlobalGradientBackground().ignoresSafeArea())
         .navigationTitle("Downloads")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Delete All Reader Downloads", isPresented: $showingDeleteAll, titleVisibility: .visible) {

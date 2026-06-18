@@ -11,7 +11,6 @@ import SwiftUI
 struct KanzenSettingsView: View {
     @EnvironmentObject var moduleManager: ModuleManager
     @State private var autoUpdateModules = ModuleManager.isAutoUpdateEnabled
-    @State private var scrollOffset: CGFloat = 0
 
     var body: some View {
         NavigationView {
@@ -84,18 +83,8 @@ struct KanzenSettingsView: View {
                 }
                 .padding(.top, 16)
                 .padding(.bottom, 32)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: ScrollOffsetPreferenceKey.self,
-                            value: -geo.frame(in: .named("kanzenSettingsScroll")).origin.y
-                        )
-                    }
-                )
             }
-            .coordinateSpace(name: "kanzenSettingsScroll")
-            .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
-            .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+            .background(GlobalGradientBackground().ignoresSafeArea())
         }
         .navigationViewStyle(StackNavigationViewStyle())
     }
@@ -105,7 +94,6 @@ private struct KanzenTrackerSettingsView: View {
     @StateObject private var trackerManager = TrackerManager.shared
     @State private var showAniListImportConfirmation = false
     @State private var showMALImportConfirmation = false
-    @State private var scrollOffset: CGFloat = 0
 
     var body: some View {
         ScrollView {
@@ -199,18 +187,8 @@ private struct KanzenTrackerSettingsView: View {
             .padding(.bottom, 32)
             .frame(maxWidth: isIPad ? 760 : .infinity)
             .frame(maxWidth: .infinity)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: -geo.frame(in: .named("kanzenTrackersScroll")).origin.y
-                    )
-                }
-            )
         }
-        .coordinateSpace(name: "kanzenTrackersScroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
-        .background(GlobalGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .background(GlobalGradientBackground().ignoresSafeArea())
         .navigationTitle("Trackers")
         .navigationBarTitleDisplayMode(.inline)
         .alert("Import AniList Library", isPresented: $showAniListImportConfirmation) {

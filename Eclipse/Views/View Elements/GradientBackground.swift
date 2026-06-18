@@ -280,13 +280,6 @@ struct ExperimentalMediaDesignMetrics {
 
 struct SettingsGradientBackground: View {
     @ObservedObject private var theme = EclipseTheme.shared
-    var scrollOffset: CGFloat = 0
-    
-    // The gradient is taller than the screen and physically offset upward
-    // as the user scrolls, so the color band visibly moves with the content.
-    private var gradientOffset: CGFloat {
-        -scrollOffset * 0.35
-    }
     
     @ViewBuilder
     var body: some View {
@@ -295,7 +288,7 @@ struct SettingsGradientBackground: View {
         if style.isMultiGradient {
             ExperimentalGradientBackground(
                 dominantColor: theme.scopedGradientColor(),
-                scrollOffset: scrollOffset,
+                scrollOffset: 0,
                 style: style
             )
         } else {
@@ -325,7 +318,6 @@ struct SettingsGradientBackground: View {
                     endPoint: .bottom
                 )
                 .frame(height: h)
-                .offset(y: gradientOffset)
             }
         }
         .clipped()

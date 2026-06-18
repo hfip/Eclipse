@@ -16,7 +16,6 @@ struct DownloadsView: View {
     @State private var showingDeleteSeriesConfirmation = false
     @State private var seriesToDelete: (tmdbId: Int, title: String)? = nil
     @State private var selectedTab: DownloadsTab = .downloads
-    @State private var scrollOffset: CGFloat = 0
     
     private enum DownloadsTab: String, CaseIterable {
         case downloads = "Downloads"
@@ -73,7 +72,7 @@ struct DownloadsView: View {
             }
         }
         .navigationTitle("Downloads")
-        .background(SettingsGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .background(SettingsGradientBackground().ignoresSafeArea())
 #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
 #endif
@@ -235,12 +234,9 @@ struct DownloadsView: View {
                 storageFooter
                     .listRowBackground(Color.clear)
             }
-            .background(EclipseScrollTracker())
         }
             .listStyle(.plain)
             .eclipseHideScrollBackground()
-            .coordinateSpace(name: "eclipseGradientScroll")
-            .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
         }
     }
     

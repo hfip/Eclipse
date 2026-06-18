@@ -21,7 +21,6 @@ struct SettingsView: View {
     @StateObject private var catalogManager = CatalogManager.shared
     @AppStorage("showKanzen") private var showKanzen: Bool = false
     @AppStorage("hideSplashScreen") private var hideSplashScreen = false
-    @State private var scrollOffset: CGFloat = 0
     @State private var isCheckingGitHubRelease = false
 
     private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
@@ -396,19 +395,9 @@ struct SettingsView: View {
                 .padding(.bottom, 30)
             }
             .padding(.top, ExperimentalFeatureState.isEnabledAtLaunch ? 12 : 16)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: ScrollOffsetPreferenceKey.self,
-                        value: -geo.frame(in: .named("settingsScroll")).origin.y
-                    )
-                }
-            )
         }
-        .coordinateSpace(name: "settingsScroll")
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
         .navigationTitle("Settings")
-        .background(SettingsGradientBackground(scrollOffset: scrollOffset).ignoresSafeArea())
+        .background(SettingsGradientBackground().ignoresSafeArea())
         .eclipseDarkToolbar()
         #endif
     }
