@@ -28,8 +28,10 @@ private func experimentalSubtitleASSOverrideValue(isMetalRenderer: Bool) -> Stri
 protocol PlayerRenderer: AnyObject {
     var isPausedState: Bool { get }
     var supportsBitmapSubtitleTracks: Bool { get }
+    var prefersPictureInPictureLayerActivationBeforeStart: Bool { get }
 
     func getRenderingView() -> UIView
+    func renderingLayoutDidChange(containerSize: CGSize)
     func start() throws
     func stop()
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]?)
@@ -167,15 +169,22 @@ private final class MPVMoltenVKView: UIView {
         layer as! MPVMoltenVKLayer
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
+    @discardableResult
+    func synchronizeDrawableSize() -> CGSize {
         let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
         let resolvedScale = scale > 0 ? scale : UIScreen.main.scale
-        metalLayer.contentsScale = resolvedScale
-        metalLayer.drawableSize = CGSize(
+        let nextDrawableSize = CGSize(
             width: max(1, bounds.width * resolvedScale),
             height: max(1, bounds.height * resolvedScale)
         )
+        metalLayer.contentsScale = resolvedScale
+        metalLayer.drawableSize = nextDrawableSize
+        return nextDrawableSize
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        synchronizeDrawableSize()
     }
 }
 
@@ -776,6 +785,7 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var selectedVideoTrackID: Int?
     private var pipTransitionID = 0
     private var pipRenderRequestCount = 0
+    private var lastRenderingLayoutSize: CGSize = .zero
 
     weak var delegate: MPVNativeRendererDelegate?
 
@@ -783,7 +793,19 @@ final class MPVNativeRenderer: PlayerRenderer {
         isPaused
     }
 
+    var currentTime: Double {
+        cachedPosition
+    }
+
+    var duration: Double {
+        cachedDuration
+    }
+
     var supportsBitmapSubtitleTracks: Bool {
+        true
+    }
+
+    var prefersPictureInPictureLayerActivationBeforeStart: Bool {
         true
     }
 
@@ -839,6 +861,42 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func getRenderingView() -> UIView {
         glView
+    }
+
+    func renderingLayoutDidChange(containerSize: CGSize) {
+        let updateLayout = { [weak self] in
+            guard let self else { return }
+            let screen = self.glView.window?.screen ?? UIScreen.main
+            let scale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale
+            self.glView.contentScaleFactor = scale
+            self.glView.layer.contentsScale = scale
+            self.displayLayer.contentsScale = scale
+            self.displayLayer.frame = CGRect(origin: .zero, size: containerSize)
+
+            guard containerSize.width > 0, containerSize.height > 0 else { return }
+            let changed = abs(self.lastRenderingLayoutSize.width - containerSize.width) > 0.5
+                || abs(self.lastRenderingLayoutSize.height - containerSize.height) > 0.5
+            guard changed else { return }
+            self.lastRenderingLayoutSize = containerSize
+            guard self.isRunning else { return }
+            self.refreshSubtitleStyleIfViewportChanged()
+            if self.currentMode == .openGL {
+                EAGLContext.setCurrent(self.glContext)
+                self.glView.deleteDrawable()
+                EAGLContext.setCurrent(nil)
+                self.glView.setNeedsDisplay()
+                self.glView.display()
+                self.requestRenderBurst(reason: "layout-change", count: 3, interval: 0.05)
+            } else {
+                self.renderPiPFrame(force: true, immediate: true)
+            }
+            self.logMPV("layout changed container=\(String(format: "%.0fx%.0f", containerSize.width, containerSize.height)) scale=\(String(format: "%.2f", scale)) mode=\(self.currentMode)")
+        }
+        if Thread.isMainThread {
+            updateLayout()
+        } else {
+            DispatchQueue.main.async(execute: updateLayout)
+        }
     }
 
     func start() throws {
@@ -2597,6 +2655,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     var supportsBitmapSubtitleTracks: Bool {
         MPVRenderBackendSupport.metalBitmapSubtitlesAllowed
     }
+    var prefersPictureInPictureLayerActivationBeforeStart: Bool { false }
 
     init(displayLayer: AVSampleBufferDisplayLayer, qualityProfile: MPVMetalSampleBufferQualityProfile) {
         self.displayLayer = displayLayer
@@ -2620,6 +2679,24 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func getRenderingView() -> UIView {
         placeholderView
+    }
+
+    func renderingLayoutDidChange(containerSize: CGSize) {
+        let updateLayout = { [weak self] in
+            guard let self else { return }
+            let screen = self.placeholderView.window?.screen ?? UIScreen.main
+            let scale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale
+            self.displayLayer.contentsScale = scale
+            self.displayLayer.frame = CGRect(origin: .zero, size: containerSize)
+            if self.isRunning {
+                self.sampleRenderer.primeFrames(reason: "layout-change", count: 2)
+            }
+        }
+        if Thread.isMainThread {
+            updateLayout()
+        } else {
+            DispatchQueue.main.async(execute: updateLayout)
+        }
     }
 
     func start() throws {
@@ -3036,7 +3113,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     }
 
     static var isAvailable: Bool {
-        MTLCreateSystemDefaultDevice() != nil && MPVSampleBufferPiPBridge.isAvailable
+        MTLCreateSystemDefaultDevice() != nil
     }
 
     weak var delegate: MPVNativeRendererDelegate? {
@@ -3047,10 +3124,10 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     }
 
     private let displayLayer: AVSampleBufferDisplayLayer
-    private let qualityProfile: MPVMetalSampleBufferQualityProfile
+    private var qualityProfile: MPVMetalSampleBufferQualityProfile
     private let containerView = UIView(frame: .zero)
     private let metalView = MPVMoltenVKView(frame: .zero)
-    private let pipBridge: MPVSampleBufferPiPBridge
+    private let pipBridge: MPVNativeRenderer
     private let eventQueue = DispatchQueue(label: "mpv.moltenvk.events", qos: .utility)
     private let stateQueue = DispatchQueue(label: "mpv.moltenvk.state", attributes: .concurrent)
     private let eventQueueGroup = DispatchGroup()
@@ -3092,6 +3169,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     private var hardwareDecodeFailureWindowStart: Date?
     private var hardwareDecodeFailureCount = 0
     private var runtimeHardwareDecodeFallbackApplied = false
+    private var lastRenderingLayoutSize: CGSize = .zero
+    private var lastMetalDrawableSize: CGSize = .zero
 
     var isPausedState: Bool {
         fallbackRenderer?.isPausedState ?? (isUsingPiPBridge ? pipBridge.isPausedState : isPaused)
@@ -3101,10 +3180,14 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         true
     }
 
+    var prefersPictureInPictureLayerActivationBeforeStart: Bool {
+        fallbackRenderer?.prefersPictureInPictureLayerActivationBeforeStart ?? true
+    }
+
     init(displayLayer: AVSampleBufferDisplayLayer, qualityProfile: MPVMetalSampleBufferQualityProfile) {
         self.displayLayer = displayLayer
         self.qualityProfile = qualityProfile
-        self.pipBridge = MPVSampleBufferPiPBridge(displayLayer: displayLayer, qualityProfile: qualityProfile)
+        self.pipBridge = MPVNativeRenderer(displayLayer: displayLayer)
         self.pipBridge.delegate = self
 
         let screen = UIApplication.shared.connectedScenes
@@ -3143,6 +3226,55 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
 
     func getRenderingView() -> UIView {
         containerView
+    }
+
+    func renderingLayoutDidChange(containerSize: CGSize) {
+        if let fallbackRenderer {
+            fallbackRenderer.renderingLayoutDidChange(containerSize: containerSize)
+            return
+        }
+
+        let updateLayout = { [weak self] in
+            guard let self else { return }
+            let targetSize: CGSize
+            if self.containerView.bounds.width > 0, self.containerView.bounds.height > 0 {
+                targetSize = self.containerView.bounds.size
+            } else {
+                targetSize = containerSize
+            }
+            guard targetSize.width > 0, targetSize.height > 0 else { return }
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.containerView.layoutIfNeeded()
+            if self.metalView.frame.size != targetSize {
+                self.metalView.frame = CGRect(origin: .zero, size: targetSize)
+            }
+            self.metalView.layoutIfNeeded()
+            let drawableSize = self.metalView.synchronizeDrawableSize()
+            self.displayLayer.frame = CGRect(origin: .zero, size: targetSize)
+            CATransaction.commit()
+
+            self.pipBridge.renderingLayoutDidChange(containerSize: targetSize)
+            let layoutChanged = abs(self.lastRenderingLayoutSize.width - targetSize.width) > 0.5
+                || abs(self.lastRenderingLayoutSize.height - targetSize.height) > 0.5
+            let drawableChanged = abs(self.lastMetalDrawableSize.width - drawableSize.width) > 0.5
+                || abs(self.lastMetalDrawableSize.height - drawableSize.height) > 0.5
+            guard layoutChanged || drawableChanged else { return }
+
+            self.lastRenderingLayoutSize = targetSize
+            self.lastMetalDrawableSize = drawableSize
+            self.refreshSubtitleStyleIfViewportChanged()
+            if self.isRunning, !self.isStopping, !self.isUsingPiPBridge, let handle = self.mpv {
+                mpv_wakeup(handle)
+            }
+            self.logMPV("layout synchronized container=\(String(format: "%.0fx%.0f", targetSize.width, targetSize.height)) metalBounds=\(String(format: "%.0fx%.0f", self.metalView.bounds.width, self.metalView.bounds.height)) drawable=\(String(format: "%.0fx%.0f", drawableSize.width, drawableSize.height)) pipActive=\(self.isUsingPiPBridge)")
+        }
+        if Thread.isMainThread {
+            updateLayout()
+        } else {
+            DispatchQueue.main.async(execute: updateLayout)
+        }
     }
 
     func start() throws {
@@ -3304,7 +3436,9 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     @discardableResult
     func updateSampleBufferQualityProfile(_ newProfile: MPVMetalSampleBufferQualityProfile) -> Bool {
         guard fallbackRenderer == nil else { return false }
-        return pipBridge.updateSampleBufferQualityProfile(newProfile)
+        qualityProfile = newProfile
+        logMPV("Metal quality profile updated for inline renderer; OpenGL PiP bridge unchanged \(newProfile.logDescription)")
+        return false
     }
 #endif
 
@@ -3507,7 +3641,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     }
 
     func canStartSampleBufferPictureInPicture() -> Bool {
-        fallbackRenderer?.canStartSampleBufferPictureInPicture() ?? MPVSampleBufferPiPBridge.isAvailable
+        fallbackRenderer?.canStartSampleBufferPictureInPicture() ?? pipBridge.canStartSampleBufferPictureInPicture()
     }
 
     func prepareForPictureInPictureStart() {
@@ -3531,7 +3665,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
                 isPreparingPiPBridge = false
                 pipBridgeLoadGeneration = nil
                 logMPV("PiP hybrid bridge start failed error=\(error) foreground={\(pictureInPictureDebugSnapshot())}")
-                delegate?.renderer(self, didFailWithError: "MPV Metal PiP bridge failed to start")
+                delegate?.renderer(self, didFailWithError: "MPV Metal OpenGL PiP handoff failed to start")
                 return
             }
 
@@ -3546,12 +3680,12 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             if wasPausedBeforePiP {
                 pipBridge.pausePlayback()
             }
-            logMPV("PiP hybrid bridge load gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) paused=\(wasPausedBeforePiP) audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) externalSubs=\(loadedExternalSubtitleRequests.count) foregroundSid=\(getCurrentSubtitleTrackId())")
+            logMPV("PiP hybrid OpenGL bridge load gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) paused=\(wasPausedBeforePiP) audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) externalSubs=\(loadedExternalSubtitleRequests.count) foregroundSid=\(getCurrentSubtitleTrackId())")
         } else {
             pipBridge.prepareInitialSeek(to: cachedPosition)
             pipBridge.setSpeed(getSpeed())
             pipBridge.applySubtitleStyle(lastAppliedSubtitleStyle)
-            logMPV("PiP hybrid bridge reuse gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) primed=\(pipBridge.isPictureInPicturePrimed())")
+            logMPV("PiP hybrid OpenGL bridge reuse gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) primed=\(pipBridge.isPictureInPicturePrimed())")
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -3573,7 +3707,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             return
         }
         let wasActive = isUsingPiPBridge
-        let bridgePosition = pipBridge.currentTime
+        let reportedBridgePosition = pipBridge.currentTime
+        let bridgePosition = reportedBridgePosition.isFinite && reportedBridgePosition > 0.1 ? reportedBridgePosition : cachedPosition
         let bridgeSpeed = pipBridge.getSpeed()
         let bridgeAudio = pipBridge.getCurrentAudioTrackId()
         let bridgeSubtitle = pipBridge.getCurrentSubtitleTrackId()
@@ -3639,6 +3774,9 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             logMPV("PiP hybrid activated bridge foregroundPos=\(String(format: "%.2f", cachedPosition)) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}")
         }
         pipBridge.activatePictureInPictureLayer()
+        DispatchQueue.main.async { [weak self] in
+            self?.metalView.isHidden = true
+        }
     }
 
     func isPictureInPicturePrimed() -> Bool {
@@ -4447,7 +4585,10 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
                 pipBridge.disableSubtitles()
             }
         }
-        logMPV("PiP hybrid bridge ready audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) snapshot={\(pipBridge.pictureInPictureDebugSnapshot())}")
+        if isPreparingPiPBridge || isUsingPiPBridge {
+            pipBridge.primePictureInPictureFrames(reason: "bridge-ready")
+        }
+        logMPV("PiP hybrid OpenGL bridge ready audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) snapshot={\(pipBridge.pictureInPictureDebugSnapshot())}")
         guard isUsingPiPBridge else { return }
         delegate?.renderer(self, didBecomeReadyToSeek: didBecomeReadyToSeek)
     }
@@ -4505,7 +4646,9 @@ final class MPVNativeRenderer: PlayerRenderer {
     weak var delegate: MPVNativeRendererDelegate?
 
     init(displayLayer: AVSampleBufferDisplayLayer) { }
+    var prefersPictureInPictureLayerActivationBeforeStart: Bool { false }
     func getRenderingView() -> UIView { UIView() }
+    func renderingLayoutDidChange(containerSize: CGSize) { }
     func start() throws { throw RendererError.unavailable }
     func stop() { }
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]?) { }

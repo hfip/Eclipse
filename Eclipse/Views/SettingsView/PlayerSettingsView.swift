@@ -369,7 +369,7 @@ struct PlayerSettingsView: View {
             return "MPV advanced features require the Metal MPV renderer."
         }
         if !MPVRenderBackendSupport.metalIsFullySupported {
-            return "MPV advanced features require the bundled Metal renderer and sample-buffer PiP bridge."
+            return "MPV advanced features require the bundled Metal renderer."
         }
         return "MPV advanced features require the Metal MPV renderer."
     }
@@ -781,16 +781,11 @@ struct PlayerSettingsView: View {
                                 .pickerStyle(.menu)
                             }
 
-                            if selectedMPVRendererIsMetal {
-                                settingsToggleRow(
-                                    title: "PiP When Leaving App",
-                                    detail: "Automatically start Picture in Picture when Metal MPV playback moves to the background.",
-                                    binding: $store.mpvAppExitPictureInPictureEnabled
-                                )
-                            } else {
-                                Label("App-exit PiP requires Metal MPV.", systemImage: "lock.fill")
-                                    .foregroundColor(.secondary)
-                            }
+                            settingsToggleRow(
+                                title: "PiP When Leaving App",
+                                detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
+                                binding: $store.mpvAppExitPictureInPictureEnabled
+                            )
 
                     } label: {
                         Label("MPV Rendering", systemImage: "display")

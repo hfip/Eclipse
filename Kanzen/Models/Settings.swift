@@ -315,13 +315,13 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Keeps MoltenVK inline playback full quality and lets Eclipse lower PiP pacing if iOS reports serious thermal pressure."
+            return "Keeps MoltenVK inline playback full quality and lets Eclipse adjust the PiP handoff path separately if needed."
         case .balanced:
-            return "Keeps inline Metal full quality with standard PiP frame pacing."
+            return "Keeps inline Metal full quality with the standard MPV PiP handoff."
         case .lowHeat:
-            return "Keeps inline Metal full quality and lowers PiP frame pacing to reduce heat."
+            return "Keeps inline Metal full quality while favoring the cooler MPV PiP handoff."
         case .sharp:
-            return "Keeps inline Metal and PiP bridge quality as high as possible at higher power cost."
+            return "Keeps inline Metal quality as high as possible at higher power cost."
         }
     }
 
@@ -362,7 +362,6 @@ struct MPVRenderBackendSupport {
     static var moltenVKMetalBackendAvailable: Bool {
         bundledMPVKitSupportsMoltenVKInlineRendering
             && moltenVKInlineRendererAvailable
-            && sampleBufferPictureInPictureBridgeAvailable
     }
 
     static var metalIsFullySupported: Bool {
@@ -375,7 +374,7 @@ struct MPVRenderBackendSupport {
             "revision=\(bundledMPVKitRevision)",
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
             "inlineRenderer=\(moltenVKInlineRendererAvailable)",
-            "pipBridge=\(sampleBufferPictureInPictureBridgeAvailable)",
+            "openGLPiPHandoff=\(sampleBufferPictureInPictureBridgeAvailable)",
             "metalRendererEnabled=\(metalRendererEnabled)",
             "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
             "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
@@ -385,22 +384,22 @@ struct MPVRenderBackendSupport {
 
     static var settingsDescription: String {
         if metalIsFullySupported {
-            return "Applies to the next player session. Metal is the default MPV renderer and uses MoltenVK inline playback with a sample-buffer bridge for PiP; OpenGL remains the fallback."
+            return "Applies to the next player session. Metal is the default MPV renderer and uses MoltenVK inline playback with an OpenGL sample-buffer handoff for PiP; OpenGL remains the fallback."
         }
         if !metalRendererEnabled {
             return "Applies to the next player session. OpenGL is active in this build."
         }
-        return "Applies to the next player session. Metal is remembered but falls back to OpenGL until the MoltenVK inline renderer and PiP bridge are available."
+        return "Applies to the next player session. Metal is remembered but falls back to OpenGL until the MoltenVK inline renderer is available."
     }
 
     static var settingsStatusLine: String {
         if metalIsFullySupported {
-            return "Metal backend: MoltenVK inline renderer with sample-buffer PiP"
+            return "Metal backend: MoltenVK inline renderer with OpenGL PiP handoff"
         }
         if !metalRendererEnabled {
             return "Metal backend: hidden in this build"
         }
-        return "Metal backend: waiting for MoltenVK inline renderer and PiP bridge"
+        return "Metal backend: waiting for MoltenVK inline renderer"
     }
 
     static func effectiveBackend(requested: MPVRenderBackend, hasMetalDevice: Bool) -> MPVRenderBackend {
@@ -415,9 +414,6 @@ struct MPVRenderBackendSupport {
         guard hasMetalDevice else { return "Metal device unavailable" }
         guard moltenVKInlineRendererAvailable else {
             return "MPVKit \(bundledMPVKitVersion) bundled in this build does not expose the MoltenVK inline renderer path"
-        }
-        guard sampleBufferPictureInPictureBridgeAvailable else {
-            return "Eclipse sample-buffer PiP bridge is not enabled in this build"
         }
         return nil
     }
