@@ -163,6 +163,12 @@ struct MediaDetailView: View {
         theme.heroBlendColor(dominant: ambientColor)
     }
 
+    /// Poster color for the scroll-attached banner bleed; nil for a
+    /// near-black/absent backdrop so the app gradient stays clean.
+    private var heroBleedColor: Color? {
+        EclipseTheme.usableDominant(ambientColor)
+    }
+
     private var designMetrics: ExperimentalMediaDesignMetrics {
         ExperimentalMediaDesignMetrics(
             preset: ExperimentalMediaDesignPreset(rawValue: experimentalDesignPreset) ?? ExperimentalMediaDesignPreset.defaultValue,
@@ -557,7 +563,7 @@ struct MediaDetailView: View {
             AtmosphereBackdrop(
                 input: theme.atmosphereInput(
                     dominant: ambientColor,
-                    hasHeroBleed: true,
+                    hasHeroBleed: false,
                     heroHeight: headerHeight,
                     fadeDistance: headerHeight * 0.62
                 ),
@@ -682,6 +688,12 @@ struct MediaDetailView: View {
                         value: -geo.frame(in: .named("mediaDetailScroll")).origin.y
                     )
                 }
+            )
+            .heroBannerBleed(
+                color: ExperimentalFeatureState.isEnabledAtLaunch ? heroBleedColor : nil,
+                heroHeight: headerHeight,
+                tail: headerHeight * 0.62,
+                strength: theme.scopedBleedStrength()
             )
         }
         .coordinateSpace(name: "mediaDetailScroll")

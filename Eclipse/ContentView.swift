@@ -518,6 +518,16 @@ struct ExperimentalContentView: View {
                 .navigationViewStyle(StackNavigationViewStyle())
             }
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 24, coordinateSpace: .local)
+                .onEnded { value in
+                    if value.translation.width > 110 && abs(value.translation.height) < 70 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                            showingSettings = false
+                        }
+                    }
+                }
+        )
     }
 
     private var closeSettingsButton: some View {

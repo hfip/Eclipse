@@ -240,7 +240,7 @@ struct BackupData: Codable {
     var githubReleaseLastPromptedVersion: String = ""
     var filterHorrorContent: Bool = false
     var selectedSimilarityAlgorithm: String = SimilarityAlgorithm.hybrid.rawValue
-    var performanceModeEnabled: Bool = false
+    var performanceModeEnabled: Bool = PerformanceModeSettings.defaultEnabled
     var performanceModeSkipAniListTraversalForAnimeDetails: Bool = false
     var performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:]
     
@@ -652,7 +652,7 @@ struct BackupData: Codable {
         githubReleaseLastPromptedVersion = try container.decodeIfPresent(String.self, forKey: .githubReleaseLastPromptedVersion) ?? ""
         filterHorrorContent = try container.decodeIfPresent(Bool.self, forKey: .filterHorrorContent) ?? false
         selectedSimilarityAlgorithm = Self.sanitizedSimilarityAlgorithm(try container.decodeIfPresent(String.self, forKey: .selectedSimilarityAlgorithm))
-        performanceModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .performanceModeEnabled) ?? false
+        performanceModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .performanceModeEnabled) ?? PerformanceModeSettings.defaultEnabled
         performanceModeSkipAniListTraversalForAnimeDetails = try container.decodeIfPresent(Bool.self, forKey: .performanceModeSkipAniListTraversalForAnimeDetails) ?? false
         let decodedPerformanceOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .performanceModeFastAnimeCatalogOverrides) ?? [:]
         performanceModeFastAnimeCatalogOverrides = decodedPerformanceOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
@@ -1097,7 +1097,7 @@ struct BackupData: Codable {
         githubReleaseLastPromptedVersion: String = "",
         filterHorrorContent: Bool = false,
         selectedSimilarityAlgorithm: String = SimilarityAlgorithm.hybrid.rawValue,
-        performanceModeEnabled: Bool = false,
+        performanceModeEnabled: Bool = PerformanceModeSettings.defaultEnabled,
         performanceModeSkipAniListTraversalForAnimeDetails: Bool = false,
         performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:],
 
@@ -2567,7 +2567,7 @@ class BackupManager {
         let githubReleaseLastPromptedVersion = json["githubReleaseLastPromptedVersion"] as? String ?? ""
         let filterHorrorContent = json["filterHorror"] as? Bool ?? false
         let selectedSimilarityAlgorithm = BackupData.sanitizedSimilarityAlgorithm(json["selectedSimilarityAlgorithm"] as? String)
-        let performanceModeEnabled = json["performanceModeEnabled"] as? Bool ?? false
+        let performanceModeEnabled = json["performanceModeEnabled"] as? Bool ?? PerformanceModeSettings.defaultEnabled
         let performanceModeSkipAniListTraversalForAnimeDetails = json["performanceModeSkipAniListTraversalForAnimeDetails"] as? Bool ?? false
         let rawPerformanceModeOverrides = json["performanceModeFastAnimeCatalogOverrides"] as? [String: Bool] ?? [:]
         let performanceModeFastAnimeCatalogOverrides = rawPerformanceModeOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }

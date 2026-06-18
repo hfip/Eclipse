@@ -77,7 +77,7 @@ struct MangaDetailView: View {
             AtmosphereBackdrop(
                 input: theme.atmosphereInput(
                     dominant: readerBleedColor,
-                    hasHeroBleed: true,
+                    hasHeroBleed: false,
                     heroHeight: heroHeight,
                     fadeDistance: heroHeight * 0.62,
                     isReaderMode: true
@@ -204,6 +204,12 @@ struct MangaDetailView: View {
                         value: -geo.frame(in: .named("mangaDetailScroll")).origin.y
                     )
                 }
+            )
+            .heroBannerBleed(
+                color: experimental ? readerBleedColor : nil,
+                heroHeight: heroHeight,
+                tail: heroHeight * 0.62,
+                strength: theme.scopedBleedStrength(isReaderMode: true)
             )
         }
         .coordinateSpace(name: "mangaDetailScroll")

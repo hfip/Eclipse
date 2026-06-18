@@ -281,6 +281,7 @@ enum PerformanceModeSettings {
     static let enabledKey = "performanceModeEnabled"
     static let skipAniListTraversalForAnimeDetailsKey = "performanceModeSkipAniListTraversalForAnimeDetails"
     static let fastAnimeCatalogOverridesKey = "performanceModeFastAnimeCatalogOverrides"
+    static let defaultEnabled = true
 
     static let animeCatalogIds: Set<String> = [
         "trendingAnime",
@@ -294,7 +295,7 @@ enum PerformanceModeSettings {
     private static let defaults = UserDefaults.standard
 
     static var isEnabled: Bool {
-        get { defaults.bool(forKey: enabledKey) }
+        get { (defaults.object(forKey: enabledKey) as? Bool) ?? defaultEnabled }
         set { defaults.set(newValue, forKey: enabledKey) }
     }
 

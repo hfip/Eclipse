@@ -1421,3 +1421,60 @@ private struct AtmosphereBleedLayer: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
+
+// MARK: - Scroll-attached hero banner bleed
+//
+// The banner's dominant color is rendered as a top-anchored background INSIDE
+// the scroll content (not the fixed backdrop), so it stays glued to the hero:
+// it holds near-opaque through the hero region — matching the hero image's own
+// bottom fade so the two meet with no seam — then fades to clear over a tail
+// below. Because it lives in the scroll content it scrolls up and off together
+// with the hero, revealing the fixed app gradient underneath. That reveal IS
+// the "overpowered by the app gradient" handoff, and because it rides the
+// native scroll it needs no scroll-offset plumbing, so it can never freeze
+// mid-fade the way a fixed, alpha-faded layer can.
+struct HeroBannerBleed: View {
+    var color: Color
+    var heroHeight: CGFloat
+    var tail: CGFloat
+    var strength: Double
+
+    var body: some View {
+        let h = max(heroHeight + tail, 1)
+        let hold = min(max(heroHeight / h, 0.05), 0.92)
+        let s = max(0, strength)
+        return LinearGradient(
+            stops: [
+                .init(color: color.opacity(min(1, 1.00 * s)), location: 0.0),
+                .init(color: color.opacity(min(1, 0.97 * s)), location: hold * 0.86),
+                .init(color: color.opacity(min(1, 0.95 * s)), location: hold),
+                .init(color: color.opacity(0.52 * s), location: hold + (1 - hold) * 0.30),
+                .init(color: color.opacity(0.24 * s), location: hold + (1 - hold) * 0.56),
+                .init(color: color.opacity(0.07 * s), location: hold + (1 - hold) * 0.82),
+                .init(color: .clear, location: 1.0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(maxWidth: .infinity)
+        .frame(height: h)
+        .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    /// Attaches a scroll-following banner bleed to the top of scroll content.
+    /// Pass `color == nil` (e.g. a near-black poster, via
+    /// `EclipseTheme.usableDominant`) to render nothing, so the app gradient
+    /// shows through unmuddied.
+    @ViewBuilder
+    func heroBannerBleed(color: Color?, heroHeight: CGFloat, tail: CGFloat, strength: Double) -> some View {
+        if let color, strength > 0.001, heroHeight > 0 {
+            background(alignment: .top) {
+                HeroBannerBleed(color: color, heroHeight: heroHeight, tail: tail, strength: strength)
+            }
+        } else {
+            self
+        }
+    }
+}

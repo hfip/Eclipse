@@ -121,13 +121,19 @@ struct AidokuMangaDetailView: View {
         return theme.scopedAtmosphereColor(dominant: base, isReaderMode: true)
     }
 
+    /// Muted bleed tone for reader detail so the top / overscroll area shows a
+    /// deep color that matches the multi-gradient instead of a vivid band.
+    private var readerBleedColor: Color {
+        readerAtmosphereColor.atmosphereScaled(0.55)
+    }
+
     @ViewBuilder
     private var readerDetailBackground: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
             AtmosphereBackdrop(
                 input: theme.atmosphereInput(
-                    dominant: readerAtmosphereColor.atmosphereScaled(0.55),
-                    hasHeroBleed: true,
+                    dominant: readerBleedColor,
+                    hasHeroBleed: false,
                     heroHeight: heroHeight,
                     fadeDistance: heroHeight * 0.62,
                     isReaderMode: true
@@ -200,6 +206,12 @@ struct AidokuMangaDetailView: View {
                         value: -geo.frame(in: .named("aidokuContentScroll")).origin.y
                     )
                 }
+            )
+            .heroBannerBleed(
+                color: experimental ? readerBleedColor : nil,
+                heroHeight: heroHeight,
+                tail: heroHeight * 0.62,
+                strength: theme.scopedBleedStrength(isReaderMode: true)
             )
         }
         .coordinateSpace(name: "aidokuContentScroll")
@@ -285,10 +297,10 @@ struct AidokuMangaDetailView: View {
             let posterHeight = experimental ? max(heroHeight * 0.74, 270) : max(heroHeight - 26, 260)
             let titleSize: CGFloat = experimental ? (isIPad ? 48 : 40) : (isIPad ? 40 : 32)
             let gradientColors: [Color] = experimental ? [
-                Color.black.opacity(0.02),
-                readerAtmosphereColor.opacity(0.16),
-                readerAtmosphereColor.opacity(0.58),
-                Color.black.opacity(0.92)
+                Color.black.opacity(0.04),
+                readerBleedColor.opacity(0.30),
+                readerBleedColor.opacity(0.74),
+                readerBleedColor.opacity(0.97)
             ] : [
                 Color.black.opacity(0.02),
                 Color.black.opacity(0.28),

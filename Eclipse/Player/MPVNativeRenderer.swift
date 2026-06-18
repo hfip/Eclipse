@@ -785,6 +785,12 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var selectedVideoTrackID: Int?
     private var pipTransitionID = 0
     private var pipRenderRequestCount = 0
+    // PiP diagnostics: distinguish "MPV produced a new frame" (FRAME flag set) from
+    // "we re-rendered the same/stale frame" (forced). All-forced means a black/frozen
+    // PiP even when enqueue succeeds. Heartbeat ticks drive a periodic health log.
+    private var pipFrameUpdateRenderCount = 0
+    private var pipForcedRenderCount = 0
+    private var pipHeartbeatTick = 0
     private var lastRenderingLayoutSize: CGSize = .zero
 
     weak var delegate: MPVNativeRendererDelegate?
@@ -1091,6 +1097,9 @@ final class MPVNativeRenderer: PlayerRenderer {
         guard isRunning, currentMode != .pictureInPicture else { return }
         pipTransitionID += 1
         pipRenderRequestCount = 0
+        pipFrameUpdateRenderCount = 0
+        pipForcedRenderCount = 0
+        pipHeartbeatTick = 0
         logMPV("PiP prepare begin id=\(pipTransitionID) \(pipDebugSnapshot())")
         logMPV("switching to OpenGL sample-buffer PiP render path")
         rememberSelectedVideoTrack(reason: "enter-pip")
@@ -1399,6 +1408,12 @@ final class MPVNativeRenderer: PlayerRenderer {
                     self?.stopPiPRenderLoop(reason: "pip-loop-ended")
                     return
                 }
+                // Heartbeat (~every 2s) so a stalled/black PiP shows up as a steady
+                // health log instead of silence after the last successful enqueue.
+                self.pipHeartbeatTick &+= 1
+                if self.pipHeartbeatTick % 48 == 0 {
+                    self.logMPV("PiP heartbeat paused=\(self.isPaused) frameUpdates=\(self.pipFrameUpdateRenderCount) forced=\(self.pipForcedRenderCount) \(self.pipBridge.performanceSnapshot())")
+                }
                 if !self.isPaused || self.forcedPiPRenderCount > 0 {
                     self.renderPiPFrame(force: true)
                 }
@@ -1604,10 +1619,15 @@ final class MPVNativeRenderer: PlayerRenderer {
             forcedPiPRenderCount = max(0, forcedPiPRenderCount - 1)
         }
         if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 || shouldForceRender {
+            if updateFlags & MPV_RENDER_UPDATE_FRAME.rawValue != 0 {
+                pipFrameUpdateRenderCount += 1
+            } else {
+                pipForcedRenderCount += 1
+            }
             let renderSize = currentPiPRenderSize()
             pipRenderRequestCount += 1
             if pipRenderRequestCount <= 5 || pipRenderRequestCount % 60 == 0 {
-                logMPV("PiP render frame request count=\(pipRenderRequestCount) immediate=\(immediate) force=\(force) flags=\(updateFlags) size=\(String(format: "%.0fx%.0f", renderSize.width, renderSize.height)) \(pipDebugSnapshot())")
+                logMPV("PiP render frame request count=\(pipRenderRequestCount) frameUpdates=\(pipFrameUpdateRenderCount) forced=\(pipForcedRenderCount) immediate=\(immediate) force=\(force) flags=\(updateFlags) size=\(String(format: "%.0fx%.0f", renderSize.width, renderSize.height)) \(pipDebugSnapshot())")
             }
             pipBridge.renderOpenGL(context: context, glContext: glContext, videoSize: renderSize, playbackPosition: cachedPosition) { [weak self] fbo, flipY in
                 guard let self else { return -1 }

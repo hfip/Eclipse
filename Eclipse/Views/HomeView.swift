@@ -15,6 +15,41 @@ func homeImageDecodeSize(width: CGFloat, height: CGFloat) -> CGSize {
     return CGSize(width: max(width * scale, 1), height: max(height * scale, 1))
 }
 
+private func homeTMDBRatingText(_ voteAverage: Double?) -> String? {
+    guard let voteAverage, voteAverage > 0 else { return nil }
+    return String(format: "%.1f", voteAverage)
+}
+
+private struct HomeCardSubtitle: View {
+    let result: TMDBSearchResult
+
+    private var year: String? {
+        result.displayDate.isEmpty ? nil : String(result.displayDate.prefix(4))
+    }
+
+    private var rating: String? {
+        homeTMDBRatingText(result.voteAverage)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let year {
+                Text(year)
+            }
+
+            if year != nil && rating != nil {
+                Text("·")
+            }
+
+            if let rating {
+                Image(systemName: "star.fill")
+                    .foregroundStyle(.yellow)
+                Text(rating)
+            }
+        }
+    }
+}
+
 struct HomeView: View {
     private let onStartupReady: () -> Void
     @State private var showingSettings = false
@@ -113,7 +148,7 @@ struct HomeView: View {
                 AtmosphereBackdrop(
                     input: theme.atmosphereInput(
                         dominant: ambientColor,
-                        hasHeroBleed: true,
+                        hasHeroBleed: false,
                         heroHeight: heroHeight,
                         fadeDistance: heroHeight * 0.6
                     ),
@@ -256,6 +291,12 @@ struct HomeView: View {
                     }
                 }
             )
+            .heroBannerBleed(
+                color: ExperimentalFeatureState.isEnabledAtLaunch ? heroBleedColor : nil,
+                heroHeight: heroHeight,
+                tail: heroHeight * 0.62,
+                strength: theme.scopedBleedStrength()
+            )
         }
         .coordinateSpace(name: "homeScroll")
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
@@ -311,7 +352,13 @@ struct HomeView: View {
     private var heroBlendColor: Color {
         theme.heroBlendColor(dominant: ambientColor)
     }
-    
+
+    /// The poster color used for the scroll-attached banner bleed. Nil for a
+    /// near-black/absent poster so the app gradient is never muddied.
+    private var heroBleedColor: Color? {
+        EclipseTheme.usableDominant(ambientColor)
+    }
+
     @ViewBuilder
     private var heroGradientOverlay: some View {
         // Modern: fade the (opaque) hero image into the banner's own color so it
@@ -1202,7 +1249,7 @@ struct ExperimentalMediaCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
 
-                    Text(cardSubtitle)
+                    HomeCardSubtitle(result: result)
                         .font(.system(size: isIPad ? 16 : 15, weight: .regular))
                         .foregroundColor(.white.opacity(0.56))
                         .lineLimit(1)
@@ -1233,12 +1280,6 @@ struct ExperimentalMediaCard: View {
             )
             .shadow(color: .black.opacity(0.28), radius: 14, x: 0, y: 8)
             .heroSource(id: heroID, namespace: heroNamespace)
-    }
-
-    private var cardSubtitle: String {
-        let year = result.displayDate.isEmpty ? nil : String(result.displayDate.prefix(4))
-        let kind = result.genreIds?.contains(16) == true ? "Animation" : (result.isMovie ? "Movie" : "TV")
-        return [year, kind].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 }
 
@@ -1414,7 +1455,7 @@ struct MediaCard: View {
                     .lineLimit(1)
                     .frame(width: backdropWidth, alignment: .leading)
 
-                Text(cardSubtitle)
+                HomeCardSubtitle(result: result)
                     .font(.system(size: isIPad ? 15 : 14, weight: .regular))
                     .foregroundColor(.white.opacity(0.58))
                     .lineLimit(1)
@@ -1422,12 +1463,6 @@ struct MediaCard: View {
             }
         }
         .frame(width: backdropWidth, alignment: .leading)
-    }
-
-    private var cardSubtitle: String {
-        let year = result.displayDate.isEmpty ? nil : String(result.displayDate.prefix(4))
-        let kind = result.isMovie ? "Movie" : "TV"
-        return [year, kind].compactMap { $0 }.joined(separator: " · ")
     }
 }
 

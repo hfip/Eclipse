@@ -1999,6 +1999,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func disarmMPVPictureInPictureRestartAfterStop(reason: String) {
         let appState = UIApplication.shared.applicationState
+        // Always drop automatic-from-inline immediately while PiP is stopping. For the
+        // OpenGL renderer the sample-buffer layer is the on-screen inline content AVKit
+        // watches, so leaving this enabled in the foreground lets AVKit re-trigger PiP the
+        // instant the user closes it — an endless close/reopen loop. It re-arms on the next
+        // backgrounding via primeMPVAppExitPictureInPictureIfNeeded -> configure...automation.
+        pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
         if appState == .active {
             cancelMPVPictureInPictureStartRequests(reason: reason)
         } else {
