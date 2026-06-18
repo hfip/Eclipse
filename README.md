@@ -107,7 +107,7 @@ The original Luna project is available at `https://github.com/cranci1/Luna`.
 
 Source code for builds distributed from this repository is available at `https://github.com/Soupy-dev/Eclipse`. If you redistribute an IPA or another binary, provide the corresponding source under GPLv3.
 
-Credits to https://github.com/mpv-android/mpv-android for mpv in android. Credits to https://github.com/Aidoku/Aidoku for powering Reader Mode.
+Credits to https://github.com/Aidoku/Aidoku for powering Reader Mode.
 
 This program comes with no warranty, to the extent permitted by law.
 
@@ -125,8 +125,6 @@ To add a service/addon, click the top right settings icon in the homescreen and 
 Secrets and API keys are loaded from ignored local configuration files instead of tracked source files.
 
 For iOS, copy `Build.local.xcconfig.example` to `Build.local.xcconfig` and fill in the values you need.
-
-For Android, copy `android/local.properties.example` to `android/local.properties` and fill in the values you need. Gradle also accepts matching environment variables or Gradle properties, and can fall back to matching values in `Build.xcconfig` or `Build.local.xcconfig`.
 
 Configured keys include:
 
