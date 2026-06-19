@@ -154,8 +154,23 @@ struct HomeView: View {
         tracksBackgroundScroll ? scrollOffset : 0
     }
 
+    /// Track scroll offset for the parallax atmosphere (non-iPad) and, additionally, whenever the
+    /// animated background is enabled — so the viewport-pinned motion layer can follow the user
+    /// after the hero passes, including on iPad where the atmosphere itself stays static.
+    private var tracksHomeScrollOffset: Bool {
+        tracksBackgroundScroll || homeAnimatedBackgroundEnabled
+    }
+
     private var postHeroAnimationClearance: CGFloat {
         ExperimentalFeatureState.isEnabledAtLaunch ? 88 : 56
+    }
+
+    /// Top inset for the viewport-pinned animated background. While the hero banner (and its
+    /// gradient) is on screen the motion is held just below the hero's bottom edge; once the user
+    /// scrolls past the hero it settles to a small fixed inset and stays pinned, so it follows the
+    /// user. `max(scrollOffset, 0)` guards rubber-band overscroll at the very top.
+    private var animatedBackgroundTopClearance: CGFloat {
+        max(heroHeight - max(scrollOffset, 0), postHeroAnimationClearance)
     }
 
     private var scrollOffsetUpdateThreshold: CGFloat {
@@ -195,6 +210,19 @@ struct HomeView: View {
                 Group {
                     theme.atmosphereStyle == .solid ? atmosphereColor : homeViewModel.ambientColor
                 }
+                .ignoresSafeArea(.all)
+            }
+
+            // Pinned to the viewport (behind the scroll content) so it follows the user. The
+            // top inset holds it below the hero banner + gradient while the hero is on screen,
+            // then it stays fixed once scrolled past. The opaque hero covers it at the top.
+            if homeAnimatedBackgroundEnabled {
+                EclipseAmbientMotionBackground(
+                    topClearance: animatedBackgroundTopClearance,
+                    ambientColor: heroBleedColor,
+                    accentColor: theme.scopedGradientColor(),
+                    motionEnabled: !reduceMotion
+                )
                 .ignoresSafeArea(.all)
             }
 
@@ -313,7 +341,7 @@ struct HomeView: View {
             }
             .background(
                 Group {
-                    if tracksBackgroundScroll {
+                    if tracksHomeScrollOffset {
                         GeometryReader { geo in
                             Color.clear.preference(
                                 key: ScrollOffsetPreferenceKey.self,
@@ -332,7 +360,7 @@ struct HomeView: View {
         }
         .coordinateSpace(name: "homeScroll")
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
-            guard tracksBackgroundScroll else { return }
+            guard tracksHomeScrollOffset else { return }
             guard abs(scrollOffset - newOffset) >= scrollOffsetUpdateThreshold else { return }
             scrollOffset = newOffset
         }
@@ -343,16 +371,6 @@ struct HomeView: View {
         VStack(spacing: 0) {
             continueWatchingSection
             contentSections
-        }
-        .background(alignment: .top) {
-            if homeAnimatedBackgroundEnabled {
-                EclipseAmbientMotionBackground(
-                    topClearance: postHeroAnimationClearance,
-                    ambientColor: heroBleedColor,
-                    accentColor: theme.scopedGradientColor(),
-                    motionEnabled: !reduceMotion
-                )
-            }
         }
     }
 

@@ -525,11 +525,6 @@ struct EclipseAmbientMotionBackground: View {
     let accentColor: Color
     let motionEnabled: Bool
 
-    @State private var drifting = false
-    @State private var pulsing = false
-    @State private var ringRotation: Double = -18
-    @State private var counterRingRotation: Double = 14
-
     private let particles: [(x: CGFloat, y: CGFloat, size: CGFloat, drift: CGFloat, opacity: Double)] = [
         (0.25, 0.24, 2.8, 15, 0.34),
         (0.75, 0.25, 3.2, -15, 0.38),
@@ -558,7 +553,7 @@ struct EclipseAmbientMotionBackground: View {
                     Color.clear
                         .frame(height: clearance)
 
-                    ambientLayer(size: CGSize(width: size.width, height: availableHeight))
+                    ambientLayer(size: CGSize(width: size.width, height: availableHeight), motionEnabled: motionEnabled)
                         .frame(width: size.width, height: availableHeight)
                         .mask {
                             topFadeMask(fadeHeight: min(max(availableHeight * 0.18, 72), 160))
@@ -567,26 +562,13 @@ struct EclipseAmbientMotionBackground: View {
                 .frame(width: size.width, height: size.height, alignment: .top)
                 .clipped()
             } else {
-                ambientLayer(size: size)
+                ambientLayer(size: size, motionEnabled: motionEnabled)
                     .frame(width: size.width, height: size.height)
                     .clipped()
             }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .onAppear { startMotionIfNeeded() }
-        .onChange(of: motionEnabled) { enabled in
-            if enabled {
-                startMotionIfNeeded()
-            } else {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    drifting = false
-                    pulsing = false
-                    ringRotation = -18
-                    counterRingRotation = 14
-                }
-            }
-        }
     }
 
     private func topFadeMask(fadeHeight: CGFloat) -> some View {
@@ -602,153 +584,207 @@ struct EclipseAmbientMotionBackground: View {
         }
     }
 
-    private func ambientLayer(size: CGSize) -> some View {
-        let width = max(size.width, 1)
-        let height = max(size.height, 1)
-        let largeRingDiameter = min(max(min(width, height) * 1.05, 340), min(max(width, height) * 0.96, 760))
-        let smallRingDiameter = min(max(min(width, height) * 0.78, 260), min(max(width, height) * 0.74, 560))
-        let driftX = drifting ? width * 0.018 : -width * 0.018
-        let driftY = drifting ? -height * 0.012 : height * 0.012
-
-        return ZStack {
-            Circle()
-                .stroke(primaryColor.opacity(pulsing ? 0.18 : 0.09), lineWidth: pulsing ? 9 : 5)
-                .frame(width: largeRingDiameter * 0.78, height: largeRingDiameter * 0.78)
-                .scaleEffect(pulsing ? 1.06 : 0.94)
-                .blur(radius: 2.5)
-                .opacity(pulsing ? 0.58 : 0.36)
-
-            Circle()
-                .stroke(
-                    AngularGradient(
-                        colors: [
-                            .clear,
-                            accentColor.opacity(0.30),
-                            primaryColor.opacity(0.22),
-                            .white.opacity(0.16),
-                            .clear
-                        ],
-                        center: .center
-                    ),
-                    lineWidth: 1.45
+    private func ambientLayer(size: CGSize, motionEnabled: Bool) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !motionEnabled)) { timeline in
+            Canvas(opaque: false, colorMode: .linear) { context, canvasSize in
+                var drawingContext = context
+                drawAmbientLayer(
+                    context: &drawingContext,
+                    size: canvasSize,
+                    date: motionEnabled ? timeline.date : Date(timeIntervalSinceReferenceDate: 0),
+                    motionEnabled: motionEnabled
                 )
-                .frame(width: largeRingDiameter, height: largeRingDiameter)
-                .rotationEffect(.degrees(ringRotation))
-                .offset(x: driftX, y: driftY)
-                .scaleEffect(pulsing ? 1.018 : 0.992)
-                .opacity(0.98)
-
-            Circle()
-                .trim(from: 0.08, to: 0.72)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            primaryColor.opacity(0.28),
-                            accentColor.opacity(0.20),
-                            .white.opacity(0.12),
-                            .clear
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round)
-                )
-                .frame(width: smallRingDiameter, height: smallRingDiameter)
-                .rotationEffect(.degrees(counterRingRotation))
-                .offset(x: -driftX, y: -driftY)
-                .scaleEffect(pulsing ? 0.98 : 1.02)
-                .opacity(0.92)
-
-            Circle()
-                .trim(from: 0.02, to: 0.16)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            .clear,
-                            primaryColor.opacity(0.32),
-                            .white.opacity(0.26),
-                            .clear
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
-                )
-                .frame(width: largeRingDiameter * 0.90, height: largeRingDiameter * 0.90)
-                .rotationEffect(.degrees(ringRotation + 72))
-                .offset(x: -driftX * 0.6, y: driftY * 0.6)
-                .opacity(pulsing ? 0.86 : 0.58)
-
-            Circle()
-                .trim(from: 0.54, to: 0.68)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            .clear,
-                            accentColor.opacity(0.30),
-                            .white.opacity(0.20),
-                            .clear
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    style: StrokeStyle(lineWidth: 2.1, lineCap: .round)
-                )
-                .frame(width: smallRingDiameter * 1.16, height: smallRingDiameter * 1.16)
-                .rotationEffect(.degrees(counterRingRotation - 34))
-                .offset(x: driftX * 0.8, y: -driftY * 0.8)
-                .opacity(pulsing ? 0.74 : 0.48)
-
-            ForEach([18.0, 146.0, 274.0], id: \.self) { angle in
-                Circle()
-                    .fill(Color.white.opacity(pulsing ? 0.46 : 0.30))
-                    .overlay {
-                        Circle()
-                            .fill(primaryColor.opacity(pulsing ? 0.26 : 0.18))
-                            .blur(radius: 1.5)
-                    }
-                    .frame(width: pulsing ? 5.4 : 4.0, height: pulsing ? 5.4 : 4.0)
-                    .offset(x: largeRingDiameter * 0.42)
-                    .rotationEffect(.degrees(ringRotation + angle))
-            }
-
-            ForEach(particles.indices, id: \.self) { index in
-                let particle = particles[index]
-                Circle()
-                    .fill(primaryColor.opacity(pulsing ? particle.opacity + 0.08 : particle.opacity))
-                    .overlay {
-                        Circle()
-                            .fill(Color.white.opacity(pulsing ? particle.opacity * 0.55 : particle.opacity * 0.38))
-                    }
-                    .frame(
-                        width: pulsing ? particle.size * 1.25 : particle.size,
-                        height: pulsing ? particle.size * 1.25 : particle.size
-                    )
-                    .position(x: width * particle.x, y: height * particle.y)
-                    .offset(x: drifting ? particle.drift : -particle.drift, y: drifting ? -12 : 12)
             }
         }
-        .frame(width: width, height: height)
         .blendMode(.screen)
         .opacity(0.96)
         .compositingGroup()
     }
 
-    private func startMotionIfNeeded() {
-        guard motionEnabled, !drifting else { return }
+    private func drawAmbientLayer(context: inout GraphicsContext, size: CGSize, date: Date, motionEnabled: Bool) {
+        let width = max(size.width, 1)
+        let height = max(size.height, 1)
+        let center = CGPoint(x: width * 0.5, y: height * 0.5)
+        let largeRingDiameter = min(max(min(width, height) * 1.05, 340), min(max(width, height) * 0.96, 760))
+        let smallRingDiameter = min(max(min(width, height) * 0.78, 260), min(max(width, height) * 0.74, 560))
+        let seconds = date.timeIntervalSinceReferenceDate
+        let drift = motionEnabled ? wave(seconds: seconds, period: 19.0) : 0.5
+        let pulse = motionEnabled ? wave(seconds: seconds, period: 9.6) : 0.5
+        let ringRotation = motionEnabled ? -18 + 360 * normalized(seconds: seconds, period: 28.0) : -18
+        let counterRingRotation = motionEnabled ? 14 - 360 * normalized(seconds: seconds, period: 36.0) : 14
+        let driftX = lerp(-width * 0.018, width * 0.018, drift)
+        let driftY = lerp(height * 0.012, -height * 0.012, drift)
 
-        withAnimation(.easeInOut(duration: 9.5).repeatForever(autoreverses: true)) {
-            drifting = true
+        var pulseContext = context
+        pulseContext.addFilter(.blur(radius: 2.5))
+        drawEllipseStroke(
+            context: &pulseContext,
+            center: center,
+            diameter: largeRingDiameter * lerp(0.94, 1.06, pulse) * 0.78,
+            color: primaryColor.opacity(lerpDouble(0.09, 0.18, pulse)),
+            lineWidth: lerp(5, 9, pulse)
+        )
+
+        drawArc(
+            context: &context,
+            center: shifted(center, x: driftX, y: driftY),
+            radius: largeRingDiameter * 0.5 * lerp(0.992, 1.018, pulse),
+            startDegrees: ringRotation + 18,
+            endDegrees: ringRotation + 128,
+            color: accentColor.opacity(0.30),
+            lineWidth: 1.45
+        )
+        drawArc(
+            context: &context,
+            center: shifted(center, x: driftX, y: driftY),
+            radius: largeRingDiameter * 0.5 * lerp(0.992, 1.018, pulse),
+            startDegrees: ringRotation + 128,
+            endDegrees: ringRotation + 228,
+            color: primaryColor.opacity(0.22),
+            lineWidth: 1.45
+        )
+        drawArc(
+            context: &context,
+            center: shifted(center, x: driftX, y: driftY),
+            radius: largeRingDiameter * 0.5 * lerp(0.992, 1.018, pulse),
+            startDegrees: ringRotation + 228,
+            endDegrees: ringRotation + 292,
+            color: Color.white.opacity(0.16),
+            lineWidth: 1.45
+        )
+
+        drawArc(
+            context: &context,
+            center: shifted(center, x: -driftX, y: -driftY),
+            radius: smallRingDiameter * 0.5 * lerp(1.02, 0.98, pulse),
+            startDegrees: counterRingRotation + 29,
+            endDegrees: counterRingRotation + 259,
+            color: primaryColor.opacity(0.28),
+            lineWidth: 1.6
+        )
+        drawArc(
+            context: &context,
+            center: shifted(center, x: -driftX, y: -driftY),
+            radius: smallRingDiameter * 0.5 * lerp(1.02, 0.98, pulse),
+            startDegrees: counterRingRotation + 132,
+            endDegrees: counterRingRotation + 224,
+            color: accentColor.opacity(0.20),
+            lineWidth: 1.6
+        )
+        drawArc(
+            context: &context,
+            center: shifted(center, x: -driftX * 0.6, y: driftY * 0.6),
+            radius: largeRingDiameter * 0.45,
+            startDegrees: ringRotation + 79,
+            endDegrees: ringRotation + 130,
+            color: primaryColor.opacity(lerpDouble(0.58, 0.86, pulse)),
+            lineWidth: 2.4
+        )
+        drawArc(
+            context: &context,
+            center: shifted(center, x: driftX * 0.8, y: -driftY * 0.8),
+            radius: smallRingDiameter * 0.58,
+            startDegrees: counterRingRotation + 160,
+            endDegrees: counterRingRotation + 210,
+            color: accentColor.opacity(lerpDouble(0.48, 0.74, pulse)),
+            lineWidth: 2.1
+        )
+
+        for angle in [18.0, 146.0, 274.0] {
+            let glintCenter = point(
+                center: center,
+                radius: largeRingDiameter * 0.42,
+                degrees: ringRotation + angle
+            )
+            let glintSize = lerp(4.0, 5.4, pulse)
+            var glowContext = context
+            glowContext.addFilter(.blur(radius: 1.5))
+            drawCircle(
+                context: &glowContext,
+                center: glintCenter,
+                diameter: glintSize * 2.2,
+                color: primaryColor.opacity(lerpDouble(0.18, 0.26, pulse))
+            )
+            drawCircle(
+                context: &context,
+                center: glintCenter,
+                diameter: glintSize,
+                color: Color.white.opacity(lerpDouble(0.30, 0.46, pulse))
+            )
         }
-        withAnimation(.easeInOut(duration: 4.8).repeatForever(autoreverses: true)) {
-            pulsing = true
+
+        for particle in particles {
+            let particleSize = particle.size * lerp(1.0, 1.25, pulse)
+            let particleCenter = CGPoint(
+                x: width * particle.x + lerp(-particle.drift, particle.drift, drift),
+                y: height * particle.y + lerp(12, -12, drift)
+            )
+            drawCircle(
+                context: &context,
+                center: particleCenter,
+                diameter: particleSize,
+                color: primaryColor.opacity(particle.opacity + lerpDouble(0, 0.08, pulse))
+            )
+            drawCircle(
+                context: &context,
+                center: particleCenter,
+                diameter: particleSize,
+                color: Color.white.opacity(particle.opacity * lerpDouble(0.38, 0.55, pulse))
+            )
         }
-        withAnimation(.linear(duration: 28).repeatForever(autoreverses: false)) {
-            ringRotation = 342
-        }
-        withAnimation(.linear(duration: 36).repeatForever(autoreverses: false)) {
-            counterRingRotation = -346
-        }
+    }
+
+    private func drawEllipseStroke(context: inout GraphicsContext, center: CGPoint, diameter: CGFloat, color: Color, lineWidth: CGFloat) {
+        let rect = CGRect(x: center.x - diameter * 0.5, y: center.y - diameter * 0.5, width: diameter, height: diameter)
+        context.stroke(Path(ellipseIn: rect), with: .color(color), lineWidth: lineWidth)
+    }
+
+    private func drawArc(context: inout GraphicsContext, center: CGPoint, radius: CGFloat, startDegrees: Double, endDegrees: Double, color: Color, lineWidth: CGFloat) {
+        var path = Path()
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: .degrees(startDegrees),
+            endAngle: .degrees(endDegrees),
+            clockwise: false
+        )
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+    }
+
+    private func drawCircle(context: inout GraphicsContext, center: CGPoint, diameter: CGFloat, color: Color) {
+        let rect = CGRect(x: center.x - diameter * 0.5, y: center.y - diameter * 0.5, width: diameter, height: diameter)
+        context.fill(Path(ellipseIn: rect), with: .color(color))
+    }
+
+    private func shifted(_ point: CGPoint, x: CGFloat, y: CGFloat) -> CGPoint {
+        CGPoint(x: point.x + x, y: point.y + y)
+    }
+
+    private func point(center: CGPoint, radius: CGFloat, degrees: Double) -> CGPoint {
+        let radians = degrees * .pi / 180
+        return CGPoint(
+            x: center.x + CGFloat(cos(radians)) * radius,
+            y: center.y + CGFloat(sin(radians)) * radius
+        )
+    }
+
+    private func normalized(seconds: TimeInterval, period: Double) -> Double {
+        guard period > 0 else { return 0 }
+        let value = seconds.truncatingRemainder(dividingBy: period) / period
+        return value < 0 ? value + 1 : value
+    }
+
+    private func wave(seconds: TimeInterval, period: Double) -> Double {
+        guard period > 0 else { return 0.5 }
+        return (sin(normalized(seconds: seconds, period: period) * 2 * .pi) + 1) * 0.5
+    }
+
+    private func lerp(_ start: CGFloat, _ end: CGFloat, _ progress: Double) -> CGFloat {
+        start + (end - start) * CGFloat(progress)
+    }
+
+    private func lerpDouble(_ start: Double, _ end: Double, _ progress: Double) -> Double {
+        start + (end - start) * progress
     }
 }
 
