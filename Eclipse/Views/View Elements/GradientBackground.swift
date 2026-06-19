@@ -530,14 +530,14 @@ struct EclipseAmbientMotionBackground: View {
     @State private var counterRingRotation: Double = 14
 
     private let particles: [(x: CGFloat, y: CGFloat, size: CGFloat, drift: CGFloat, opacity: Double)] = [
-        (0.16, 0.14, 2.0, 18, 0.30),
-        (0.78, 0.20, 2.8, -16, 0.34),
-        (0.34, 0.34, 1.8, 12, 0.26),
-        (0.88, 0.42, 2.2, -20, 0.24),
-        (0.12, 0.58, 2.6, 15, 0.27),
-        (0.58, 0.70, 2.0, -12, 0.30),
-        (0.28, 0.86, 1.8, 14, 0.22),
-        (0.84, 0.88, 2.4, -15, 0.22)
+        (0.28, 0.24, 2.0, 10, 0.24),
+        (0.72, 0.25, 2.6, -10, 0.28),
+        (0.42, 0.42, 1.8, 8, 0.22),
+        (0.62, 0.50, 2.0, -8, 0.22),
+        (0.26, 0.70, 2.4, 9, 0.23),
+        (0.74, 0.70, 2.1, -9, 0.23),
+        (0.48, 0.18, 1.8, 7, 0.20),
+        (0.52, 0.84, 2.3, -7, 0.20)
     ]
 
     private var primaryColor: Color {
@@ -548,24 +548,26 @@ struct EclipseAmbientMotionBackground: View {
         GeometryReader { proxy in
             let size = proxy.size
             let clearance = min(max(topClearance, 0), max(size.height, 0))
+            let availableHeight = max(size.height - clearance, 1)
 
-            ambientLayer(size: size)
-                .frame(width: size.width, height: max(size.height - clearance + 180, 1))
-                .offset(y: clearance)
-                .mask {
-                    VStack(spacing: 0) {
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.82), .white],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 180)
+            if clearance > 1 {
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: clearance)
 
-                        Color.white
-                    }
+                    ambientLayer(size: CGSize(width: size.width, height: availableHeight))
+                        .frame(width: size.width, height: availableHeight)
+                        .mask {
+                            topFadeMask(fadeHeight: min(max(availableHeight * 0.18, 72), 160))
+                        }
                 }
                 .frame(width: size.width, height: size.height, alignment: .top)
                 .clipped()
+            } else {
+                ambientLayer(size: size)
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+            }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -583,86 +585,83 @@ struct EclipseAmbientMotionBackground: View {
         }
     }
 
+    private func topFadeMask(fadeHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [.clear, .white.opacity(0.82), .white],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: fadeHeight)
+
+            Color.white
+        }
+    }
+
     private func ambientLayer(size: CGSize) -> some View {
         let width = max(size.width, 1)
         let height = max(size.height, 1)
+        let largeRingDiameter = min(max(min(width, height) * 1.05, 340), min(max(width, height) * 0.96, 760))
+        let smallRingDiameter = min(max(min(width, height) * 0.78, 260), min(max(width, height) * 0.74, 560))
+        let driftX = drifting ? width * 0.018 : -width * 0.018
+        let driftY = drifting ? -height * 0.012 : height * 0.012
 
         return ZStack {
-            RadialGradient(
-                colors: [
-                    primaryColor.opacity(0.30),
-                    primaryColor.opacity(0.13),
-                    .clear
-                ],
-                center: .center,
-                startRadius: 12,
-                endRadius: max(width, height) * 0.52
-            )
-            .frame(width: width * 1.15, height: height * 0.62)
-            .offset(x: drifting ? width * 0.12 : -width * 0.10, y: drifting ? height * 0.08 : -height * 0.04)
-
-            RadialGradient(
-                colors: [
-                    Color(red: 0.12, green: 0.62, blue: 0.72).opacity(0.22),
-                    Color(red: 0.54, green: 0.28, blue: 0.82).opacity(0.10),
-                    .clear
-                ],
-                center: .center,
-                startRadius: 10,
-                endRadius: max(width, height) * 0.48
-            )
-            .frame(width: width * 0.92, height: height * 0.54)
-            .offset(x: drifting ? -width * 0.18 : width * 0.14, y: drifting ? height * 0.30 : height * 0.18)
-
             Circle()
                 .stroke(
                     AngularGradient(
                         colors: [
-                            .white.opacity(0),
-                            accentColor.opacity(0.20),
-                            Color(red: 0.18, green: 0.72, blue: 0.78).opacity(0.14),
-                            primaryColor.opacity(0.18),
-                            .white.opacity(0)
+                            .clear,
+                            accentColor.opacity(0.18),
+                            primaryColor.opacity(0.12),
+                            .white.opacity(0.08),
+                            .clear
                         ],
                         center: .center
                     ),
                     lineWidth: 1
                 )
-                .frame(width: min(max(width * 1.25, 420), 760), height: min(max(width * 1.25, 420), 760))
+                .frame(width: largeRingDiameter, height: largeRingDiameter)
                 .rotationEffect(.degrees(ringRotation))
-                .offset(y: drifting ? height * 0.04 : -height * 0.02)
-                .opacity(0.92)
+                .offset(x: driftX, y: driftY)
+                .opacity(0.82)
 
             Circle()
                 .trim(from: 0.08, to: 0.72)
                 .stroke(
                     LinearGradient(
                         colors: [
-                            .white.opacity(0.18),
-                            Color(red: 0.38, green: 0.76, blue: 0.88).opacity(0.14),
-                            .white.opacity(0)
+                            primaryColor.opacity(0.18),
+                            accentColor.opacity(0.12),
+                            .white.opacity(0.06),
+                            .clear
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     style: StrokeStyle(lineWidth: 1.2, lineCap: .round)
                 )
-                .frame(width: min(max(width * 0.92, 320), 620), height: min(max(width * 0.92, 320), 620))
+                .frame(width: smallRingDiameter, height: smallRingDiameter)
                 .rotationEffect(.degrees(counterRingRotation))
-                .offset(x: drifting ? width * 0.18 : width * 0.08, y: drifting ? height * 0.22 : height * 0.12)
-                .opacity(0.88)
+                .offset(x: -driftX, y: -driftY)
+                .opacity(0.78)
 
             ForEach(particles.indices, id: \.self) { index in
                 let particle = particles[index]
                 Circle()
-                    .fill(Color.white.opacity(particle.opacity))
+                    .fill(primaryColor.opacity(particle.opacity))
+                    .overlay {
+                        Circle()
+                            .fill(Color.white.opacity(particle.opacity * 0.35))
+                    }
                     .frame(width: particle.size, height: particle.size)
                     .position(x: width * particle.x, y: height * particle.y)
-                    .offset(x: drifting ? particle.drift : -particle.drift * 0.4, y: drifting ? -14 : 10)
+                    .offset(x: drifting ? particle.drift : -particle.drift, y: drifting ? -8 : 8)
             }
         }
+        .frame(width: width, height: height)
         .blendMode(.screen)
-        .opacity(0.96)
+        .opacity(0.84)
         .compositingGroup()
     }
 
