@@ -50,6 +50,11 @@ private struct HomeCardSubtitle: View {
     }
 }
 
+private enum HeroCarouselDirection {
+    case forward
+    case backward
+}
+
 struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -63,6 +68,7 @@ struct HomeView: View {
     @State private var observedPerformanceMode = PerformanceModeSettings.isEnabled
     @State private var observedHomeCatalogSignature = ""
     @State private var pendingHomeCatalogReloadTask: Task<Void, Never>?
+    @State private var heroCarouselDirection: HeroCarouselDirection = .forward
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var trackerManager = TrackerManager.shared
     @State private var scrollOffset: CGFloat = 0
@@ -83,7 +89,7 @@ struct HomeView: View {
     @AppStorage(ExperimentalVisualTuning.mediaCardScaleKey) private var experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
     @StateObject private var layoutStore = HomeCatalogLayoutStore.shared
 
-    private let heroCarouselTimer = Timer.publish(every: 12, on: .main, in: .common).autoconnect()
+    private let heroCarouselTimer = Timer.publish(every: 7, on: .main, in: .common).autoconnect()
 
     init(onStartupReady: @escaping () -> Void = {}) {
         self.onStartupReady = onStartupReady
@@ -272,7 +278,7 @@ struct HomeView: View {
             scheduleHomeCatalogReloadIfNeeded()
         }
         .onReceive(heroCarouselTimer) { _ in
-            homeViewModel.advanceHeroCarouselIfNeeded()
+            advanceHeroCarousel(.forward)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
@@ -387,6 +393,8 @@ struct HomeView: View {
 
     @ViewBuilder
     private var heroSectionBody: some View {
+        let heroIdentity = homeViewModel.heroContent?.stableIdentity ?? "empty"
+
         ZStack(alignment: .bottom) {
             StretchyHeaderView(
                 backdropURL: currentHeroImageURL,
@@ -397,9 +405,64 @@ struct HomeView: View {
                     homeViewModel.ambientColor = color
                 }
             )
+            .id("hero-image-\(heroIdentity)")
+            .transition(heroBannerTransition)
 
             heroGradientOverlay
+                .allowsHitTesting(false)
+
             heroContentInfo
+                .id("hero-content-\(heroIdentity)")
+                .transition(heroBannerTransition)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(heroCarouselSwipeGesture)
+        .animation(heroCarouselAnimation, value: heroIdentity)
+    }
+
+    private var heroCarouselAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.18) : .easeInOut(duration: 0.42)
+    }
+
+    private var heroBannerTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+
+        switch heroCarouselDirection {
+        case .forward:
+            return .asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            )
+        case .backward:
+            return .asymmetric(
+                insertion: .move(edge: .leading).combined(with: .opacity),
+                removal: .move(edge: .trailing).combined(with: .opacity)
+            )
+        }
+    }
+
+    private var heroCarouselSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 28, coordinateSpace: .local)
+            .onEnded { value in
+                guard heroBannerBehavior == HeroBannerBehavior.carousel.rawValue,
+                      homeViewModel.heroCarouselCount > 1 else {
+                    return
+                }
+
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                guard abs(horizontal) > 54, abs(horizontal) > abs(vertical) * 1.2 else {
+                    return
+                }
+
+                advanceHeroCarousel(horizontal < 0 ? .forward : .backward)
+            }
+    }
+
+    private func advanceHeroCarousel(_ direction: HeroCarouselDirection) {
+        heroCarouselDirection = direction
+        withAnimation(heroCarouselAnimation) {
+            homeViewModel.advanceHeroCarouselIfNeeded(by: direction == .forward ? 1 : -1)
         }
     }
 
@@ -1259,11 +1322,31 @@ struct ExperimentalMediaCard: View {
         case .poster:
             return .poster
         case .automatic:
-            if preferredStyle == .poster || result.genreIds?.contains(16) == true {
+            if prefersPosterArtworkInAutomatic {
                 return .poster
             }
             return result.fullBackdropURL == nil ? .poster : .landscape
         }
+    }
+
+    private var prefersPosterArtworkInAutomatic: Bool {
+        if preferredStyle == .poster {
+            return true
+        }
+
+        guard result.genreIds?.contains(16) == true else {
+            return false
+        }
+
+        let animeOriginCountries: Set<String> = ["JP", "CN", "KR", "TW"]
+        if result.originCountry?.contains(where: { animeOriginCountries.contains($0) }) == true {
+            return true
+        }
+
+        guard let originalLanguage = result.originalLanguage?.lowercased() else {
+            return false
+        }
+        return ["ja", "zh", "ko"].contains(originalLanguage)
     }
 
     private var cardSize: CGSize {

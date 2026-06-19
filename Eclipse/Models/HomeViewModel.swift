@@ -547,11 +547,14 @@ final class HomeViewModel: ObservableObject {
         applyHeroBannerSelection()
     }
 
-    func advanceHeroCarouselIfNeeded() {
+    func advanceHeroCarouselIfNeeded(by offset: Int = 1) {
         let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.static.rawValue
         guard HeroBannerBehavior(rawValue: behaviorRaw) == .carousel else { return }
         guard heroCarouselItems.count > 1 else { return }
-        heroCarouselIndex = (heroCarouselIndex + 1) % heroCarouselItems.count
+        let count = heroCarouselItems.count
+        let normalizedOffset = ((offset % count) + count) % count
+        guard normalizedOffset != 0 else { return }
+        heroCarouselIndex = (heroCarouselIndex + normalizedOffset) % count
         heroContent = heroCarouselItems[heroCarouselIndex]
     }
 
