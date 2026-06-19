@@ -548,7 +548,7 @@ final class HomeViewModel: ObservableObject {
     }
 
     func advanceHeroCarouselIfNeeded(by offset: Int = 1) {
-        let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.static.rawValue
+        let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.defaultValue.rawValue
         guard HeroBannerBehavior(rawValue: behaviorRaw) == .carousel else { return }
         guard heroCarouselItems.count > 1 else { return }
         let count = heroCarouselItems.count
@@ -560,8 +560,8 @@ final class HomeViewModel: ObservableObject {
 
     private func applyHeroBannerSelection() {
         let catalogId = UserDefaults.standard.string(forKey: "heroBannerCatalogId") ?? "trending"
-        let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.static.rawValue
-        let behavior = HeroBannerBehavior(rawValue: behaviorRaw) ?? .static
+        let behaviorRaw = UserDefaults.standard.string(forKey: "heroBannerBehavior") ?? HeroBannerBehavior.defaultValue.rawValue
+        let behavior = HeroBannerBehavior(rawValue: behaviorRaw) ?? .defaultValue
         let candidates = heroCandidates(for: catalogId)
 
         guard !candidates.isEmpty else { return }

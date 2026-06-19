@@ -150,7 +150,7 @@ struct BackupData: Codable {
     var horizontalEpisodeList: Bool = false
     var useClassicScheduleUI: Bool = false
     var heroBannerCatalogId: String = "trending"
-    var heroBannerBehavior: String = HeroBannerBehavior.static.rawValue
+    var heroBannerBehavior: String = HeroBannerBehavior.defaultValue.rawValue
     /// JSON blob of per-catalog home layout overrides (keyed by catalog id). "" when none.
     var homeCatalogLayoutOverrides: String = ""
     var homeAnimatedBackgroundEnabled: Bool?
@@ -1038,7 +1038,7 @@ struct BackupData: Codable {
         horizontalEpisodeList: Bool = false,
         useClassicScheduleUI: Bool = false,
         heroBannerCatalogId: String = "trending",
-        heroBannerBehavior: String = HeroBannerBehavior.static.rawValue,
+        heroBannerBehavior: String = HeroBannerBehavior.defaultValue.rawValue,
         homeCatalogLayoutOverrides: String = "",
         homeAnimatedBackgroundEnabled: Bool? = nil,
         experimentalMediaDesignPreset: String = ExperimentalMediaDesignPreset.defaultValue.rawValue,
@@ -1432,7 +1432,7 @@ struct BackupData: Codable {
     static func sanitizedHeroBannerBehavior(_ value: String?) -> String {
         guard let value,
               let behavior = HeroBannerBehavior(rawValue: value) else {
-            return HeroBannerBehavior.static.rawValue
+            return HeroBannerBehavior.defaultValue.rawValue
         }
         return behavior.rawValue
     }

@@ -19,7 +19,7 @@ struct HomeLayoutView: View {
 
     // Hero
     @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
-    @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
+    @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.defaultValue.rawValue
 
     @StateObject private var catalogManager = CatalogManager.shared
     @StateObject private var layoutStore = HomeCatalogLayoutStore.shared
@@ -190,8 +190,8 @@ struct HomeLayoutView: View {
     private var heroBehaviorBinding: Binding<String> {
         Binding(
             get: {
-                let resolved = HeroBannerBehavior(rawValue: heroBannerBehavior) ?? .static
-                return HeroBannerBehavior.selectableCases.contains(resolved) ? resolved.rawValue : HeroBannerBehavior.static.rawValue
+                let resolved = HeroBannerBehavior(rawValue: heroBannerBehavior) ?? .defaultValue
+                return HeroBannerBehavior.selectableCases.contains(resolved) ? resolved.rawValue : HeroBannerBehavior.defaultValue.rawValue
             },
             set: { heroBannerBehavior = $0 }
         )
