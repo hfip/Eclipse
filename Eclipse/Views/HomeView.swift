@@ -154,23 +154,10 @@ struct HomeView: View {
         tracksBackgroundScroll ? scrollOffset : 0
     }
 
-    /// Track scroll offset for the parallax atmosphere (non-iPad) and, additionally, whenever the
-    /// animated background is enabled — so the viewport-pinned motion layer can follow the user
-    /// after the hero passes, including on iPad where the atmosphere itself stays static.
-    private var tracksHomeScrollOffset: Bool {
-        tracksBackgroundScroll || homeAnimatedBackgroundEnabled
-    }
-
-    private var postHeroAnimationClearance: CGFloat {
-        ExperimentalFeatureState.isEnabledAtLaunch ? 88 : 56
-    }
-
-    /// Top inset for the viewport-pinned animated background. While the hero banner (and its
-    /// gradient) is on screen the motion is held just below the hero's bottom edge; once the user
-    /// scrolls past the hero it settles to a small fixed inset and stays pinned, so it follows the
-    /// user. `max(scrollOffset, 0)` guards rubber-band overscroll at the very top.
+    /// Small top inset for the viewport-pinned animated background so its motion sits
+    /// screen-centered (not squeezed) and stays clear of the status-bar/nav area.
     private var animatedBackgroundTopClearance: CGFloat {
-        max(heroHeight - max(scrollOffset, 0), postHeroAnimationClearance)
+        ExperimentalFeatureState.isEnabledAtLaunch ? 88 : 56
     }
 
     private var scrollOffsetUpdateThreshold: CGFloat {
@@ -341,7 +328,7 @@ struct HomeView: View {
             }
             .background(
                 Group {
-                    if tracksHomeScrollOffset {
+                    if tracksBackgroundScroll {
                         GeometryReader { geo in
                             Color.clear.preference(
                                 key: ScrollOffsetPreferenceKey.self,
@@ -360,7 +347,7 @@ struct HomeView: View {
         }
         .coordinateSpace(name: "homeScroll")
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
-            guard tracksHomeScrollOffset else { return }
+            guard tracksBackgroundScroll else { return }
             guard abs(scrollOffset - newOffset) >= scrollOffsetUpdateThreshold else { return }
             scrollOffset = newOffset
         }

@@ -70,6 +70,6 @@ struct CollectionDetailView: View {
             }
         }
         .navigationTitle(collection.name)
-        .background(SettingsGradientBackground(allowsAnimatedBackground: false).ignoresSafeArea())
+        .background(SettingsGradientBackground().ignoresSafeArea())
     }
 }
