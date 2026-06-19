@@ -60,6 +60,7 @@ struct MangaCollectionDetailView: View {
         }
         .navigationTitle(collection.name)
         .navigationBarTitleDisplayMode(.inline)
+        .background(GlobalGradientBackground(allowsAnimatedBackground: false).ignoresSafeArea())
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {

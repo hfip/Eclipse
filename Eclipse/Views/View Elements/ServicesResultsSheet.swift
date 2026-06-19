@@ -1902,7 +1902,7 @@ struct ModulesSearchResultsSheet: View {
                             unifiedResultsSections
                         }
                     }
-                    .eclipseSettingsStyle()
+                    .eclipseSettingsStyle(allowsAnimatedBackground: false)
                 }
             }
             .navigationTitle(autoModeOnly && !showManualPicker ? (downloadMode ? "Auto Download" : "Auto Mode") : (downloadMode ? "Download Source" : "Services Result"))

@@ -389,7 +389,7 @@ struct ExperimentalContentView: View {
 
     var body: some View {
         ZStack {
-            GlobalGradientBackground()
+            GlobalGradientBackground(allowsAnimatedBackground: false)
                 .ignoresSafeArea()
 
             experimentalTabView
@@ -494,7 +494,7 @@ struct ExperimentalContentView: View {
 
     private var experimentalSettingsFullScreen: some View {
         ZStack(alignment: .topLeading) {
-            GlobalGradientBackground()
+            GlobalGradientBackground(allowsAnimatedBackground: false)
                 .ignoresSafeArea()
 
             if #available(iOS 16.0, *) {

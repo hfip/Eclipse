@@ -46,7 +46,7 @@ struct DownloadedShowDetailView: View {
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
-        .background(SettingsGradientBackground().ignoresSafeArea())
+        .background(SettingsGradientBackground(allowsAnimatedBackground: false).ignoresSafeArea())
         .confirmationDialog(
             "Delete Episode",
             isPresented: $showingDeleteConfirmation,

@@ -161,7 +161,7 @@ struct SettingsView: View {
 
                         GlassDivider()
 
-                        GlassSettingsRow(icon: "sparkles", iconColor: .cyan, title: "Animated Home Background") {
+                        GlassSettingsRow(icon: "sparkles", iconColor: .cyan, title: "Animated Background") {
                             Toggle("", isOn: $homeAnimatedBackgroundEnabled)
                                 .labelsHidden()
                                 .tint(.cyan)
@@ -386,7 +386,7 @@ struct SettingsView: View {
                 Text("Performance Mode")
             }
             Toggle("Hide Splash Screen", isOn: $hideSplashScreen)
-            Toggle("Animated Home Background", isOn: $homeAnimatedBackgroundEnabled)
+            Toggle("Animated Background", isOn: $homeAnimatedBackgroundEnabled)
         } header: {
             Text("TMDB Settings")
         }

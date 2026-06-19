@@ -439,22 +439,22 @@ class EclipseTheme: ObservableObject {
 extension View {
     /// Apply the standard dark base background used across all screens
     @ViewBuilder
-    func eclipseBackground() -> some View {
+    func eclipseBackground(allowsAnimatedBackground: Bool = true) -> some View {
         self.background(
-            GlobalGradientBackground()
+            GlobalGradientBackground(allowsAnimatedBackground: allowsAnimatedBackground)
                 .ignoresSafeArea()
         )
     }
     
     /// Apply the gradient background used in Settings screens
-    func eclipseGradientBackground() -> some View {
-        self.modifier(EclipseAutoGradientModifier())
+    func eclipseGradientBackground(allowsAnimatedBackground: Bool = true) -> some View {
+        self.modifier(EclipseAutoGradientModifier(allowsAnimatedBackground: allowsAnimatedBackground))
     }
 
     /// Apply the app-wide gradient used by Reader Mode/Kanzen shell screens.
-    func kanzenGradientBackground(scrollOffset: CGFloat = 0) -> some View {
+    func kanzenGradientBackground(scrollOffset: CGFloat = 0, allowsAnimatedBackground: Bool = true) -> some View {
         self.background(
-            GlobalGradientBackground(scrollOffset: scrollOffset)
+            GlobalGradientBackground(scrollOffset: scrollOffset, allowsAnimatedBackground: allowsAnimatedBackground)
                 .ignoresSafeArea()
         )
     }
@@ -489,10 +489,10 @@ extension View {
 
     /// Apply Eclipse styling to any List-based settings sub-view:
     /// gradient background, transparent list style, dark toolbar
-    func eclipseSettingsStyle() -> some View {
+    func eclipseSettingsStyle(allowsAnimatedBackground: Bool = true) -> some View {
         self
             .eclipseHideScrollBackground()
-            .eclipseGradientBackground()
+            .eclipseGradientBackground(allowsAnimatedBackground: allowsAnimatedBackground)
             .eclipseDarkToolbar()
     }
 
@@ -548,11 +548,13 @@ extension View {
 // MARK: - Auto-tracking gradient modifier
 
 private struct EclipseAutoGradientModifier: ViewModifier {
+    var allowsAnimatedBackground: Bool
+
     func body(content: Content) -> some View {
         content
             .coordinateSpace(name: "eclipseGradientScroll")
             .background(
-                SettingsGradientBackground()
+                SettingsGradientBackground(allowsAnimatedBackground: allowsAnimatedBackground)
                     .ignoresSafeArea()
             )
     }

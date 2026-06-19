@@ -148,7 +148,7 @@ struct AidokuMangaDetailView: View {
                 scrollOffset: scrollOffset
             )
         } else {
-            GlobalGradientBackground(scrollOffset: scrollOffset)
+            GlobalGradientBackground(scrollOffset: scrollOffset, allowsAnimatedBackground: false)
         }
     }
 

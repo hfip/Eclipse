@@ -6,15 +6,6 @@ import SwiftUI
 import Kingfisher
 import AVKit
 
-enum HomeAnimatedBackgroundSettings {
-    static let enabledKey = "homeAnimatedBackgroundEnabled"
-    static let defaultEnabled = true
-
-    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: enabledKey) == nil ? defaultEnabled : defaults.bool(forKey: enabledKey)
-    }
-}
-
 func homeImageDecodeSize(width: CGFloat, height: CGFloat) -> CGSize {
 #if os(iOS) || os(tvOS)
     let scale = UIScreen.main.scale
@@ -198,7 +189,7 @@ struct HomeView: View {
                 )
                 .ignoresSafeArea(.all)
             } else {
-                GlobalGradientBackground(scrollOffset: backgroundScrollOffset)
+                GlobalGradientBackground(scrollOffset: backgroundScrollOffset, allowsAnimatedBackground: false)
                     .ignoresSafeArea(.all)
 
                 Group {
@@ -355,7 +346,7 @@ struct HomeView: View {
         }
         .background(alignment: .top) {
             if homeAnimatedBackgroundEnabled {
-                HomeAmbientMotionBackground(
+                EclipseAmbientMotionBackground(
                     topClearance: postHeroAnimationClearance,
                     ambientColor: heroBleedColor,
                     accentColor: theme.scopedGradientColor(),
@@ -1092,168 +1083,6 @@ struct HomeView: View {
         onStartupReady()
     }
 
-}
-
-private struct HomeAmbientMotionBackground: View {
-    let topClearance: CGFloat
-    let ambientColor: Color?
-    let accentColor: Color
-    let motionEnabled: Bool
-
-    @State private var drifting = false
-    @State private var ringRotation: Double = -18
-    @State private var counterRingRotation: Double = 14
-
-    private let particles: [(x: CGFloat, y: CGFloat, size: CGFloat, drift: CGFloat, opacity: Double)] = [
-        (0.16, 0.14, 2.0, 18, 0.30),
-        (0.78, 0.20, 2.8, -16, 0.34),
-        (0.34, 0.34, 1.8, 12, 0.26),
-        (0.88, 0.42, 2.2, -20, 0.24),
-        (0.12, 0.58, 2.6, 15, 0.27),
-        (0.58, 0.70, 2.0, -12, 0.30),
-        (0.28, 0.86, 1.8, 14, 0.22),
-        (0.84, 0.88, 2.4, -15, 0.22)
-    ]
-
-    private var primaryColor: Color {
-        ambientColor ?? accentColor
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            let clearance = min(max(topClearance, 0), max(size.height, 0))
-
-            ambientLayer(size: size)
-                .frame(width: size.width, height: max(size.height - clearance + 180, 1))
-                .offset(y: clearance)
-                .mask {
-                    VStack(spacing: 0) {
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.82), .white],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 180)
-
-                        Color.white
-                    }
-                }
-                .frame(width: size.width, height: size.height, alignment: .top)
-                .clipped()
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-        .onAppear { startMotionIfNeeded() }
-        .onChange(of: motionEnabled) { enabled in
-            if enabled {
-                startMotionIfNeeded()
-            } else {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    drifting = false
-                    ringRotation = -18
-                    counterRingRotation = 14
-                }
-            }
-        }
-    }
-
-    private func ambientLayer(size: CGSize) -> some View {
-        let width = max(size.width, 1)
-        let height = max(size.height, 1)
-
-        return ZStack {
-            RadialGradient(
-                colors: [
-                    primaryColor.opacity(0.30),
-                    primaryColor.opacity(0.13),
-                    .clear
-                ],
-                center: .center,
-                startRadius: 12,
-                endRadius: max(width, height) * 0.52
-            )
-            .frame(width: width * 1.15, height: height * 0.62)
-            .offset(x: drifting ? width * 0.12 : -width * 0.10, y: drifting ? height * 0.08 : -height * 0.04)
-
-            RadialGradient(
-                colors: [
-                    Color(red: 0.12, green: 0.62, blue: 0.72).opacity(0.22),
-                    Color(red: 0.54, green: 0.28, blue: 0.82).opacity(0.10),
-                    .clear
-                ],
-                center: .center,
-                startRadius: 10,
-                endRadius: max(width, height) * 0.48
-            )
-            .frame(width: width * 0.92, height: height * 0.54)
-            .offset(x: drifting ? -width * 0.18 : width * 0.14, y: drifting ? height * 0.30 : height * 0.18)
-
-            Circle()
-                .stroke(
-                    AngularGradient(
-                        colors: [
-                            .white.opacity(0),
-                            accentColor.opacity(0.20),
-                            Color(red: 0.18, green: 0.72, blue: 0.78).opacity(0.14),
-                            primaryColor.opacity(0.18),
-                            .white.opacity(0)
-                        ],
-                        center: .center
-                    ),
-                    lineWidth: 1
-                )
-                .frame(width: min(max(width * 1.25, 420), 760), height: min(max(width * 1.25, 420), 760))
-                .rotationEffect(.degrees(ringRotation))
-                .offset(y: drifting ? height * 0.04 : -height * 0.02)
-                .opacity(0.92)
-
-            Circle()
-                .trim(from: 0.08, to: 0.72)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.18),
-                            Color(red: 0.38, green: 0.76, blue: 0.88).opacity(0.14),
-                            .white.opacity(0)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    style: StrokeStyle(lineWidth: 1.2, lineCap: .round)
-                )
-                .frame(width: min(max(width * 0.92, 320), 620), height: min(max(width * 0.92, 320), 620))
-                .rotationEffect(.degrees(counterRingRotation))
-                .offset(x: drifting ? width * 0.18 : width * 0.08, y: drifting ? height * 0.22 : height * 0.12)
-                .opacity(0.88)
-
-            ForEach(particles.indices, id: \.self) { index in
-                let particle = particles[index]
-                Circle()
-                    .fill(Color.white.opacity(particle.opacity))
-                    .frame(width: particle.size, height: particle.size)
-                    .position(x: width * particle.x, y: height * particle.y)
-                    .offset(x: drifting ? particle.drift : -particle.drift * 0.4, y: drifting ? -14 : 10)
-            }
-        }
-        .blendMode(.screen)
-        .opacity(0.96)
-        .compositingGroup()
-    }
-
-    private func startMotionIfNeeded() {
-        guard motionEnabled, !drifting else { return }
-
-        withAnimation(.easeInOut(duration: 9.5).repeatForever(autoreverses: true)) {
-            drifting = true
-        }
-        withAnimation(.linear(duration: 28).repeatForever(autoreverses: false)) {
-            ringRotation = 342
-        }
-        withAnimation(.linear(duration: 36).repeatForever(autoreverses: false)) {
-            counterRingRotation = -346
-        }
-    }
 }
 
 private struct HeroScoreChip: Identifiable {

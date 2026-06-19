@@ -89,7 +89,7 @@ struct HomeLayoutView: View {
 
             settingRow(
                 title: "Animated Background",
-                description: "Subtle Eclipse-style motion behind home rows."
+                description: "Subtle Eclipse-style motion behind broad app surfaces."
             ) {
                 Toggle("", isOn: $animatedBackgroundEnabled)
                     .labelsHidden()
