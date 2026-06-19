@@ -1446,11 +1446,12 @@ struct HeroBannerBleed: View {
         return LinearGradient(
             stops: [
                 .init(color: color.opacity(min(1, 1.00 * s)), location: 0.0),
-                .init(color: color.opacity(min(1, 0.97 * s)), location: hold * 0.86),
-                .init(color: color.opacity(min(1, 0.95 * s)), location: hold),
-                .init(color: color.opacity(0.52 * s), location: hold + (1 - hold) * 0.30),
-                .init(color: color.opacity(0.24 * s), location: hold + (1 - hold) * 0.56),
-                .init(color: color.opacity(0.07 * s), location: hold + (1 - hold) * 0.82),
+                // Hold full opacity through the hero so the boundary is pure color
+                // on both sides (the hero overlay also reaches full) — no seam.
+                .init(color: color.opacity(min(1, 1.00 * s)), location: hold),
+                .init(color: color.opacity(min(1, 0.60 * s)), location: hold + (1 - hold) * 0.28),
+                .init(color: color.opacity(min(1, 0.30 * s)), location: hold + (1 - hold) * 0.52),
+                .init(color: color.opacity(min(1, 0.09 * s)), location: hold + (1 - hold) * 0.78),
                 .init(color: .clear, location: 1.0)
             ],
             startPoint: .top,

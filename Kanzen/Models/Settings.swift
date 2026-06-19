@@ -315,13 +315,13 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Keeps MoltenVK inline playback full quality and lets Eclipse adjust the PiP handoff path separately if needed."
+            return "Starts sharp and automatically lowers the inline Metal render resolution when the device gets hot, then restores it as it cools."
         case .balanced:
-            return "Keeps inline Metal full quality with the standard MPV PiP handoff."
+            return "Renders the inline Metal surface slightly below native resolution for lower heat with minimal visible softening."
         case .lowHeat:
-            return "Keeps inline Metal full quality while favoring the cooler MPV PiP handoff."
+            return "Renders the inline Metal surface well below native resolution to minimize heat and power use; video looks softer."
         case .sharp:
-            return "Keeps inline Metal quality as high as possible at higher power cost."
+            return "Always renders the inline Metal surface at full native resolution for maximum sharpness at higher power cost."
         }
     }
 

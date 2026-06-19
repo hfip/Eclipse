@@ -784,16 +784,18 @@ struct MediaDetailView: View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
+                    // Subtle top scrim for status-bar/back-button legibility only —
+                    // soft enough not to read as a dark "box" over the artwork.
                     LinearGradient(
                         stops: [
-                            .init(color: Color.black.opacity(0.42), location: 0.0),
-                            .init(color: Color.black.opacity(0.14), location: 0.48),
+                            .init(color: Color.black.opacity(0.22), location: 0.0),
+                            .init(color: Color.black.opacity(0.06), location: 0.55),
                             .init(color: .clear, location: 1.0)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                    .frame(height: isIPad ? 260 : 210)
+                    .frame(height: isIPad ? 220 : 170)
 
                     Spacer(minLength: 0)
                 }
@@ -801,10 +803,10 @@ struct MediaDetailView: View {
                 LinearGradient(
                     gradient: Gradient(stops: [
                         .init(color: .clear, location: 0.0),
-                        .init(color: Color.black.opacity(0.10), location: 0.20),
-                        .init(color: heroBlendColor.opacity(0.36), location: 0.46),
-                        .init(color: heroBlendColor.opacity(0.70), location: 0.74),
-                        .init(color: heroBlendColor.opacity(0.94), location: 1.0)
+                        .init(color: heroBlendColor.opacity(0.30), location: 0.32),
+                        .init(color: heroBlendColor.opacity(0.64), location: 0.60),
+                        .init(color: heroBlendColor.opacity(0.90), location: 0.84),
+                        .init(color: heroBlendColor.opacity(1.0), location: 1.0)
                     ]),
                     startPoint: .top,
                     endPoint: .bottom
@@ -1167,30 +1169,30 @@ struct MediaDetailView: View {
                 searchInServices()
             }) {
                 Text(canUseMainPlayButton ? playButtonText : "No Services")
-                    .font(.system(size: isIPad ? 30 : 27, weight: .heavy))
+                    .font(.system(size: isIPad ? 25 : 22, weight: .bold))
                     .foregroundColor(canUseMainPlayButton ? .black : .white.opacity(0.62))
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
                     .frame(maxWidth: .infinity)
-                    .frame(height: isIPad ? 66 : 58)
+                    .frame(height: isIPad ? 58 : 52)
                     .background(
-                        RoundedRectangle(cornerRadius: isIPad ? 24 : 20, style: .continuous)
+                        RoundedRectangle(cornerRadius: isIPad ? 20 : 17, style: .continuous)
                             .fill(canUseMainPlayButton ? Color.white.opacity(0.72) : Color.white.opacity(0.16))
                             .background(
-                                RoundedRectangle(cornerRadius: isIPad ? 24 : 20, style: .continuous)
+                                RoundedRectangle(cornerRadius: isIPad ? 20 : 17, style: .continuous)
                                     .fill(.ultraThinMaterial)
                                     .opacity(0.72)
                             )
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: isIPad ? 24 : 20, style: .continuous)
+                        RoundedRectangle(cornerRadius: isIPad ? 20 : 17, style: .continuous)
                             .stroke(Color.white.opacity(0.32), lineWidth: 1)
                     )
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(!canUseMainPlayButton)
 
-            HStack(spacing: isIPad ? 56 : 44) {
+            HStack(spacing: isIPad ? 30 : 22) {
                 experimentalActionButton(systemName: "rectangle.stack.badge.plus", foregroundColor: .white) {
                     showingAddToCollection = true
                 }
@@ -1213,9 +1215,10 @@ struct MediaDetailView: View {
     private func experimentalActionButton(systemName: String, foregroundColor: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: isIPad ? 36 : 31, weight: .semibold))
+                .font(.system(size: isIPad ? 26 : 22, weight: .semibold))
                 .foregroundColor(foregroundColor)
-                .frame(width: isIPad ? 70 : 58, height: isIPad ? 70 : 58)
+                .frame(width: isIPad ? 54 : 48, height: isIPad ? 54 : 48)
+                .shadow(color: .black.opacity(0.45), radius: 6, x: 0, y: 2)
                 .contentShape(Circle())
         }
         .buttonStyle(PlainButtonStyle())

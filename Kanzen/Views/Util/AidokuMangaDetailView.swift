@@ -102,6 +102,7 @@ struct AidokuMangaDetailView: View {
     @State private var reverseChapterList = false
     @State private var expandedDescription = false
     @State private var scrollOffset: CGFloat = 0
+    @State private var headerAmbientColor: Color = .black
     @AppStorage(ReaderDetailElement.orderStorageKey) private var readerDetailElementOrder = ReaderDetailElement.defaultOrderRawValue
     @AppStorage(ReaderDetailElement.hiddenStorageKey) private var readerDetailHiddenElements = ""
 
@@ -121,10 +122,16 @@ struct AidokuMangaDetailView: View {
         return theme.scopedAtmosphereColor(dominant: base, isReaderMode: true)
     }
 
-    /// Muted bleed tone for reader detail so the top / overscroll area shows a
-    /// deep color that matches the multi-gradient instead of a vivid band.
-    private var readerBleedColor: Color {
-        readerAtmosphereColor.atmosphereScaled(0.55)
+    /// Banner blend color from the cover's extracted dominant (falling back to
+    /// the backdrop tone for a dark/absent cover) — same behavior as a media hero.
+    private var readerHeroBlendColor: Color {
+        theme.heroBlendColor(dominant: headerAmbientColor, isReaderMode: true)
+    }
+
+    /// Cover dominant for the scroll-attached bleed; nil for a near-black cover
+    /// so the app gradient stays clean.
+    private var readerBleedColor: Color? {
+        EclipseTheme.usableDominant(headerAmbientColor)
     }
 
     @ViewBuilder
@@ -132,7 +139,7 @@ struct AidokuMangaDetailView: View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
             AtmosphereBackdrop(
                 input: theme.atmosphereInput(
-                    dominant: readerBleedColor,
+                    dominant: readerHeroBlendColor,
                     hasHeroBleed: false,
                     heroHeight: heroHeight,
                     fadeDistance: heroHeight * 0.62,
@@ -297,10 +304,10 @@ struct AidokuMangaDetailView: View {
             let posterHeight = experimental ? max(heroHeight * 0.74, 270) : max(heroHeight - 26, 260)
             let titleSize: CGFloat = experimental ? (isIPad ? 48 : 40) : (isIPad ? 40 : 32)
             let gradientColors: [Color] = experimental ? [
-                Color.black.opacity(0.04),
-                readerBleedColor.opacity(0.30),
-                readerBleedColor.opacity(0.74),
-                readerBleedColor.opacity(0.97)
+                Color.black.opacity(0.10),
+                readerHeroBlendColor.opacity(0.36),
+                readerHeroBlendColor.opacity(0.78),
+                readerHeroBlendColor.opacity(1.0)
             ] : [
                 Color.black.opacity(0.02),
                 Color.black.opacity(0.28),
@@ -308,24 +315,30 @@ struct AidokuMangaDetailView: View {
             ]
 
             ZStack(alignment: contentAlignment) {
+                // Modern: a sharp full-bleed cover banner whose extracted color
+                // drives the gradient + bleed, exactly like a media hero. Legacy:
+                // blurred fill behind a centered cover poster.
                 KFImage(URL(string: coverURL))
                     .placeholder { Color.black.opacity(0.18) }
+                    .onSuccess { result in
+                        headerAmbientColor = Color.ambientColor(from: result.image)
+                    }
                     .resizable()
                     .scaledToFill()
                     .frame(width: viewportWidth, height: stretchedHeight)
                     .clipped()
-                    .blur(radius: experimental ? 14 : 18)
-                    .overlay(Color.black.opacity(experimental ? 0.22 : 0.34))
+                    .blur(radius: experimental ? 0 : 18)
+                    .overlay(Color.black.opacity(experimental ? 0.10 : 0.34))
 
-                KFImage(URL(string: coverURL))
-                    .placeholder { Color.clear }
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: posterWidth, height: posterHeight, alignment: .center)
-                    .frame(width: viewportWidth, alignment: .center)
-                    .clipShape(RoundedRectangle(cornerRadius: experimental ? designMetrics.cardRadius : 0, style: .continuous))
-                    .shadow(color: .black.opacity(experimental ? 0.26 : 0), radius: experimental ? 22 : 0, x: 0, y: experimental ? 16 : 0)
-                    .padding(.top, experimental ? 22 : 10)
+                if !experimental {
+                    KFImage(URL(string: coverURL))
+                        .placeholder { Color.clear }
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: posterWidth, height: posterHeight, alignment: .center)
+                        .frame(width: viewportWidth, alignment: .center)
+                        .padding(.top, 10)
+                }
 
                 LinearGradient(
                     colors: gradientColors,

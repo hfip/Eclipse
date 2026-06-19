@@ -367,9 +367,10 @@ struct HomeView: View {
         LinearGradient(
             gradient: Gradient(stops: ExperimentalFeatureState.isEnabledAtLaunch ? [
                 .init(color: heroBlendColor.opacity(0.0), location: 0.0),
-                .init(color: Color.black.opacity(0.10), location: 0.28),
-                .init(color: heroBlendColor.opacity(0.50), location: 0.64),
-                .init(color: heroBlendColor.opacity(0.94), location: 1.0)
+                .init(color: heroBlendColor.opacity(0.32), location: 0.34),
+                .init(color: heroBlendColor.opacity(0.66), location: 0.62),
+                .init(color: heroBlendColor.opacity(0.90), location: 0.84),
+                .init(color: heroBlendColor.opacity(1.0), location: 1.0)
             ] : [
                 .init(color: ambientColor.opacity(0.0), location: 0.0),
                 .init(color: Color.black.opacity(0.26), location: 0.18),

@@ -169,13 +169,25 @@ private final class MPVMoltenVKView: UIView {
         layer as! MPVMoltenVKLayer
     }
 
+    /// Multiplier (0.1...1.0) applied on top of the native screen scale when sizing the Metal
+    /// drawable. Driven by the active quality profile so the inline MoltenVK surface can be
+    /// rendered below native resolution to cut GPU load / heat. The layer keeps its full
+    /// `contentsScale`, so a smaller drawable is simply upscaled to the view bounds.
+    var renderScale: CGFloat = 1.0 {
+        didSet {
+            guard abs(oldValue - renderScale) > 0.001 else { return }
+            synchronizeDrawableSize()
+        }
+    }
+
     @discardableResult
     func synchronizeDrawableSize() -> CGSize {
         let scale = window?.screen.nativeScale ?? UIScreen.main.nativeScale
         let resolvedScale = scale > 0 ? scale : UIScreen.main.scale
+        let effectiveScale = resolvedScale * max(0.1, min(1.0, renderScale))
         let nextDrawableSize = CGSize(
-            width: max(1, bounds.width * resolvedScale),
-            height: max(1, bounds.height * resolvedScale)
+            width: max(1, bounds.width * effectiveScale),
+            height: max(1, bounds.height * effectiveScale)
         )
         metalLayer.contentsScale = resolvedScale
         metalLayer.drawableSize = nextDrawableSize
@@ -2595,18 +2607,24 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     let name: String
     let maximumFrameSize: CGSize
     let preferredPiPFramesPerSecond: Int
+    /// Fraction of the native drawable resolution the inline MoltenVK surface is rendered at.
+    /// 1.0 = full native pixels; lower values reduce fragment-shader work (and therefore heat)
+    /// by rendering a smaller surface that CAMetalLayer upscales to the view bounds.
+    let renderScale: CGFloat
     let reason: String
 
     private static let fullQualityMaximumFrameSize = CGSize(width: 3840, height: 2160)
 
     var logDescription: String {
         let sizeText = "\(Int(maximumFrameSize.width))x\(Int(maximumFrameSize.height))"
-        return "profile=\(name) maxFrame=\(sizeText) pipCap=\(preferredPiPFramesPerSecond) reason=\(reason)"
+        let scaleText = String(format: "%.2f", renderScale)
+        return "profile=\(name) maxFrame=\(sizeText) renderScale=\(scaleText) pipCap=\(preferredPiPFramesPerSecond) reason=\(reason)"
     }
 
     func hasSameRenderSettings(as other: MPVMetalSampleBufferQualityProfile) -> Bool {
         maximumFrameSize == other.maximumFrameSize
             && preferredPiPFramesPerSecond == other.preferredPiPFramesPerSecond
+            && abs(renderScale - other.renderScale) < 0.001
     }
 
     static func sharp(reason: String) -> MPVMetalSampleBufferQualityProfile {
@@ -2614,6 +2632,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
             name: "Sharp",
             maximumFrameSize: fullQualityMaximumFrameSize,
             preferredPiPFramesPerSecond: 30,
+            renderScale: 1.0,
             reason: reason
         )
     }
@@ -2621,8 +2640,9 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     static func balanced(reason: String) -> MPVMetalSampleBufferQualityProfile {
         MPVMetalSampleBufferQualityProfile(
             name: "Balanced",
-            maximumFrameSize: fullQualityMaximumFrameSize,
+            maximumFrameSize: CGSize(width: 2560, height: 1440),
             preferredPiPFramesPerSecond: 30,
+            renderScale: 0.82,
             reason: reason
         )
     }
@@ -2630,8 +2650,9 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     static func lowHeat(reason: String) -> MPVMetalSampleBufferQualityProfile {
         MPVMetalSampleBufferQualityProfile(
             name: "Low Heat",
-            maximumFrameSize: fullQualityMaximumFrameSize,
+            maximumFrameSize: CGSize(width: 1600, height: 900),
             preferredPiPFramesPerSecond: 24,
+            renderScale: 0.62,
             reason: reason
         )
     }
@@ -3225,6 +3246,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         metalView.metalLayer.framebufferOnly = true
         metalView.metalLayer.backgroundColor = UIColor.black.cgColor
         metalView.metalLayer.contentsScale = nativeScale
+        metalView.renderScale = qualityProfile.renderScale
         containerView.addSubview(metalView)
         NSLayoutConstraint.activate([
             metalView.topAnchor.constraint(equalTo: containerView.topAnchor),
@@ -3456,9 +3478,27 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     @discardableResult
     func updateSampleBufferQualityProfile(_ newProfile: MPVMetalSampleBufferQualityProfile) -> Bool {
         guard fallbackRenderer == nil else { return false }
+        let previousScale = qualityProfile.renderScale
         qualityProfile = newProfile
-        logMPV("Metal quality profile updated for inline renderer; OpenGL PiP bridge unchanged \(newProfile.logDescription)")
-        return false
+        guard abs(previousScale - newProfile.renderScale) > 0.001 else {
+            logMPV("Metal quality profile updated, render scale unchanged \(newProfile.logDescription)")
+            return false
+        }
+        let applyChange = { [weak self] in
+            guard let self else { return }
+            self.metalView.renderScale = newProfile.renderScale
+            // Re-run the layout pass so the smaller drawable is published and mpv is woken to
+            // recreate its swapchain at the new surface size (the MoltenVK context resizes to
+            // the layer's drawableSize on the next present).
+            self.renderingLayoutDidChange(containerSize: self.containerView.bounds.size)
+        }
+        if Thread.isMainThread {
+            applyChange()
+        } else {
+            DispatchQueue.main.async(execute: applyChange)
+        }
+        logMPV("Metal quality profile applied to inline renderer \(newProfile.logDescription)")
+        return true
     }
 #endif
 
