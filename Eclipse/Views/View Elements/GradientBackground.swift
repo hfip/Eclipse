@@ -526,18 +526,21 @@ struct EclipseAmbientMotionBackground: View {
     let motionEnabled: Bool
 
     @State private var drifting = false
+    @State private var pulsing = false
     @State private var ringRotation: Double = -18
     @State private var counterRingRotation: Double = 14
 
     private let particles: [(x: CGFloat, y: CGFloat, size: CGFloat, drift: CGFloat, opacity: Double)] = [
-        (0.28, 0.24, 2.0, 10, 0.24),
-        (0.72, 0.25, 2.6, -10, 0.28),
-        (0.42, 0.42, 1.8, 8, 0.22),
-        (0.62, 0.50, 2.0, -8, 0.22),
-        (0.26, 0.70, 2.4, 9, 0.23),
-        (0.74, 0.70, 2.1, -9, 0.23),
-        (0.48, 0.18, 1.8, 7, 0.20),
-        (0.52, 0.84, 2.3, -7, 0.20)
+        (0.25, 0.24, 2.8, 15, 0.34),
+        (0.75, 0.25, 3.2, -15, 0.38),
+        (0.39, 0.42, 2.4, 12, 0.30),
+        (0.63, 0.50, 2.7, -12, 0.30),
+        (0.25, 0.70, 3.0, 14, 0.32),
+        (0.76, 0.70, 2.8, -14, 0.32),
+        (0.47, 0.18, 2.2, 11, 0.28),
+        (0.53, 0.84, 3.0, -11, 0.28),
+        (0.36, 0.60, 1.9, 10, 0.24),
+        (0.66, 0.34, 2.1, -10, 0.24)
     ]
 
     private var primaryColor: Color {
@@ -578,6 +581,7 @@ struct EclipseAmbientMotionBackground: View {
             } else {
                 withAnimation(.easeOut(duration: 0.25)) {
                     drifting = false
+                    pulsing = false
                     ringRotation = -18
                     counterRingRotation = 14
                 }
@@ -608,60 +612,125 @@ struct EclipseAmbientMotionBackground: View {
 
         return ZStack {
             Circle()
+                .stroke(primaryColor.opacity(pulsing ? 0.18 : 0.09), lineWidth: pulsing ? 9 : 5)
+                .frame(width: largeRingDiameter * 0.78, height: largeRingDiameter * 0.78)
+                .scaleEffect(pulsing ? 1.06 : 0.94)
+                .blur(radius: 2.5)
+                .opacity(pulsing ? 0.58 : 0.36)
+
+            Circle()
                 .stroke(
                     AngularGradient(
                         colors: [
                             .clear,
-                            accentColor.opacity(0.18),
-                            primaryColor.opacity(0.12),
-                            .white.opacity(0.08),
+                            accentColor.opacity(0.30),
+                            primaryColor.opacity(0.22),
+                            .white.opacity(0.16),
                             .clear
                         ],
                         center: .center
                     ),
-                    lineWidth: 1
+                    lineWidth: 1.45
                 )
                 .frame(width: largeRingDiameter, height: largeRingDiameter)
                 .rotationEffect(.degrees(ringRotation))
                 .offset(x: driftX, y: driftY)
-                .opacity(0.82)
+                .scaleEffect(pulsing ? 1.018 : 0.992)
+                .opacity(0.98)
 
             Circle()
                 .trim(from: 0.08, to: 0.72)
                 .stroke(
                     LinearGradient(
                         colors: [
-                            primaryColor.opacity(0.18),
-                            accentColor.opacity(0.12),
-                            .white.opacity(0.06),
+                            primaryColor.opacity(0.28),
+                            accentColor.opacity(0.20),
+                            .white.opacity(0.12),
                             .clear
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    style: StrokeStyle(lineWidth: 1.2, lineCap: .round)
+                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round)
                 )
                 .frame(width: smallRingDiameter, height: smallRingDiameter)
                 .rotationEffect(.degrees(counterRingRotation))
                 .offset(x: -driftX, y: -driftY)
-                .opacity(0.78)
+                .scaleEffect(pulsing ? 0.98 : 1.02)
+                .opacity(0.92)
+
+            Circle()
+                .trim(from: 0.02, to: 0.16)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            primaryColor.opacity(0.32),
+                            .white.opacity(0.26),
+                            .clear
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
+                )
+                .frame(width: largeRingDiameter * 0.90, height: largeRingDiameter * 0.90)
+                .rotationEffect(.degrees(ringRotation + 72))
+                .offset(x: -driftX * 0.6, y: driftY * 0.6)
+                .opacity(pulsing ? 0.86 : 0.58)
+
+            Circle()
+                .trim(from: 0.54, to: 0.68)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            accentColor.opacity(0.30),
+                            .white.opacity(0.20),
+                            .clear
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    style: StrokeStyle(lineWidth: 2.1, lineCap: .round)
+                )
+                .frame(width: smallRingDiameter * 1.16, height: smallRingDiameter * 1.16)
+                .rotationEffect(.degrees(counterRingRotation - 34))
+                .offset(x: driftX * 0.8, y: -driftY * 0.8)
+                .opacity(pulsing ? 0.74 : 0.48)
+
+            ForEach([18.0, 146.0, 274.0], id: \.self) { angle in
+                Circle()
+                    .fill(Color.white.opacity(pulsing ? 0.46 : 0.30))
+                    .overlay {
+                        Circle()
+                            .fill(primaryColor.opacity(pulsing ? 0.26 : 0.18))
+                            .blur(radius: 1.5)
+                    }
+                    .frame(width: pulsing ? 5.4 : 4.0, height: pulsing ? 5.4 : 4.0)
+                    .offset(x: largeRingDiameter * 0.42)
+                    .rotationEffect(.degrees(ringRotation + angle))
+            }
 
             ForEach(particles.indices, id: \.self) { index in
                 let particle = particles[index]
                 Circle()
-                    .fill(primaryColor.opacity(particle.opacity))
+                    .fill(primaryColor.opacity(pulsing ? particle.opacity + 0.08 : particle.opacity))
                     .overlay {
                         Circle()
-                            .fill(Color.white.opacity(particle.opacity * 0.35))
+                            .fill(Color.white.opacity(pulsing ? particle.opacity * 0.55 : particle.opacity * 0.38))
                     }
-                    .frame(width: particle.size, height: particle.size)
+                    .frame(
+                        width: pulsing ? particle.size * 1.25 : particle.size,
+                        height: pulsing ? particle.size * 1.25 : particle.size
+                    )
                     .position(x: width * particle.x, y: height * particle.y)
-                    .offset(x: drifting ? particle.drift : -particle.drift, y: drifting ? -8 : 8)
+                    .offset(x: drifting ? particle.drift : -particle.drift, y: drifting ? -12 : 12)
             }
         }
         .frame(width: width, height: height)
         .blendMode(.screen)
-        .opacity(0.84)
+        .opacity(0.96)
         .compositingGroup()
     }
 
@@ -670,6 +739,9 @@ struct EclipseAmbientMotionBackground: View {
 
         withAnimation(.easeInOut(duration: 9.5).repeatForever(autoreverses: true)) {
             drifting = true
+        }
+        withAnimation(.easeInOut(duration: 4.8).repeatForever(autoreverses: true)) {
+            pulsing = true
         }
         withAnimation(.linear(duration: 28).repeatForever(autoreverses: false)) {
             ringRotation = 342
