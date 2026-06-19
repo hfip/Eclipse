@@ -196,11 +196,11 @@ final class PlayerSettingsStore: ObservableObject {
     }
 
     @Published var experimentalMPVPreloadWifiLimitMB: Int {
-        didSet { UserDefaults.standard.set(max(32, min(experimentalMPVPreloadWifiLimitMB, 2048)), forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey) }
+        didSet { UserDefaults.standard.set(ExperimentalFeatureState.clampedMPVPreloadWifiLimitMB(experimentalMPVPreloadWifiLimitMB), forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey) }
     }
 
     @Published var experimentalMPVPreloadCellularLimitMB: Int {
-        didSet { UserDefaults.standard.set(max(8, min(experimentalMPVPreloadCellularLimitMB, 256)), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey) }
+        didSet { UserDefaults.standard.set(ExperimentalFeatureState.clampedMPVPreloadCellularLimitMB(experimentalMPVPreloadCellularLimitMB), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey) }
     }
 
     @Published var experimentalMPVPreloadAutoClearEnabled: Bool {
@@ -348,9 +348,9 @@ final class PlayerSettingsStore: ObservableObject {
         self.experimentalMPVSmoothTransitionEnabled = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey)
         self.experimentalMPVPreloadCellularEnabled = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
         let wifiLimit = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
-        self.experimentalMPVPreloadWifiLimitMB = wifiLimit > 0 ? wifiLimit : 256
+        self.experimentalMPVPreloadWifiLimitMB = ExperimentalFeatureState.resolvedMPVPreloadWifiLimitMB(wifiLimit)
         let cellularLimit = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
-        self.experimentalMPVPreloadCellularLimitMB = cellularLimit > 0 ? cellularLimit : 32
+        self.experimentalMPVPreloadCellularLimitMB = ExperimentalFeatureState.resolvedMPVPreloadCellularLimitMB(cellularLimit)
         self.experimentalMPVPreloadAutoClearEnabled = (UserDefaults.standard.object(forKey: ExperimentalFeatureState.mpvPreloadAutoClearKey) as? Bool) ?? true
         self.experimentalMPVShowRemainingTime = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
         self.experimentalMPVPreciseProgress = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
@@ -926,12 +926,12 @@ struct PlayerSettingsView: View {
             settingsToggleRow(title: "Auto-Clear Warmup Cache", detail: "Wipe leftover warmup data each time Eclipse launches so it never piles up. Recommended on.", binding: $store.experimentalMPVPreloadAutoClearEnabled)
             GlassDivider(leadingInset: 16)
             GlassDetailRow(title: "Wi-Fi Cache Limit", subtitle: "\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV stream warmup cache.") {
-                Stepper("", value: $store.experimentalMPVPreloadWifiLimitMB, in: 32...2048, step: 32)
+                Stepper("", value: $store.experimentalMPVPreloadWifiLimitMB, in: ExperimentalFeatureState.mpvPreloadWifiLimitRange, step: 32)
                     .labelsHidden()
             }
             GlassDivider(leadingInset: 16)
             GlassDetailRow(title: "Cellular Cache Limit", subtitle: "\(store.experimentalMPVPreloadCellularLimitMB) MB for MPV stream warmup cache.") {
-                Stepper("", value: $store.experimentalMPVPreloadCellularLimitMB, in: 8...256, step: 8)
+                Stepper("", value: $store.experimentalMPVPreloadCellularLimitMB, in: ExperimentalFeatureState.mpvPreloadCellularLimitRange, step: 8)
                     .labelsHidden()
             }
             GlassDivider(leadingInset: 16)

@@ -479,6 +479,27 @@ enum ExperimentalFeatureState {
     static let mpvIgnoreSpecialSubtitleStylesKey = "experimentalMPVIgnoreSpecialSubtitleStyles"
     static let iCloudSyncEnabledKey = "experimentalICloudSyncEnabled"
 
+    static let mpvPreloadWifiDefaultLimitMB = 2048
+    static let mpvPreloadCellularDefaultLimitMB = 500
+    static let mpvPreloadWifiLimitRange = 32...2048
+    static let mpvPreloadCellularLimitRange = 8...2048
+
+    static func clampedMPVPreloadWifiLimitMB(_ value: Int) -> Int {
+        max(mpvPreloadWifiLimitRange.lowerBound, min(value, mpvPreloadWifiLimitRange.upperBound))
+    }
+
+    static func clampedMPVPreloadCellularLimitMB(_ value: Int) -> Int {
+        max(mpvPreloadCellularLimitRange.lowerBound, min(value, mpvPreloadCellularLimitRange.upperBound))
+    }
+
+    static func resolvedMPVPreloadWifiLimitMB(_ value: Int) -> Int {
+        clampedMPVPreloadWifiLimitMB(value > 0 ? value : mpvPreloadWifiDefaultLimitMB)
+    }
+
+    static func resolvedMPVPreloadCellularLimitMB(_ value: Int) -> Int {
+        clampedMPVPreloadCellularLimitMB(value > 0 ? value : mpvPreloadCellularDefaultLimitMB)
+    }
+
     // Modern interface is the default. Use object(forKey:) so a fresh install
     // (key unset, before registerDefaults runs) still resolves to `true`.
     private(set) static var isEnabledAtLaunch: Bool = (UserDefaults.standard.object(forKey: enabledKey) as? Bool) ?? true
@@ -494,8 +515,8 @@ enum ExperimentalFeatureState {
             mpvPreloadEnabledKey: true,
             mpvSmoothTransitionEnabledKey: true,
             mpvPreloadCellularEnabledKey: false,
-            mpvPreloadWifiLimitMBKey: 256,
-            mpvPreloadCellularLimitMBKey: 32,
+            mpvPreloadWifiLimitMBKey: mpvPreloadWifiDefaultLimitMB,
+            mpvPreloadCellularLimitMBKey: mpvPreloadCellularDefaultLimitMB,
             mpvPreloadAutoClearKey: true,
             mpvShowRemainingTimeKey: true,
             mpvPreciseProgressKey: true,
@@ -989,11 +1010,11 @@ final class ExperimentalMPVPreloadManager {
 #if canImport(Network)
         if currentPath?.usesInterfaceType(.cellular) == true {
             let mb = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
-            return Int64(max(8, min(mb, 256))) * 1024 * 1024
+            return Int64(ExperimentalFeatureState.resolvedMPVPreloadCellularLimitMB(mb)) * 1024 * 1024
         }
 #endif
         let mb = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
-        return Int64(max(32, min(mb, 2048))) * 1024 * 1024
+        return Int64(ExperimentalFeatureState.resolvedMPVPreloadWifiLimitMB(mb)) * 1024 * 1024
     }
 
     private func writeStarterCache(url: URL, headers: [String: String]?, key: String, label: String) async {

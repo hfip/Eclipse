@@ -126,8 +126,8 @@ struct BackupData: Codable {
     var experimentalMPVPreloadEnabled: Bool = true
     var experimentalMPVSmoothTransitionEnabled: Bool = true
     var experimentalMPVPreloadCellularEnabled: Bool = false
-    var experimentalMPVPreloadWifiLimitMB: Int = 256
-    var experimentalMPVPreloadCellularLimitMB: Int = 32
+    var experimentalMPVPreloadWifiLimitMB: Int = ExperimentalFeatureState.mpvPreloadWifiDefaultLimitMB
+    var experimentalMPVPreloadCellularLimitMB: Int = ExperimentalFeatureState.mpvPreloadCellularDefaultLimitMB
     var experimentalMPVShowRemainingTime: Bool = true
     var experimentalMPVPreciseProgress: Bool = true
     var experimentalMPVIgnoreSpecialSubtitleStyles: Bool = false
@@ -541,8 +541,8 @@ struct BackupData: Codable {
         experimentalMPVPreloadEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreloadEnabled) ?? true
         experimentalMPVSmoothTransitionEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVSmoothTransitionEnabled) ?? true
         experimentalMPVPreloadCellularEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreloadCellularEnabled) ?? false
-        experimentalMPVPreloadWifiLimitMB = max(32, min(try container.decodeIfPresent(Int.self, forKey: .experimentalMPVPreloadWifiLimitMB) ?? 256, 2048))
-        experimentalMPVPreloadCellularLimitMB = max(8, min(try container.decodeIfPresent(Int.self, forKey: .experimentalMPVPreloadCellularLimitMB) ?? 32, 256))
+        experimentalMPVPreloadWifiLimitMB = ExperimentalFeatureState.resolvedMPVPreloadWifiLimitMB(try container.decodeIfPresent(Int.self, forKey: .experimentalMPVPreloadWifiLimitMB) ?? ExperimentalFeatureState.mpvPreloadWifiDefaultLimitMB)
+        experimentalMPVPreloadCellularLimitMB = ExperimentalFeatureState.resolvedMPVPreloadCellularLimitMB(try container.decodeIfPresent(Int.self, forKey: .experimentalMPVPreloadCellularLimitMB) ?? ExperimentalFeatureState.mpvPreloadCellularDefaultLimitMB)
         experimentalMPVShowRemainingTime = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVShowRemainingTime) ?? true
         experimentalMPVPreciseProgress = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreciseProgress) ?? true
         experimentalMPVIgnoreSpecialSubtitleStyles = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVIgnoreSpecialSubtitleStyles) ?? false
@@ -811,8 +811,8 @@ struct BackupData: Codable {
         try container.encode(experimentalMPVPreloadEnabled, forKey: .experimentalMPVPreloadEnabled)
         try container.encode(experimentalMPVSmoothTransitionEnabled, forKey: .experimentalMPVSmoothTransitionEnabled)
         try container.encode(experimentalMPVPreloadCellularEnabled, forKey: .experimentalMPVPreloadCellularEnabled)
-        try container.encode(max(32, min(experimentalMPVPreloadWifiLimitMB, 2048)), forKey: .experimentalMPVPreloadWifiLimitMB)
-        try container.encode(max(8, min(experimentalMPVPreloadCellularLimitMB, 256)), forKey: .experimentalMPVPreloadCellularLimitMB)
+        try container.encode(ExperimentalFeatureState.clampedMPVPreloadWifiLimitMB(experimentalMPVPreloadWifiLimitMB), forKey: .experimentalMPVPreloadWifiLimitMB)
+        try container.encode(ExperimentalFeatureState.clampedMPVPreloadCellularLimitMB(experimentalMPVPreloadCellularLimitMB), forKey: .experimentalMPVPreloadCellularLimitMB)
         try container.encode(experimentalMPVShowRemainingTime, forKey: .experimentalMPVShowRemainingTime)
         try container.encode(experimentalMPVPreciseProgress, forKey: .experimentalMPVPreciseProgress)
         try container.encode(experimentalMPVIgnoreSpecialSubtitleStyles, forKey: .experimentalMPVIgnoreSpecialSubtitleStyles)
@@ -1014,8 +1014,8 @@ struct BackupData: Codable {
         experimentalMPVPreloadEnabled: Bool = true,
         experimentalMPVSmoothTransitionEnabled: Bool = true,
         experimentalMPVPreloadCellularEnabled: Bool = false,
-        experimentalMPVPreloadWifiLimitMB: Int = 256,
-        experimentalMPVPreloadCellularLimitMB: Int = 32,
+        experimentalMPVPreloadWifiLimitMB: Int = ExperimentalFeatureState.mpvPreloadWifiDefaultLimitMB,
+        experimentalMPVPreloadCellularLimitMB: Int = ExperimentalFeatureState.mpvPreloadCellularDefaultLimitMB,
         experimentalMPVShowRemainingTime: Bool = true,
         experimentalMPVPreciseProgress: Bool = true,
         experimentalMPVIgnoreSpecialSubtitleStyles: Bool = false,
@@ -1214,8 +1214,8 @@ struct BackupData: Codable {
         self.experimentalMPVPreloadEnabled = experimentalMPVPreloadEnabled
         self.experimentalMPVSmoothTransitionEnabled = experimentalMPVSmoothTransitionEnabled
         self.experimentalMPVPreloadCellularEnabled = experimentalMPVPreloadCellularEnabled
-        self.experimentalMPVPreloadWifiLimitMB = max(32, min(experimentalMPVPreloadWifiLimitMB, 2048))
-        self.experimentalMPVPreloadCellularLimitMB = max(8, min(experimentalMPVPreloadCellularLimitMB, 256))
+        self.experimentalMPVPreloadWifiLimitMB = ExperimentalFeatureState.clampedMPVPreloadWifiLimitMB(experimentalMPVPreloadWifiLimitMB)
+        self.experimentalMPVPreloadCellularLimitMB = ExperimentalFeatureState.clampedMPVPreloadCellularLimitMB(experimentalMPVPreloadCellularLimitMB)
         self.experimentalMPVShowRemainingTime = experimentalMPVShowRemainingTime
         self.experimentalMPVPreciseProgress = experimentalMPVPreciseProgress
         self.experimentalMPVIgnoreSpecialSubtitleStyles = experimentalMPVIgnoreSpecialSubtitleStyles
@@ -1960,8 +1960,8 @@ class BackupManager {
         let experimentalMPVPreloadEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey)
         let experimentalMPVSmoothTransitionEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey)
         let experimentalMPVPreloadCellularEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
-        let experimentalMPVPreloadWifiLimitMB = max(32, min(userDefaults.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey), 2048))
-        let experimentalMPVPreloadCellularLimitMB = max(8, min(userDefaults.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey), 256))
+        let experimentalMPVPreloadWifiLimitMB = ExperimentalFeatureState.resolvedMPVPreloadWifiLimitMB(userDefaults.integer(forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey))
+        let experimentalMPVPreloadCellularLimitMB = ExperimentalFeatureState.resolvedMPVPreloadCellularLimitMB(userDefaults.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey))
         let experimentalMPVShowRemainingTime = userDefaults.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
         let experimentalMPVPreciseProgress = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         let experimentalMPVIgnoreSpecialSubtitleStyles = userDefaults.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
@@ -2519,8 +2519,8 @@ class BackupManager {
         let experimentalMPVPreloadEnabled = json["experimentalMPVPreloadEnabled"] as? Bool ?? true
         let experimentalMPVSmoothTransitionEnabled = json["experimentalMPVSmoothTransitionEnabled"] as? Bool ?? true
         let experimentalMPVPreloadCellularEnabled = json["experimentalMPVPreloadCellularEnabled"] as? Bool ?? false
-        let experimentalMPVPreloadWifiLimitMB = max(32, min(BackupData.optionalInt(from: json["experimentalMPVPreloadWifiLimitMB"], defaultValue: 256), 2048))
-        let experimentalMPVPreloadCellularLimitMB = max(8, min(BackupData.optionalInt(from: json["experimentalMPVPreloadCellularLimitMB"], defaultValue: 32), 256))
+        let experimentalMPVPreloadWifiLimitMB = ExperimentalFeatureState.resolvedMPVPreloadWifiLimitMB(BackupData.optionalInt(from: json["experimentalMPVPreloadWifiLimitMB"], defaultValue: ExperimentalFeatureState.mpvPreloadWifiDefaultLimitMB))
+        let experimentalMPVPreloadCellularLimitMB = ExperimentalFeatureState.resolvedMPVPreloadCellularLimitMB(BackupData.optionalInt(from: json["experimentalMPVPreloadCellularLimitMB"], defaultValue: ExperimentalFeatureState.mpvPreloadCellularDefaultLimitMB))
         let experimentalMPVShowRemainingTime = json["experimentalMPVShowRemainingTime"] as? Bool ?? true
         let experimentalMPVPreciseProgress = json["experimentalMPVPreciseProgress"] as? Bool ?? true
         let experimentalMPVIgnoreSpecialSubtitleStyles = json["experimentalMPVIgnoreSpecialSubtitleStyles"] as? Bool ?? false
@@ -3060,8 +3060,8 @@ class BackupManager {
         userDefaults.set(backup.experimentalMPVPreloadEnabled, forKey: ExperimentalFeatureState.mpvPreloadEnabledKey)
         userDefaults.set(backup.experimentalMPVSmoothTransitionEnabled, forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey)
         userDefaults.set(backup.experimentalMPVPreloadCellularEnabled, forKey: ExperimentalFeatureState.mpvPreloadCellularEnabledKey)
-        userDefaults.set(max(32, min(backup.experimentalMPVPreloadWifiLimitMB, 2048)), forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
-        userDefaults.set(max(8, min(backup.experimentalMPVPreloadCellularLimitMB, 256)), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
+        userDefaults.set(ExperimentalFeatureState.clampedMPVPreloadWifiLimitMB(backup.experimentalMPVPreloadWifiLimitMB), forKey: ExperimentalFeatureState.mpvPreloadWifiLimitMBKey)
+        userDefaults.set(ExperimentalFeatureState.clampedMPVPreloadCellularLimitMB(backup.experimentalMPVPreloadCellularLimitMB), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
         userDefaults.set(backup.experimentalMPVShowRemainingTime, forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
         userDefaults.set(backup.experimentalMPVPreciseProgress, forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         userDefaults.set(backup.experimentalMPVIgnoreSpecialSubtitleStyles, forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
