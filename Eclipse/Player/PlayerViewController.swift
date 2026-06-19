@@ -1140,6 +1140,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var lastVLCPauseLogTime: CFTimeInterval = 0
     private var pendingInitialResumeTarget: Double?
     private var pendingInitialResumeDeadline: Date?
+    private var pendingInitialResumeRetryCount = 0
+    private var pendingInitialResumeLastRetryAt: Date?
     private var vlcProxyFallbackTried = false
     private var mpvTransportBridgeFallbackTried = false
     private var isMPVTransportBridgePlaybackActive = false
@@ -2779,6 +2781,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         pendingSeekTime = nil
         pendingInitialResumeTarget = nil
         pendingInitialResumeDeadline = nil
+        pendingInitialResumeRetryCount = 0
+        pendingInitialResumeLastRetryAt = nil
         releaseBackgroundRecoveryProgressGate(reason: "new-load")
         setVLCSubtitleStyleReloadProgressGate(active: false, reason: "new-load")
         if let info = mediaInfo {
@@ -3020,6 +3024,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 pendingSeekTime = lastPlayedTime
                 pendingInitialResumeTarget = lastPlayedTime
                 pendingInitialResumeDeadline = Date().addingTimeInterval(20)
+                pendingInitialResumeRetryCount = 0
+                pendingInitialResumeLastRetryAt = nil
                 Logger.shared.log("Prepared resume seek to \(Int(lastPlayedTime))s", type: "Progress")
             }
         }
@@ -8537,6 +8543,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 waitingForInitialResume = false
                 pendingInitialResumeTarget = nil
                 pendingInitialResumeDeadline = nil
+                pendingInitialResumeRetryCount = 0
+                pendingInitialResumeLastRetryAt = nil
             }
         } else {
             waitingForInitialResume = false
@@ -8561,6 +8569,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
 
             if waitingForInitialResume {
+                self.retryPendingInitialResumeIfNeeded(currentPosition: safePosition)
                 self.cachedPosition = safePosition
                 if safeDuration > 0 {
                     self.updateProgressHostingController()
@@ -8675,6 +8684,31 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             )
         }
         updateTraktScrobbleFromProgress(position: persistPosition, duration: effectiveDuration)
+    }
+
+    private func retryPendingInitialResumeIfNeeded(currentPosition: Double) {
+        guard !isClosing,
+              isMetalMPVRenderer,
+              !isVLCPlayer,
+              !isSeeking,
+              let target = pendingInitialResumeTarget,
+              let deadline = pendingInitialResumeDeadline else {
+            return
+        }
+        let now = Date()
+        guard now < deadline, currentPosition + 2.0 < target else { return }
+        guard pendingInitialResumeRetryCount < 3 else { return }
+        if let lastRetry = pendingInitialResumeLastRetryAt, now.timeIntervalSince(lastRetry) < 0.9 {
+            return
+        }
+
+        pendingInitialResumeRetryCount += 1
+        pendingInitialResumeLastRetryAt = now
+        Logger.shared.log(
+            "[PlayerVC.progress] retrying Metal initial resume target=\(secondsText(target)) position=\(secondsText(currentPosition)) attempt=\(pendingInitialResumeRetryCount)",
+            type: "MPV"
+        )
+        rendererSeek(to: target)
     }
 
     private func logVLCUIProgressIfNeeded(rawPosition: Double, rawDuration: Double, safePosition: Double, effectiveDuration: Double, durationIsReliable: Bool, waitingForInitialResume: Bool) {
@@ -9682,8 +9716,6 @@ extension PlayerViewController: MPVNativeRendererDelegate {
             return
         }
         let shouldShowControls = !suppressNextPlayPauseControlReveal
-        suppressNextPlayPauseControlReveal = false
-        playPauseRevealSuppressionToken += 1
         updatePlayPauseButton(isPaused: isPaused, shouldShowControls: shouldShowControls)
         pipController?.updatePlaybackState()
     }

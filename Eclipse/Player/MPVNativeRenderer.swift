@@ -3472,7 +3472,12 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         updateHTTPHeaders(headers)
         applySubtitleStyle(lastAppliedSubtitleStyle)
         let target = url.isFileURL ? url.path : url.absoluteString
-        let loadStatus = command(handle, ["loadfile", target, "replace"])
+        var loadCommand = ["loadfile", target, "replace"]
+        if let initialSeek = pendingInitialSeek, initialSeek.isFinite, initialSeek > 0 {
+            loadCommand.append(String(format: "start=%.3f", initialSeek))
+            logMPV("load start option gen=\(generation) seek=\(String(format: "%.2f", initialSeek))s")
+        }
+        let loadStatus = command(handle, loadCommand)
         if loadStatus < 0 {
             setLoading(false)
             delegate?.renderer(self, didFailWithError: "MPV Metal rejected the media load command (\(loadStatus))")
