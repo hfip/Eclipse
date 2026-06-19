@@ -1520,7 +1520,7 @@
 			repositoryURL = "https://github.com/Soupy-dev/MPVKit";
 			requirement = {
 				kind = revision;
-				revision = 6b33a15f6d943d33505e26b66acc715870336c74;
+				revision = 80a278beba7e6a348cdb2269f4d9816b7a520038;
 			};
 		};
 		13A46CFB2EF5943400423BC6 /* XCRemoteSwiftPackageReference "FakeWebKit" */ = {

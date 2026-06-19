@@ -703,7 +703,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVMoltenVKRenderer.isAvailable)
         if effectiveBackend == .metal {
             let qualityProfile = metalSampleBufferQualityProfile()
-            Logger.shared.log("[PlayerVC.MPV] using MoltenVK Metal renderer with OpenGL PiP handoff \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            Logger.shared.log("[PlayerVC.MPV] using MoltenVK Metal renderer with GPU sample-buffer PiP handoff \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
             let r = MPVMoltenVKRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
             r.delegate = self
             return r
@@ -9610,7 +9610,7 @@ extension PlayerViewController: PiPControllerDelegate {
         }
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         if metalMPVRenderer != nil {
-            logPictureInPicture("scene-will-deactivate pending MoltenVK OpenGL PiP handoff until background confirmation")
+            logPictureInPicture("scene-will-deactivate pending MoltenVK GPU sample-buffer PiP handoff until background confirmation")
             primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate-metal")
             scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate-metal", delay: 0.35)
             return

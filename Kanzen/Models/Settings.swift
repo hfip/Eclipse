@@ -329,8 +329,8 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
 }
 
 struct MPVRenderBackendSupport {
-    static let bundledMPVKitVersion = "0.41.0-eclipse-metal.1"
-    static let bundledMPVKitRevision = "6b33a15f6d943d33505e26b66acc715870336c74"
+    static let bundledMPVKitVersion = "0.41.0-eclipse-metal.2"
+    static let bundledMPVKitRevision = "80a278beba7e6a348cdb2269f4d9816b7a520038"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
     static let metalRendererEnabled = true
 
@@ -374,7 +374,7 @@ struct MPVRenderBackendSupport {
             "revision=\(bundledMPVKitRevision)",
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
             "inlineRenderer=\(moltenVKInlineRendererAvailable)",
-            "openGLPiPHandoff=\(sampleBufferPictureInPictureBridgeAvailable)",
+            "gpuSampleBufferPiP=\(sampleBufferPictureInPictureBridgeAvailable)",
             "metalRendererEnabled=\(metalRendererEnabled)",
             "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
             "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
@@ -384,7 +384,7 @@ struct MPVRenderBackendSupport {
 
     static var settingsDescription: String {
         if metalIsFullySupported {
-            return "Applies to the next player session. Metal is the default MPV renderer and uses MoltenVK inline playback with an OpenGL sample-buffer handoff for PiP; OpenGL remains the fallback."
+            return "Applies to the next player session. Metal is the default MPV renderer and uses MoltenVK inline playback with a GPU sample-buffer handoff for PiP; OpenGL remains the fallback."
         }
         if !metalRendererEnabled {
             return "Applies to the next player session. OpenGL is active in this build."
@@ -394,7 +394,7 @@ struct MPVRenderBackendSupport {
 
     static var settingsStatusLine: String {
         if metalIsFullySupported {
-            return "Metal backend: MoltenVK inline renderer with OpenGL PiP handoff"
+            return "Metal backend: MoltenVK inline renderer with GPU sample-buffer PiP handoff"
         }
         if !metalRendererEnabled {
             return "Metal backend: hidden in this build"

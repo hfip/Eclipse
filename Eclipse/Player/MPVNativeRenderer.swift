@@ -2813,7 +2813,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func performanceOverlaySnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "MPV sample-buffer-pip \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
+        return "MPV sample-buffer-pip \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)\nbackend \(snapshot.presentationBackend.rawValue) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount)"
     }
 
 #if ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
@@ -2978,7 +2978,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func pictureInPictureDebugSnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "mode=sample-buffer-pip running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) frames=\(snapshot.frameCount) attempts=\(snapshot.renderAttemptCount) failures=\(snapshot.renderFailureCount) layer=\(snapshot.displayLayerStatus) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
+        return "mode=sample-buffer-pip backend=\(snapshot.presentationBackend.rawValue) running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) frames=\(snapshot.frameCount) attempts=\(snapshot.renderAttemptCount) failures=\(snapshot.renderFailureCount) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount) layer=\(snapshot.displayLayerStatus) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
     }
 
     func beginForegroundUIStallRecovery(reason: String) {
@@ -3128,7 +3128,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         lastLoggedDiagnosticsFrameCount = diagnostics.frameCount
         lastLoggedDiagnosticsFailures = totalFailures
         Logger.shared.log(
-            "[MPVSampleBufferPiPBridge] diagnostics frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) metalProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
+            "[MPVSampleBufferPiPBridge] diagnostics backend=\(diagnostics.presentationBackend.rawValue) metalFrames=\(diagnostics.metalPresentationFrameCount) metalFail=\(diagnostics.metalPresentationFailureCount) frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) metalProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
             type: "MPV"
         )
     }
@@ -3168,7 +3168,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     private var qualityProfile: MPVMetalSampleBufferQualityProfile
     private let containerView = UIView(frame: .zero)
     private let metalView = MPVMoltenVKView(frame: .zero)
-    private let pipBridge: MPVNativeRenderer
+    private let pipBridge: MPVSampleBufferPiPBridge
     private let eventQueue = DispatchQueue(label: "mpv.moltenvk.events", qos: .utility)
     private let stateQueue = DispatchQueue(label: "mpv.moltenvk.state", attributes: .concurrent)
     private let eventQueueGroup = DispatchGroup()
@@ -3222,13 +3222,14 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     }
 
     var prefersPictureInPictureLayerActivationBeforeStart: Bool {
-        fallbackRenderer?.prefersPictureInPictureLayerActivationBeforeStart ?? true
+        fallbackRenderer?.prefersPictureInPictureLayerActivationBeforeStart
+            ?? pipBridge.prefersPictureInPictureLayerActivationBeforeStart
     }
 
     init(displayLayer: AVSampleBufferDisplayLayer, qualityProfile: MPVMetalSampleBufferQualityProfile) {
         self.displayLayer = displayLayer
         self.qualityProfile = qualityProfile
-        self.pipBridge = MPVNativeRenderer(displayLayer: displayLayer)
+        self.pipBridge = MPVSampleBufferPiPBridge(displayLayer: displayLayer, qualityProfile: qualityProfile)
         self.pipBridge.delegate = self
 
         let screen = UIApplication.shared.connectedScenes
@@ -3478,11 +3479,12 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     @discardableResult
     func updateSampleBufferQualityProfile(_ newProfile: MPVMetalSampleBufferQualityProfile) -> Bool {
         guard fallbackRenderer == nil else { return false }
+        let bridgeChanged = pipBridge.updateSampleBufferQualityProfile(newProfile)
         let previousScale = qualityProfile.renderScale
         qualityProfile = newProfile
         guard abs(previousScale - newProfile.renderScale) > 0.001 else {
             logMPV("Metal quality profile updated, render scale unchanged \(newProfile.logDescription)")
-            return false
+            return bridgeChanged
         }
         let applyChange = { [weak self] in
             guard let self else { return }
@@ -3725,7 +3727,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
                 isPreparingPiPBridge = false
                 pipBridgeLoadGeneration = nil
                 logMPV("PiP hybrid bridge start failed error=\(error) foreground={\(pictureInPictureDebugSnapshot())}")
-                delegate?.renderer(self, didFailWithError: "MPV Metal OpenGL PiP handoff failed to start")
+                delegate?.renderer(self, didFailWithError: "MPV Metal sample-buffer PiP handoff failed to start")
                 return
             }
 
@@ -3740,12 +3742,12 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             if wasPausedBeforePiP {
                 pipBridge.pausePlayback()
             }
-            logMPV("PiP hybrid OpenGL bridge load gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) paused=\(wasPausedBeforePiP) audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) externalSubs=\(loadedExternalSubtitleRequests.count) foregroundSid=\(getCurrentSubtitleTrackId())")
+            logMPV("PiP hybrid GPU sample-buffer bridge load gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) paused=\(wasPausedBeforePiP) audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) externalSubs=\(loadedExternalSubtitleRequests.count) foregroundSid=\(getCurrentSubtitleTrackId())")
         } else {
             pipBridge.prepareInitialSeek(to: cachedPosition)
             pipBridge.setSpeed(getSpeed())
             pipBridge.applySubtitleStyle(lastAppliedSubtitleStyle)
-            logMPV("PiP hybrid OpenGL bridge reuse gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) primed=\(pipBridge.isPictureInPicturePrimed())")
+            logMPV("PiP hybrid GPU sample-buffer bridge reuse gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) primed=\(pipBridge.isPictureInPicturePrimed())")
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -4657,7 +4659,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         if isPreparingPiPBridge || isUsingPiPBridge {
             pipBridge.primePictureInPictureFrames(reason: "bridge-ready")
         }
-        logMPV("PiP hybrid OpenGL bridge ready audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) snapshot={\(pipBridge.pictureInPictureDebugSnapshot())}")
+        logMPV("PiP hybrid GPU sample-buffer bridge ready audio=\(pendingPiPAudioTrackId ?? -1) sub=\(pendingPiPSubtitleTrackId ?? -1) snapshot={\(pipBridge.pictureInPictureDebugSnapshot())}")
         guard isUsingPiPBridge else { return }
         delegate?.renderer(self, didBecomeReadyToSeek: didBecomeReadyToSeek)
     }
