@@ -73,7 +73,7 @@ jobs:
             -out build/eclipse-ios-distribution-private-key.tar.gz.enc
 
       - name: Upload CSR artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: eclipse-ios-csr
           path: build/csr
@@ -81,7 +81,7 @@ jobs:
           retention-days: 30
 
       - name: Upload encrypted private key artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: eclipse-ios-encrypted-private-key
           path: build/eclipse-ios-distribution-private-key.tar.gz.enc
