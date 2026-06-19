@@ -120,6 +120,19 @@ final class HomeCatalogLayoutStore: ObservableObject {
         persist()
     }
 
+    /// Re-reads overrides from persistent storage. Call after a backup restore writes the
+    /// underlying UserDefaults key directly.
+    func reloadFromStorage() {
+        let loaded = Self.load(from: userDefaults)
+        if Thread.isMainThread {
+            overrides = loaded
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.overrides = loaded
+            }
+        }
+    }
+
     // MARK: - Storage
 
     private func store(_ value: CatalogLayoutOverride, for id: String) {

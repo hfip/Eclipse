@@ -6,6 +6,15 @@ import SwiftUI
 import Kingfisher
 import AVKit
 
+enum HomeAnimatedBackgroundSettings {
+    static let enabledKey = "homeAnimatedBackgroundEnabled"
+    static let defaultEnabled = true
+
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: enabledKey) == nil ? defaultEnabled : defaults.bool(forKey: enabledKey)
+    }
+}
+
 func homeImageDecodeSize(width: CGFloat, height: CGFloat) -> CGSize {
 #if os(iOS) || os(tvOS)
     let scale = UIScreen.main.scale
@@ -51,6 +60,8 @@ private struct HomeCardSubtitle: View {
 }
 
 struct HomeView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private let onStartupReady: () -> Void
     @State private var showingSettings = false
     @State private var isHoveringWatchNow = false
@@ -74,9 +85,12 @@ struct HomeView: View {
     @ObservedObject private var theme = EclipseTheme.shared
     @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
     @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
+    @AppStorage(HomeAnimatedBackgroundSettings.enabledKey) private var homeAnimatedBackgroundEnabled = HomeAnimatedBackgroundSettings.defaultEnabled
     @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
     @AppStorage(ExperimentalHeroBleedLevel.storageKey) private var experimentalHeroBleedLevel = ExperimentalHeroBleedLevel.defaultValue.rawValue
     @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
+    @AppStorage(ExperimentalVisualTuning.mediaCardScaleKey) private var experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
+    @StateObject private var layoutStore = HomeCatalogLayoutStore.shared
 
     private let heroCarouselTimer = Timer.publish(every: 12, on: .main, in: .common).autoconnect()
 
@@ -106,10 +120,34 @@ struct HomeView: View {
         return heroImageURL(for: hero)
     }
     private var designMetrics: ExperimentalMediaDesignMetrics {
-        ExperimentalMediaDesignMetrics(
+        // Reading experimentalMediaCardScale here (not just relying on .current) keeps the
+        // home reactive to global size changes made elsewhere.
+        var tuning = ExperimentalVisualTuning.current
+        tuning.mediaCardScale = ExperimentalVisualTuning.sanitizedMediaCardScale(experimentalMediaCardScale)
+        return ExperimentalMediaDesignMetrics(
             preset: ExperimentalMediaDesignPreset(rawValue: experimentalDesignPreset) ?? ExperimentalMediaDesignPreset.defaultValue,
             heroBleedLevel: ExperimentalHeroBleedLevel(rawValue: experimentalHeroBleedLevel) ?? ExperimentalHeroBleedLevel.defaultValue,
-            cardShape: ExperimentalHomeCardShape(rawValue: experimentalHomeCardShape) ?? ExperimentalHomeCardShape.defaultValue
+            cardShape: ExperimentalHomeCardShape(rawValue: experimentalHomeCardShape) ?? ExperimentalHomeCardShape.defaultValue,
+            tuning: tuning
+        )
+    }
+
+    /// Resolves the effective metrics for a catalog, applying any per-catalog
+    /// orientation/size override on top of the global `designMetrics`.
+    private func metrics(for catalog: Catalog) -> ExperimentalMediaDesignMetrics {
+        let base = designMetrics
+        let override = layoutStore.override(for: catalog.id)
+        guard !override.isEmpty else { return base }
+        var tuning = base.tuning
+        if let sizeScale = override.sizeScale {
+            tuning.mediaCardScale = ExperimentalVisualTuning.sanitizedMediaCardScale(sizeScale)
+        }
+        let cardShape = override.orientation.cardShape ?? base.cardShape
+        return ExperimentalMediaDesignMetrics(
+            preset: base.preset,
+            heroBleedLevel: base.heroBleedLevel,
+            cardShape: cardShape,
+            tuning: tuning
         )
     }
 
@@ -121,8 +159,16 @@ struct HomeView: View {
 #endif
     }
 
+    private var tracksHomeScrollOffset: Bool {
+        tracksBackgroundScroll || homeAnimatedBackgroundEnabled
+    }
+
     private var backgroundScrollOffset: CGFloat {
         tracksBackgroundScroll ? scrollOffset : 0
+    }
+
+    private var animatedBackgroundTopClearance: CGFloat {
+        max(heroHeight - max(scrollOffset, 0), 0)
     }
 
     private var scrollOffsetUpdateThreshold: CGFloat {
@@ -162,6 +208,16 @@ struct HomeView: View {
                 Group {
                     theme.atmosphereStyle == .solid ? atmosphereColor : homeViewModel.ambientColor
                 }
+                .ignoresSafeArea(.all)
+            }
+
+            if homeAnimatedBackgroundEnabled {
+                HomeAmbientMotionBackground(
+                    topClearance: animatedBackgroundTopClearance,
+                    ambientColor: heroBleedColor,
+                    accentColor: theme.scopedGradientColor(),
+                    motionEnabled: !reduceMotion
+                )
                 .ignoresSafeArea(.all)
             }
             
@@ -281,7 +337,7 @@ struct HomeView: View {
             }
             .background(
                 Group {
-                    if tracksBackgroundScroll {
+                    if tracksHomeScrollOffset {
                         GeometryReader { geo in
                             Color.clear.preference(
                                 key: ScrollOffsetPreferenceKey.self,
@@ -300,7 +356,7 @@ struct HomeView: View {
         }
         .coordinateSpace(name: "homeScroll")
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
-            guard tracksBackgroundScroll else { return }
+            guard tracksHomeScrollOffset else { return }
             guard abs(scrollOffset - newOffset) >= scrollOffsetUpdateThreshold else { return }
             scrollOffset = newOffset
         }
@@ -733,6 +789,7 @@ struct HomeView: View {
             }
             
             ForEach(Array(catalogs.enumerated()), id: \.element.id) { index, catalog in
+                let catalogMetrics = metrics(for: catalog)
                 switch catalog.displayStyle {
                 case .standard:
                     if let items = homeViewModel.catalogResults[catalog.id], !items.isEmpty {
@@ -740,42 +797,42 @@ struct HomeView: View {
                         let displayItems = catalog.id == "trending"
                             ? limitedItems.filter { $0.stableIdentity != homeViewModel.heroContent?.stableIdentity }
                             : limitedItems
-                        
+
                         let displayTitle: String = {
                             if catalog.id == "becauseYouWatched" && !homeViewModel.becauseYouWatchedTitle.isEmpty {
                                 return "Because You Watched \(homeViewModel.becauseYouWatchedTitle)"
                             }
                             return catalog.name
                         }()
-                        
+
                         MediaSection(
                             title: displayTitle,
                             items: displayItems,
-                            metrics: designMetrics
+                            metrics: catalogMetrics
                         )
                     }
-                    
+
                 case .network:
                     NetworkSectionWidget(
                         widgetData: homeViewModel.widgetData,
                         tmdbService: tmdbService,
-                        metrics: designMetrics
+                        metrics: catalogMetrics
                     )
-                    
+
                 case .genre:
                     GenreSectionWidget(
                         widgetData: homeViewModel.widgetData,
                         tmdbService: tmdbService,
-                        metrics: designMetrics
+                        metrics: catalogMetrics
                     )
-                    
+
                 case .company:
                     CompanySectionWidget(
                         widgetData: homeViewModel.widgetData,
                         tmdbService: tmdbService,
-                        metrics: designMetrics
+                        metrics: catalogMetrics
                     )
-                    
+
                 case .ranked:
                     let items = homeViewModel.widgetData[catalog.id]
                         ?? homeViewModel.catalogResults[catalog.id]
@@ -785,15 +842,15 @@ struct HomeView: View {
                         title: catalog.name,
                         items: Array(items.prefix(10)),
                         tmdbService: tmdbService,
-                        metrics: designMetrics
+                        metrics: catalogMetrics
                     )
-                    
+
                 case .featured:
                     FeaturedSpotlightWidget(
                         widgetData: homeViewModel.widgetData,
                         genreName: homeViewModel.featuredGenreName,
                         tmdbService: tmdbService,
-                        metrics: designMetrics
+                        metrics: catalogMetrics
                     )
                 }
                 
@@ -1035,6 +1092,168 @@ struct HomeView: View {
 
 }
 
+private struct HomeAmbientMotionBackground: View {
+    let topClearance: CGFloat
+    let ambientColor: Color?
+    let accentColor: Color
+    let motionEnabled: Bool
+
+    @State private var drifting = false
+    @State private var ringRotation: Double = -18
+    @State private var counterRingRotation: Double = 14
+
+    private let particles: [(x: CGFloat, y: CGFloat, size: CGFloat, drift: CGFloat, opacity: Double)] = [
+        (0.16, 0.14, 2.0, 18, 0.20),
+        (0.78, 0.20, 2.8, -16, 0.24),
+        (0.34, 0.34, 1.8, 12, 0.18),
+        (0.88, 0.42, 2.2, -20, 0.16),
+        (0.12, 0.58, 2.6, 15, 0.18),
+        (0.58, 0.70, 2.0, -12, 0.20),
+        (0.28, 0.86, 1.8, 14, 0.15),
+        (0.84, 0.88, 2.4, -15, 0.14)
+    ]
+
+    private var primaryColor: Color {
+        ambientColor ?? accentColor
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let clearance = min(max(topClearance, 0), max(size.height, 0))
+
+            ambientLayer(size: size)
+                .frame(width: size.width, height: max(size.height - clearance + 180, 1))
+                .offset(y: clearance)
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.82), .white],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 180)
+
+                        Color.white
+                    }
+                }
+                .frame(width: size.width, height: size.height, alignment: .top)
+                .clipped()
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { startMotionIfNeeded() }
+        .onChange(of: motionEnabled) { enabled in
+            if enabled {
+                startMotionIfNeeded()
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    drifting = false
+                    ringRotation = -18
+                    counterRingRotation = 14
+                }
+            }
+        }
+    }
+
+    private func ambientLayer(size: CGSize) -> some View {
+        let width = max(size.width, 1)
+        let height = max(size.height, 1)
+
+        return ZStack {
+            RadialGradient(
+                colors: [
+                    primaryColor.opacity(0.18),
+                    primaryColor.opacity(0.08),
+                    .clear
+                ],
+                center: .center,
+                startRadius: 12,
+                endRadius: max(width, height) * 0.52
+            )
+            .frame(width: width * 1.15, height: height * 0.62)
+            .offset(x: drifting ? width * 0.12 : -width * 0.10, y: drifting ? height * 0.08 : -height * 0.04)
+
+            RadialGradient(
+                colors: [
+                    Color(red: 0.12, green: 0.62, blue: 0.72).opacity(0.13),
+                    Color(red: 0.54, green: 0.28, blue: 0.82).opacity(0.06),
+                    .clear
+                ],
+                center: .center,
+                startRadius: 10,
+                endRadius: max(width, height) * 0.48
+            )
+            .frame(width: width * 0.92, height: height * 0.54)
+            .offset(x: drifting ? -width * 0.18 : width * 0.14, y: drifting ? height * 0.30 : height * 0.18)
+
+            Circle()
+                .stroke(
+                    AngularGradient(
+                        colors: [
+                            .white.opacity(0),
+                            accentColor.opacity(0.12),
+                            Color(red: 0.18, green: 0.72, blue: 0.78).opacity(0.08),
+                            primaryColor.opacity(0.10),
+                            .white.opacity(0)
+                        ],
+                        center: .center
+                    ),
+                    lineWidth: 1
+                )
+                .frame(width: min(max(width * 1.25, 420), 760), height: min(max(width * 1.25, 420), 760))
+                .rotationEffect(.degrees(ringRotation))
+                .offset(y: drifting ? height * 0.04 : -height * 0.02)
+                .opacity(0.75)
+
+            Circle()
+                .trim(from: 0.08, to: 0.72)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.10),
+                            Color(red: 0.38, green: 0.76, blue: 0.88).opacity(0.07),
+                            .white.opacity(0)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    style: StrokeStyle(lineWidth: 1.2, lineCap: .round)
+                )
+                .frame(width: min(max(width * 0.92, 320), 620), height: min(max(width * 0.92, 320), 620))
+                .rotationEffect(.degrees(counterRingRotation))
+                .offset(x: drifting ? width * 0.18 : width * 0.08, y: drifting ? height * 0.22 : height * 0.12)
+                .opacity(0.70)
+
+            ForEach(particles.indices, id: \.self) { index in
+                let particle = particles[index]
+                Circle()
+                    .fill(Color.white.opacity(particle.opacity))
+                    .frame(width: particle.size, height: particle.size)
+                    .position(x: width * particle.x, y: height * particle.y)
+                    .offset(x: drifting ? particle.drift : -particle.drift * 0.4, y: drifting ? -14 : 10)
+            }
+        }
+        .blendMode(.screen)
+        .opacity(0.86)
+        .compositingGroup()
+    }
+
+    private func startMotionIfNeeded() {
+        guard motionEnabled, !drifting else { return }
+
+        withAnimation(.easeInOut(duration: 9.5).repeatForever(autoreverses: true)) {
+            drifting = true
+        }
+        withAnimation(.linear(duration: 28).repeatForever(autoreverses: false)) {
+            ringRotation = 342
+        }
+        withAnimation(.linear(duration: 36).repeatForever(autoreverses: false)) {
+            counterRingRotation = -346
+        }
+    }
+}
+
 private struct HeroScoreChip: Identifiable {
     let id: String
     let label: String
@@ -1151,14 +1370,16 @@ struct ExperimentalMediaShelf: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: isIPad ? 18 : 16) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center) {
                 Text(title)
                     .font(.system(size: isIPad ? 34 : 29, weight: .heavy))
                     .foregroundColor(.white)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .minimumScaleFactor(0.82)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
 
-                Spacer()
+                Spacer(minLength: 8)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: isIPad ? 26 : 22, weight: .semibold))
@@ -1526,8 +1747,13 @@ struct ContinueWatchingCard: View {
     @State private var imdbId: String? = nil
     @State private var enrichedPlaybackContext: EpisodePlaybackContext? = nil
 
-    private var cardWidth: CGFloat { isTvOS ? 380 : (isIPad ? 360 : 260) }
-    private var cardHeight: CGFloat { isTvOS ? 220 : (isIPad ? 200 : 146) }
+    // Continue Watching follows the global card-size control (Modern UI, non-tvOS only).
+    private var globalCardSizeScale: CGFloat {
+        guard ExperimentalFeatureState.isEnabledAtLaunch, !isTvOS else { return 1 }
+        return CGFloat(ExperimentalVisualTuning.current.mediaCardScale)
+    }
+    private var cardWidth: CGFloat { (isTvOS ? 380 : (isIPad ? 360 : 260)) * globalCardSizeScale }
+    private var cardHeight: CGFloat { (isTvOS ? 220 : (isIPad ? 200 : 146)) * globalCardSizeScale }
     private var logoMaxWidth: CGFloat { isTvOS ? 200 : (isIPad ? 180 : 140) }
     private var logoMaxHeight: CGFloat { isTvOS ? 60 : (isIPad ? 52 : 40) }
     private var backdropDecodeSize: CGSize { homeImageDecodeSize(width: cardWidth, height: cardHeight) }

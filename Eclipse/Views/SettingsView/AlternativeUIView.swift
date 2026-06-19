@@ -12,11 +12,8 @@ struct AlternativeUIView: View {
     // Retained display options
     @AppStorage("seasonMenu") private var useSeasonMenu = false
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList = false
-    @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
-    @AppStorage("heroBannerCatalogId") private var heroBannerCatalogId = "trending"
-    @AppStorage("heroBannerBehavior") private var heroBannerBehavior = HeroBannerBehavior.static.rawValue
 
-    // Retained layout knobs (feed ExperimentalMediaDesignMetrics)
+    // Layout knobs retained for Reset Appearance; their controls now live in Home Layout.
     @AppStorage(ExperimentalMediaDesignPreset.storageKey) private var experimentalDesignPreset = ExperimentalMediaDesignPreset.defaultValue.rawValue
     @AppStorage(ExperimentalHomeCardShape.storageKey) private var experimentalHomeCardShape = ExperimentalHomeCardShape.defaultValue.rawValue
     @AppStorage(ExperimentalVisualTuning.sectionSpacingScaleKey) private var experimentalSectionSpacingScale = ExperimentalVisualTuning.defaultSectionSpacingScale
@@ -24,13 +21,13 @@ struct AlternativeUIView: View {
     @AppStorage(ExperimentalVisualTuning.mediaCardScaleKey) private var experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
     @AppStorage(ExperimentalVisualTuning.glassStrengthKey) private var experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
     @AppStorage(ExperimentalVisualTuning.heroHeightScaleKey) private var experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
+    @AppStorage(HomeAnimatedBackgroundSettings.enabledKey) private var homeAnimatedBackgroundEnabled = HomeAnimatedBackgroundSettings.defaultEnabled
 
     // Interface (modern vs classic) — restart applied gate
     @AppStorage(ExperimentalFeatureState.enabledKey) private var modernInterfaceEnabled = true
     @State private var showRestartAlert = false
 
     @StateObject private var accentColorManager = AccentColorManager.shared
-    @StateObject private var catalogManager = CatalogManager.shared
     @ObservedObject private var theme = EclipseTheme.shared
     @State private var mediaDetailElements = MediaDetailElement.orderedElements()
     @State private var hiddenMediaDetailElements = MediaDetailElement.hiddenElements()
@@ -44,9 +41,13 @@ struct AlternativeUIView: View {
                 .eclipseExperimentalSettingsRows()
             interfaceSection
                 .eclipseExperimentalSettingsRows()
-            advancedSection
+            homeLayoutSection
+                .eclipseExperimentalSettingsRows()
+            detailPagesSection
                 .eclipseExperimentalSettingsRows()
             mediaDetailSection
+                .eclipseExperimentalSettingsRows()
+            resetSection
                 .eclipseExperimentalSettingsRows()
         }
         .navigationTitle("Appearance")
@@ -152,14 +153,6 @@ struct AlternativeUIView: View {
                     range: AppearanceConfig.intensityRange,
                     step: 0.05
                 )
-
-                sliderRow(
-                    title: "Motion",
-                    description: "How much the background drifts while scrolling.",
-                    value: $theme.atmosphereMotion,
-                    range: AppearanceConfig.motionRange,
-                    step: 0.05
-                )
             }
         } header: {
             Text("Theme")
@@ -216,116 +209,69 @@ struct AlternativeUIView: View {
         }
     }
 
-    // MARK: - Advanced
+    // MARK: - Home layout
 
-    private var advancedSection: some View {
+    private var homeLayoutSection: some View {
         Section {
-            DisclosureGroup("Advanced") {
-                pickerRow(
-                    title: "Layout Density",
-                    description: "Controls hero scale, spacing and card sizing.",
-                    selection: $experimentalDesignPreset,
-                    values: ExperimentalMediaDesignPreset.allCases.map { ($0.rawValue, $0.displayName) }
-                )
-
-                pickerRow(
-                    title: "Card Shape",
-                    description: "Whether home shelves prefer backdrop or poster art.",
-                    selection: $experimentalHomeCardShape,
-                    values: ExperimentalHomeCardShape.allCases.map { ($0.rawValue, $0.displayName) }
-                )
-
-                sliderRow(
-                    title: "Hero Size",
-                    description: "Scale the large banner / detail artwork.",
-                    value: $experimentalHeroHeightScale,
-                    range: 0.75...1.15,
-                    step: 0.05
-                )
-
-                sliderRow(
-                    title: "Section Spacing",
-                    description: "Vertical rhythm between shelves.",
-                    value: $experimentalSectionSpacingScale,
-                    range: 0.75...1.35,
-                    step: 0.05
-                )
-
-                sliderRow(
-                    title: "Card Roundness",
-                    description: "Corner radius of cards.",
-                    value: $experimentalCardRadiusScale,
-                    range: 0.7...1.4,
-                    step: 0.05
-                )
-
-                sliderRow(
-                    title: "Card Size",
-                    description: "Scale home and reader media cards.",
-                    value: $experimentalMediaCardScale,
-                    range: 0.85...1.2,
-                    step: 0.05
-                )
-
-                sliderRow(
-                    title: "Glass Strength",
-                    description: "Translucent card and control intensity.",
-                    value: $experimentalGlassStrength,
-                    range: 0.0...1.4,
-                    step: 0.05
-                )
-
-                pickerRow(
-                    title: "Hero Banner",
-                    description: "The home catalogue used for the large banner.",
-                    selection: $heroBannerCatalogId,
-                    values: catalogManager.catalogs.sorted { $0.order < $1.order }.map { ($0.id, $0.name) }
-                )
-
-                settingRow(title: "Hero Behavior", description: "When the banner changes.") {
-                    Picker("", selection: $heroBannerBehavior) {
-                        ForEach(HeroBannerBehavior.allCases) { behavior in
-                            Text(behavior.displayName).tag(behavior.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
+            NavigationLink {
+                HomeLayoutView()
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Home Layout")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text("Size and orientation of home rows — globally or per catalog.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
                 }
+            }
+        } header: {
+            Text("Home")
+        }
+    }
 
-                toggleRow(
-                    title: "Alternative Season Menu",
-                    description: "Dropdown menus instead of horizontal scrolls for seasons, specials and OVAs.",
-                    isOn: $useSeasonMenu
-                )
-                toggleRow(
-                    title: "Horizontal Episode List",
-                    description: "Use a horizontal instead of vertical episode list.",
-                    isOn: $horizontalEpisodeList
-                )
-                toggleRow(
-                    title: "Classic Schedule Layout",
-                    description: "Original full schedule list instead of the day picker.",
-                    isOn: $useClassicScheduleUI
-                )
+    // MARK: - Detail pages
 
-                Button(action: resetAppearance) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Reset Appearance")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            Text("Restore the default theme and layout values.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Spacer()
-                        Image(systemName: "arrow.counterclockwise")
-                            .foregroundColor(accent)
+    private var detailPagesSection: some View {
+        Section {
+            toggleRow(
+                title: "Alternative Season Menu",
+                description: "Dropdown menus instead of horizontal scrolls for seasons, specials and OVAs.",
+                isOn: $useSeasonMenu
+            )
+            toggleRow(
+                title: "Horizontal Episode List",
+                description: "Use a horizontal instead of vertical episode list.",
+                isOn: $horizontalEpisodeList
+            )
+        } header: {
+            Text("Detail Pages")
+        }
+    }
+
+    // MARK: - Reset
+
+    private var resetSection: some View {
+        Section {
+            Button(action: resetAppearance) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Reset Appearance")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text("Restore the default theme and layout values.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
                     }
+                    Spacer()
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundColor(accent)
                 }
             }
         } footer: {
-            Text("Advanced controls let you fine-tune or recreate the classic look. Custom palette colors appear here when the Custom palette is selected.")
+            Text("Resets theme, layout and per-catalog overrides to their defaults.")
         }
     }
 
@@ -478,22 +424,6 @@ struct AlternativeUIView: View {
         }
     }
 
-    private func pickerRow(
-        title: String,
-        description: String,
-        selection: Binding<String>,
-        values: [(String, String)]
-    ) -> some View {
-        settingRow(title: title, description: description) {
-            Picker("", selection: selection) {
-                ForEach(values, id: \.0) { option in
-                    Text(option.1).tag(option.0)
-                }
-            }
-            .pickerStyle(.menu)
-        }
-    }
-
     private func sliderRow(
         title: String,
         description: String,
@@ -592,6 +522,8 @@ struct AlternativeUIView: View {
         experimentalCardRadiusScale = ExperimentalVisualTuning.defaultCardRadiusScale
         experimentalMediaCardScale = ExperimentalVisualTuning.defaultMediaCardScale
         experimentalGlassStrength = ExperimentalVisualTuning.defaultGlassStrength
+        homeAnimatedBackgroundEnabled = HomeAnimatedBackgroundSettings.defaultEnabled
+        HomeCatalogLayoutStore.shared.resetAll()
     }
 }
 

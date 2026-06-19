@@ -2282,21 +2282,20 @@ final class TrackerManager: NSObject, ObservableObject {
         let show: TraktShow?
     }
 
+    // Trakt's `/shows/:id/comments/:sort` and `/movies/:id/comments/:sort` endpoints
+    // return a flat array of comment objects, where `comment` is the text string and
+    // `user` is nested inside each element (NOT a `{ comment: {...}, user: {...} }` wrapper).
     private struct TraktCommentResponse: Decodable {
-        let comment: TraktComment
-        let user: TraktCommentUser?
-    }
-
-    private struct TraktComment: Decodable {
         let id: Int
         let comment: String
         let spoiler: Bool?
         let review: Bool?
         let likes: Int?
         let createdAt: String?
+        let user: TraktCommentUser?
 
         enum CodingKeys: String, CodingKey {
-            case id, comment, spoiler, review, likes
+            case id, comment, spoiler, review, likes, user
             case createdAt = "created_at"
         }
     }
@@ -2709,20 +2708,20 @@ final class TrackerManager: NSObject, ObservableObject {
             )
             let decoded = try JSONDecoder().decode([TraktCommentResponse].self, from: data)
             let comments = decoded.compactMap { response -> TraktCommentReview? in
-                guard response.comment.spoiler != true,
-                      !response.comment.comment.lowercased().contains("[spoiler]"),
-                      let cleanComment = cleanTraktComment(response.comment.comment) else {
+                guard response.spoiler != true,
+                      !response.comment.lowercased().contains("[spoiler]"),
+                      let cleanComment = cleanTraktComment(response.comment) else {
                     return nil
                 }
                 let author = response.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let username = response.user?.username?.trimmingCharacters(in: .whitespacesAndNewlines)
                 return TraktCommentReview(
-                    id: response.comment.id,
+                    id: response.id,
                     authorName: author?.isEmpty == false ? author! : (username?.isEmpty == false ? username! : "Trakt User"),
                     comment: cleanComment,
-                    likes: response.comment.likes ?? 0,
-                    createdAt: response.comment.createdAt,
-                    isReview: response.comment.review ?? false
+                    likes: response.likes ?? 0,
+                    createdAt: response.createdAt,
+                    isReview: response.review ?? false
                 )
             }
 

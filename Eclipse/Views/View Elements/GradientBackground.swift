@@ -412,6 +412,10 @@ struct ExperimentalMediaDesignMetrics {
         }
     }
 
+    /// The active media-card size multiplier. Widgets and other fixed-size rows
+    /// multiply their hardcoded dimensions by this so the size control affects them too.
+    var mediaCardScale: CGFloat { CGFloat(tuning.mediaCardScale) }
+
     private func scaled(_ size: CGSize) -> CGSize {
         CGSize(
             width: size.width * CGFloat(tuning.mediaCardScale),

@@ -315,17 +315,50 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Starts sharp and automatically lowers the inline Metal render resolution when the device gets hot, then restores it as it cools."
+            return "Starts sharp and automatically lowers Metal resolution, frame pacing, and high-bit-depth HDR work when the device gets hot, then restores quality as it cools."
         case .balanced:
-            return "Renders the inline Metal surface slightly below native resolution for lower heat with minimal visible softening."
+            return "Caps Metal/sample-buffer output below native 4K while preserving high-bit-depth HDR for lower heat with minimal visible softening."
         case .lowHeat:
-            return "Renders the inline Metal surface well below native resolution to minimize heat and power use; video looks softer."
+            return "Caps Metal/sample-buffer output aggressively and disables high-bit-depth HDR to minimize heat and power use; video looks softer."
         case .sharp:
-            return "Always renders the inline Metal surface at full native resolution for maximum sharpness at higher power cost."
+            return "Allows full-resolution Metal output and high-bit-depth HDR for maximum fidelity at higher power cost."
         }
     }
 
     static let defaultProfile: MPVMetalQualityProfile = .auto
+}
+
+/// Controls how the Metal/gpu-next renderer treats HDR (HDR10/HLG/Dolby Vision P8) content.
+enum MPVHDRMode: String, CaseIterable, Identifiable {
+    /// Pass HDR through to the display when it has EDR headroom; tone-map to SDR otherwise.
+    case auto
+    /// Always request HDR/EDR output for HDR content, regardless of display detection.
+    case hdr
+    /// Always tone-map HDR down to SDR for a consistent look across every display.
+    case sdr
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .auto: return "Auto"
+        case .hdr: return "Always HDR"
+        case .sdr: return "Always SDR"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .auto:
+            return "Outputs true HDR on HDR-capable displays and cleanly tone-maps to SDR everywhere else. Recommended."
+        case .hdr:
+            return "Always sends HDR content to the display as HDR. May look washed out or too dark on non-HDR screens."
+        case .sdr:
+            return "Always tone-maps HDR content down to SDR for a consistent picture on any display."
+        }
+    }
+
+    static let defaultMode: MPVHDRMode = .auto
 }
 
 struct MPVRenderBackendSupport {
@@ -428,6 +461,7 @@ enum ExperimentalFeatureState {
     static let mpvPreloadCellularEnabledKey = "experimentalMPVPreloadCellularEnabled"
     static let mpvPreloadWifiLimitMBKey = "experimentalMPVPreloadWifiLimitMB"
     static let mpvPreloadCellularLimitMBKey = "experimentalMPVPreloadCellularLimitMB"
+    static let mpvPreloadAutoClearKey = "experimentalMPVPreloadAutoClear"
     static let mpvShowRemainingTimeKey = "experimentalMPVShowRemainingTime"
     static let mpvPreciseProgressKey = "experimentalMPVPreciseProgress"
     static let mpvIgnoreSpecialSubtitleStylesKey = "experimentalMPVIgnoreSpecialSubtitleStyles"
@@ -450,6 +484,7 @@ enum ExperimentalFeatureState {
             mpvPreloadCellularEnabledKey: false,
             mpvPreloadWifiLimitMBKey: 256,
             mpvPreloadCellularLimitMBKey: 32,
+            mpvPreloadAutoClearKey: true,
             mpvShowRemainingTimeKey: true,
             mpvPreciseProgressKey: true,
             mpvIgnoreSpecialSubtitleStylesKey: false,
@@ -745,6 +780,17 @@ final class ExperimentalMPVPreloadManager {
         pathMonitor.start(queue: pathQueue)
 #endif
         migrateLegacyCacheFileNamesIfNeeded()
+        // Auto-clear (default ON): wipe any warmup starters left over from a previous app
+        // session at startup, so the cache never accumulates across launches. Starters are
+        // only useful within a session (30-minute TTL), so this never affects same-session
+        // warmups. When disabled, the cache is still bounded by the size limit + TTL.
+        if Self.autoClearEnabled {
+            clearCache()
+        }
+    }
+
+    static var autoClearEnabled: Bool {
+        (UserDefaults.standard.object(forKey: ExperimentalFeatureState.mpvPreloadAutoClearKey) as? Bool) ?? true
     }
 
     var cacheSizeBytes: Int64 {
@@ -1439,6 +1485,31 @@ class Settings: ObservableObject {
     var mpvAppExitPictureInPictureEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvAppExitPictureInPictureEnabled") }
+    }
+
+    var mpvHDRMode: MPVHDRMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "mpvHDRMode")
+                ?? MPVHDRMode.defaultMode.rawValue
+            return MPVHDRMode(rawValue: raw) ?? .defaultMode
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "mpvHDRMode")
+        }
+    }
+
+    /// Whether the player may request multichannel (5.1/7.1) PCM output on routes that
+    /// support it (USB-C/HDMI/AirPlay). Built-in speakers always remain stereo. Defaults on.
+    var mpvSurroundSoundEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: "mpvSurroundSoundEnabled") == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: "mpvSurroundSoundEnabled")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "mpvSurroundSoundEnabled")
+        }
     }
 
     var smartInAppPlayerChoosingEnabled: Bool {

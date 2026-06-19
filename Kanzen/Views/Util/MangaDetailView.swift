@@ -223,6 +223,7 @@ struct MangaDetailView: View {
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { scrollOffset = $0 }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .ignoresSafeArea(edges: .top)
         .background(readerDetailBackground.ignoresSafeArea())
         .sheet(isPresented: $showAddToCollection) {
             MangaAddToCollectionView(item: libraryItem)
@@ -370,7 +371,6 @@ struct MangaDetailView: View {
             .offset(y: yOffset)
         }
         .frame(height: heroHeight)
-        .clipped()
     }
 
     @ViewBuilder

@@ -155,6 +155,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(playerOpenSubtitlesAutoFallbackEnabled, forKey: "playerOpenSubtitlesAutoFallbackEnabled") }
     }
 
+    @Published var playerSubtitleAppearanceEnabled: Bool {
+        didSet { UserDefaults.standard.set(playerSubtitleAppearanceEnabled, forKey: "playerSubtitleAppearanceEnabled") }
+    }
+
     @Published var mpvForegroundFPS: Int {
         didSet { UserDefaults.standard.set(mpvForegroundFPS == 60 ? 60 : 30, forKey: "mpvForegroundFPS") }
     }
@@ -169,6 +173,14 @@ final class PlayerSettingsStore: ObservableObject {
 
     @Published var mpvAppExitPictureInPictureEnabled: Bool {
         didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
+    }
+
+    @Published var mpvHDRMode: MPVHDRMode {
+        didSet { UserDefaults.standard.set(mpvHDRMode.rawValue, forKey: "mpvHDRMode") }
+    }
+
+    @Published var mpvSurroundSoundEnabled: Bool {
+        didSet { UserDefaults.standard.set(mpvSurroundSoundEnabled, forKey: "mpvSurroundSoundEnabled") }
     }
 
     @Published var experimentalMPVPreloadEnabled: Bool {
@@ -189,6 +201,10 @@ final class PlayerSettingsStore: ObservableObject {
 
     @Published var experimentalMPVPreloadCellularLimitMB: Int {
         didSet { UserDefaults.standard.set(max(8, min(experimentalMPVPreloadCellularLimitMB, 256)), forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey) }
+    }
+
+    @Published var experimentalMPVPreloadAutoClearEnabled: Bool {
+        didSet { UserDefaults.standard.set(experimentalMPVPreloadAutoClearEnabled, forKey: ExperimentalFeatureState.mpvPreloadAutoClearKey) }
     }
 
     @Published var experimentalMPVShowRemainingTime: Bool {
@@ -313,6 +329,7 @@ final class PlayerSettingsStore: ObservableObject {
         self.playerDoubleTapSeekSeconds = Self.migratedDouble(genericKey: "playerDoubleTapSeekSeconds", legacyKey: "vlcDoubleTapSeekSeconds", defaultValue: 10.0)
         self.playerOpenSubtitlesEnabled = Self.migratedBool(genericKey: "playerOpenSubtitlesEnabled", legacyKey: "vlcOpenSubtitlesEnabled", defaultValue: false)
         self.playerOpenSubtitlesAutoFallbackEnabled = Self.migratedBool(genericKey: "playerOpenSubtitlesAutoFallbackEnabled", legacyKey: "vlcOpenSubtitlesAutoFallbackEnabled", defaultValue: true)
+        self.playerSubtitleAppearanceEnabled = Self.migratedBool(genericKey: "playerSubtitleAppearanceEnabled", legacyKey: "enableVLCSubtitleEditMenu", defaultValue: true)
 
         self.mpvForegroundFPS = UserDefaults.standard.integer(forKey: "mpvForegroundFPS") == 60 ? 60 : 30
         let backendRaw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
@@ -320,6 +337,11 @@ final class PlayerSettingsStore: ObservableObject {
         let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
         self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
         self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
+        let hdrModeRaw = UserDefaults.standard.string(forKey: "mpvHDRMode") ?? MPVHDRMode.defaultMode.rawValue
+        self.mpvHDRMode = MPVHDRMode(rawValue: hdrModeRaw) ?? .defaultMode
+        self.mpvSurroundSoundEnabled = UserDefaults.standard.object(forKey: "mpvSurroundSoundEnabled") == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: "mpvSurroundSoundEnabled")
 
         ExperimentalFeatureState.registerDefaults()
         self.experimentalMPVPreloadEnabled = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey)
@@ -329,6 +351,7 @@ final class PlayerSettingsStore: ObservableObject {
         self.experimentalMPVPreloadWifiLimitMB = wifiLimit > 0 ? wifiLimit : 256
         let cellularLimit = UserDefaults.standard.integer(forKey: ExperimentalFeatureState.mpvPreloadCellularLimitMBKey)
         self.experimentalMPVPreloadCellularLimitMB = cellularLimit > 0 ? cellularLimit : 32
+        self.experimentalMPVPreloadAutoClearEnabled = (UserDefaults.standard.object(forKey: ExperimentalFeatureState.mpvPreloadAutoClearKey) as? Bool) ?? true
         self.experimentalMPVShowRemainingTime = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
         self.experimentalMPVPreciseProgress = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         self.experimentalMPVIgnoreSpecialSubtitleStyles = UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
@@ -345,6 +368,9 @@ struct PlayerSettingsView: View {
     @State private var subtitleFontSizePresetName: String = "Medium"
     @State private var subtitleVerticalOffset: Double = -6.0
     @State private var expandedGroups: Set<String> = []
+    @AppStorage("enableSubtitlesByDefault") private var enableSubtitlesByDefault = false
+    @AppStorage("defaultSubtitleLanguage") private var defaultSubtitleLanguage = "eng"
+    @AppStorage("preferredAnimeAudioLanguage") private var preferredAnimeAudioLanguage = "jpn"
     private let playbackSpeedOptions: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     private let doubleTapSeekOptions: [Double] = [5, 10, 15, 20, 30, 45, 60]
     private let mpvForegroundFPSOptions: [Int] = [30, 60]
@@ -527,23 +553,17 @@ struct PlayerSettingsView: View {
             settingsToggleRow(
                 title: "Enable Subtitles by Default",
                 detail: "Automatically load and display subtitles when available.",
-                binding: Binding(
-                    get: { UserDefaults.standard.bool(forKey: "enableSubtitlesByDefault") },
-                    set: { UserDefaults.standard.set($0, forKey: "enableSubtitlesByDefault") }
-                )
+                binding: $enableSubtitlesByDefault
             )
 
             GlassDivider(leadingInset: 16)
 
             NavigationLink(destination: PlayerLanguageSelectionView(
                 title: "Default Subtitle Language",
-                selectedLanguage: Binding(
-                    get: { UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng" },
-                    set: { UserDefaults.standard.set($0, forKey: "defaultSubtitleLanguage") }
-                )
+                selectedLanguage: $defaultSubtitleLanguage
             )) {
                 GlassDetailRow(title: "Default Subtitle Language", subtitle: "Language preference for subtitles.") {
-                    valueChevron(getLanguageName(UserDefaults.standard.string(forKey: "defaultSubtitleLanguage") ?? "eng"))
+                    valueChevron(getLanguageName(defaultSubtitleLanguage))
                 }
             }
             .buttonStyle(.plain)
@@ -552,13 +572,10 @@ struct PlayerSettingsView: View {
 
             NavigationLink(destination: PlayerLanguageSelectionView(
                 title: "Preferred Anime Audio",
-                selectedLanguage: Binding(
-                    get: { UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn" },
-                    set: { UserDefaults.standard.set($0, forKey: "preferredAnimeAudioLanguage") }
-                )
+                selectedLanguage: $preferredAnimeAudioLanguage
             )) {
                 GlassDetailRow(title: "Preferred Anime Audio", subtitle: "Audio language for anime content.") {
-                    valueChevron(getLanguageName(UserDefaults.standard.string(forKey: "preferredAnimeAudioLanguage") ?? "jpn"))
+                    valueChevron(getLanguageName(preferredAnimeAudioLanguage))
                 }
             }
             .buttonStyle(.plain)
@@ -569,6 +586,13 @@ struct PlayerSettingsView: View {
     private var subtitleAppearanceGroup: some View {
         disclosureHeader("Subtitle Appearance", icon: "textformat.size", iconColor: .purple, key: "subAppearance")
         if isExpanded("subAppearance") {
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(
+                title: "Subtitle Edit Menu",
+                detail: "Show subtitle color, outline, size, and position controls in the in-player MPV subtitle menu.",
+                binding: $store.playerSubtitleAppearanceEnabled
+            )
+
             GlassDivider(leadingInset: 16)
             GlassDetailRow(title: "Subtitle Text Color", subtitle: "Default color for in-app subtitle rendering.") {
                 Picker("", selection: subtitleTextColorBinding) {
@@ -674,8 +698,26 @@ struct PlayerSettingsView: View {
                 }
 
                 GlassDivider(leadingInset: 16)
+                GlassDetailRow(title: "HDR Output", subtitle: "How HDR video (HDR10/HLG/Dolby Vision) is sent to the display.\n\(store.mpvHDRMode.settingsDescription)") {
+                    Picker("", selection: $store.mpvHDRMode) {
+                        ForEach(MPVHDRMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.white.opacity(0.7))
+                }
+
+                GlassDivider(leadingInset: 16)
             }
 
+            settingsToggleRow(
+                title: "Surround Sound",
+                detail: "Output 5.1/7.1 audio on connected receivers (USB-C, HDMI, AirPlay) when the track has it. Built-in speakers always play stereo.",
+                binding: $store.mpvSurroundSoundEnabled
+            )
+
+            GlassDivider(leadingInset: 16)
             GlassDetailRow(title: "Inline Frame Rate", subtitle: "Most media will look normal in 30 fps, but in the rare case of 60fps media, switch this to 60 fps.") {
                 Picker("", selection: $store.mpvForegroundFPS) {
                     ForEach(mpvForegroundFPSOptions, id: \.self) { fps in
@@ -877,9 +919,11 @@ struct PlayerSettingsView: View {
             GlassDivider(leadingInset: 16)
             settingsToggleRow(title: "Stream Warmup Cache", detail: "Route compatible HTTP streams through a cache-aware MPV proxy that can reuse starter bytes for faster retries and reloads.", binding: $store.experimentalMPVPreloadEnabled)
             GlassDivider(leadingInset: 16)
-            settingsToggleRow(title: "Next Episode Staging", detail: "Pre-resolve the next episode preview near the end of MPV playback. Stream selection still uses the normal next-episode flow.", binding: $store.experimentalMPVSmoothTransitionEnabled)
+            settingsToggleRow(title: "Next Episode Staging", detail: "Near the end of MPV playback, pre-resolve and warm the next episode's stream so it starts faster. Requires Auto Mode.", binding: $store.experimentalMPVSmoothTransitionEnabled)
             GlassDivider(leadingInset: 16)
             settingsToggleRow(title: "Allow Cellular Warmup", detail: "Keep off for sideloaded or metered setups unless you explicitly want small stream warmups on cellular.", binding: $store.experimentalMPVPreloadCellularEnabled)
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(title: "Auto-Clear Warmup Cache", detail: "Wipe leftover warmup data each time Eclipse launches so it never piles up. Recommended on.", binding: $store.experimentalMPVPreloadAutoClearEnabled)
             GlassDivider(leadingInset: 16)
             GlassDetailRow(title: "Wi-Fi Cache Limit", subtitle: "\(store.experimentalMPVPreloadWifiLimitMB) MB for MPV stream warmup cache.") {
                 Stepper("", value: $store.experimentalMPVPreloadWifiLimitMB, in: 32...2048, step: 32)
@@ -896,6 +940,7 @@ struct PlayerSettingsView: View {
             settingsToggleRow(title: "Precise Progress Adjustment", detail: "Use finer slider updates for MPV progress adjustments.", binding: $store.experimentalMPVPreciseProgress)
             GlassDivider(leadingInset: 16)
             settingsToggleRow(title: "Ignore Special Subtitle Styles", detail: "Prefer app subtitle styling over embedded ASS effects when MPV exposes compatible tracks.", binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles)
+            GlassSectionFooter("These are best-effort accelerations. Because sources differ wildly in how they serve streams, warmup and next-episode staging won't always kick in — playback still works normally when they don't.")
         }
     }
 
@@ -935,8 +980,9 @@ struct PlayerSettingsView: View {
         Binding(
             get: { subtitleStrokeWidth },
             set: {
-                subtitleStrokeWidth = $0
-                UserDefaults.standard.set($0, forKey: "subtitles_strokeWidth")
+                let clamped = max(0, min($0, 2.0))
+                subtitleStrokeWidth = clamped
+                UserDefaults.standard.set(clamped, forKey: "subtitles_strokeWidth")
             }
         )
     }
@@ -969,8 +1015,9 @@ struct PlayerSettingsView: View {
         Binding(
             get: { subtitleVerticalOffset },
             set: { selectedValue in
-                subtitleVerticalOffset = selectedValue
-                UserDefaults.standard.set(selectedValue, forKey: "playerSubtitleOverlayBottomConstant")
+                let clamped = max(-24, min(selectedValue, 24))
+                subtitleVerticalOffset = clamped
+                UserDefaults.standard.set(clamped, forKey: "playerSubtitleOverlayBottomConstant")
             }
         )
     }
@@ -1005,8 +1052,12 @@ struct PlayerSettingsView: View {
         let strokeColor = loadSubtitleColor(forKey: "subtitles_strokeColor", defaultColor: .black)
         subtitleStrokeColorName = subtitleStrokeColorOptions.first(where: { $0.color.isEqual(strokeColor) })?.name ?? "Black"
 
-        let savedStrokeWidth = UserDefaults.standard.double(forKey: "subtitles_strokeWidth")
-        subtitleStrokeWidth = savedStrokeWidth >= 0 ? savedStrokeWidth : 1.0
+        if UserDefaults.standard.object(forKey: "subtitles_strokeWidth") != nil {
+            let savedStrokeWidth = UserDefaults.standard.double(forKey: "subtitles_strokeWidth")
+            subtitleStrokeWidth = max(0, min(savedStrokeWidth, 2.0))
+        } else {
+            subtitleStrokeWidth = 1.0
+        }
 
         let savedFontSize = UserDefaults.standard.double(forKey: "subtitles_fontSize")
         let resolvedFontSize = savedFontSize > 0 ? savedFontSize : 30.0
@@ -1022,6 +1073,6 @@ struct PlayerSettingsView: View {
             UserDefaults.standard.set(UserDefaults.standard.double(forKey: "vlcSubtitleOverlayBottomConstant"), forKey: "playerSubtitleOverlayBottomConstant")
         }
         let savedBottomConstant = UserDefaults.standard.double(forKey: "playerSubtitleOverlayBottomConstant")
-        subtitleVerticalOffset = UserDefaults.standard.object(forKey: "playerSubtitleOverlayBottomConstant") != nil ? savedBottomConstant : -6.0
+        subtitleVerticalOffset = UserDefaults.standard.object(forKey: "playerSubtitleOverlayBottomConstant") != nil ? max(-24, min(savedBottomConstant, 24)) : -6.0
     }
 }

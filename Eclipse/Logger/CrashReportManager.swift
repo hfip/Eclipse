@@ -39,7 +39,7 @@ final class CrashReportManager {
         )
 
         guard let reporter = PLCrashReporter(configuration: config) else {
-            Logger.shared.log("[CrashReporter] Failed to create PLCrashReporter instance", type: "CrashProbe")
+            Logger.shared.log("[CrashReporter] Failed to create PLCrashReporter instance", type: "CrashReporter")
             return
         }
 
@@ -47,13 +47,13 @@ final class CrashReportManager {
 
         do {
             try reporter.enableAndReturnError()
-            Logger.shared.log("[CrashReporter] Native crash reporter enabled", type: "CrashProbe")
+            Logger.shared.log("[CrashReporter] Native crash reporter enabled", type: "CrashReporter")
             collectPendingCrashReportIfNeeded(from: reporter)
         } catch {
-            Logger.shared.log("[CrashReporter] Failed to enable native crash reporter: \(error.localizedDescription)", type: "CrashProbe")
+            Logger.shared.log("[CrashReporter] Failed to enable native crash reporter: \(error.localizedDescription)", type: "CrashReporter")
         }
 #else
-        Logger.shared.log("[CrashReporter] CrashReporter module unavailable; native crash capture disabled", type: "CrashProbe")
+        Logger.shared.log("[CrashReporter] CrashReporter module unavailable; native crash capture disabled", type: "CrashReporter")
 #endif
     }
 
@@ -80,9 +80,9 @@ final class CrashReportManager {
                 try? text.write(to: crashReportURL, atomically: true, encoding: .utf8)
             }
 
-            Logger.shared.log("[CrashReporter] Captured pending native crash report bytes=\(data.count)", type: "CrashProbe")
+            Logger.shared.log("[CrashReporter] Captured pending native crash report bytes=\(data.count)", type: "CrashReporter")
         } catch {
-            Logger.shared.log("[CrashReporter] Failed to load pending native crash report: \(error.localizedDescription)", type: "CrashProbe")
+            Logger.shared.log("[CrashReporter] Failed to load pending native crash report: \(error.localizedDescription)", type: "CrashReporter")
         }
 
         reporter.purgePendingCrashReport()

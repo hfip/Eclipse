@@ -44,6 +44,8 @@
 		13830AEC2E55BD9200B3CDE4 /* AlgorithmManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13830AEB2E55BD9200B3CDE4 /* AlgorithmManager.swift */; };
 		13830AEE2E55BEDD00B3CDE4 /* JaroWinklerSimilarity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13830AED2E55BEDD00B3CDE4 /* JaroWinklerSimilarity.swift */; };
 		13830AF22E55F51300B3CDE4 /* AlternativeUIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13830AF12E55F51300B3CDE4 /* AlternativeUIView.swift */; };
+		14CC00040000000000CC0004 /* HomeLayoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14CC00030000000000CC0003 /* HomeLayoutView.swift */; };
+		14CC00020000000000CC0002 /* HomeCatalogLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14CC00010000000000CC0001 /* HomeCatalogLayout.swift */; };
 		13830AF42E55F5FF00B3CDE4 /* AccentColorManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13830AF32E55F5FF00B3CDE4 /* AccentColorManager.swift */; };
 		139509A22E7DDAE100CB60D4 /* PlayerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139509A12E7DDAE100CB60D4 /* PlayerSettingsView.swift */; };
 		BB7777912F20000000BB7791 /* PlayerLanguageSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB7777902F20000000BB7790 /* PlayerLanguageSelectionView.swift */; };
@@ -108,6 +110,7 @@
 		13F0729D2E4B2D9200EF90EB /* JSController-Search.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072702E4B2D9000EF90EB /* JSController-Search.swift */; };
 		13F0729E2E4B2D9200EF90EB /* JSController-Details.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072712E4B2D9000EF90EB /* JSController-Details.swift */; };
 		13F0729F2E4B2D9200EF90EB /* ServiceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072722E4B2D9000EF90EB /* ServiceManager.swift */; };
+		14CC00060000000000CC0006 /* AutoModeStreamSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14CC00050000000000CC0005 /* AutoModeStreamSelection.swift */; };
 		13F072A02E4B2D9200EF90EB /* JSController-Streams.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072732E4B2D9000EF90EB /* JSController-Streams.swift */; };
 		13F072A12E4B2D9200EF90EB /* JSController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072742E4B2D9000EF90EB /* JSController.swift */; };
 		13F072A22E4B2D9200EF90EB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F072772E4B2D9000EF90EB /* SettingsView.swift */; };
@@ -235,6 +238,7 @@
 		13830AEB2E55BD9200B3CDE4 /* AlgorithmManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AlgorithmManager.swift; sourceTree = "<group>"; };
 		13830AED2E55BEDD00B3CDE4 /* JaroWinklerSimilarity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JaroWinklerSimilarity.swift; sourceTree = "<group>"; };
 		13830AF12E55F51300B3CDE4 /* AlternativeUIView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AlternativeUIView.swift; sourceTree = "<group>"; };
+		14CC00030000000000CC0003 /* HomeLayoutView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HomeLayoutView.swift; sourceTree = "<group>"; };
 		13830AF32E55F5FF00B3CDE4 /* AccentColorManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AccentColorManager.swift; sourceTree = "<group>"; };
 		139509A12E7DDAE100CB60D4 /* PlayerSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlayerSettingsView.swift; sourceTree = "<group>"; };
 		BB7777902F20000000BB7790 /* PlayerLanguageSelectionView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlayerLanguageSelectionView.swift; sourceTree = "<group>"; };
@@ -287,6 +291,7 @@
 		13F072702E4B2D9000EF90EB /* JSController-Search.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "JSController-Search.swift"; sourceTree = "<group>"; };
 		13F072712E4B2D9000EF90EB /* JSController-Details.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "JSController-Details.swift"; sourceTree = "<group>"; };
 		13F072722E4B2D9000EF90EB /* ServiceManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ServiceManager.swift; sourceTree = "<group>"; };
+		14CC00050000000000CC0005 /* AutoModeStreamSelection.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AutoModeStreamSelection.swift; sourceTree = "<group>"; };
 		13F072732E4B2D9000EF90EB /* JSController-Streams.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "JSController-Streams.swift"; sourceTree = "<group>"; };
 		13F072742E4B2D9000EF90EB /* JSController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = JSController.swift; sourceTree = "<group>"; };
 		13F072772E4B2D9000EF90EB /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -328,6 +333,7 @@
 		13F5B5942E730CB200565E75 /* TMDBContentFilter.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TMDBContentFilter.swift; sourceTree = "<group>"; };
 		14BBB0043FFF111100AAAAAA /* BackupManagementView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BackupManagementView.swift; sourceTree = "<group>"; };
 		14BBB0063FFF111100AAAAAA /* BackupManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BackupManager.swift; sourceTree = "<group>"; };
+		14CC00010000000000CC0001 /* HomeCatalogLayout.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HomeCatalogLayout.swift; sourceTree = "<group>"; };
 		AA1111102F10000000AA1110 /* TrackerManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TrackerManager.swift; sourceTree = "<group>"; };
 		AA2222202F10000000AA2220 /* TrackerModels.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TrackerModels.swift; sourceTree = "<group>"; };
 		AA3333302F10000000AA3330 /* TrackersSettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TrackersSettingsView.swift; sourceTree = "<group>"; };
@@ -891,6 +897,7 @@
 				12201F502EBE91870033073C /* ServiceStore.swift */,
 				13F0726E2E4B2D9000EF90EB /* ServicesEntity.swift */,
 				13F072722E4B2D9000EF90EB /* ServiceManager.swift */,
+				14CC00050000000000CC0005 /* AutoModeStreamSelection.swift */,
 				12201F522EBE922D0033073C /* ServiceModels.xcdatamodeld */,
 				5E1111102F60000000AE1110 /* StremioModels.swift */,
 				5E2222202F60000000AE2220 /* StremioClient.swift */,
@@ -910,6 +917,7 @@
 				139509A12E7DDAE100CB60D4 /* PlayerSettingsView.swift */,
 				BB7777902F20000000BB7790 /* PlayerLanguageSelectionView.swift */,
 				13830AF12E55F51300B3CDE4 /* AlternativeUIView.swift */,
+				14CC00030000000000CC0003 /* HomeLayoutView.swift */,
 				13F072792E4B2D9000EF90EB /* ServicesView.swift */,
 				5E2222202F70000000AE2220 /* StremioConfigureView.swift */,
 				BEEF00132FE2000000BEEF13 /* NuvioPluginsView.swift */,
@@ -947,6 +955,7 @@
 			children = (
 				13F5B5932E730B0200565E75 /* Library */,
 				14BBB0063FFF111100AAAAAA /* BackupManager.swift */,
+				14CC00010000000000CC0001 /* HomeCatalogLayout.swift */,
 				13C6F3452EA4C6BC00DECD2B /* CacheManager.swift */,
 				DD1111102FB0000000DD1110 /* DownloadManager.swift */,
 				DD1111142FB0000000DD1114 /* HLSDownloader.swift */,
@@ -1125,6 +1134,7 @@
 				13F072AC2E4B2D9200EF90EB /* Shows-Details.swift in Sources */,
 				13E1EDDD2ED9E66000087629 /* KanzenOutputFormatter.swift in Sources */,
 				13830AF22E55F51300B3CDE4 /* AlternativeUIView.swift in Sources */,
+				14CC00040000000000CC0004 /* HomeLayoutView.swift in Sources */,
 				13F072BA2E4B2D9200EF90EB /* TMDBService.swift in Sources */,
 				13F072C22E4B2D9200EF90EB /* AniListService.swift in Sources */,
 				13E1EDE82ED9E66000087629 /* MainMenu.swift in Sources */,
@@ -1211,6 +1221,7 @@
 				13830AF42E55F5FF00B3CDE4 /* AccentColorManager.swift in Sources */,
 				13F072A12E4B2D9200EF90EB /* JSController.swift in Sources */,
 				13F0729F2E4B2D9200EF90EB /* ServiceManager.swift in Sources */,
+				14CC00060000000000CC0006 /* AutoModeStreamSelection.swift in Sources */,
 				12201F512EBE918D0033073C /* ServiceStore.swift in Sources */,
 				5E1111112F60000000AE1111 /* StremioModels.swift in Sources */,
 				5E2222212F60000000AE2221 /* StremioClient.swift in Sources */,
@@ -1225,6 +1236,7 @@
 				13F187AC2E6F38CE00747F7E /* LibraryManager.swift in Sources */,
 				14BBB0033FFF111100AAAAAA /* BackupManagementView.swift in Sources */,
 				14BBB0053FFF111100AAAAAA /* BackupManager.swift in Sources */,
+				14CC00020000000000CC0002 /* HomeCatalogLayout.swift in Sources */,
 				FF1111112F30000000FF1111 /* AniListMangaService.swift in Sources */,
 				FF2222222F30000000FF2222 /* MangaCatalogManager.swift in Sources */,
 				FF3333332F30000000FF3333 /* MangaHomeViewModel.swift in Sources */,
@@ -1520,7 +1532,7 @@
 			repositoryURL = "https://github.com/Soupy-dev/MPVKit";
 			requirement = {
 				kind = revision;
-				revision = 80a278beba7e6a348cdb2269f4d9816b7a520038;
+				revision = 2861ff1a95b85ce03b525dc50cd9f75ef984fe88;
 			};
 		};
 		13A46CFB2EF5943400423BC6 /* XCRemoteSwiftPackageReference "FakeWebKit" */ = {

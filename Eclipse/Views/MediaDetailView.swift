@@ -140,6 +140,7 @@ struct MediaDetailView: View {
     @ObservedObject private var downloadManager = DownloadManager.shared
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var theme = EclipseTheme.shared
+    @StateObject private var accentManager = AccentColorManager.shared
     private let progressManager = ProgressManager.shared
     
     @Environment(\.presentationMode) var presentationMode
@@ -311,7 +312,6 @@ struct MediaDetailView: View {
     }
     
     var body: some View {
-        let _ = Logger.shared.log("MediaDetailView body evaluate: id=\(searchResult.id) type=\(searchResult.mediaType) isLoading=\(isLoading) hasLoaded=\(hasLoadedContent) error=\(errorMessage != nil) movieDetail=\(movieDetail != nil) tvDetail=\(tvShowDetail != nil) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil") seasonDetailEpisodes=\(seasonDetail?.episodes.count ?? 0) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") sheets=play:\(showingSearchResults),download:\(showingDownloadSheet)", type: "CrashProbe")
         ZStack {
             EclipseTheme.shared.backgroundBase
                 .ignoresSafeArea(.all)
@@ -320,13 +320,10 @@ struct MediaDetailView: View {
                 .ignoresSafeArea(.all)
 
             if isLoading {
-                let _ = Logger.shared.log("MediaDetailView body branch loading: id=\(searchResult.id)", type: "CrashProbe")
                 loadingView
             } else if let errorMessage = errorMessage {
-                let _ = Logger.shared.log("MediaDetailView body branch error: id=\(searchResult.id) message=\(errorMessage)", type: "CrashProbe")
                 errorView(errorMessage)
             } else {
-                let _ = Logger.shared.log("MediaDetailView body branch content: id=\(searchResult.id) isMovie=\(searchResult.isMovie)", type: "CrashProbe")
                 mainScrollView
             }
 #if !os(tvOS)
@@ -342,11 +339,9 @@ struct MediaDetailView: View {
         }
 #endif
         .onAppear {
-            Logger.shared.log("MediaDetailView onAppear: id=\(searchResult.id) hasLoaded=\(hasLoadedContent) isLoading=\(isLoading) taskActive=\(detailLoadTask != nil)", type: "CrashProbe")
             if !hasLoadedContent {
                 loadMediaDetails()
             } else {
-                Logger.shared.log("MediaDetailView onAppear using existing loaded state: id=\(searchResult.id) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
                 startTraktFeatureLoad()
                 startExperimentalExtrasLoadIfNeeded()
             }
@@ -354,14 +349,10 @@ struct MediaDetailView: View {
         }
         .onDisappear {
             if let detailLoadTask {
-                Logger.shared.log("MediaDetail load task cancelled on disappear: id=\(searchResult.id)", type: "CrashProbe")
                 detailLoadTask.cancel()
                 self.detailLoadTask = nil
-            } else {
-                Logger.shared.log("MediaDetailView onDisappear: id=\(searchResult.id) no active load task", type: "CrashProbe")
             }
             if let specialsLoadTask {
-                Logger.shared.log("MediaDetail specials load task cancelled on disappear: id=\(searchResult.id)", type: "CrashProbe")
                 specialsLoadTask.cancel()
                 self.specialsLoadTask = nil
             }
@@ -383,19 +374,16 @@ struct MediaDetailView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestNextEpisode)) { notification in
-            Logger.shared.log("MediaDetailView nextEpisode notification received: id=\(searchResult.id) userInfo=\(notification.userInfo ?? [:])", type: "CrashProbe")
             guard let userInfo = notification.userInfo,
                   let tmdbId = userInfo["tmdbId"] as? Int,
                   tmdbId == searchResult.id,
                   let seasonNumber = userInfo["seasonNumber"] as? Int,
                   let episodeNumber = userInfo["episodeNumber"] as? Int else {
-                Logger.shared.log("MediaDetailView nextEpisode ignored: id=\(searchResult.id) did not match/parse", type: "CrashProbe")
                 return
             }
 
             if let specialContext = selectedSpecialEpisodeContext,
                let nextSpecialEpisode = specialContext.episodes.first(where: { $0.seasonNumber == seasonNumber && $0.episodeNumber == episodeNumber }) {
-                Logger.shared.log("MediaDetailView nextEpisode matched special: id=\(searchResult.id) S\(seasonNumber)E\(episodeNumber) delay=\(nextEpisodeSheetPresentationDelay)", type: "CrashProbe")
                 selectedEpisodeForSearch = nextSpecialEpisode
                 scheduleNextEpisodePresentation {
                     beginSpecialSearch(context: specialContext, episode: nextSpecialEpisode)
@@ -406,11 +394,9 @@ struct MediaDetailView: View {
             // Find the next episode in the current season detail
             if let episodes = seasonDetail?.episodes,
                let nextEp = episodes.first(where: { $0.seasonNumber == seasonNumber && $0.episodeNumber == episodeNumber }) {
-                Logger.shared.log("MediaDetailView nextEpisode matched: id=\(searchResult.id) S\(seasonNumber)E\(episodeNumber) delay=\(nextEpisodeSheetPresentationDelay)", type: "CrashProbe")
                 selectedEpisodeForSearch = nextEp
                 showingSearchResults = false
                 scheduleNextEpisodePresentation {
-                    Logger.shared.log("MediaDetailView nextEpisode presenting search sheet: id=\(searchResult.id) S\(seasonNumber)E\(episodeNumber)", type: "CrashProbe")
                     playSheetRequestId = UUID()
                     showingSearchResults = true
                 }
@@ -419,32 +405,14 @@ struct MediaDetailView: View {
             }
         }
         .onChangeComp(of: libraryManager.collections) { _, _ in
-            Logger.shared.log("MediaDetailView collections changed: id=\(searchResult.id)", type: "CrashProbe")
             updateBookmarkStatus()
         }
-        .onChangeComp(of: isLoading) { _, newValue in
-            Logger.shared.log("MediaDetailView isLoading changed: id=\(searchResult.id) isLoading=\(newValue)", type: "CrashProbe")
-        }
-        .onChangeComp(of: hasLoadedContent) { _, newValue in
-            Logger.shared.log("MediaDetailView hasLoadedContent changed: id=\(searchResult.id) hasLoaded=\(newValue)", type: "CrashProbe")
-        }
-        .onChangeComp(of: selectedSeason?.seasonNumber) { _, newValue in
-            Logger.shared.log("MediaDetailView selectedSeason changed: id=\(searchResult.id) season=\(newValue?.description ?? "nil")", type: "CrashProbe")
-        }
-        .onChangeComp(of: seasonDetail?.episodes.count) { _, newValue in
-            Logger.shared.log("MediaDetailView seasonDetail episode count changed: id=\(searchResult.id) count=\(newValue?.description ?? "nil")", type: "CrashProbe")
-        }
-        .onChangeComp(of: selectedEpisodeForSearch?.id) { _, _ in
-            Logger.shared.log("MediaDetailView selectedEpisode changed: id=\(searchResult.id) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber):id\($0.id)" } ?? "nil")", type: "CrashProbe")
-        }
         .onChangeComp(of: showingSearchResults) { _, newValue in
-            Logger.shared.log("MediaDetailView showingSearchResults changed: id=\(searchResult.id) visible=\(newValue) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
             if !newValue {
                 refreshDetailContentLayout(reason: "play sheet dismissed")
             }
         }
         .onChangeComp(of: showingDownloadSheet) { _, newValue in
-            Logger.shared.log("MediaDetailView showingDownloadSheet changed: id=\(searchResult.id) visible=\(newValue) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
             if !newValue {
                 refreshDetailContentLayout(reason: "download sheet dismissed")
             }
@@ -467,7 +435,6 @@ struct MediaDetailView: View {
             invalidatePendingNextEpisodePresentation()
         }
         .sheet(isPresented: $showingSearchResults) {
-            let _ = Logger.shared.log("MediaDetailView constructing play sheet: id=\(searchResult.id) isAnime=\(isAnimeShow) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") autoMode=\(UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"))", type: "CrashProbe")
             let playbackContext = playbackContextForSearchSheet(selectedEpisodeForSearch)
             ModulesSearchResultsSheet(
                 mediaTitle: {
@@ -500,7 +467,6 @@ struct MediaDetailView: View {
             .id(playSheetRequestId)
         }
         .sheet(isPresented: $showingDownloadSheet) {
-            let _ = Logger.shared.log("MediaDetailView constructing download sheet: id=\(searchResult.id) isAnime=\(isAnimeShow) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") autoMode=\(UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"))", type: "CrashProbe")
             let playbackContext = playbackContextForSearchSheet(selectedEpisodeForSearch)
             ModulesSearchResultsSheet(
                 mediaTitle: {
@@ -552,7 +518,6 @@ struct MediaDetailView: View {
             )
         }
         .sheet(isPresented: $showingAddToCollection) {
-            let _ = Logger.shared.log("MediaDetailView constructing add-to-collection sheet: id=\(searchResult.id)", type: "CrashProbe")
             AddToCollectionView(searchResult: searchResult)
         }
     }
@@ -674,7 +639,6 @@ struct MediaDetailView: View {
     
     @ViewBuilder
     private var mainScrollView: some View {
-        let _ = Logger.shared.log("MediaDetailView construct mainScrollView: id=\(searchResult.id) isLoading=\(isLoading) hasLoaded=\(hasLoadedContent) isAnime=\(isAnimeShow) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
         let _ = detailContentRefreshTick
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
@@ -709,7 +673,6 @@ struct MediaDetailView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             guard hasLoadedContent, !isLoading else { return }
             detailContentRefreshTick += 1
-            Logger.shared.log("MediaDetailView refreshed content layout: id=\(searchResult.id) reason=\(reason)", type: "CrashProbe")
         }
     }
 
@@ -722,6 +685,32 @@ struct MediaDetailView: View {
     
     @ViewBuilder
     private var heroImageSection: some View {
+        if ExperimentalFeatureState.isEnabledAtLaunch {
+            // Top-anchor the hero content over the lower image so that expanding
+            // the synopsis grows the section DOWNWARD (pushing the cast/episodes
+            // below it down) instead of shoving the title/buttons up. The image
+            // stays a fixed band pinned to the top; the content can extend past it
+            // onto the banner bleed.
+            ZStack(alignment: .top) {
+                heroBackdrop
+                    .frame(height: headerHeight)
+
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                        .frame(height: headerHeight * 0.40)
+                    headerSection
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+        } else {
+            ZStack(alignment: .bottom) {
+                heroBackdrop
+                headerSection
+            }
+        }
+    }
+
+    private var heroBackdrop: some View {
         ZStack(alignment: .bottom) {
             StretchyHeaderView(
                 backdropURL: detailHeroImageURL,
@@ -732,15 +721,13 @@ struct MediaDetailView: View {
                     ambientColor = color
                 }
             )
-            
+
             gradientOverlay
-            headerSection
         }
     }
     
     @ViewBuilder
     private var contentContainer: some View {
-        let _ = Logger.shared.log("MediaDetailView construct contentContainer: id=\(searchResult.id) movie=\(searchResult.isMovie) cast=\(castMembers.count)", type: "CrashProbe")
         VStack(spacing: 0) {
             VStack(
                 alignment: .leading,
@@ -782,37 +769,21 @@ struct MediaDetailView: View {
     @ViewBuilder
     private var gradientOverlay: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    // Subtle top scrim for status-bar/back-button legibility only —
-                    // soft enough not to read as a dark "box" over the artwork.
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color.black.opacity(0.22), location: 0.0),
-                            .init(color: Color.black.opacity(0.06), location: 0.55),
-                            .init(color: .clear, location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: isIPad ? 220 : 170)
-
-                    Spacer(minLength: 0)
-                }
-
-                LinearGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: heroBlendColor.opacity(0.30), location: 0.32),
-                        .init(color: heroBlendColor.opacity(0.64), location: 0.60),
-                        .init(color: heroBlendColor.opacity(0.90), location: 0.84),
-                        .init(color: heroBlendColor.opacity(1.0), location: 1.0)
-                    ]),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: max(designMetrics.heroBottomFadeHeight + 150, isIPad ? 680 : 570))
-            }
+            // Bottom fade only — the artwork stays clean to the top edge (the back
+            // and top-right buttons carry their own backings), so there is no dark
+            // "box" behind the status bar.
+            LinearGradient(
+                gradient: Gradient(stops: [
+                    .init(color: .clear, location: 0.0),
+                    .init(color: heroBlendColor.opacity(0.30), location: 0.32),
+                    .init(color: heroBlendColor.opacity(0.64), location: 0.60),
+                    .init(color: heroBlendColor.opacity(0.90), location: 0.84),
+                    .init(color: heroBlendColor.opacity(1.0), location: 1.0)
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: max(designMetrics.heroBottomFadeHeight + 150, isIPad ? 680 : 570))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .allowsHitTesting(false)
         } else {
@@ -872,7 +843,7 @@ struct MediaDetailView: View {
 
     @ViewBuilder
     private var experimentalHeaderSection: some View {
-        VStack(alignment: .center, spacing: isIPad ? 15 : 12) {
+        VStack(alignment: .center, spacing: isIPad ? 13 : 10) {
             titleArtwork
 
             if shouldShowHeroDetails, let metadata = detailMetadataLine {
@@ -1057,16 +1028,22 @@ struct MediaDetailView: View {
     @ViewBuilder
     private var experimentalHeroSynopsisSection: some View {
         if let overviewText = currentOverviewText {
-            Text(showFullSynopsis ? overviewText : String(overviewText.prefix(220)) + (overviewText.count > 220 ? "..." : ""))
+            // The hero content is top-anchored (see heroImageSection), so expanding
+            // here grows the section downward — pushing the cast/episodes below it
+            // down, never the title/buttons above it up.
+            let canExpand = overviewText.count > 150
+            Text(overviewText)
                 .font(.system(size: isIPad ? 21 : 18, weight: .regular))
                 .foregroundColor(.white.opacity(0.92))
-                .lineLimit(showFullSynopsis ? 8 : 4)
+                .lineLimit(showFullSynopsis ? nil : 4)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, isIPad ? 98 : 28)
                 .shadow(color: .black.opacity(0.60), radius: 7, x: 0, y: 3)
+                .contentShape(Rectangle())
                 .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                    guard canExpand else { return }
+                    withAnimation(.easeInOut(duration: 0.28)) {
                         showFullSynopsis.toggle()
                     }
                 }
@@ -1164,7 +1141,7 @@ struct MediaDetailView: View {
 
     @ViewBuilder
     private var experimentalPlayAndBookmarkSection: some View {
-        VStack(spacing: isIPad ? 26 : 22) {
+        VStack(spacing: isIPad ? 18 : 15) {
             Button(action: {
                 searchInServices()
             }) {
@@ -1227,7 +1204,6 @@ struct MediaDetailView: View {
     @ViewBuilder
     private var episodesSection: some View {
         if !searchResult.isMovie {
-            let _ = Logger.shared.log("MediaDetailView construct episodesSection: tmdbId=\(searchResult.id) isAnime=\(isAnimeShow) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil") anilistEpisodes=\(anilistEpisodes?.count ?? 0)", type: "CrashProbe")
             TVShowSeasonsSection(
                 tvShow: tvShowDetail,
                 isAnime: isAnimeShow,
@@ -1247,9 +1223,6 @@ struct MediaDetailView: View {
                 tmdbService: tmdbService
             ) {
                 EmptyView()
-            }
-            .onAppear {
-                Logger.shared.log("MediaDetailView episodesSection appeared: tmdbId=\(searchResult.id) isAnime=\(isAnimeShow) tvSeasons=\(tvShowDetail?.seasons.count ?? 0) selectedSeason=\(selectedSeason?.seasonNumber.description ?? "nil") anilistEpisodes=\(anilistEpisodes?.count ?? 0)", type: "CrashProbe")
             }
         }
     }
@@ -1364,12 +1337,10 @@ struct MediaDetailView: View {
     }
     
     private func toggleBookmark() {
-        Logger.shared.log("MediaDetailView toggleBookmark: id=\(searchResult.id) wasBookmarked=\(isBookmarked)", type: "CrashProbe")
         withAnimation(.easeInOut(duration: 0.2)) {
             libraryManager.toggleBookmark(for: searchResult)
             updateBookmarkStatus()
         }
-        Logger.shared.log("MediaDetailView toggleBookmark complete: id=\(searchResult.id) isBookmarked=\(isBookmarked)", type: "CrashProbe")
     }
 
     @ViewBuilder
@@ -1667,7 +1638,11 @@ struct MediaDetailView: View {
     private var specialsOVASection: some View {
         if isAnimeShow && (isLoadingAnimeSpecials || !animeSpecialEntries.isEmpty) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.title3)
+                        .foregroundStyle(accentManager.currentAccentColor)
+
                     Text("Specials & OVAs")
                         .font(.title2)
                         .fontWeight(.bold)
@@ -1676,6 +1651,15 @@ struct MediaDetailView: View {
                     if isLoadingAnimeSpecials {
                         ProgressView()
                             .scaleEffect(0.75)
+                            .padding(.leading, 2)
+                    } else if !animeSpecialEntries.isEmpty {
+                        Text("\(animeSpecialEntries.count)")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(.ultraThinMaterial, in: Capsule())
                     }
 
                     Spacer()
@@ -1688,12 +1672,13 @@ struct MediaDetailView: View {
                             .padding(.horizontal)
                     } else {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
+                            HStack(spacing: 14) {
                                 ForEach(animeSpecialEntries) { entry in
                                     specialEntryButton(entry)
                                 }
                             }
                             .padding(.horizontal)
+                            .padding(.vertical, 6)
                         }
                     }
                 }
@@ -1736,50 +1721,105 @@ struct MediaDetailView: View {
 
     @ViewBuilder
     private func specialEntryButton(_ entry: AniListSpecialSearchEntry) -> some View {
+        let isSelected = selectedSpecialEpisodeContext?.id == entry.id
+        let accent = accentManager.currentAccentColor
+        let cardWidth: CGFloat = 96
+        let posterHeight: CGFloat = 144
+
         Button(action: {
-            selectSpecialEntry(entry)
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                selectSpecialEntry(entry)
+            }
         }) {
             VStack(spacing: 8) {
-                specialPoster(urlString: entry.posterUrl, fallbackText: entry.formatLabel)
+                ZStack(alignment: .bottom) {
+                    specialPoster(urlString: entry.posterUrl, fallbackText: entry.formatLabel, width: cardWidth, height: posterHeight)
+
+                    // Bottom scrim for badge legibility
+                    LinearGradient(
+                        colors: [.clear, Color.black.opacity(0.6)],
+                        startPoint: .center,
+                        endPoint: .bottom
+                    )
+                    .frame(width: cardWidth, height: posterHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .allowsHitTesting(false)
+
+                    Text(entry.episodeCount == 1 ? entry.formatLabel : "\(entry.formatLabel) · \(entry.episodeCount)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.bottom, 7)
+                        .frame(maxWidth: cardWidth - 12)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(
+                            isSelected ? accent : Color.white.opacity(0.08),
+                            lineWidth: isSelected ? 2.5 : 1
+                        )
+                )
+                .overlay(alignment: .topTrailing) {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundColor(.white)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(accent))
+                            .overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1.5))
+                            .padding(6)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .shadow(
+                    color: isSelected ? accent.opacity(0.55) : Color.black.opacity(0.25),
+                    radius: isSelected ? 12 : 5,
+                    x: 0,
+                    y: isSelected ? 6 : 3
+                )
+                .scaleEffect(isSelected ? 1.0 : 0.96)
 
                 Text(entry.preferredTitle)
                     .font(.caption)
-                    .fontWeight(.medium)
+                    .fontWeight(isSelected ? .semibold : .medium)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .frame(width: 84, height: 34)
-                    .foregroundColor(selectedSpecialEpisodeContext?.id == entry.id ? .white : .white.opacity(0.82))
-
-                Text(entry.episodeCount == 1 ? entry.formatLabel : "\(entry.formatLabel) - \(entry.episodeCount) eps")
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .foregroundColor(.white.opacity(0.65))
-                    .frame(width: 84)
+                    .frame(width: cardWidth, height: 34, alignment: .top)
+                    .foregroundColor(isSelected ? .white : .white.opacity(0.65))
             }
         }
         .buttonStyle(PlainButtonStyle())
     }
 
     @ViewBuilder
-    private func specialPoster(urlString: String?, fallbackText: String) -> some View {
+    private func specialPoster(urlString: String?, fallbackText: String, width: CGFloat, height: CGFloat) -> some View {
         if let urlString, let url = URL(string: urlString) {
             KFImage(url)
                 .placeholder {
-                    specialPosterPlaceholder(fallbackText)
+                    specialPosterPlaceholder(fallbackText, width: width, height: height)
                 }
                 .resizable()
                 .aspectRatio(2/3, contentMode: .fill)
-                .frame(width: 80, height: 120)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .frame(width: width, height: height)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         } else {
-            specialPosterPlaceholder(fallbackText)
+            specialPosterPlaceholder(fallbackText, width: width, height: height)
         }
     }
 
-    private func specialPosterPlaceholder(_ fallbackText: String) -> some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(Color.white.opacity(0.08))
-            .frame(width: 80, height: 120)
+    private func specialPosterPlaceholder(_ fallbackText: String, width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [accentManager.currentAccentColor.opacity(0.35), Color.black.opacity(0.35)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: width, height: height)
             .overlay(
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
@@ -1789,7 +1829,7 @@ struct MediaDetailView: View {
                         .fontWeight(.bold)
                         .lineLimit(1)
                 }
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(.white.opacity(0.8))
             )
     }
 
@@ -1891,7 +1931,6 @@ struct MediaDetailView: View {
     
     private func updateBookmarkStatus() {
         isBookmarked = libraryManager.isBookmarked(searchResult)
-        Logger.shared.log("MediaDetailView updateBookmarkStatus: id=\(searchResult.id) isBookmarked=\(isBookmarked)", type: "CrashProbe")
     }
 
     private func resolveMainPlayEpisodeTarget() -> MainPlayEpisodeCandidate? {
@@ -2041,10 +2080,8 @@ struct MediaDetailView: View {
     }
     
     private func searchInServices() {
-        Logger.shared.log("MediaDetailView searchInServices begin: id=\(searchResult.id) isMovie=\(searchResult.isMovie) hasActiveSources=\(hasActiveSources) selectedEpisodeBefore=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") seasonDetailEpisodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
         if searchResult.isMovie {
             selectedEpisodeForSearch = nil
-            Logger.shared.log("MediaDetailView searchInServices movie selected: id=\(searchResult.id)", type: "CrashProbe")
             if preferDownloadedMedia,
                let item = downloadManager.completedDownloadItem(tmdbId: searchResult.id, isMovie: true) {
                 playDownloadedItem(item)
@@ -2052,7 +2089,6 @@ struct MediaDetailView: View {
             }
 
             guard hasActiveSources else { return }
-            Logger.shared.log("MediaDetailView searchInServices presenting: id=\(searchResult.id) selectedEpisode=nil", type: "CrashProbe")
             playSheetRequestId = UUID()
             showingSearchResults = true
             return
@@ -2098,7 +2134,6 @@ struct MediaDetailView: View {
         }
 
         guard hasActiveSources else { return }
-        Logger.shared.log("MediaDetailView searchInServices presenting: id=\(searchResult.id) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
         playSheetRequestId = UUID()
         showingSearchResults = true
     }
@@ -2319,23 +2354,17 @@ struct MediaDetailView: View {
     }
     
     private func downloadInServices() {
-        Logger.shared.log("MediaDetailView downloadInServices begin: id=\(searchResult.id) isMovie=\(searchResult.isMovie) hasActiveSources=\(hasActiveSources) selectedEpisodeBefore=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil") seasonDetailEpisodes=\(seasonDetail?.episodes.count ?? 0)", type: "CrashProbe")
         if !searchResult.isMovie {
             if selectedEpisodeForSearch != nil {
-                Logger.shared.log("MediaDetailView downloadInServices keeping selected episode: id=\(searchResult.id) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
             } else if let seasonDetail = seasonDetail, !seasonDetail.episodes.isEmpty {
                 selectedEpisodeForSearch = seasonDetail.episodes.first
-                Logger.shared.log("MediaDetailView downloadInServices defaulted first episode: id=\(searchResult.id) episode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
             } else {
                 selectedEpisodeForSearch = nil
-                Logger.shared.log("MediaDetailView downloadInServices no episode available: id=\(searchResult.id)", type: "CrashProbe")
             }
         } else {
             selectedEpisodeForSearch = nil
-            Logger.shared.log("MediaDetailView downloadInServices movie selected: id=\(searchResult.id)", type: "CrashProbe")
         }
         
-        Logger.shared.log("MediaDetailView downloadInServices presenting: id=\(searchResult.id) selectedEpisode=\(selectedEpisodeForSearch.map { "S\($0.seasonNumber)E\($0.episodeNumber)" } ?? "nil")", type: "CrashProbe")
         showingDownloadSheet = true
     }
     
@@ -2486,12 +2515,10 @@ struct MediaDetailView: View {
     
     private func loadMediaDetails() {
         if let existingTask = detailLoadTask {
-            Logger.shared.log("MediaDetail cancelling previous task before reload: id=\(searchResult.id)", type: "CrashProbe")
             existingTask.cancel()
             detailLoadTask = nil
         }
         if let specialsLoadTask {
-            Logger.shared.log("MediaDetail cancelling stale specials task before reload: id=\(searchResult.id)", type: "CrashProbe")
             specialsLoadTask.cancel()
             self.specialsLoadTask = nil
         }
@@ -2507,15 +2534,11 @@ struct MediaDetailView: View {
         }
         specialsLoadGeneration += 1
         let detailCacheKey = PerformanceModeSettings.detailCacheKey(for: searchResult.stableIdentity)
-        Logger.shared.log("MediaDetail load start: id=\(searchResult.id) type=\(searchResult.mediaType) title=\(searchResult.displayTitle)", type: "CrashProbe")
-        Logger.shared.log("MediaDetail cache lookup begin: key=\(detailCacheKey)", type: "CrashProbe")
 
         // Check view-level cache first for instant back-navigation
         if let cached = MediaDetailCacheStore.shared.get(key: detailCacheKey) {
-            Logger.shared.log("MediaDetail cache hit: key=\(detailCacheKey) type=\(searchResult.mediaType)", type: "CrashProbe")
             // Defer state update to next run loop tick so SwiftUI properly re-renders
             Task { @MainActor in
-                Logger.shared.log("MediaDetail cache apply begin: key=\(detailCacheKey) movie=\(cached.movieDetail != nil) tv=\(cached.tvShowDetail != nil) cachedSeasons=\(cached.tvShowDetail?.seasons.count ?? 0) cachedEpisodes=\(cached.anilistEpisodes?.count ?? 0)", type: "CrashProbe")
                 self.movieDetail = cached.movieDetail
                 self.tvShowDetail = cached.tvShowDetail
                 self.selectedSeason = cached.selectedSeason
@@ -2536,7 +2559,6 @@ struct MediaDetailView: View {
                 self.selectedSpecialEpisodeContext = nil
                 self.isLoading = false
                 self.hasLoadedContent = true
-                Logger.shared.log("MediaDetail cache state applied: key=\(detailCacheKey) tvSeasons=\(cached.tvShowDetail?.seasons.count ?? 0) selectedSeason=\(cached.selectedSeason?.seasonNumber.description ?? "nil") anilistEpisodes=\(cached.anilistEpisodes?.count ?? 0)", type: "CrashProbe")
                 if cached.isAnimeShow, !self.searchResult.isMovie, cached.animeSpecialEntries.isEmpty {
                     self.startAnimeSpecialsLoad(
                         tmdbShowId: self.searchResult.id,
@@ -2551,7 +2573,6 @@ struct MediaDetailView: View {
             }
             return
         }
-        Logger.shared.log("MediaDetail cache miss: key=\(detailCacheKey)", type: "CrashProbe")
 
         isLoading = true
         errorMessage = nil
@@ -2570,42 +2591,22 @@ struct MediaDetailView: View {
         isLoadingTraktComments = false
         isLoadingExperimentalExtras = false
         selectedSpecialEpisodeContext = nil
-        Logger.shared.log("MediaDetail scheduling async task: id=\(searchResult.id)", type: "CrashProbe")
         
         detailLoadTask = Task {
-            Logger.shared.log("MediaDetail async task entered: id=\(searchResult.id)", type: "CrashProbe")
-            defer {
-                if Task.isCancelled {
-                    Logger.shared.log("MediaDetail async task finished as cancelled: id=\(searchResult.id)", type: "CrashProbe")
-                } else {
-                    Logger.shared.log("MediaDetail async task finished: id=\(searchResult.id)", type: "CrashProbe")
-                }
-            }
             do {
                 if searchResult.isMovie {
-                    Logger.shared.log("Movie detail fetch begin: tmdbId=\(searchResult.id)", type: "CrashProbe")
-                    Logger.shared.log("Movie detail step: getMovieDetails start id=\(searchResult.id)", type: "CrashProbe")
                     let detail = try await tmdbService.getMovieDetails(id: searchResult.id)
-                    Logger.shared.log("Movie detail step: getMovieDetails done id=\(searchResult.id)", type: "CrashProbe")
 
-                    Logger.shared.log("Movie detail step: getMovieImages start id=\(searchResult.id)", type: "CrashProbe")
                     let images = try await tmdbService.getMovieImages(id: searchResult.id, preferredLanguage: selectedLanguage)
-                    Logger.shared.log("Movie detail step: getMovieImages done id=\(searchResult.id)", type: "CrashProbe")
 
-                    Logger.shared.log("Movie detail step: getRomajiTitle start id=\(searchResult.id)", type: "CrashProbe")
                     let romaji = await tmdbService.getRomajiTitle(for: "movie", id: searchResult.id)
-                    Logger.shared.log("Movie detail step: getRomajiTitle done id=\(searchResult.id)", type: "CrashProbe")
 
-                    Logger.shared.log("Movie detail step: getMovieCredits start id=\(searchResult.id)", type: "CrashProbe")
                     let credits = try? await tmdbService.getMovieCredits(id: searchResult.id)
-                    Logger.shared.log("Movie detail step: getMovieCredits done id=\(searchResult.id) cast=\(credits?.cast.count ?? 0)", type: "CrashProbe")
 
-                    Logger.shared.log("Movie detail fetch complete: tmdbId=\(searchResult.id) cast=\(credits?.cast.count ?? 0)", type: "CrashProbe")
                     
                     if Task.isCancelled { return }
                     await MainActor.run {
                         guard !Task.isCancelled else { return }
-                        Logger.shared.log("Movie detail apply state begin: tmdbId=\(searchResult.id)", type: "CrashProbe")
                         self.movieDetail = detail
                         self.synopsis = detail.overview ?? ""
                         self.romajiTitle = romaji
@@ -2639,43 +2640,31 @@ struct MediaDetailView: View {
                             castMembers: self.castMembers,
                             timestamp: Date()
                         ))
-                        Logger.shared.log("Movie detail apply state complete: tmdbId=\(searchResult.id) cast=\(self.castMembers.count) logo=\(self.logoURL != nil)", type: "CrashProbe")
                         self.startTraktFeatureLoad()
                         self.startExperimentalExtrasLoadIfNeeded()
                     }
                 } else {
-                    Logger.shared.log("TV detail fetch begin: tmdbId=\(searchResult.id)", type: "CrashProbe")
-                    Logger.shared.log("TV detail step: queue getTVShowWithSeasons id=\(searchResult.id)", type: "CrashProbe")
-                    Logger.shared.log("TV detail step: queue getTVShowImages id=\(searchResult.id)", type: "CrashProbe")
-                    Logger.shared.log("TV detail step: queue getRomajiTitle id=\(searchResult.id)", type: "CrashProbe")
-                    Logger.shared.log("TV detail step: queue getTVCredits id=\(searchResult.id)", type: "CrashProbe")
                     async let detailTask = tmdbService.getTVShowWithSeasons(id: searchResult.id)
                     async let imagesTask = tmdbService.getTVShowImages(id: searchResult.id, preferredLanguage: selectedLanguage)
                     async let romajiTask = tmdbService.getRomajiTitle(for: "tv", id: searchResult.id)
                     async let creditsTask = tmdbService.getTVCredits(id: searchResult.id)
 
                     let detail = try await detailTask
-                    Logger.shared.log("TV detail step: getTVShowWithSeasons done id=\(searchResult.id) seasons=\(detail.seasons.count)", type: "CrashProbe")
 
                     let images: TMDBImagesResponse?
                     do {
                         images = try await imagesTask
-                        Logger.shared.log("TV detail step: getTVShowImages done id=\(searchResult.id) hasImages=true", type: "CrashProbe")
                     } catch {
                         images = nil
-                        Logger.shared.log("TV detail step: getTVShowImages failed id=\(searchResult.id) error=\(error.localizedDescription)", type: "CrashProbe")
                     }
 
                     let romaji = await romajiTask
-                    Logger.shared.log("TV detail step: getRomajiTitle done id=\(searchResult.id)", type: "CrashProbe")
 
                     let credits: TMDBCreditsResponse?
                     do {
                         credits = try await creditsTask
-                        Logger.shared.log("TV detail step: getTVCredits done id=\(searchResult.id) cast=\(credits?.cast.count ?? 0)", type: "CrashProbe")
                     } catch {
                         credits = nil
-                        Logger.shared.log("TV detail step: getTVCredits failed id=\(searchResult.id) error=\(error.localizedDescription)", type: "CrashProbe")
                     }
 
                     
@@ -2729,11 +2718,9 @@ struct MediaDetailView: View {
                         resolvedAnimeRating = nil
                     }
 
-                    Logger.shared.log("TV detail step: apply state start id=\(searchResult.id)", type: "CrashProbe")
                     if Task.isCancelled { return }
                     await MainActor.run {
                         guard !Task.isCancelled else { return }
-                        Logger.shared.log("TV detail apply state on main begin: tmdbId=\(searchResult.id) detectedAsAnime=\(detectedAsAnime) animeData=\(animeData != nil) tmdbSeasons=\(detail.seasons.count)", type: "CrashProbe")
                         self.synopsis = detail.overview ?? ""
                         self.romajiTitle = romaji
                         self.isAnimeShow = detectedAsAnime
@@ -2744,7 +2731,6 @@ struct MediaDetailView: View {
                             Logger.shared.log("MediaDetailView: Using AniList structure — \(animeData.seasons.count) seasons", type: "AniList")
                             // Build AniList seasons list with TMDB-compatible fields
                             let aniSeasons: [TMDBSeason] = animeData.seasons.map { aniSeason in
-                                Logger.shared.log("MediaDetailView: converting AniList season tmdbId=\(detail.id) anilistId=\(aniSeason.anilistId) season=\(aniSeason.seasonNumber) title=\(aniSeason.title) episodes=\(aniSeason.episodes.count) poster=\(aniSeason.posterUrl != nil)", type: "CrashProbe")
                                 var posterPath: String?
                                 if let posterUrl = aniSeason.posterUrl {
                                     if posterUrl.contains("image.tmdb.org") {
@@ -2799,7 +2785,6 @@ struct MediaDetailView: View {
                             )
                             
                             self.tvShowDetail = detailWithAniSeasons
-                            Logger.shared.log("MediaDetailView: assigned detailWithAniSeasons tmdbId=\(detail.id) seasons=\(detailWithAniSeasons.seasons.count) totalEpisodes=\(detailWithAniSeasons.numberOfEpisodes ?? 0)", type: "CrashProbe")
                             
                             var seasonTitles: [Int: String] = [:]
                             var seasonRomajiTitles: [Int: String] = [:]
@@ -2807,7 +2792,6 @@ struct MediaDetailView: View {
                             var seasonKitsuIds: [Int: Int] = [:]
                             var allEpisodes: [AniListEpisode] = []
                             for season in animeData.seasons {
-                                Logger.shared.log("MediaDetailView: flatten AniList season tmdbId=\(detail.id) season=\(season.seasonNumber) title=\(season.title) episodes=\(season.episodes.count)", type: "CrashProbe")
                                 seasonTitles[season.seasonNumber] = season.title
                                 if let romaji = season.romajiTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
                                    !romaji.isEmpty {
@@ -2819,8 +2803,6 @@ struct MediaDetailView: View {
                                 }
                                 allEpisodes.append(contentsOf: season.episodes)
                             }
-                            Logger.shared.log("MediaDetailView: AniList season conversion complete tmdbId=\(detail.id) aniSeasons=\(aniSeasons.count) summary=\(aniSeasons.prefix(8).map { "s\($0.seasonNumber):id\($0.id):eps\($0.episodeCount)" }.joined(separator: "|"))", type: "CrashProbe")
-                            Logger.shared.log("MediaDetailView: anime state preassign tmdbId=\(detail.id) aniSeasons=\(aniSeasons.count) allEpisodes=\(allEpisodes.count) seasonTitles=\(seasonTitles.count)", type: "CrashProbe")
                             self.animeSeasonTitles = seasonTitles
                             self.animeSeasonRomajiTitles = seasonRomajiTitles
                             self.animeSeasonAniListIds = seasonAniListIds
@@ -2829,10 +2811,8 @@ struct MediaDetailView: View {
                             
                             if let firstSeason = aniSeasons.first {
                                 self.selectedSeason = firstSeason
-                                Logger.shared.log("MediaDetailView: selected first AniList season tmdbId=\(detail.id) season=\(firstSeason.seasonNumber) episodeCount=\(firstSeason.episodeCount)", type: "CrashProbe")
                             } else {
                                 self.selectedSeason = nil
-                                Logger.shared.log("MediaDetailView: AniList data had no seasons to select tmdbId=\(detail.id)", type: "CrashProbe")
                             }
                         } else {
                             // Fallback to TMDB seasons
@@ -2845,23 +2825,17 @@ struct MediaDetailView: View {
                             self.animeSeasonKitsuIds = [:]
                             if let firstSeason = detail.seasons.first(where: { $0.seasonNumber > 0 }) {
                                 self.selectedSeason = firstSeason
-                                Logger.shared.log("MediaDetailView: selected first TMDB season tmdbId=\(detail.id) season=\(firstSeason.seasonNumber) episodeCount=\(firstSeason.episodeCount)", type: "CrashProbe")
                             } else {
                                 self.selectedSeason = nil
-                                Logger.shared.log("MediaDetailView: TMDB detail had no positive seasons tmdbId=\(detail.id) seasons=\(detail.seasons.count)", type: "CrashProbe")
                             }
                         }
                         
                         if let images, let logo = tmdbService.getBestLogo(from: images, preferredLanguage: selectedLanguage) {
                             self.logoURL = logo.fullURL
-                            Logger.shared.log("MediaDetailView: assigned logo tmdbId=\(detail.id) hasLogo=true", type: "CrashProbe")
-                        } else {
-                            Logger.shared.log("MediaDetailView: assigned logo tmdbId=\(detail.id) hasLogo=false", type: "CrashProbe")
                         }
                         self.selectedEpisodeForSearch = nil
                         self.isLoading = false
                         self.hasLoadedContent = true
-                        Logger.shared.log("MediaDetailView: state applied tmdbId=\(searchResult.id) isAnime=\(self.isAnimeShow) tvSeasons=\(self.tvShowDetail?.seasons.count ?? 0) selectedSeason=\(self.selectedSeason?.seasonNumber.description ?? "nil") anilistEpisodes=\(self.anilistEpisodes?.count ?? 0) hasLoaded=\(self.hasLoadedContent)", type: "CrashProbe")
                         
                         // Store in view-level cache for instant back-navigation
                         MediaDetailCacheStore.shared.set(key: detailCacheKey, detail: .init(
@@ -2882,7 +2856,6 @@ struct MediaDetailView: View {
                             castMembers: self.castMembers,
                             timestamp: Date()
                         ))
-                        Logger.shared.log("MediaDetailView: cache stored key=\(detailCacheKey) selectedSeason=\(self.selectedSeason?.seasonNumber.description ?? "nil")", type: "CrashProbe")
                         if detectedAsAnime {
                             self.startAnimeSpecialsLoad(
                                 tmdbShowId: detail.id,
@@ -2897,12 +2870,9 @@ struct MediaDetailView: View {
                         self.startTraktFeatureLoad()
                         self.startExperimentalExtrasLoadIfNeeded()
                     }
-                    Logger.shared.log("TV detail fetch complete: tmdbId=\(searchResult.id)", type: "CrashProbe")
                 }
             } catch is CancellationError {
-                Logger.shared.log("MediaDetail load cancelled: id=\(searchResult.id) type=\(searchResult.mediaType)", type: "CrashProbe")
             } catch {
-                Logger.shared.log("MediaDetail load failed: id=\(searchResult.id) type=\(searchResult.mediaType) error=\(error.localizedDescription)", type: "CrashProbe")
                 await MainActor.run {
                     self.errorMessage = error.localizedDescription
                     self.isLoading = false

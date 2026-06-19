@@ -244,6 +244,7 @@ struct AidokuMangaDetailView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .ignoresSafeArea(edges: .top)
         .background(readerDetailBackground.ignoresSafeArea())
         .sheet(isPresented: $showAddToCollection) {
             MangaAddToCollectionView(item: libraryItem)
@@ -387,7 +388,6 @@ struct AidokuMangaDetailView: View {
             .offset(y: yOffset)
         }
         .frame(height: heroHeight)
-        .clipped()
     }
 
     private var creatorLine: String {

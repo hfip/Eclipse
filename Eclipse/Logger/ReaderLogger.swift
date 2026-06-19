@@ -235,7 +235,7 @@ class ReaderLogger: @unchecked Sendable {
 
         let entry = LogEntry(
             message: "Detected previous unclean reader shutdown.",
-            type: "ReaderCrashProbe",
+            type: "Shutdown",
             timestamp: Date()
         )
         appendToDisk(entry)

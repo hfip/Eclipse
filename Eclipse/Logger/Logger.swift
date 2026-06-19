@@ -57,12 +57,8 @@ class Logger: @unchecked Sendable {
         guard !trimmed.isEmpty else { return "General" }
 
         switch trimmed.lowercased() {
-        case "crashprobe", "matching", "animatch", "animap", "tmdbmatch", "mediamatch":
+        case "matching", "animatch", "animap", "tmdbmatch", "mediamatch":
             return "Matching"
-        case "mpvcrashprobe":
-            return "MPV"
-        case "vlccrashprobe":
-            return "VLC"
         default:
             return trimmed
         }
@@ -249,7 +245,7 @@ class Logger: @unchecked Sendable {
 
         let entry = LogEntry(
             message: "Detected previous unclean app shutdown (likely crash or force close).",
-            type: "CrashProbe",
+            type: "Shutdown",
             timestamp: Date()
         )
 
@@ -423,7 +419,7 @@ class Logger: @unchecked Sendable {
 
     private static func isCrashDiagnosticType(_ type: String) -> Bool {
         switch type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "crashprobe", "mpvcrashprobe", "vlccrashprobe", "vlcplayback", "vlcproxy":
+        case "vlcplayback", "vlcproxy":
             return true
         default:
             return false

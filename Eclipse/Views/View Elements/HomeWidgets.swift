@@ -58,12 +58,13 @@ struct NetworkSectionWidget: View {
     @ViewBuilder
     private func networkCard(network: WidgetNetwork, items: [TMDBSearchResult]) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let posterWidth: CGFloat = isExperimental ? (isIPad ? 124 : 96) : (isIPad ? 100 : 80)
-        let posterHeight: CGFloat = isExperimental ? (isIPad ? 178 : 142) : (isIPad ? 150 : 120)
+        let s: CGFloat = isExperimental ? metrics.mediaCardScale : 1
+        let posterWidth: CGFloat = (isExperimental ? (isIPad ? 124 : 96) : (isIPad ? 100 : 80)) * s
+        let posterHeight: CGFloat = (isExperimental ? (isIPad ? 178 : 142) : (isIPad ? 150 : 120)) * s
         let availableWidth = max(UIScreen.main.bounds.width - 44, 280)
-        let maxCardWidth: CGFloat = isIPad ? 430 : 318
+        let maxCardWidth: CGFloat = (isIPad ? 430 : 318) * s
         let cardWidth: CGFloat = isExperimental ? min(maxCardWidth, availableWidth) : (isIPad ? 340 : 260)
-        let cardHeight: CGFloat = isExperimental ? (isIPad ? 214 : 168) : (isIPad ? 190 : 160)
+        let cardHeight: CGFloat = (isExperimental ? (isIPad ? 214 : 168) : (isIPad ? 190 : 160)) * s
         let radius = isExperimental ? metrics.cardRadius : 16
 
         ZStack(alignment: .leading) {
@@ -160,12 +161,13 @@ struct GenreSectionWidget: View {
     @ViewBuilder
     private func genreCard(genre: WidgetGenre, items: [TMDBSearchResult]) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let posterWidth: CGFloat = isExperimental ? (isIPad ? 124 : 96) : (isIPad ? 100 : 80)
-        let posterHeight: CGFloat = isExperimental ? (isIPad ? 178 : 142) : (isIPad ? 150 : 120)
+        let s: CGFloat = isExperimental ? metrics.mediaCardScale : 1
+        let posterWidth: CGFloat = (isExperimental ? (isIPad ? 124 : 96) : (isIPad ? 100 : 80)) * s
+        let posterHeight: CGFloat = (isExperimental ? (isIPad ? 178 : 142) : (isIPad ? 150 : 120)) * s
         let availableWidth = max(UIScreen.main.bounds.width - 44, 280)
-        let maxCardWidth: CGFloat = isIPad ? 430 : 318
+        let maxCardWidth: CGFloat = (isIPad ? 430 : 318) * s
         let cardWidth: CGFloat = isExperimental ? min(maxCardWidth, availableWidth) : (isIPad ? 340 : 260)
-        let cardHeight: CGFloat = isExperimental ? (isIPad ? 214 : 168) : (isIPad ? 190 : 160)
+        let cardHeight: CGFloat = (isExperimental ? (isIPad ? 214 : 168) : (isIPad ? 190 : 160)) * s
         let radius = isExperimental ? metrics.cardRadius : 16
 
         ZStack(alignment: .leading) {
@@ -262,8 +264,9 @@ struct CompanySectionWidget: View {
     @ViewBuilder
     private func companyCard(company: WidgetCompany, items: [TMDBSearchResult]) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let cardWidth: CGFloat = isExperimental ? (isIPad ? 340 : 264) : (isIPad ? 300 : 232)
-        let cardHeight: CGFloat = isExperimental ? (isIPad ? 150 : 124) : 104
+        let s: CGFloat = isExperimental ? metrics.mediaCardScale : 1
+        let cardWidth: CGFloat = (isExperimental ? (isIPad ? 340 : 264) : (isIPad ? 300 : 232)) * s
+        let cardHeight: CGFloat = (isExperimental ? (isIPad ? 150 : 124) : 104) * s
         let radius = isExperimental ? metrics.cardRadius : 14
 
         ZStack {
@@ -331,8 +334,9 @@ struct RankedListWidget: View {
     @ViewBuilder
     private func rankedCard(title: String, items: [TMDBSearchResult]) -> some View {
         let isExperimental = ExperimentalFeatureState.isEnabledAtLaunch
-        let posterWidth: CGFloat = isExperimental ? (isIPad ? 132 : 102) : (isIPad ? 112 : 86)
-        let posterHeight: CGFloat = isExperimental ? 164 : 140
+        let s: CGFloat = isExperimental ? metrics.mediaCardScale : 1
+        let posterWidth: CGFloat = (isExperimental ? (isIPad ? 132 : 102) : (isIPad ? 112 : 86)) * s
+        let posterHeight: CGFloat = (isExperimental ? 164 : 140) * s
         let radius = isExperimental ? metrics.cardRadius : 16
 
         VStack(alignment: .leading, spacing: 0) {
@@ -390,7 +394,7 @@ struct RankedListWidget: View {
             .padding(.top, 10)
             .padding(.bottom, 14)
         }
-        .frame(width: isExperimental ? min(CGFloat(isIPad ? 420 : 318), max(UIScreen.main.bounds.width - 44, 280)) : (isIPad ? 360 : 280))
+        .frame(width: isExperimental ? min(CGFloat(isIPad ? 420 : 318) * s, max(UIScreen.main.bounds.width - 44, 280)) : (isIPad ? 360 : 280))
         .background(
             LinearGradient(
                 colors: isExperimental
@@ -460,10 +464,12 @@ struct FeaturedSpotlightWidget: View {
                 }
                 .modifier(ScrollClipModifier())
                 .background(
+                    // Neutral translucent fill so the card row reads as a grouped
+                    // container without tinting the app gradient a muddy brown.
                     LinearGradient(
                         colors: [
-                            Color(red: 0.24, green: 0.19, blue: 0.16).opacity(0.88),
-                            Color(red: 0.14, green: 0.11, blue: 0.14).opacity(0.82)
+                            Color.white.opacity(0.05),
+                            Color.black.opacity(0.22)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -471,7 +477,7 @@ struct FeaturedSpotlightWidget: View {
                 )
             }
         }
-        .background(Color.black.opacity(0.24))
+        .background(Color.black.opacity(0.18))
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -522,7 +528,7 @@ struct FeaturedSpotlightWidget: View {
 
     @ViewBuilder
     private func experimentalSpotlightBanner(spotlight: TMDBSearchResult) -> some View {
-        let bannerHeight: CGFloat = isIPad ? 350 : 252
+        let bannerHeight: CGFloat = (isIPad ? 350 : 252) * metrics.mediaCardScale
 
         ZStack(alignment: .center) {
             KFImage(URL(string: spotlight.fullBackdropURL ?? spotlight.fullPosterURL ?? ""))
@@ -641,8 +647,9 @@ struct FeaturedSpotlightWidget: View {
     @ViewBuilder
     private func spotlightSmallCard(item: TMDBSearchResult, forceLandscape: Bool) -> some View {
         let isLandscape = ExperimentalFeatureState.isEnabledAtLaunch || forceLandscape
-        let posterWidth = CGFloat(isLandscape ? 176 : 120) * iPadScale
-        let posterHeight = CGFloat(isLandscape ? 99 : 180) * iPadScale
+        let s: CGFloat = ExperimentalFeatureState.isEnabledAtLaunch ? metrics.mediaCardScale : 1
+        let posterWidth = CGFloat(isLandscape ? 176 : 120) * iPadScale * s
+        let posterHeight = CGFloat(isLandscape ? 99 : 180) * iPadScale * s
         let posterShadowRadius: CGFloat = isIPad ? 3 : 6
         let radius = isLandscape ? max(metrics.cardRadius - 2, 14) : 12
 

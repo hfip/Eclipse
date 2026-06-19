@@ -41,6 +41,9 @@ struct PlaybackLaunchContext {
     let subtitles: [String]
     let subtitleNames: [String]?
     let retryCount: Int
+    /// Stremio catalog title candidates from the originating search. Only populated for Stremio
+    /// launches; used by next-episode warmup to reproduce the addon catalog-search fallback.
+    let titleCandidates: [String]
 
     init(
         sourceId: String,
@@ -52,7 +55,8 @@ struct PlaybackLaunchContext {
         headers: [String: String],
         subtitles: [String],
         subtitleNames: [String]?,
-        retryCount: Int
+        retryCount: Int,
+        titleCandidates: [String] = []
     ) {
         self.sourceId = sourceId
         self.sourceName = sourceName
@@ -64,6 +68,7 @@ struct PlaybackLaunchContext {
         self.subtitles = subtitles
         self.subtitleNames = subtitleNames
         self.retryCount = retryCount
+        self.titleCandidates = titleCandidates
     }
 }
 
@@ -700,15 +705,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private lazy var renderer: PlayerRenderer = {
         let requestedBackend = Settings.shared.mpvRenderBackend
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVMoltenVKRenderer.isAvailable)
+        let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVSampleBufferPiPBridge.isAvailable)
         if effectiveBackend == .metal {
             let qualityProfile = metalSampleBufferQualityProfile()
-            Logger.shared.log("[PlayerVC.MPV] using MoltenVK Metal renderer with GPU sample-buffer PiP handoff \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
-            let r = MPVMoltenVKRenderer(displayLayer: displayLayer, qualityProfile: qualityProfile)
+            Logger.shared.log("[PlayerVC.MPV] using single-instance Metal sample-buffer renderer (inline + PiP, one mpv handle) \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            let r = MPVSampleBufferPiPBridge(displayLayer: displayLayer, qualityProfile: qualityProfile)
             r.delegate = self
             return r
         }
-        if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVMoltenVKRenderer.isAvailable) {
+        if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVSampleBufferPiPBridge.isAvailable) {
             Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
         }
 #else
@@ -727,8 +732,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-    private var metalMPVRenderer: MPVMoltenVKRenderer? {
-        return renderer as? MPVMoltenVKRenderer
+    private var metalMPVRenderer: MPVSampleBufferPiPBridge? {
+        return renderer as? MPVSampleBufferPiPBridge
     }
 #endif
 
@@ -750,7 +755,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private var mpvRendererName: String {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        if metalMPVRenderer != nil { return "moltenvk" }
+        if metalMPVRenderer != nil { return "metal-sample-buffer" }
 #endif
         if mpvRenderer != nil { return "opengl" }
         return "none"
@@ -862,17 +867,26 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func evaluateMetalThermalQuality(reason: String) {
         guard Settings.shared.mpvMetalQualityProfile == .auto,
               let metalMPVRenderer else { return }
-        let resolvedProfile = metalSampleBufferQualityProfile()
-        guard metalMPVRenderer.updateSampleBufferQualityProfile(resolvedProfile) else { return }
-        Logger.shared.log("[PlayerVC.MPV] Auto Metal quality changed reason=\(reason) \(resolvedProfile.logDescription)", type: "MPV")
 
+        // Re-resolve and apply on every tick so quality tracks the thermal state in both
+        // directions: it steps down further as things worsen (sharp -> balanced -> low heat)
+        // and climbs back up as the device cools.
+        let resolvedProfile = metalSampleBufferQualityProfile()
+        if metalMPVRenderer.updateSampleBufferQualityProfile(resolvedProfile) {
+            Logger.shared.log("[PlayerVC.MPV] Auto Metal quality changed reason=\(reason) \(resolvedProfile.logDescription)", type: "MPV")
+        }
+
+        // Notice is one-shot per bad-thermal episode: show it once when we enter a bad
+        // state and re-arm it only after thermals return to normal, so it never spams.
         let thermalState = ProcessInfo.processInfo.thermalState
-        if thermalState == .serious || thermalState == .critical {
-            let now = CACurrentMediaTime()
-            if now - lastMetalThermalNoticeAt > 20 {
-                lastMetalThermalNoticeAt = now
+        let isBadThermalState = thermalState == .serious || thermalState == .critical
+        if isBadThermalState {
+            if !hasShownThermalQualityNotice {
+                hasShownThermalQualityNotice = true
                 showPlayerNotice("Eclipse detected bad thermal state, protecting device")
             }
+        } else {
+            hasShownThermalQualityNotice = false
         }
     }
 #endif
@@ -1716,9 +1730,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func rendererApplySubtitleStyle(_ style: SubtitleStyle) {
         if vlcRenderer != nil {
-            logVLCUI("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))", type: "Player")
+            logVLCUI("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth)) offset=\(String(format: "%.1f", style.verticalOffset))", type: "Player")
         } else {
-            logMPV("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
+            logMPV("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth)) offset=\(String(format: "%.1f", style.verticalOffset))")
         }
         renderer.applySubtitleStyle(style)
     }
@@ -1729,6 +1743,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             strokeColor: subtitleModel.strokeColor,
             strokeWidth: subtitleModel.strokeWidth,
             fontSize: subtitleModel.fontSize,
+            verticalOffset: subtitleModel.verticalOffset,
             isVisible: visible ?? subtitleModel.isVisible
         )
     }
@@ -2160,7 +2175,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let processInfo = ProcessInfo.processInfo
         let thermal = metalThermalStateName(processInfo.thermalState)
         let noteText = note.map { " note=\($0)" } ?? ""
-        logVLCUI("foreground \(event) safe app=\(appState) running=\(isRunning) closing=\(isClosing) loading=\(isRendererLoading) playbackStarted=\(playbackDidStart) controls=\(controlsVisible) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) pendingSeek=\(secondsText(pendingSeekTime)) media={\(vlcMediaInfoLogLabel())} rendererPresent=\(vlcRenderer != nil) view=\(String(format: "%.0fx%.0f", viewBounds.width, viewBounds.height)) video=\(String(format: "%.0fx%.0f", videoBounds.width, videoBounds.height)) window=\(view.window != nil) windowBounds=\(String(format: "%.0fx%.0f", windowBounds.width, windowBounds.height)) vlcIndex=\(vlcIndex) vlcHidden=\(vlcView?.isHidden ?? true) vlcAlpha=\(String(format: "%.2f", vlcView?.alpha ?? 0)) displayAttached=\(displayLayer.superlayer != nil) displayHidden=\(displayLayer.isHidden) displayOpacity=\(String(format: "%.2f", displayLayer.opacity)) displayFrame=\(String(format: "%.0fx%.0f", displayFrame.width, displayFrame.height)) spinnerAnimating=\(loadingIndicator.isAnimating) spinnerAlpha=\(String(format: "%.2f", loadingIndicator.alpha)) browser={\(episodeBrowserStateSummary())} thermal=\(thermal) lowPower=\(processInfo.isLowPowerModeEnabled) proxy={\(vlcProxyDiagnosticsSummary())}\(noteText)", type: "VLCCrashProbe")
     }
 
     private func episodeBrowserStateSummary(host explicitHost: UIHostingController<AnyView>? = nil) -> String {
@@ -2224,7 +2238,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let now = CACurrentMediaTime()
         guard now - lastVLCUISteadyHeartbeatLogTime >= 30 else { return }
         lastVLCUISteadyHeartbeatLogTime = now
-        logVLCUI("steady heartbeat \(vlcSteadyEnvironmentSnapshot(safePosition: safePosition, effectiveDuration: effectiveDuration, durationIsReliable: durationIsReliable))", type: "VLCCrashProbe")
     }
 
     private func scheduleVLCUIViewSnapshots(_ event: String, delays: [TimeInterval] = [0.25, 1.0]) {
@@ -2282,6 +2295,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 if !isLoading { saveSubtitleSettings() }
             }
         }
+        @Published var verticalOffset: CGFloat = -6.0 {
+            didSet {
+                if !isLoading { saveSubtitleSettings() }
+            }
+        }
         
         init() {
             loadSubtitleSettings()
@@ -2294,12 +2312,23 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             isVisible = visible
             shouldPersistChanges = oldShouldPersistChanges
         }
+
+        func reloadStyleSettingsFromDefaults(preservingVisibility: Bool = true) {
+            let currentVisibility = isVisible
+            isLoading = true
+            loadSubtitleSettings()
+            if preservingVisibility {
+                isVisible = currentVisibility
+            }
+            isLoading = false
+        }
         
         private func saveSubtitleSettings() {
             let defaults = UserDefaults.standard
             defaults.set(isVisible, forKey: "subtitles_isVisible")
             defaults.set(strokeWidth, forKey: "subtitles_strokeWidth")
             defaults.set(fontSize, forKey: "subtitles_fontSize")
+            defaults.set(verticalOffset, forKey: "playerSubtitleOverlayBottomConstant")
             
             if let foregroundData = try? NSKeyedArchiver.archivedData(withRootObject: foregroundColor, requiringSecureCoding: false) {
                 defaults.set(foregroundData, forKey: "subtitles_foregroundColor")
@@ -2318,7 +2347,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             
             if defaults.object(forKey: "subtitles_strokeWidth") != nil {
                 let width = CGFloat(defaults.double(forKey: "subtitles_strokeWidth"))
-                strokeWidth = width > 0 ? width : 1.0
+                strokeWidth = max(0, min(width, 2.0))
             }
             
             if defaults.object(forKey: "subtitles_fontSize") != nil {
@@ -2333,6 +2362,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if let strokeData = defaults.data(forKey: "subtitles_strokeColor"),
                let color = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: strokeData) {
                 strokeColor = color
+            }
+
+            if defaults.object(forKey: "playerSubtitleOverlayBottomConstant") == nil,
+               defaults.object(forKey: "vlcSubtitleOverlayBottomConstant") != nil {
+                defaults.set(defaults.double(forKey: "vlcSubtitleOverlayBottomConstant"), forKey: "playerSubtitleOverlayBottomConstant")
+            }
+            if defaults.object(forKey: "playerSubtitleOverlayBottomConstant") != nil {
+                let offset = CGFloat(defaults.double(forKey: "playerSubtitleOverlayBottomConstant"))
+                verticalOffset = max(-24, min(offset, 24))
+            } else {
+                verticalOffset = -6.0
             }
         }
     }
@@ -2410,7 +2450,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var performanceOverlayTimer: Timer?
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
     private var metalThermalQualityTimer: Timer?
-    private var lastMetalThermalNoticeAt: CFTimeInterval = 0
+    /// One-shot latch so the thermal notice appears once per bad-thermal episode.
+    /// Re-armed when thermals return to a normal (nominal/fair) state.
+    private var hasShownThermalQualityNotice = false
 #endif
     private var playerNoticeDismissWorkItem: DispatchWorkItem?
     private var lastCPUProcessTime: TimeInterval?
@@ -3012,6 +3054,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             displayLayer.isHidden = true
             displayLayer.opacity = 0.0
             logVLCUI("setupLayout skipped sample-buffer displayLayer for VLC renderer", type: "Player")
+        } else if isMetalMPVRenderer {
+            // Single-instance Metal sample-buffer renderer hosts and shows the display
+            // layer inside its own rendering view (added below) for both inline and PiP,
+            // so there is no separate hidden PiP-only layer to attach to the container.
+            displayLayer.isHidden = false
+            displayLayer.opacity = 1.0
         } else {
             displayLayer.isHidden = true
             displayLayer.opacity = 0.0
@@ -3875,6 +3923,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             state: subtitleModel.isVisible ? .off : .on
         ) { [weak self] _ in
             self?.subtitleModel.isVisible = false
+            self?.rendererDisableSubtitles()
+            self?.subtitleEntries.removeAll()
+            self?.vlcSubtitleSelection = .none
             self?.updateSubtitleButtonAppearance()
             self?.updateSubtitleMenu()
         }
@@ -3888,11 +3939,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 image: UIImage(systemName: "captions.bubble"),
                 state: isSelected ? .on : .off
             ) { [weak self] _ in
-                self?.currentSubtitleIndex = index
-                self?.subtitleModel.isVisible = true
-                self?.loadCurrentSubtitle()
-                self?.updateSubtitleButtonAppearance()
-                self?.updateSubtitleMenu()
+                guard let self else { return }
+                self.currentSubtitleIndex = index
+                self.subtitleModel.isVisible = true
+                self.vlcSubtitleSelection = .external(index: index)
+                self.loadCurrentSubtitle()
+                self.rendererApplySubtitleStyle(self.currentSubtitleStyle(visible: true))
+                self.updateSubtitleButtonAppearance()
+                self.updateSubtitleMenu()
             }
             trackActions.append(action)
         }
@@ -3990,12 +4044,34 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         
         let fontSizeMenu = UIMenu(title: "Font Size", image: UIImage(systemName: "textformat.size"), children: fontSizeActions)
+
+        let verticalOffsets: [(String, CGFloat)] = [
+            ("Highest", -24.0),
+            ("Higher", -16.0),
+            ("Default", -6.0),
+            ("Lower", 6.0),
+            ("Lowest", 18.0)
+        ]
+
+        let verticalOffsetActions = verticalOffsets.map { (name, offset) in
+            UIAction(
+                title: name,
+                state: abs(subtitleModel.verticalOffset - offset) < 0.01 ? .on : .off
+            ) { [weak self] _ in
+                self?.subtitleModel.verticalOffset = offset
+                self?.updateCurrentSubtitleAppearance()
+                self?.refreshActiveSubtitleMenu()
+            }
+        }
+
+        let verticalOffsetMenu = UIMenu(title: "Vertical Position", image: UIImage(systemName: "arrow.up.and.down"), children: verticalOffsetActions)
         
         return UIMenu(title: "Appearance", image: UIImage(systemName: "paintbrush"), children: [
             foregroundColorMenu,
             strokeColorMenu,
             strokeWidthMenu,
-            fontSizeMenu
+            fontSizeMenu,
+            verticalOffsetMenu
         ])
     }
     
@@ -4003,6 +4079,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         rendererApplySubtitleStyle(currentSubtitleStyle())
 
         if isVLCCustomSubtitleOverlayEnabled {
+            applyVLCSubtitleOverlayPositionSetting()
             updateVLCSubtitleOverlay(for: cachedPosition)
             if subtitleModel.isVisible && currentSubtitleIndex < subtitleURLs.count {
                 loadCurrentSubtitle()
@@ -4083,7 +4160,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if !shouldShow {
             episodeBrowserButton.alpha = 0.0
             if isEpisodeBrowserVisible {
-                logVLCUI("episode browser visibility update hiding active browser enabled=\(isVLCEpisodeBrowserButtonSettingEnabled) mediaInfo=\(mediaInfo != nil) supportsControls=\(supportsSharedPlayerControls)", type: "VLCCrashProbe")
                 dismissEpisodeBrowser(animated: true, reason: "button-visibility-hidden")
             }
         } else if controlsVisible {
@@ -4101,11 +4177,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     @objc private func episodeBrowserButtonTapped() {
         guard let seed = makeEpisodeBrowserSeed() else {
-            logVLCUI("episode browser button tapped but seed unavailable media={\(vlcMediaInfoLogLabel())} \(episodeBrowserStateSummary())", type: "VLCCrashProbe")
             logVLCUIViewSnapshot("episodeBrowser tap seed unavailable")
             return
         }
-        logVLCUI("episode browser button tapped seed={showId=\(seed.showId) current=S\(seed.currentSeasonNumber)E\(seed.currentEpisodeNumber) anime=\(seed.isAnime) title=\(seed.showTitle)} \(episodeBrowserStateSummary())", type: "VLCCrashProbe")
         if isEpisodeBrowserVisible {
             dismissEpisodeBrowser(animated: true, reason: "button-toggle")
             return
@@ -4137,7 +4211,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func showEpisodeBrowser(seed: PlayerEpisodeBrowserSeed, reason: String = "unspecified") {
-        logVLCUI("episode browser show requested reason=\(reason) seed={showId=\(seed.showId) current=S\(seed.currentSeasonNumber)E\(seed.currentEpisodeNumber) anime=\(seed.isAnime) title=\(seed.showTitle)} \(episodeBrowserStateSummary())", type: "VLCCrashProbe")
         logVLCUIViewSnapshot("episodeBrowser show requested")
         controlsHideWorkItem?.cancel()
         isEpisodeBrowserVisible = true
@@ -4145,11 +4218,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             seed: seed,
             onClose: { [weak self] in
                 guard let self else { return }
-                self.logVLCUI("episode browser drawer close tapped \(self.episodeBrowserStateSummary())", type: "VLCCrashProbe")
                 self.dismissEpisodeBrowser(animated: true, reason: "drawer-close")
             },
             onEpisodeSelected: { [weak self] item in
-                self?.logVLCUI("episode browser drawer selected target=S\(item.episode.seasonNumber)E\(item.episode.episodeNumber) anime=\(item.isAnime) downloaded=\(item.isDownloaded) current=\(item.isCurrent) \(self?.episodeBrowserStateSummary() ?? "browser=nil")", type: "VLCCrashProbe")
                 self?.handleEpisodeBrowserSelection(item)
             }
         )
@@ -4167,27 +4238,22 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         host.didMove(toParent: self)
         episodeBrowserHostingController = host
         videoContainer.bringSubviewToFront(host.view)
-        logVLCUI("episode browser shown reason=\(reason) \(episodeBrowserStateSummary(host: host))", type: "VLCCrashProbe")
         logVLCUIViewSnapshot("episodeBrowser shown")
         scheduleVLCUIViewSnapshots("episodeBrowser shown followup", delays: [0.10, 0.50, 1.00])
     }
 
     private func dismissEpisodeBrowser(animated: Bool, reason: String = "unspecified") {
         guard let host = episodeBrowserHostingController else {
-            logVLCUI("episode browser dismiss requested without host reason=\(reason) animated=\(animated) \(episodeBrowserStateSummary())", type: "VLCCrashProbe")
             isEpisodeBrowserVisible = false
             logVLCUIViewSnapshot("episodeBrowser dismiss no host")
             return
         }
-        logVLCUI("episode browser dismiss requested reason=\(reason) animated=\(animated) \(episodeBrowserStateSummary(host: host))", type: "VLCCrashProbe")
         logVLCUIViewSnapshot("episodeBrowser dismiss requested")
         isEpisodeBrowserVisible = false
         let removeHost = {
-            self.logVLCUI("episode browser dismiss removing reason=\(reason) \(self.episodeBrowserStateSummary(host: host))", type: "VLCCrashProbe")
             host.willMove(toParent: nil)
             host.view.removeFromSuperview()
             host.removeFromParent()
-            self.logVLCUI("episode browser dismiss removed reason=\(reason) \(self.episodeBrowserStateSummary(host: host))", type: "VLCCrashProbe")
             self.logVLCUIViewSnapshot("episodeBrowser dismiss removed")
             self.scheduleVLCUIViewSnapshots("episodeBrowser dismiss followup", delays: [0.10, 0.50])
         }
@@ -4205,10 +4271,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func handleEpisodeBrowserSelection(_ item: PlayerEpisodeBrowserItem, reason: String = "episode-browser") {
         guard !item.isCurrent else {
-            logVLCUI("episode selection ignored current item reason=\(reason) target=S\(item.episode.seasonNumber)E\(item.episode.episodeNumber) \(episodeBrowserStateSummary())", type: "VLCCrashProbe")
             return
         }
-        logVLCUI("episode selection reason=\(reason) target=S\(item.episode.seasonNumber)E\(item.episode.episodeNumber) anime=\(item.isAnime) downloaded=\(item.isDownloaded) current=\(item.isCurrent)", type: "VLCCrashProbe")
 
         if UserDefaults.standard.bool(forKey: "preferDownloadedMedia"),
            let request = downloadedPlaybackRequest(for: item) {
@@ -4245,7 +4309,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func presentEpisodeSourceSheet(for item: PlayerEpisodeBrowserItem, reason: String = "episode-browser") {
         guard presentedViewController == nil else { return }
-        logVLCUI("present episode source sheet reason=\(reason) target=S\(item.episode.seasonNumber)E\(item.episode.episodeNumber) title=\(item.mediaTitle) autoOnly=\(UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"))", type: "VLCCrashProbe")
         let sheet = ModulesSearchResultsSheet(
             mediaTitle: item.mediaTitle,
             seasonTitleOverride: item.seasonTitleOverride,
@@ -4275,13 +4338,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             guard let self else { return }
             self.playbackReplacementGeneration += 1
             let replacementGeneration = self.playbackReplacementGeneration
-            let transitionId = String(UUID().uuidString.prefix(8))
             let wasVLC = self.isVLCPlayer
-            let previousMedia = self.vlcMediaInfoLogLabel()
-            let nextMedia = self.vlcMediaInfoLogLabel(for: request.mediaInfo)
-            if wasVLC {
-                self.logVLCUI("replacePlayback begin transition=\(transitionId) generation=\(replacementGeneration) reason=\(reason) from={\(previousMedia)} to={\(nextMedia)} cached=\(self.secondsText(self.cachedPosition))/\(self.secondsText(self.cachedDuration)) running=\(self.isRunning) loading=\(self.isRendererLoading)", type: "VLCCrashProbe")
-            }
             if let mediaInfo = self.mediaInfo {
                 self.syncTraktProgressOnPlaybackCloseIfNeeded(for: mediaInfo, reason: "replace-playback")
             }
@@ -4319,13 +4376,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let startReplacementLoad = { [weak self] in
                 guard let self else { return }
                 guard self.playbackReplacementGeneration == replacementGeneration else {
-                    if wasVLC {
-                        self.logVLCUI("replacePlayback load skipped stale transition=\(transitionId) generation=\(replacementGeneration) currentGeneration=\(self.playbackReplacementGeneration)", type: "VLCCrashProbe")
-                    }
                     return
-                }
-                if wasVLC {
-                    self.logVLCUI("replacePlayback load starting transition=\(transitionId) generation=\(replacementGeneration) reason=\(reason) url=\(request.url.absoluteString) headers=\(request.headers?.count ?? 0)", type: "VLCCrashProbe")
                 }
                 if shouldSwitchVLCInPlace {
                     self.isReplacingVLCPlaybackInPlace = true
@@ -4338,11 +4389,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
 
             if shouldSwitchVLCInPlace {
-                self.logVLCUI("replacePlayback using VLC in-place media switch transition=\(transitionId) generation=\(replacementGeneration) reason=\(reason)", type: "VLCCrashProbe")
                 startReplacementLoad()
             } else if wasVLC {
                 self.rendererStop()
-                self.logVLCUI("replacePlayback waiting for VLC stop drain transition=\(transitionId) generation=\(replacementGeneration)", type: "VLCCrashProbe")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.20, execute: startReplacementLoad)
             } else {
                 self.rendererStop()
@@ -5161,7 +5210,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        logVLCUI("next episode preview resolve start key=\(key) posterSetting=\(shouldUsePosterNextEpisodeButton)", type: "VLCCrashProbe")
         nextEpisodePreviewTask = Task { @MainActor [weak self] in
             let model = PlayerEpisodeBrowserViewModel(seed: seed)
             let item = await model.itemAfterCurrent()
@@ -5169,12 +5217,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             self.nextEpisodePreviewTask = nil
             guard self.nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber) == key else { return }
             if let item {
-                self.logVLCUI("next episode preview resolve success key=\(key) code=\(item.displayCode) artworkCount=\(item.artworkURLs.count)", type: "VLCCrashProbe")
                 self.nextEpisodePreview = item
                 self.nextEpisodePreviewKey = key
                 self.applyNextEpisodeButtonAppearance()
             } else {
-                self.logVLCUI("next episode preview resolve empty key=\(key)", type: "VLCCrashProbe")
                 self.nextEpisodePreview = nil
                 self.nextEpisodePreviewKey = nil
                 self.nextEpisodePreviewUnavailableKeys.insert(key)
@@ -5223,7 +5269,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             nextEpisodeButton.layer.shadowOffset = CGSize(width: 0, height: 8)
             nextEpisodeButton.layer.shadowRadius = 14
             nextEpisodeButtonAppearanceKey = signature
-            logVLCUI("next episode poster button configured key=\(nextEpisodePreviewKey ?? "nil") artworkReady=\(imageReady) imageURLs=\(imageURLs.count)", type: "VLCCrashProbe")
         }
 
         guard !isSameArtwork else {
@@ -5245,9 +5290,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        if index == 0 {
-            logVLCUI("next episode artwork load begin candidates=\(imageURLs.count) keyHash=\(key.hashValue.magnitude)", type: "VLCCrashProbe")
-        }
 #if canImport(Kingfisher)
         let processor = DownsamplingImageProcessor(size: nextEpisodeArtworkDecodeSize)
         KingfisherManager.shared.retrieveImage(
@@ -5265,10 +5307,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
                 switch result {
                 case .success(let value):
-                    self.logVLCUI("next episode artwork load success source=kingfisher index=\(index) size=\(String(format: "%.0fx%.0f", value.image.size.width, value.image.size.height))", type: "VLCCrashProbe")
                     self.applyNextEpisodeArtworkImage(value.image, key: key)
                 case .failure(let error):
-                    self.logVLCUI("next episode artwork load failed source=kingfisher index=\(index) error=\(error.localizedDescription)", type: "VLCCrashProbe")
                     self.loadNextEpisodeArtwork(from: imageURLs, key: key, index: index + 1)
                 }
             }
@@ -5282,10 +5322,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                       self.shouldUsePosterNextEpisodeButton else { return }
 
                 if let rawImage {
-                    self.logVLCUI("next episode artwork load success source=urlsession index=\(index) bytes=\(data?.count ?? 0) size=\(String(format: "%.0fx%.0f", rawImage.size.width, rawImage.size.height))", type: "VLCCrashProbe")
                     self.applyNextEpisodeArtworkImage(rawImage, key: key)
                 } else {
-                    self.logVLCUI("next episode artwork load failed source=urlsession index=\(index) bytes=\(data?.count ?? 0)", type: "VLCCrashProbe")
                     self.loadNextEpisodeArtwork(from: imageURLs, key: key, index: index + 1)
                 }
             }
@@ -5358,7 +5396,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         nextEpisodeButton.updatePosterArtwork(image)
         nextEpisodeButtonAppearanceKey = nil
-        logVLCUI("next episode artwork applied key=\(nextEpisodePreviewKey ?? "nil") source=\(String(format: "%.0fx%.0f", rawImage.size.width, rawImage.size.height)) rendered=\(String(format: "%.0fx%.0f", image.size.width, image.size.height))", type: "VLCCrashProbe")
     }
 
     private func makeNextEpisodeArtworkImage(from rawImage: UIImage) -> UIImage {
@@ -5454,7 +5491,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard pendingNextEpisodeRequest == nil else { return }
 
         let nextEpisodeNumber = episodeNumber + 1
-        logVLCUI("next episode button tapped from=S\(seasonNumber)E\(episodeNumber) target=S\(seasonNumber)E\(nextEpisodeNumber) hasPreview=\(nextEpisodePreview != nil) previewTask=\(nextEpisodePreviewTask != nil) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "VLCCrashProbe")
         Logger.shared.log("NextEpisode: User requested S\(seasonNumber)E\(nextEpisodeNumber)", type: "Player")
         if let preview = nextEpisodePreview {
             hideNextEpisodeButton()
@@ -5470,7 +5506,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         pendingNextEpisodeRequest = (seasonNumber, nextEpisodeNumber)
         nextEpisodeButton.isEnabled = false
         hideNextEpisodeButton()
-        logVLCUI("next episode button closing player for detail-sheet fallback target=S\(seasonNumber)E\(nextEpisodeNumber)", type: "VLCCrashProbe")
         closeTapped()
     }
 
@@ -5526,7 +5561,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         nextEpisodeButton.isHidden = false
         videoContainer.bringSubviewToFront(nextEpisodeButton)
         bringTimedActionButtonsToFront()
-        logVLCUI("next episode button show automatic posterSetting=\(shouldUsePosterNextEpisodeButton) hasPreview=\(nextEpisodePreview != nil) artworkKey=\(nextEpisodeArtworkKey != nil) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "VLCCrashProbe")
         UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut]) {
             self.nextEpisodeButton.alpha = 1.0
         }
@@ -5546,7 +5580,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        let stageThreshold = max(0.50, threshold - 0.08)
+        // Start staging a few percent BEFORE the user's "next episode" appearance threshold so
+        // the next stream has lead time to resolve + warm (e.g. appearance 90% → stage at 85%).
+        // Clamped so it never fires implausibly early.
+        let stageLead = 0.05
+        let stageThreshold = max(0.50, threshold - stageLead)
         guard progress >= stageThreshold else { return }
 
         let key = nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
@@ -5560,12 +5598,422 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             episodeNumber: nextEpisodeNumber
         )
         resolveNextEpisodePreviewIfNeeded(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
+        prewarmNextEpisodeStreamIfPossible(
+            showId: showId,
+            currentSeasonNumber: seasonNumber,
+            currentEpisodeNumber: episodeNumber,
+            nextEpisodeNumber: nextEpisodeNumber
+        )
+    }
+
+    /// Best-effort: resolve the NEXT episode's stream ahead of time and warm its byte cache so
+    /// the upcoming transition is fast. This is a pure side-channel — it only primes the warmup
+    /// cache via `prewarm` and never touches current playback; every failure path is a silent
+    /// no-op. It is intentionally conservative: it only commits when the next stream URL can be
+    /// resolved unambiguously, so the warmed URL is guaranteed to match the one the normal
+    /// next-episode flow will play (otherwise the warm would be wasted).
+    private func prewarmNextEpisodeStreamIfPossible(
+        showId: Int,
+        currentSeasonNumber: Int,
+        currentEpisodeNumber: Int,
+        nextEpisodeNumber: Int
+    ) {
+        // Only when the Metal MPV warmup path is actually usable and both toggles are on.
+        guard ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason == nil,
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey),
+              UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
+            return
+        }
+
+        // Stay low-profile: never add resolution/network load (and never risk heating the
+        // device) while it is already under thermal pressure or in Low Power Mode. The byte
+        // warmup itself is also thermal-gated inside prewarm(), but we bail before doing any
+        // work so the JS/scraper resolution doesn't run either.
+        let processInfo = ProcessInfo.processInfo
+        guard !processInfo.isLowPowerModeEnabled,
+              processInfo.thermalState != .serious,
+              processInfo.thermalState != .critical else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=power-or-thermal show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            return
+        }
+
+        // Auto mode makes stream selection deterministic; without it we can't predict the
+        // user's manual server/quality choice, so skip to avoid warming the wrong URL.
+        guard UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled") else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=auto-mode-off show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            return
+        }
+
+        // Anime relies on AniList traversal to map episodes correctly. If the user disabled it,
+        // our episode-number matching would risk warming the wrong episode, so skip anime then.
+        if case .episode(_, _, _, _, _, let isAnime)? = mediaInfo, isAnime,
+           PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=anilist-traversal-disabled show=\(showId)", type: "MPV")
+            return
+        }
+
+        // Resolve via the SAME ecosystem the current episode is playing from. The plugin/Stremio
+        // paths derive the TMDB lookup numbers via `nextEpisodeLookupNumbers`, which applies the
+        // anime AniList/Kitsu remapping carried in `episodePlaybackContext` — so anime works there
+        // too as long as that context exists (it bails otherwise).
+        switch playbackLaunchContext?.sourceKind ?? .service {
+        case .service:
+            prewarmNextEpisodeViaService(
+                showId: showId,
+                currentSeasonNumber: currentSeasonNumber,
+                currentEpisodeNumber: currentEpisodeNumber,
+                nextEpisodeNumber: nextEpisodeNumber
+            )
+        case .plugin:
+            prewarmNextEpisodeViaPlugin(
+                showId: showId,
+                currentSeasonNumber: currentSeasonNumber,
+                nextEpisodeNumber: nextEpisodeNumber
+            )
+        case .stremio:
+            prewarmNextEpisodeViaStremio(
+                showId: showId,
+                currentSeasonNumber: currentSeasonNumber,
+                nextEpisodeNumber: nextEpisodeNumber
+            )
+        }
+    }
+
+    /// Resolved next-episode lookup, mirroring `ServicesResultsSheet.streamLookupSeasonNumber` /
+    /// `streamLookupEpisodeNumber` / `shouldSearchStremio`. Applies the anime AniList/Kitsu remap by
+    /// projecting the current `episodePlaybackContext` onto the next local episode number.
+    ///
+    /// Returns nil to signal "skip prewarm": either anime with no usable mapping context, or a
+    /// special episode the addon can't be queried for (no resolved TMDB season/episode).
+    private func nextEpisodeLookupNumbers(
+        currentSeasonNumber: Int,
+        nextEpisodeNumber: Int
+    ) -> (season: Int?, episode: Int?, context: EpisodePlaybackContext?)? {
+        let isAnime: Bool = {
+            if case .episode(_, _, _, _, _, let value)? = mediaInfo { return value }
+            return false
+        }()
+
+        // Project the current episode's context onto the next local episode number. This carries
+        // the anime absolute-number and TMDB-offset remapping (see EpisodePlaybackContext).
+        let nextContext = episodePlaybackContext?.forEpisodeNumber(nextEpisodeNumber)
+
+        // Anime without a mapping context would let us only guess raw numbers, which for remapped
+        // anime would warm the wrong episode. Skip rather than risk it.
+        if isAnime && nextContext == nil {
+            return nil
+        }
+
+        if let context = nextContext, context.isSpecial {
+            guard let season = context.resolvedTMDBSeasonNumber,
+                  let episode = context.resolvedTMDBEpisodeNumber else {
+                return nil
+            }
+            return (season, episode, nextContext)
+        }
+
+        let season = nextContext?.resolvedTMDBSeasonNumber ?? currentSeasonNumber
+        let episode = nextContext?.resolvedTMDBEpisodeNumber ?? nextEpisodeNumber
+        return (season, episode, nextContext)
+    }
+
+    /// JS-service next episode: re-fetch the module's episode list, find the next episode href,
+    /// extract + select its stream, and warm it. Runs the (light, one-shot) JS resolution inline.
+    private func prewarmNextEpisodeViaService(
+        showId: Int,
+        currentSeasonNumber: Int,
+        currentEpisodeNumber: Int,
+        nextEpisodeNumber: Int
+    ) {
+        // Reuse the exact source + show page the CURRENT episode was played from.
+        guard let entry = ProgressManager.shared.findEpisode(showId: showId, season: currentSeasonNumber, episode: currentEpisodeNumber),
+              let serviceId = entry.lastServiceId,
+              let showHref = entry.lastHref, !showHref.isEmpty,
+              let service = ServiceManager.shared.activeServices.first(where: { $0.id == serviceId }) else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=no-recorded-service show=\(showId) S\(currentSeasonNumber)E\(currentEpisodeNumber)", type: "MPV")
+            return
+        }
+
+        Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolving (service) show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber) source=\(service.metadata.sourceName)", type: "MPV")
+
+        let jsController = JSController()
+        jsController.loadScript(service.jsScript, service: service)
+        jsController.fetchEpisodesJS(url: showHref, module: service) { episodes in
+            guard let nextHref = PlayerViewController.nextEpisodeHref(
+                episodes: episodes,
+                seasonNumber: currentSeasonNumber,
+                episodeNumber: nextEpisodeNumber
+            ) else {
+                Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=next-href-not-found show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                return
+            }
+
+            jsController.fetchStreamUrlJS(episodeUrl: nextHref, module: service) { result in
+                guard let resolved = PlayerViewController.selectPrewarmStream(streams: result.streams, sources: result.sources) else {
+                    Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=ambiguous-or-no-stream show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                    return
+                }
+                guard let streamURL = URL(string: resolved.url),
+                      let scheme = streamURL.scheme?.lowercased(),
+                      scheme == "http" || scheme == "https" else {
+                    return
+                }
+
+                let finalHeaders = PlayerViewController.mergedPlaybackHeaders(baseURL: service.metadata.baseUrl, custom: resolved.headers)
+                Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolved (service) show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber) target=\(streamURL.absoluteString)", type: "MPV")
+                ExperimentalMPVPreloadManager.shared.prewarm(
+                    url: streamURL,
+                    headers: finalHeaders,
+                    label: "next-S\(currentSeasonNumber)E\(nextEpisodeNumber)"
+                )
+            }
+        }
+    }
+
+    /// Nuvio plugin next episode: resolve via the plugin manager (id-based) on a low-priority
+    /// background task, pick the stream the way the real auto flow would, and warm it.
+    private func prewarmNextEpisodeViaPlugin(
+        showId: Int,
+        currentSeasonNumber: Int,
+        nextEpisodeNumber: Int
+    ) {
+        guard let sourceId = playbackLaunchContext?.sourceId,
+              let source = NuvioPluginManager.shared.activeSources(for: "tv").first(where: { SourceHealth.pluginId($0) == sourceId }) else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=no-plugin-source show=\(showId)", type: "MPV")
+            return
+        }
+
+        // Plugins resolve purely by TMDB season/episode; for anime these are the AniList→TMDB
+        // remapped numbers. nil means anime-without-context or an unmappable special → skip.
+        guard let lookup = nextEpisodeLookupNumbers(currentSeasonNumber: currentSeasonNumber, nextEpisodeNumber: nextEpisodeNumber) else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=plugin-no-episode-mapping show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            return
+        }
+
+        Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolving (plugin) show=\(showId) S\(lookup.season ?? currentSeasonNumber)E\(lookup.episode ?? nextEpisodeNumber) source=\(source.name)", type: "MPV")
+
+        Task(priority: .utility) {
+            let streams = await NuvioPluginManager.shared.executeSource(
+                source,
+                tmdbId: showId,
+                mediaType: "tv",
+                season: lookup.season,
+                episode: lookup.episode
+            )
+            let direct = streams.filter { $0.isDirectHTTP }
+            let chosen: NuvioPluginStream?
+            if direct.count == 1 {
+                chosen = direct.first            // single stream → the real flow plays it directly
+            } else if direct.count > 1 {
+                chosen = AutoModeStreamSelection.bestPluginStream(from: direct)
+            } else {
+                chosen = nil
+            }
+            guard let stream = chosen,
+                  let streamURL = URL(string: stream.url),
+                  let scheme = streamURL.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=plugin-no-usable-stream show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                return
+            }
+
+            let finalHeaders = PlayerViewController.mergedUserAgentHeaders(custom: stream.sanitizedHeaders)
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolved (plugin) show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber) target=\(streamURL.absoluteString)", type: "MPV")
+            ExperimentalMPVPreloadManager.shared.prewarm(
+                url: streamURL,
+                headers: finalHeaders,
+                label: "next-plugin-S\(currentSeasonNumber)E\(nextEpisodeNumber)"
+            )
+        }
+    }
+
+    /// Stremio next episode: re-resolve via the SAME addon the current episode played from, using
+    /// the addon's direct content IDs (tmdb + imdb + anilist/kitsu + season/episode), pick the
+    /// stream the way the real auto flow would (`bestStremioStream`), and warm it. Low-priority task.
+    ///
+    /// Anime is supported: `nextEpisodeLookupNumbers` projects the carried `episodePlaybackContext`
+    /// (which holds the AniList/Kitsu mapping) onto the next episode and we forward both the AniList
+    /// id and the playback context to the addon, exactly like the live flow. The originating search's
+    /// title candidates are carried on the launch context, so the addon catalog-search fallback (used
+    /// when direct content IDs return nothing) is reproduced too.
+    private func prewarmNextEpisodeViaStremio(
+        showId: Int,
+        currentSeasonNumber: Int,
+        nextEpisodeNumber: Int
+    ) {
+        guard let sourceId = playbackLaunchContext?.sourceId,
+              let addon = StremioAddonManager.shared.activeStreamAddons.first(where: { SourceHealth.stremioId($0) == sourceId }) else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=no-stremio-addon show=\(showId)", type: "MPV")
+            return
+        }
+
+        guard let lookup = nextEpisodeLookupNumbers(currentSeasonNumber: currentSeasonNumber, nextEpisodeNumber: nextEpisodeNumber) else {
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=stremio-no-episode-mapping show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            return
+        }
+
+        // Show-level context, identical to what the originating search used (captured on the main
+        // actor before hopping to the background task).
+        let imdbId = self.imdbId
+        let titleCandidates = playbackLaunchContext?.titleCandidates ?? []
+        let nextContext = lookup.context
+        let anilistId = nextContext?.anilistMediaId
+        let lookupSeason = lookup.season
+        let lookupEpisode = lookup.episode
+
+        Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolving (stremio) show=\(showId) S\(lookupSeason ?? currentSeasonNumber)E\(lookupEpisode ?? nextEpisodeNumber) source=\(addon.manifest.name)", type: "MPV")
+
+        Task(priority: .utility) {
+            let streams = await StremioAddonManager.shared.fetchStreamsFromAddon(
+                addon,
+                tmdbId: showId,
+                imdbId: imdbId,
+                type: "series",
+                season: lookupSeason,
+                episode: lookupEpisode,
+                anilistId: anilistId,
+                playbackContext: nextContext,
+                titleCandidates: titleCandidates
+            )
+            let direct = streams.filter { $0.isDirectHTTP }
+            guard let stream = AutoModeStreamSelection.bestStremioStream(from: direct),
+                  let urlString = stream.url,
+                  let streamURL = URL(string: urlString),
+                  let scheme = streamURL.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=stremio-no-usable-stream show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                return
+            }
+
+            let finalHeaders = PlayerViewController.mergedUserAgentHeaders(custom: stream.proxyHeaders)
+            Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolved (stremio) show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber) target=\(streamURL.absoluteString)", type: "MPV")
+            ExperimentalMPVPreloadManager.shared.prewarm(
+                url: streamURL,
+                headers: finalHeaders,
+                label: "next-stremio-S\(currentSeasonNumber)E\(nextEpisodeNumber)"
+            )
+        }
+    }
+
+    /// Finds the href for (seasonNumber, episodeNumber) within a flat episode list, mirroring
+    /// `ServicesResultsSheet.parseSeasons` + the exact-match branch of `findEpisodeHref` so the
+    /// resolved href matches the normal flow. Returns nil unless there is an exact match.
+    private static func nextEpisodeHref(episodes: [EpisodeLink], seasonNumber: Int, episodeNumber: Int) -> String? {
+        guard !episodes.isEmpty else { return nil }
+
+        var seasons: [[EpisodeLink]] = []
+        var current: [EpisodeLink] = []
+        var last = 0
+        for ep in episodes {
+            if ep.number == 1 || ep.number <= last {
+                if !current.isEmpty { seasons.append(current); current = [] }
+            }
+            current.append(ep)
+            last = ep.number
+        }
+        if !current.isEmpty { seasons.append(current) }
+
+        let index = seasonNumber - 1
+        if index >= 0, index < seasons.count,
+           let match = seasons[index].first(where: { $0.number == episodeNumber }) {
+            return match.href
+        }
+        // One-season sources expose a single flat list.
+        if seasons.count <= 1, let match = episodes.first(where: { $0.number == episodeNumber }) {
+            return match.href
+        }
+        return nil
+    }
+
+    /// Selects which stream URL to warm. A single option always matches the real flow.
+    /// Multiple options are only handled when Auto Quality is enabled (per the user setting);
+    /// it mirrors the resolution-dominant ranking of the real auto-selector and bails when no
+    /// option exposes a detectable resolution (the real flow shows a manual picker in that case).
+    /// A mismatch only wastes a bounded warmup fetch — it never affects playback.
+    private static func selectPrewarmStream(streams: [String]?, sources: [[String: Any]]?) -> (url: String, headers: [String: String]?)? {
+        var candidates: [(url: String, headers: [String: String]?, label: String)] = []
+        if let sources = sources, !sources.isEmpty {
+            for source in sources {
+                guard let raw = (source["streamUrl"] as? String) ?? (source["url"] as? String), !raw.isEmpty else { continue }
+                let name = ["title", "name", "label", "quality"]
+                    .compactMap { source[$0] as? String }
+                    .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+                candidates.append((raw, headersFromAny(source["headers"]), "\(name) \(raw)"))
+            }
+        } else if let streams = streams {
+            for stream in streams where stream.hasPrefix("http") {
+                candidates.append((stream, nil, stream))
+            }
+        }
+
+        guard !candidates.isEmpty else { return nil }
+        if candidates.count == 1 {
+            return (candidates[0].url, candidates[0].headers)
+        }
+
+        // Multiple options: only commit when Auto Quality is on (otherwise the real flow would
+        // prompt the user, so we can't predict the choice — skip to avoid a wrong warm). Uses the
+        // shared scorer so the pick matches the real service auto-selection exactly.
+        let preference = AutoModeQualityPreference.current
+        guard preference.usesAutomaticSelection,
+              candidates.contains(where: { AutoModeStreamSelection.streamLabelHasDetectedQuality($0.label) }) else {
+            return nil
+        }
+
+        let best = candidates.enumerated().max {
+            AutoModeStreamSelection.streamPreferenceScore(label: $0.element.label, preference: preference, index: $0.offset)
+                < AutoModeStreamSelection.streamPreferenceScore(label: $1.element.label, preference: preference, index: $1.offset)
+        }?.element
+        guard let best else { return nil }
+        return (best.url, best.headers)
+    }
+
+    /// Mirrors `ServicesResultsSheet.safeConvertToHeaders` for the JS `headers` payload.
+    private static func headersFromAny(_ value: Any?) -> [String: String]? {
+        guard let value, !(value is NSNull) else { return nil }
+        if let headers = value as? [String: String] { return headers }
+        if let dict = value as? [String: Any] {
+            var out: [String: String] = [:]
+            for (key, val) in dict {
+                if let s = val as? String { out[key] = s }
+                else if let n = val as? NSNumber { out[key] = n.stringValue }
+                else if !(val is NSNull) { out[key] = String(describing: val) }
+            }
+            return out.isEmpty ? nil : out
+        }
+        return nil
+    }
+
+    /// Mirrors the Origin/Referer/User-Agent merge in `ServicesResultsSheet.playStreamURL` so the
+    /// warmup cache key matches the headers the real playback will use.
+    private static func mergedPlaybackHeaders(baseURL: String, custom: [String: String]?) -> [String: String] {
+        var finalHeaders: [String: String] = [
+            "Origin": baseURL,
+            "Referer": baseURL,
+            "User-Agent": URLSession.randomUserAgent
+        ]
+        if let custom {
+            for (k, v) in custom { finalHeaders[k] = v }
+            if finalHeaders["User-Agent"] == nil {
+                finalHeaders["User-Agent"] = URLSession.randomUserAgent
+            }
+        }
+        return finalHeaders
+    }
+
+    /// Mirrors the User-Agent + custom-headers merge used by the Stremio/plugin playback paths
+    /// (which, unlike services, do not inject Origin/Referer) so the warmup cache key matches.
+    private static func mergedUserAgentHeaders(custom: [String: String]?) -> [String: String] {
+        var finalHeaders: [String: String] = ["User-Agent": URLSession.randomUserAgent]
+        if let custom {
+            for (k, v) in custom { finalHeaders[k] = v }
+        }
+        return finalHeaders
     }
 
     private func hideNextEpisodeButton() {
         guard nextEpisodeButtonShown else { return }
         nextEpisodeButtonShown = false
-        logVLCUI("next episode button hide automatic cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "VLCCrashProbe")
         UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseIn]) {
             self.nextEpisodeButton.alpha = 0
         } completion: { _ in
@@ -5580,7 +6028,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         didDispatchNextEpisodeRequest = true
         pendingNextEpisodeRequest = nil
-        logVLCUI("dispatching pending next episode request S\(request.seasonNumber)E\(request.episodeNumber)", type: "VLCCrashProbe")
         onRequestNextEpisode?(request.seasonNumber, request.episodeNumber)
     }
 
@@ -6000,6 +6447,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ("Huge", 42.0),
             ("Extra Huge", 46.0)
         ]
+        let verticalOffsets: [(String, CGFloat)] = [
+            ("Highest", -24.0),
+            ("Higher", -16.0),
+            ("Default", -6.0),
+            ("Lower", 6.0),
+            ("Lowest", 18.0)
+        ]
 
         return [
             PlayerOverlayMenuSection(title: "Text Color", actions: foregroundColors.map { name, color in
@@ -6026,6 +6480,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             PlayerOverlayMenuSection(title: "Font Size", actions: fontSizes.map { name, size in
                 makeOverlayAction(title: name, imageName: "textformat.size", isSelected: subtitleModel.fontSize == size) { [weak self] in
                     self?.subtitleModel.fontSize = size
+                    self?.updateCurrentSubtitleAppearance()
+                    self?.showMPVSubtitleMenu()
+                }
+            }),
+            PlayerOverlayMenuSection(title: "Vertical Position", actions: verticalOffsets.map { name, offset in
+                makeOverlayAction(title: name, imageName: "arrow.up.and.down", isSelected: abs(subtitleModel.verticalOffset - offset) < 0.01) { [weak self] in
+                    self?.subtitleModel.verticalOffset = offset
                     self?.updateCurrentSubtitleAppearance()
                     self?.showMPVSubtitleMenu()
                 }
@@ -6862,7 +7323,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     @objc private func handleUserDefaultsDidChange() {
         guard Thread.isMainThread else {
-            Logger.shared.log("[PlayerVC.Settings] UserDefaults changed off-main; dispatching player UI refresh to main", type: "CrashProbe")
             DispatchQueue.main.async { [weak self] in
                 self?.handleUserDefaultsDidChange()
             }
@@ -6882,6 +7342,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         Logger.shared.log("[PlayerVC.Settings] UserDefaults changed; evaluating in-app player subtitle mode", type: "Player")
         configureSeekButtons()
+        subtitleModel.reloadStyleSettingsFromDefaults(preservingVisibility: true)
         if isVLCPlayer {
             applyVLCSubtitleModeSettingIfNeeded()
             applyVLCSubtitleOverlayPositionSetting()
@@ -7203,9 +7664,20 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // External subtitles present (MPV)
         if !subtitleURLs.isEmpty {
             if subtitleURLs.count == 1 {
-                subtitleModel.isVisible.toggle()
-                rendererRefreshSubtitleOverlay()
+                let shouldShow = !subtitleModel.isVisible
+                subtitleModel.isVisible = shouldShow
+                userSelectedSubtitleTrack = true
+                if shouldShow {
+                    vlcSubtitleSelection = .external(index: currentSubtitleIndex)
+                    loadCurrentSubtitle()
+                    rendererApplySubtitleStyle(currentSubtitleStyle(visible: true))
+                } else {
+                    rendererDisableSubtitles()
+                    subtitleEntries.removeAll()
+                    vlcSubtitleSelection = .none
+                }
                 updateSubtitleButtonAppearance()
+                updateSubtitleTracksMenu()
             } else {
                 showSubtitleSelectionMenu()
             }
@@ -7223,7 +7695,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let disable = UIAlertAction(title: "Disable Subtitles", style: .destructive) { [weak self] _ in
             Logger.shared.log("Embedded subtitles disabled via action sheet", type: "Info")
             self?.userSelectedSubtitleTrack = true
+            self?.subtitleModel.isVisible = false
             self?.rendererDisableSubtitles()
+            self?.subtitleEntries.removeAll()
+            self?.vlcSubtitleSelection = .none
+            self?.updateSubtitleButtonAppearance()
             self?.updateSubtitleTracksMenu()
         }
         alert.addAction(disable)
@@ -7233,10 +7709,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             for (id, name) in embeddedTracks {
                 alert.addAction(UIAlertAction(title: name, style: .default) { [weak self] _ in
+                    guard let self else { return }
                     Logger.shared.log("Embedded subtitle selected via action sheet: id=\(id) name=\(name)", type: "Info")
-                    self?.userSelectedSubtitleTrack = true
-                    self?.rendererSetSubtitleTrack(id: id)
-                    self?.updateSubtitleTracksMenu()
+                    self.userSelectedSubtitleTrack = true
+                    self.subtitleModel.isVisible = true
+                    self.vlcSubtitleSelection = .embedded(trackId: id)
+                    self.rendererSetSubtitleTrack(id: id)
+                    self.rendererApplySubtitleStyle(self.currentSubtitleStyle(visible: true))
+                    self.updateSubtitleButtonAppearance()
+                    self.updateSubtitleTracksMenu()
                 })
             }
         }
@@ -7260,19 +7741,26 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let disableAction = UIAlertAction(title: "Disable Subtitles", style: .default) { [weak self] _ in
             self?.subtitleModel.isVisible = false
             self?.userSelectedSubtitleTrack = true
-            self?.rendererRefreshSubtitleOverlay()
+            self?.rendererDisableSubtitles()
+            self?.subtitleEntries.removeAll()
+            self?.vlcSubtitleSelection = .none
             self?.updateSubtitleButtonAppearance()
+            self?.updateSubtitleTracksMenu()
         }
         alert.addAction(disableAction)
         
         for (index, _) in subtitleURLs.enumerated() {
             let title = index < subtitleNames.count ? subtitleNames[index] : "Subtitle \(index + 1)"
             let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.currentSubtitleIndex = index
-                self?.subtitleModel.isVisible = true
-                self?.userSelectedSubtitleTrack = true
-                self?.loadCurrentSubtitle()
-                self?.updateSubtitleButtonAppearance()
+                guard let self else { return }
+                self.currentSubtitleIndex = index
+                self.subtitleModel.isVisible = true
+                self.userSelectedSubtitleTrack = true
+                self.vlcSubtitleSelection = .external(index: index)
+                self.loadCurrentSubtitle()
+                self.rendererApplySubtitleStyle(self.currentSubtitleStyle(visible: true))
+                self.updateSubtitleButtonAppearance()
+                self.updateSubtitleTracksMenu()
             }
             alert.addAction(action)
         }
@@ -9406,7 +9894,6 @@ extension PlayerViewController: PiPControllerDelegate {
         let now = CACurrentMediaTime()
         guard now - lastVLCUIMemoryWarningLogTime >= 2 else { return }
         lastVLCUIMemoryWarningLogTime = now
-        logVLCUI("memory warning \(vlcSteadyEnvironmentSnapshot(safePosition: cachedPosition, effectiveDuration: cachedDuration, durationIsReliable: cachedDuration > 5))", type: "VLCCrashProbe")
         logVLCUIViewSnapshot("memoryWarning")
     }
 
@@ -9719,9 +10206,11 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
             guard !pending else {
-                self.logPictureInPicture("will-enter-foreground canceled pending MPV PiP start; restoring foreground renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
-                pip.stopPictureInPicture(source: "will-enter-foreground-pending")
-                self.rendererFinishPictureInPicture()
+                // Starting PiP from the foreground makes iOS fire a foreground event mid-
+                // handshake; tearing the renderer down here (stop + finish) races AVKit's
+                // didStart and leaves the PiP window black. Leave the in-flight start alone —
+                // didStart -> activate will show it, and failedToStart/timeout paths recover.
+                self.logPictureInPicture("will-enter-foreground keeping in-flight PiP start (no teardown) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
                 return
             }
             self.rendererFinishPictureInPicture()
@@ -9742,9 +10231,11 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
             guard !pending else {
-                self.logPictureInPicture("\(source): canceled pending MPV PiP start; restoring foreground renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
-                pip.stopPictureInPicture(source: "\(source)-pending")
-                self.rendererFinishPictureInPicture()
+                // See appWillEnterForeground: starting PiP itself briefly foregrounds the
+                // app, so tearing down an in-flight start here races AVKit's didStart and
+                // makes the PiP window black (and breaks Metal's auto-PiP on backgrounding).
+                // Leave it alone; didStart -> activate shows it, recovery paths handle failure.
+                self.logPictureInPicture("\(source): keeping in-flight PiP start (no teardown) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
                 return
             }
             self.logMPV("\(source): PiP inactive; restoring MPV foreground render path renderer={\(self.rendererPictureInPictureDebugSnapshot())}")

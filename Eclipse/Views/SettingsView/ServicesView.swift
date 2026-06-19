@@ -17,17 +17,16 @@ struct ServicesView: View {
     @State private var showDownloadAlert = false
     @State private var downloadURL = ""
     @State private var serviceDownloadAlert: ServiceDownloadAlert?
-    @State private var autoUpdateEnabled: Bool = UserDefaults.standard.bool(forKey: "autoUpdateServicesEnabled")
+    @AppStorage("autoUpdateServicesEnabled") private var autoUpdateEnabled = true
     @State private var showStremioAddAlert = false
     @State private var stremioURL = ""
     @State private var stremioError: String?
     @State private var showStremioError = false
-    @State private var servicesAutoModeEnabled: Bool = UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
-    @State private var servicesAutoSelectEpisodesEnabled: Bool = UserDefaults.standard.bool(forKey: "servicesAutoSelectEpisodesEnabled")
+    @AppStorage("servicesAutoModeEnabled") private var servicesAutoModeEnabled = false
+    @AppStorage("servicesAutoSelectEpisodesEnabled") private var servicesAutoSelectEpisodesEnabled = false
+    @AppStorage("servicesAutoModeQualityPreference") private var autoModeQualityPreferenceRaw = AutoModeQualityPreference.defaultPreference.rawValue
     @State private var selectedAutoModeSourceIds: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceIds") ?? [])
     @State private var autoModeSourceOrderIds: [String] = UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceOrderIds") ?? []
-    @State private var autoModeQualityPreference: AutoModeQualityPreference = .current
-    @State private var autoModeQualityEnabled: Bool = AutoModeQualityPreference.current.usesAutomaticSelection
 
     private struct ServiceDownloadAlert: Identifiable {
         let id = UUID()
@@ -107,7 +106,7 @@ struct ServicesView: View {
             .onAppear {
                 _ = healthStore.version
                 pluginManager.load()
-                syncAutoModeSelectionWithInstalledSources()
+                reloadAutoModeSelectionFromDefaults()
             }
         }
     }
@@ -245,14 +244,40 @@ struct ServicesView: View {
         orderedAutoModeListItems.filter { selectedAutoModeSourceIds.contains($0.autoModeSourceId) }
     }
 
+    private var autoModeQualityPreference: AutoModeQualityPreference {
+        AutoModeQualityPreference(rawValue: autoModeQualityPreferenceRaw) ?? AutoModeQualityPreference.defaultPreference
+    }
+
+    private var autoModeQualityEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { autoModeQualityPreference.usesAutomaticSelection },
+            set: { enabled in
+                if enabled {
+                    if !autoModeQualityPreference.usesAutomaticSelection {
+                        autoModeQualityPreferenceRaw = AutoModeQualityPreference.defaultPreference.rawValue
+                    }
+                } else {
+                    autoModeQualityPreferenceRaw = AutoModeQualityPreference.manual.rawValue
+                }
+            }
+        )
+    }
+
+    private var autoModeQualityPreferenceBinding: Binding<AutoModeQualityPreference> {
+        Binding(
+            get: { autoModeQualityPreference.usesAutomaticSelection ? autoModeQualityPreference : AutoModeQualityPreference.defaultPreference },
+            set: { preference in
+                let resolved = preference.usesAutomaticSelection ? preference : AutoModeQualityPreference.defaultPreference
+                autoModeQualityPreferenceRaw = resolved.rawValue
+            }
+        )
+    }
+
     @ViewBuilder
     private var servicesList: some View {
         List {
             Section {
                 Toggle("Auto-Update Services", isOn: $autoUpdateEnabled)
-                    .onChange(of: autoUpdateEnabled) { newValue in
-                        serviceManager.isAutoUpdateEnabled = newValue
-                    }
             } footer: {
                 Text("Automatically check for service updates when the app is opened.")
             }
@@ -261,38 +286,17 @@ struct ServicesView: View {
 
             Section {
                 Toggle("Auto Mode", isOn: $servicesAutoModeEnabled)
-                    .onChange(of: servicesAutoModeEnabled) { newValue in
-                        UserDefaults.standard.set(newValue, forKey: "servicesAutoModeEnabled")
-                    }
 
                 Toggle("Auto-Select Episodes", isOn: $servicesAutoSelectEpisodesEnabled)
-                    .onChange(of: servicesAutoSelectEpisodesEnabled) { newValue in
-                        UserDefaults.standard.set(newValue, forKey: "servicesAutoSelectEpisodesEnabled")
-                    }
 
                 if servicesAutoModeEnabled {
-                    Toggle("Auto Quality", isOn: $autoModeQualityEnabled)
-                        .onChange(of: autoModeQualityEnabled) { enabled in
-                            if enabled {
-                                if !autoModeQualityPreference.usesAutomaticSelection {
-                                    autoModeQualityPreference = .auto
-                                }
-                            } else {
-                                autoModeQualityPreference = .manual
-                            }
-                            UserDefaults.standard.set(autoModeQualityPreference.rawValue, forKey: AutoModeQualityPreference.storageKey)
-                        }
+                    Toggle("Auto Quality", isOn: autoModeQualityEnabledBinding)
 
-                    if autoModeQualityEnabled {
-                        Picker("Quality", selection: $autoModeQualityPreference) {
+                    if autoModeQualityPreference.usesAutomaticSelection {
+                        Picker("Quality", selection: autoModeQualityPreferenceBinding) {
                             ForEach(AutoModeQualityPreference.allCases.filter(\.usesAutomaticSelection)) { preference in
                                 Text(preference.title).tag(preference)
                             }
-                        }
-                        .onChange(of: autoModeQualityPreference) { newValue in
-                            let resolved = newValue.usesAutomaticSelection ? newValue : .auto
-                            autoModeQualityPreference = resolved
-                            UserDefaults.standard.set(resolved.rawValue, forKey: AutoModeQualityPreference.storageKey)
                         }
                     }
 
@@ -452,8 +456,7 @@ struct ServicesView: View {
     private func reloadAutoModeSelectionFromDefaults() {
         selectedAutoModeSourceIds = Set(UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceIds") ?? [])
         autoModeSourceOrderIds = UserDefaults.standard.stringArray(forKey: "servicesAutoModeSourceOrderIds") ?? []
-        autoModeQualityPreference = .current
-        autoModeQualityEnabled = autoModeQualityPreference.usesAutomaticSelection
+        autoModeQualityPreferenceRaw = AutoModeQualityPreference.sanitizedRawValue(autoModeQualityPreferenceRaw)
         syncAutoModeSelectionWithInstalledSources()
     }
 

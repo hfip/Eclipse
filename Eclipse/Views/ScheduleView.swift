@@ -11,7 +11,6 @@ import Kingfisher
 
 struct ScheduleView: View {
     @AppStorage("showLocalScheduleTime") private var showLocalScheduleTime = true
-    @AppStorage("useClassicScheduleUI") private var useClassicScheduleUI = false
     @AppStorage("defaultScheduleMode") private var defaultScheduleModeRaw = ScheduleMode.anime.rawValue
     @StateObject private var viewModel = ScheduleViewModel()
     @StateObject private var accentColorManager = AccentColorManager.shared
@@ -166,17 +165,9 @@ struct ScheduleView: View {
             VStack(alignment: .leading, spacing: 16) {
                 scheduleModePickerSection
 
-                if useClassicScheduleUI {
-                    classicTimeZoneToggleSection
-
-                    ForEach(viewModel.dayBuckets) { bucket in
-                        daySection(bucket: bucket)
-                    }
-                } else {
-                    timeZoneToggleSection
-                    dayPickerSection
-                    selectedDaySection
-                }
+                timeZoneToggleSection
+                dayPickerSection
+                selectedDaySection
             }
             .padding(.top)
             .padding(.bottom, 100)
@@ -237,52 +228,6 @@ struct ScheduleView: View {
         .background(EclipseTheme.shared.cardBackground)
         .cornerRadius(10)
         .padding(.horizontal)
-    }
-
-    private var classicTimeZoneToggleSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Timezone")
-                    .font(.headline)
-                Text("Times are shown in \(showLocalScheduleTime ? "your local time" : "UTC")")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
-            Toggle("Local time", isOn: $showLocalScheduleTime)
-                .labelsHidden()
-                .tint(accentColorManager.currentAccentColor)
-        }
-        .padding()
-        .background(EclipseTheme.shared.cardBackground)
-        .cornerRadius(16)
-        .padding(.horizontal)
-    }
-
-    private func daySection(bucket: DayBucket) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(formattedDay(bucket.date))
-                .font(.title2)
-                .fontWeight(.bold)
-                .padding(.horizontal)
-
-            if bucket.items.isEmpty {
-                Text("No episodes scheduled")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-            } else {
-                LazyVStack(spacing: 12) {
-                    ForEach(bucket.items) { item in
-                        scheduleItemCard(item: item)
-                    }
-                }
-                .padding(.horizontal)
-            }
-        }
     }
 
     private var dayPickerSection: some View {
@@ -388,11 +333,7 @@ struct ScheduleView: View {
                 }
             }
         } label: {
-            if useClassicScheduleUI {
-                scheduleItemContent(item: item)
-            } else {
-                compactScheduleItemContent(item: item)
-            }
+            compactScheduleItemContent(item: item)
         }
         .buttonStyle(.plain)
         .opacity(loadingItemId == item.id ? 0.6 : 1.0)
@@ -406,51 +347,6 @@ struct ScheduleView: View {
         .disabled(loadingItemId != nil)
     }
     
-    private func scheduleItemContent(item: ScheduleEntry) -> some View {
-        HStack(spacing: 12) {
-            if let coverURL = item.coverImage, let url = URL(string: coverURL) {
-                KFImage(url)
-                    .resizable()
-                    .placeholder {
-                        Rectangle()
-                            .fill(Color.gray.opacity(0.2))
-                    }
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 54 * iPadScaleSmall, height: 76 * iPadScaleSmall)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            } else {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(width: 54 * iPadScaleSmall, height: 76 * iPadScaleSmall)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text(item.title)
-                    .font(.headline)
-                    .lineLimit(2)
-
-                HStack(spacing: 8) {
-                    Text(formatLabel(for: item))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    Text("•")
-                        .foregroundColor(.secondary)
-                    
-                    Label(formattedTime(for: item), systemImage: "clock")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            Spacer()
-        }
-        .padding()
-        .background(EclipseTheme.shared.cardBackground)
-        .cornerRadius(16)
-    }
-
     private func compactScheduleItemContent(item: ScheduleEntry) -> some View {
         HStack(spacing: 12) {
             schedulePoster(urlString: item.coverImage)
@@ -573,30 +469,6 @@ struct ScheduleView: View {
         return "in \(hours / 24)d"
     }
     
-    private func formatLabel(for item: ScheduleEntry) -> String {
-        if item.source != .anime {
-            if let season = item.season, item.episode > 0 {
-                return "S\(season) Ep. \(item.episode)"
-            }
-            return item.episode > 0 ? "Ep. \(item.episode)" : "New episode"
-        }
-
-        switch item.format?.uppercased() {
-        case "MOVIE":
-            return "Movie"
-        case "OVA":
-            return "OVA"
-        case "ONA":
-            return "ONA Ep. \(item.episode)"
-        case "SPECIAL":
-            return "Special"
-        case "MUSIC":
-            return "Music"
-        default:
-            return "Ep. \(item.episode)"
-        }
-    }
-
     private var scheduleCalendar: Calendar {
         var calendar = Calendar.current
         calendar.timeZone = showLocalScheduleTime ? .current : TimeZone(secondsFromGMT: 0)!

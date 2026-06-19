@@ -196,6 +196,7 @@ struct contentView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .ignoresSafeArea(edges: .top)
         .background(readerDetailBackground.ignoresSafeArea())
         .sheet(isPresented: $showAddToCollection) {
             MangaAddToCollectionView(item: libraryItem)
@@ -378,7 +379,6 @@ struct contentView: View {
             .offset(y: yOffset)
         }
         .frame(height: heroHeight)
-        .clipped()
     }
 
     @ViewBuilder

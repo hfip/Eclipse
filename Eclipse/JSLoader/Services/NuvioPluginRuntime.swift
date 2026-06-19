@@ -139,6 +139,20 @@ enum NuvioPluginRuntime {
         }
         context.setObject(nativeFetch, forKeyedSubscript: "__native_fetch" as NSString)
 
+        // Back the setTimeout polyfill: JavaScriptCore has no timers, and several scrapers
+        // wrap fetch in a setTimeout-based timeout (Promise.race) — without this they die
+        // with "Can't find variable: setTimeout" and return nothing. Delay is clamped to the
+        // overall runtime budget, and callbacks are dropped once the plugin has completed.
+        let scheduleTimeout: @convention(block) (JSValue?, Double) -> Void = { callback, milliseconds in
+            guard let callback, !callback.isUndefined, !callback.isNull else { return }
+            let clamped = min(max(0, milliseconds), timeoutSeconds * 1000)
+            DispatchQueue.main.asyncAfter(deadline: .now() + clamped / 1000.0) {
+                guard !box.isFinished else { return }
+                callback.call(withArguments: [])
+            }
+        }
+        context.setObject(scheduleTimeout, forKeyedSubscript: "__schedule_timeout" as NSString)
+
         let hash: @convention(block) (String, String) -> String = { algorithm, value in
             digestHex(algorithm: algorithm, value: value)
         }
@@ -525,6 +539,36 @@ enum NuvioPluginRuntime {
         globalThis.AbortController.prototype.abort = function() { this.signal.aborted = true; };
         globalThis.AbortSignal = function() {};
 
+        (function() {
+            var __nuvioTimers = {};
+            var __nuvioTimerSeq = 1;
+            globalThis.setTimeout = function(handler, timeout) {
+                if (typeof handler !== "function") return 0;
+                var id = __nuvioTimerSeq++;
+                __nuvioTimers[id] = true;
+                var extraArgs = Array.prototype.slice.call(arguments, 2);
+                __schedule_timeout(function() {
+                    if (!__nuvioTimers[id]) return;
+                    delete __nuvioTimers[id];
+                    try { handler.apply(undefined, extraArgs); }
+                    catch (e) { if (typeof console !== "undefined" && console.error) console.error("setTimeout callback error:", e); }
+                }, Number(timeout) || 0);
+                return id;
+            };
+            globalThis.clearTimeout = function(id) { if (id != null) delete __nuvioTimers[id]; };
+            // No real interval timer (avoids runaway loops keeping the JS context alive);
+            // scrapers only rely on setTimeout for fetch timeouts in practice.
+            globalThis.setInterval = function() { return 0; };
+            globalThis.clearInterval = function(id) { if (id != null) delete __nuvioTimers[id]; };
+            globalThis.setImmediate = function(handler) {
+                return globalThis.setTimeout.apply(null, [handler, 0].concat(Array.prototype.slice.call(arguments, 1)));
+            };
+            globalThis.clearImmediate = function(id) { globalThis.clearTimeout(id); };
+            if (typeof globalThis.queueMicrotask !== "function") {
+                globalThis.queueMicrotask = function(cb) { if (typeof cb === "function") Promise.resolve().then(cb); };
+            }
+        })();
+
         globalThis.URL = function(value, base) {
             var parsed = __parse_url(String(value), base == null ? null : String(base));
             this.href = parsed.href || String(value);
@@ -681,6 +725,7 @@ enum NuvioPluginRuntime {
             api.last = function() { return api.eq(ids.length - 1); };
             api.text = function() { return ids.map(function(id) { return __cheerio_text(id); }).join(""); };
             api.html = function() { return ids.length ? __cheerio_inner_html(ids[0]) : null; };
+            api.outerHtml = function() { return ids.length ? __cheerio_html(ids[0]) : null; };
             api.attr = function(name) {
                 if (!ids.length) return undefined;
                 var value = __cheerio_attr(ids[0], String(name));
@@ -741,10 +786,27 @@ enum NuvioPluginRuntime {
         }
         function cheerioLoad(html) {
             var root = __cheerio_load(String(html || ""));
-            return function(selector) {
+            function cheerioFn(selector, context) {
                 if (selector == null) return createCheerioCollection([root]);
+                // `$(existingCollection)` — return it untouched, matching cheerio.
+                if (selector && typeof selector === "object" && typeof selector.toArray === "function") {
+                    return selector;
+                }
+                // `$(selector, context)` — scope the search to the context collection.
+                if (context && typeof context === "object" && typeof context.find === "function") {
+                    return context.find(String(selector));
+                }
                 return createCheerioCollection(__cheerio_select(root, String(selector)));
+            }
+            // Static `$.html()` — serialize the whole document; `$.html(el)` serializes the
+            // outer HTML of a node/collection. Common scraper idiom; matches the reference runtime.
+            cheerioFn.html = function(node) {
+                if (node && typeof node === "object" && typeof node.outerHtml === "function") {
+                    return node.outerHtml();
+                }
+                return __cheerio_html(root);
             };
+            return cheerioFn;
         }
         var cheerioModule = { load: cheerioLoad };
 
@@ -859,6 +921,12 @@ private final class NuvioPluginRuntimeCompletion {
     private let continuation: CheckedContinuation<[NuvioPluginStream], Error>
     private let lock = NSLock()
     private var completed = false
+
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return completed
+    }
 
     init(continuation: CheckedContinuation<[NuvioPluginStream], Error>) {
         self.continuation = continuation

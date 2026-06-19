@@ -25,6 +25,45 @@ private func experimentalSubtitleASSOverrideValue(isMetalRenderer: Bool) -> Stri
     return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey) ? "yes" : "no"
 }
 
+/// Raise (or restore) the shared AVAudioSession's preferred output channel count so multichannel
+/// (5.1/7.1) PCM can reach routes that support it — USB-C/HDMI/AirPlay report >2 channels, while
+/// built-in speakers report 2 and stay stereo. Paired with mpv's `audio-channels=auto`, which then
+/// receives the multichannel layout from the audio device. Honors the user's surround setting and
+/// is a quiet no-op while no player audio session is active.
+private func eclipseApplyPreferredOutputChannels(log: (String) -> Void) {
+    let session = AVAudioSession.sharedInstance()
+    guard session.category == .playback else { return }
+    let maxChannels = session.maximumOutputNumberOfChannels
+    let desired = Settings.shared.mpvSurroundSoundEnabled ? maxChannels : min(2, maxChannels)
+    guard desired >= 1, desired != session.preferredOutputNumberOfChannels else { return }
+    do {
+        try session.setPreferredOutputNumberOfChannels(desired)
+        let route = session.currentRoute.outputs.map(\.portType.rawValue).joined(separator: ",")
+        log("audio: preferred output channels=\(desired) (max=\(maxChannels) surround=\(Settings.shared.mpvSurroundSoundEnabled) route=\(route.isEmpty ? "none" : route))")
+    } catch {
+        log("audio: failed to set preferred output channels desired=\(desired) max=\(maxChannels): \(error)")
+    }
+}
+
+/// Installs a single process-wide observer that re-applies the preferred multichannel output count
+/// whenever the audio route changes (e.g. plugging into an HDMI/USB receiver mid-playback). iOS can
+/// reset the preference across route changes, so re-applying keeps surround engaged.
+private final class EclipseAudioRouteWatcher {
+    static let shared = EclipseAudioRouteWatcher()
+    private var token: NSObjectProtocol?
+
+    func ensureInstalled() {
+        guard token == nil else { return }
+        token = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { _ in
+            eclipseApplyPreferredOutputChannels(log: { Logger.shared.log("[MPVAudio] \($0)", type: "MPV") })
+        }
+    }
+}
+
 protocol PlayerRenderer: AnyObject {
     var isPausedState: Bool { get }
     var supportsBitmapSubtitleTracks: Bool { get }
@@ -78,6 +117,7 @@ struct SubtitleStyle {
     let strokeColor: UIColor
     let strokeWidth: CGFloat
     let fontSize: CGFloat
+    let verticalOffset: CGFloat
     let isVisible: Bool
 
     static let `default` = SubtitleStyle(
@@ -85,8 +125,15 @@ struct SubtitleStyle {
         strokeColor: .black,
         strokeWidth: 1.0,
         fontSize: 38.0,
+        verticalOffset: -6.0,
         isVisible: false
     )
+}
+
+private func mpvSubtitlePosition(for verticalOffset: CGFloat) -> String {
+    let defaultOffset: CGFloat = -6.0
+    let position = max(0, min(150, 100 + (verticalOffset - defaultOffset)))
+    return String(format: "%.0f", position)
 }
 
 protocol MPVNativeRendererDelegate: AnyObject {
@@ -788,7 +835,6 @@ final class MPVNativeRenderer: PlayerRenderer {
     private var lastProgressLogBucket = -1
     private var lastDurationLogValue: Double = -1
     private var lastTrackSummary = ""
-    private var lastPlaybackDiagnosticsBucket = -1
     private var lastPlaybackErrorMessage: String?
     private var lastSlowOpenGLRenderLogAt: CFTimeInterval = 0
     private var hardwareDecodeFailureWindowStart: Date?
@@ -829,10 +875,6 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     private func logMPV(_ message: String) {
         Logger.shared.log("[MPVNativeRenderer] \(message)", type: "MPV")
-    }
-
-    private func logMPVCrashProbe(_ message: String) {
-        Logger.shared.log("[MPVNativeRenderer] \(message)", type: "MPVCrashProbe")
     }
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
@@ -928,7 +970,6 @@ final class MPVNativeRenderer: PlayerRenderer {
             throw RendererError.mpvCreationFailed
         }
         mpv = handle
-        logMPVCrashProbe("diagnostics marker version=mpv-ios-opengl-36f621b-behavior backend=openGL")
 
         setOption(name: "terminal", value: "no")
         setOption(name: "msg-level", value: "all=warn,cplayer=v,ffmpeg=v,demux=v,stream=v")
@@ -938,6 +979,9 @@ final class MPVNativeRenderer: PlayerRenderer {
         setOption(name: "hwdec", value: "videotoolbox-copy")
         setOption(name: "vd-lavc-dr", value: "no")
         setOption(name: "vd-lavc-software-fallback", value: "yes")
+        // Surround: request the source channel layout so multichannel routes (USB-C/HDMI/AirPlay)
+        // get 5.1/7.1 PCM; stereo routes downmix transparently. See ensureAudioSessionActive.
+        setOption(name: "audio-channels", value: Settings.shared.mpvSurroundSoundEnabled ? "auto" : "stereo")
         setOption(name: "demuxer-thread", value: "yes")
         setOption(name: "cache", value: "yes")
         setOption(name: "cache-pause-wait", value: "5")
@@ -1058,7 +1102,6 @@ final class MPVNativeRenderer: PlayerRenderer {
 
         apply(commands: preset.commands, on: handle)
         command(handle, ["stop"])
-        logMPVCrashProbe("configured iOS MPV video path target=\(describe(url: url)) hwdec=videotoolbox-copy softwareFallback=yes backend=openGL")
         updateHTTPHeaders(headers)
         applySubtitleStyle(lastAppliedSubtitleStyle)
 
@@ -1745,7 +1788,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         let currentHWDec = mpv.flatMap { getStringProperty(handle: $0, name: "hwdec-current") } ?? "nil"
         let videoCodec = mpv.flatMap { getStringProperty(handle: $0, name: "video-codec") } ?? "nil"
         logMPV("hardware decode fallback applying count=\(hardwareDecodeFailureCount) codec=\(videoCodec) hwdec=\(currentHWDec) trigger=\(trigger)")
-        logMPVCrashProbe("hardware decode fallback applying codec=\(videoCodec) hwdec=\(currentHWDec) pos=\(String(format: "%.2f", cachedPosition)) trigger=\(trigger)")
 
         setProperty(name: "vd-lavc-software-fallback", value: "yes")
         setProperty(name: "hwdec", value: "no")
@@ -1769,7 +1811,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         let elapsed = currentLoadStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "nil"
         logMPV("file loaded gen=\(loadGeneration) elapsed=\(elapsed)s duration=\(String(format: "%.2f", cachedDuration)) position=\(String(format: "%.2f", cachedPosition))")
         logTrackSummaryIfChanged(reason: "file-loaded")
-        logPlaybackDiagnostics(reason: "file-loaded")
         startForegroundDisplayLink(reason: "file-loaded")
         if let initialSeek = pendingInitialSeek {
             logMPV("applying pending initial seek \(String(format: "%.2f", initialSeek))s")
@@ -1868,9 +1909,6 @@ final class MPVNativeRenderer: PlayerRenderer {
                 if bucket != lastProgressLogBucket {
                     lastProgressLogBucket = bucket
                     logMPV("progress position=\(String(format: "%.2f", cachedPosition)) duration=\(String(format: "%.2f", cachedDuration)) loading=\(isLoading) ready=\(isReadyToSeek) paused=\(isPaused)")
-                    if shouldLogPlaybackDiagnostics(for: bucket) {
-                        logPlaybackDiagnostics(reason: "progress-\(bucket * 10)s")
-                    }
                 }
                 publishProgress()
             }
@@ -1968,6 +2006,8 @@ final class MPVNativeRenderer: PlayerRenderer {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .moviePlayback)
             try session.setActive(true)
+            eclipseApplyPreferredOutputChannels(log: { [weak self] in self?.logMPV($0) })
+            EclipseAudioRouteWatcher.shared.ensureInstalled()
         } catch {
             logMPV("failed to activate AVAudioSession: \(error)")
         }
@@ -2171,38 +2211,6 @@ final class MPVNativeRenderer: PlayerRenderer {
         let speed = getStringProperty(handle: handle, name: "cache-speed") ?? "nil"
         let idle = getStringProperty(handle: handle, name: "demuxer-cache-idle") ?? "nil"
         return "cachePercent=\(buffering) cacheDuration=\(duration) cacheSpeed=\(speed) demuxerIdle=\(idle)"
-    }
-
-    private func shouldLogPlaybackDiagnostics(for progressBucket: Int) -> Bool {
-        guard progressBucket != lastPlaybackDiagnosticsBucket else { return false }
-        if progressBucket <= 6 { return true }
-        return progressBucket % 3 == 0
-    }
-
-    private func logPlaybackDiagnostics(reason: String) {
-        lastPlaybackDiagnosticsBucket = Int(cachedPosition / 10.0)
-        let size = currentVideoSize()
-        logMPVCrashProbe("diagnostics checkpoint reason=\(reason) gen=\(loadGeneration) mode=\(currentMode) backend=openGL pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) loading=\(isLoading) ready=\(isReadyToSeek) paused=\(isPaused) running=\(isRunning) stopping=\(isStopping) video=\(String(format: "%.0fx%.0f", size.width, size.height)) lastTracks={\(shortText(lastTrackSummary, limit: 260))}")
-        guard let handle = mpv else {
-            logMPVCrashProbe("diagnostics values reason=\(reason) skipped: mpv handle nil")
-            return
-        }
-        let videoCodec = getStringProperty(handle: handle, name: "video-codec") ?? "nil"
-        let audioCodec = getStringProperty(handle: handle, name: "audio-codec") ?? "nil"
-        let hwdec = getStringProperty(handle: handle, name: "hwdec-current") ?? "nil"
-        let videoFormat = getStringProperty(handle: handle, name: "video-format") ?? "nil"
-        let pixelFormat = getStringProperty(handle: handle, name: "video-params/pixelformat")
-            ?? getStringProperty(handle: handle, name: "video-params/format")
-            ?? "nil"
-        let hwPixelFormat = getStringProperty(handle: handle, name: "video-params/hw-pixelformat") ?? "nil"
-        let videoFilter = getStringProperty(handle: handle, name: "vf") ?? "nil"
-        let hwdecImageFormat = getStringProperty(handle: handle, name: "hwdec-image-format") ?? "nil"
-        let fps = getStringProperty(handle: handle, name: "estimated-vf-fps")
-            ?? getStringProperty(handle: handle, name: "container-fps")
-            ?? "nil"
-        let voDrops = getStringProperty(handle: handle, name: "vo-drop-frame-count") ?? "nil"
-        let decoderDrops = getStringProperty(handle: handle, name: "decoder-frame-drop-count") ?? "nil"
-        logMPVCrashProbe("diagnostics values reason=\(reason) backend=openGL codecV=\(videoCodec) codecA=\(audioCodec) hwdec=\(hwdec) hwdecImage=\(hwdecImageFormat) videoFormat=\(videoFormat) pixelFormat=\(pixelFormat) hwPixelFormat=\(hwPixelFormat) vf=\(videoFilter) fps=\(fps) voDrops=\(voDrops) decoderDrops=\(decoderDrops)")
     }
 
     private func describe(url: URL) -> String {
@@ -2546,12 +2554,13 @@ final class MPVNativeRenderer: PlayerRenderer {
 
     func applySubtitleStyle(_ style: SubtitleStyle) {
         lastAppliedSubtitleStyle = style
-        logMPV("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth))")
+        logMPV("applySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth)) offset=\(String(format: "%.1f", style.verticalOffset))")
         setProperty(name: "sub-visibility", value: style.isVisible ? "yes" : "no")
         setProperty(name: "sub-font-size", value: String(adjustedSubtitleFontSize(for: style)))
         setProperty(name: "sub-color", value: mpvColor(style.foregroundColor))
         setProperty(name: "sub-border-color", value: mpvColor(style.strokeColor))
         setProperty(name: "sub-border-size", value: String(format: "%.2f", max(0, min(style.strokeWidth * 1.5, 5.0))))
+        setProperty(name: "sub-pos", value: mpvSubtitlePosition(for: style.verticalOffset))
         setProperty(name: "sub-shadow-offset", value: "0")
         setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: false))
     }
@@ -2607,6 +2616,9 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     let name: String
     let maximumFrameSize: CGSize
     let preferredPiPFramesPerSecond: Int
+    /// Enables the expensive rgba64 -> RGBA16F HDR sample-buffer route.
+    /// Low Heat disables it so HDR falls back to the cheaper BGRA presentation path.
+    let allowsHighBitDepthHDR: Bool
     /// Fraction of the native drawable resolution the inline MoltenVK surface is rendered at.
     /// 1.0 = full native pixels; lower values reduce fragment-shader work (and therefore heat)
     /// by rendering a smaller surface that CAMetalLayer upscales to the view bounds.
@@ -2618,12 +2630,13 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
     var logDescription: String {
         let sizeText = "\(Int(maximumFrameSize.width))x\(Int(maximumFrameSize.height))"
         let scaleText = String(format: "%.2f", renderScale)
-        return "profile=\(name) maxFrame=\(sizeText) renderScale=\(scaleText) pipCap=\(preferredPiPFramesPerSecond) reason=\(reason)"
+        return "profile=\(name) maxFrame=\(sizeText) renderScale=\(scaleText) pipCap=\(preferredPiPFramesPerSecond) highBitDepthHDR=\(allowsHighBitDepthHDR) reason=\(reason)"
     }
 
     func hasSameRenderSettings(as other: MPVMetalSampleBufferQualityProfile) -> Bool {
         maximumFrameSize == other.maximumFrameSize
             && preferredPiPFramesPerSecond == other.preferredPiPFramesPerSecond
+            && allowsHighBitDepthHDR == other.allowsHighBitDepthHDR
             && abs(renderScale - other.renderScale) < 0.001
     }
 
@@ -2632,6 +2645,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
             name: "Sharp",
             maximumFrameSize: fullQualityMaximumFrameSize,
             preferredPiPFramesPerSecond: 30,
+            allowsHighBitDepthHDR: true,
             renderScale: 1.0,
             reason: reason
         )
@@ -2642,6 +2656,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
             name: "Balanced",
             maximumFrameSize: CGSize(width: 2560, height: 1440),
             preferredPiPFramesPerSecond: 30,
+            allowsHighBitDepthHDR: true,
             renderScale: 0.82,
             reason: reason
         )
@@ -2652,6 +2667,7 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
             name: "Low Heat",
             maximumFrameSize: CGSize(width: 1600, height: 900),
             preferredPiPFramesPerSecond: 24,
+            allowsHighBitDepthHDR: false,
             renderScale: 0.62,
             reason: reason
         )
@@ -2719,7 +2735,18 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     }
 
     func getRenderingView() -> UIView {
-        placeholderView
+        // The single MPV handle renders into displayLayer for both inline and PiP, so
+        // host the layer inside the rendering view and keep it visible for inline
+        // playback. (renderingLayoutDidChange keeps its frame synced to the container.)
+        if displayLayer.superlayer !== placeholderView.layer {
+            displayLayer.removeFromSuperlayer()
+            displayLayer.frame = placeholderView.bounds
+            displayLayer.zPosition = 0
+            placeholderView.layer.addSublayer(displayLayer)
+        }
+        displayLayer.isHidden = false
+        displayLayer.opacity = 1.0
+        return placeholderView
     }
 
     func renderingLayoutDidChange(containerSize: CGSize) {
@@ -2813,7 +2840,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func performanceOverlaySnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "MPV sample-buffer-pip \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)\nbackend \(snapshot.presentationBackend.rawValue) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount)"
+        return "MPV sample-buffer-pip \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)\nbackend \(snapshot.presentationBackend.rawValue) api=\(snapshot.renderAPI) source=\(snapshot.sourcePixelFormatDescription) pixel=\(snapshot.pixelFormatDescription) hdr=\(snapshot.hdrMetadataApplied) highBitDepth=\(snapshot.highBitDepthRenderingActive) highBitDepthFailures=\(snapshot.highBitDepthRenderingFailureCount) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount)"
     }
 
 #if ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
@@ -2868,6 +2895,13 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func getSpeed() -> Double {
         sampleRenderer.getSpeed()
+    }
+
+    /// Mutes this renderer when it is embedded as a warm hybrid PiP bridge.
+    /// The direct sample-buffer path does not call this because inline and PiP
+    /// are the same mpv instance.
+    func setAudioMuted(_ muted: Bool) {
+        _ = sampleRenderer.command(["set", "mute", muted ? "yes" : "no"])
     }
 
     func getAudioTracksDetailed() -> [(Int, String, String)] {
@@ -2930,6 +2964,9 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
                 isVisible: style.isVisible
             )
         )
+        _ = sampleRenderer.command(["set", "sub-pos", mpvSubtitlePosition(for: style.verticalOffset)])
+        _ = sampleRenderer.command(["set", "sub-shadow-offset", "0"])
+        _ = sampleRenderer.command(["set", "sub-ass-override", experimentalSubtitleASSOverrideValue(isMetalRenderer: true)])
     }
 
     func canStartSampleBufferPictureInPicture() -> Bool {
@@ -2978,7 +3015,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func pictureInPictureDebugSnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "mode=sample-buffer-pip backend=\(snapshot.presentationBackend.rawValue) running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) frames=\(snapshot.frameCount) attempts=\(snapshot.renderAttemptCount) failures=\(snapshot.renderFailureCount) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount) layer=\(snapshot.displayLayerStatus) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
+        return "mode=sample-buffer-pip backend=\(snapshot.presentationBackend.rawValue) api=\(snapshot.renderAPI) source=\(snapshot.sourcePixelFormatDescription) pixel=\(snapshot.pixelFormatDescription) hdr=\(snapshot.hdrMetadataApplied) highBitDepth=\(snapshot.highBitDepthRenderingActive) highBitDepthFailures=\(snapshot.highBitDepthRenderingFailureCount) primaries=\(snapshot.videoColorPrimaries.isEmpty ? "unknown" : snapshot.videoColorPrimaries) transfer=\(snapshot.videoTransferFunction.isEmpty ? "unknown" : snapshot.videoTransferFunction) sigPeak=\(String(format: "%.2f", snapshot.videoSignalPeak)) running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) frames=\(snapshot.frameCount) attempts=\(snapshot.renderAttemptCount) failures=\(snapshot.renderFailureCount) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount) layer=\(snapshot.displayLayerStatus) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
     }
 
     func beginForegroundUIStallRecovery(reason: String) {
@@ -2995,7 +3032,8 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         let options = MPVMetalSampleBufferRendererOptions(
             maximumFrameSize: qualityProfile.maximumFrameSize,
             preferredFramesPerSecond: targetFPS,
-            preferredPiPFramesPerSecond: pipFramesPerSecond
+            preferredPiPFramesPerSecond: pipFramesPerSecond,
+            prefersHighBitDepthRendering: qualityProfile.allowsHighBitDepthHDR
         )
         return (options, targetFPS, pipFramesPerSecond)
     }
@@ -3084,6 +3122,16 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
             isPaused = true
             delegate?.renderer(self, didChangeLoading: false)
             delegate?.renderer(self, didChangePause: true)
+            // A load can settle straight into .paused (e.g. entering PiP while
+            // paused) without ever passing through .playing/.ready. Without this,
+            // the pending resume seek is never applied and position updates stay
+            // gated, so PiP would start at 0:00.
+            if currentURL != nil, !isReadyToSeek {
+                isReadyToSeek = true
+                isAwaitingReadyForCurrentLoad = false
+                applyPendingInitialSeekIfNeeded(reason: "paused")
+                delegate?.renderer(self, didBecomeReadyToSeek: true)
+            }
         case .ready:
             isLoading = false
             delegate?.renderer(self, didChangeLoading: false)
@@ -3128,7 +3176,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         lastLoggedDiagnosticsFrameCount = diagnostics.frameCount
         lastLoggedDiagnosticsFailures = totalFailures
         Logger.shared.log(
-            "[MPVSampleBufferPiPBridge] diagnostics backend=\(diagnostics.presentationBackend.rawValue) metalFrames=\(diagnostics.metalPresentationFrameCount) metalFail=\(diagnostics.metalPresentationFailureCount) frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) metalProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
+            "[MPVSampleBufferPiPBridge] diagnostics backend=\(diagnostics.presentationBackend.rawValue) api=\(diagnostics.renderAPI) source=\(diagnostics.sourcePixelFormatDescription) pixel=\(diagnostics.pixelFormatDescription) hdr=\(diagnostics.hdrMetadataApplied) highBitDepth=\(diagnostics.highBitDepthRenderingActive) highBitDepthFail=\(diagnostics.highBitDepthRenderingFailureCount) primaries=\(diagnostics.videoColorPrimaries.isEmpty ? "unknown" : diagnostics.videoColorPrimaries) transfer=\(diagnostics.videoTransferFunction.isEmpty ? "unknown" : diagnostics.videoTransferFunction) sigPeak=\(String(format: "%.2f", diagnostics.videoSignalPeak)) metalFrames=\(diagnostics.metalPresentationFrameCount) metalFail=\(diagnostics.metalPresentationFailureCount) frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) metalProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
             type: "MPV"
         )
     }
@@ -3212,6 +3260,9 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     private var runtimeHardwareDecodeFallbackApplied = false
     private var lastRenderingLayoutSize: CGSize = .zero
     private var lastMetalDrawableSize: CGSize = .zero
+    // True when the inline Metal layer is currently configured for HDR/EDR passthrough.
+    private var hdrPassthroughActive = false
+    private var lastHDRConfigurationSignature = ""
 
     var isPausedState: Bool {
         fallbackRenderer?.isPausedState ?? (isUsingPiPBridge ? pipBridge.isPausedState : isPaused)
@@ -3348,6 +3399,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         isStopping = true
         isRunning = false
         pipBridge.stop()
+        resetHDRConfiguration()
 
         let handleForShutdown = mpv
         if let handle = handleForShutdown {
@@ -3695,6 +3747,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         setProperty(name: "sub-color", value: mpvColor(style.foregroundColor))
         setProperty(name: "sub-border-color", value: mpvColor(style.strokeColor))
         setProperty(name: "sub-border-size", value: String(format: "%.2f", max(0, min(style.strokeWidth * 1.5, 5.0))))
+        setProperty(name: "sub-pos", value: mpvSubtitlePosition(for: style.verticalOffset))
         setProperty(name: "sub-shadow-offset", value: "0")
         setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: true))
         if isUsingPiPBridge {
@@ -3748,6 +3801,14 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             pipBridge.setSpeed(getSpeed())
             pipBridge.applySubtitleStyle(lastAppliedSubtitleStyle)
             logMPV("PiP hybrid GPU sample-buffer bridge reuse gen=\(loadGeneration) pos=\(String(format: "%.2f", cachedPosition)) primed=\(pipBridge.isPictureInPicturePrimed())")
+        }
+
+        // Keep the PiP bridge silent until it takes over at activation; otherwise
+        // both the inline mpv and the bridge play this stream's audio during the
+        // prepare->activate window. Skip if PiP is already active so a re-prepare
+        // can't silence the running window.
+        if !isUsingPiPBridge {
+            pipBridge.setAudioMuted(true)
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -3841,6 +3902,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         if !wasActive {
             setProperty(name: "pause", value: "yes")
             setProperty(name: "vid", value: "no")
+            // Inline mpv is now paused and the bridge owns playback, so let its audio through.
+            pipBridge.setAudioMuted(false)
             logMPV("PiP hybrid activated bridge foregroundPos=\(String(format: "%.2f", cachedPosition)) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}")
         }
         pipBridge.activatePictureInPictureLayer()
@@ -3891,7 +3954,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         let vo = mpv.flatMap { getStringProperty(handle: $0, name: "vo-configured") } ?? "nil"
         let hwdec = mpv.flatMap { getStringProperty(handle: $0, name: "hwdec-current") } ?? "nil"
         let mode = isUsingPiPBridge ? "metal-pip" : (isPreparingPiPBridge ? "moltenvk-pip-warmup" : "moltenvk")
-        return "mode=\(mode) running=\(isRunning) paused=\(isPausedState) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) video=\(String(format: "%.0fx%.0f", size.width, size.height)) vo=\(vo) hwdec=\(hwdec) bridgeGen=\(pipBridgeLoadGeneration ?? -1) currentGen=\(loadGeneration) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}"
+        return "mode=\(mode) running=\(isRunning) paused=\(isPausedState) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) video=\(String(format: "%.0fx%.0f", size.width, size.height)) vo=\(vo) hwdec=\(hwdec) hdr=\(hdrPassthroughActive ? "passthrough" : "sdr") bridgeGen=\(pipBridgeLoadGeneration ?? -1) currentGen=\(loadGeneration) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}"
     }
 
     private func startMoltenVK() throws {
@@ -3923,6 +3986,14 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         setOption(name: "framedrop", value: "vo")
         setOption(name: "interpolation", value: "no")
         setOption(name: "video-rotate", value: "no")
+        // Surround: ask mpv for the full source channel layout so it can feed multichannel
+        // PCM to the audio device when the active route exposes >2 channels (configured in
+        // ensureAudioSessionActive). On stereo-only routes the AO reports 2ch and mpv
+        // transparently downmixes. When the user disables surround, force a stereo downmix.
+        setOption(name: "audio-channels", value: Settings.shared.mpvSurroundSoundEnabled ? "auto" : "stereo")
+        // HDR is applied per-file once the colorspace is known (applyHDRConfiguration); start
+        // with passthrough off so SDR content and non-HDR displays are never affected.
+        setOption(name: "target-colorspace-hint", value: "no")
         setOption(name: "sub-auto", value: "fuzzy")
         setOption(name: "subs-fallback", value: "yes")
         setOption(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: true))
@@ -3967,6 +4038,70 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         if status < 0 {
             logMPV("failed to set Metal layer wid status=\(status)")
         }
+    }
+
+    /// Detects whether the loaded video is HDR and, honoring the user's HDR Output setting and the
+    /// display's EDR capability, switches the inline Metal layer between HDR passthrough and SDR
+    /// tone-mapping. Safe for SDR sources (leaves the layer in its default SDR state) and a no-op
+    /// while the PiP sample-buffer bridge owns presentation or the OpenGL fallback is active.
+    private func applyHDRConfiguration(reason: String) {
+        guard let handle = mpv, isRunning, !isStopping, fallbackRenderer == nil, !isUsingPiPBridge else { return }
+
+        let gamma = (getStringProperty(handle: handle, name: "video-params/gamma") ?? "").lowercased()
+        let primaries = (getStringProperty(handle: handle, name: "video-params/primaries") ?? "").lowercased()
+        let isHDRSource = gamma == "pq" || gamma == "hlg" || gamma == "st2084" || primaries == "bt.2020"
+
+        let mode = Settings.shared.mpvHDRMode
+        let wantsPassthrough: Bool
+        switch mode {
+        case .sdr:
+            wantsPassthrough = false
+        case .hdr:
+            wantsPassthrough = isHDRSource
+        case .auto:
+            wantsPassthrough = isHDRSource && displaySupportsEDR()
+        }
+
+        // Skip redundant reconfiguration on repeated reconfig events for the same state.
+        let signature = "\(mode.rawValue)|\(gamma)|\(primaries)|\(wantsPassthrough)"
+        guard signature != lastHDRConfigurationSignature else { return }
+        lastHDRConfigurationSignature = signature
+
+        // `target-colorspace-hint=yes` makes gpu-next signal the source colorspace to the swapchain;
+        // only enable it when we actually want HDR passthrough so SDR output and non-EDR displays
+        // keep mpv's default tone-mapping behavior (no regression for the common SDR case).
+        setProperty(name: "target-colorspace-hint", value: wantsPassthrough ? "yes" : "no")
+        hdrPassthroughActive = wantsPassthrough
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if #available(iOS 16.0, *) {
+                self.metalView.metalLayer.wantsExtendedDynamicRangeContent = wantsPassthrough
+            }
+        }
+
+        logMPV("HDR config reason=\(reason) mode=\(mode.rawValue) gamma=\(gamma.isEmpty ? "nil" : gamma) primaries=\(primaries.isEmpty ? "nil" : primaries) hdrSource=\(isHDRSource) passthrough=\(wantsPassthrough)")
+    }
+
+    private func resetHDRConfiguration() {
+        lastHDRConfigurationSignature = ""
+        hdrPassthroughActive = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if #available(iOS 16.0, *) {
+                self.metalView.metalLayer.wantsExtendedDynamicRangeContent = false
+            }
+        }
+    }
+
+    private func displaySupportsEDR() -> Bool {
+        guard #available(iOS 16.0, *) else { return false }
+        let screen = metalView.window?.screen
+            ?? UIApplication.shared.connectedScenes
+                .compactMap { ($0 as? UIWindowScene)?.screen }
+                .first
+            ?? UIScreen.main
+        return screen.potentialEDRHeadroom > 1.0
     }
 
     private func observeProperties() {
@@ -4023,6 +4158,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             setLoading(true)
         case MPV_EVENT_VIDEO_RECONFIG:
             refreshVideoState()
+            applyHDRConfiguration(reason: "video-reconfig")
         case MPV_EVENT_FILE_LOADED:
             handleFileLoaded()
         case MPV_EVENT_END_FILE:
@@ -4096,7 +4232,6 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         let currentHWDec = mpv.flatMap { getStringProperty(handle: $0, name: "hwdec-current") } ?? "nil"
         let videoCodec = mpv.flatMap { getStringProperty(handle: $0, name: "video-codec") } ?? "nil"
         logMPV("hardware decode fallback applying count=\(hardwareDecodeFailureCount) codec=\(videoCodec) hwdec=\(currentHWDec) trigger=\(trigger)")
-        Logger.shared.log("[MPVMoltenVKRenderer] hardware decode fallback codec=\(videoCodec) hwdec=\(currentHWDec) pos=\(String(format: "%.2f", cachedPosition)) trigger=\(trigger)", type: "MPVCrashProbe")
 
         setProperty(name: "vd-lavc-software-fallback", value: "yes")
         setProperty(name: "hwdec", value: "no")
@@ -4117,6 +4252,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         isAwaitingFileLoadedForCurrentLoad = false
         setLoading(isPausedForCache)
         refreshVideoState()
+        applyHDRConfiguration(reason: "file-loaded")
         logTrackSummaryIfChanged(reason: "file-loaded")
         if let initialSeek = pendingInitialSeek {
             pendingInitialSeek = nil
@@ -4279,6 +4415,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .moviePlayback)
             try session.setActive(true)
+            eclipseApplyPreferredOutputChannels(log: { [weak self] in self?.logMPV($0) })
+            EclipseAudioRouteWatcher.shared.ensureInstalled()
         } catch {
             logMPV("failed to activate AVAudioSession: \(error)")
         }

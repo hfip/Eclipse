@@ -8,6 +8,9 @@
   <a href="https://github.com/Soupy-dev/Eclipse/releases">
     <img alt="GitHub release downloads" src="https://img.shields.io/github/downloads/Soupy-dev/Eclipse/total.svg?style=for-the-badge&label=Downloads&cacheSeconds=3600">
   </a>
+  <a href="https://www.patreon.com/soupy698">
+    <img alt="Patreon" src="https://img.shields.io/badge/Patreon-Support%20Development-FF424D?style=for-the-badge&logo=patreon&logoColor=white">
+  </a>
 </p>
 
 <p align="center">
@@ -21,7 +24,7 @@
 
 ## Why Eclipse
 
-Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku as well. Star the repo if you like my work!
+Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku as well. Star the repo or support on Patreon if you like my work!
 
 ## Screenshots
 
@@ -69,25 +72,11 @@ Get the TestFlight build (Recommended for most iOS users, easiest to download an
 
 https://testflight.apple.com/join/FDXvrxVg
 
-Get the latest release from the releases page:
-
-https://github.com/Soupy-dev/Eclipse/releases
-
-
 AltStore and SideStore users can add this source:
 
 ```text
 https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/altsource.json
 ```
-
-New to sideloading? This guide is a good starting point:
-
-```text
-https://gist.github.com/sinceohsix/688637ac04695d1ff38f844acc8ba7f3
-```
-
-SideStore is not required. Other sideloading options work too, and `r/sideloaded` has many community guides.
-
 
 ## Notes
 

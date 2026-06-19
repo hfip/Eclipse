@@ -118,6 +118,8 @@ struct BackupData: Codable {
     var mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue
     var mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue
     var mpvAppExitPictureInPictureEnabled: Bool = false
+    var mpvHDRMode: String = MPVHDRMode.defaultMode.rawValue
+    var mpvSurroundSoundEnabled: Bool = true
     var smartInAppPlayerChoosingEnabled: Bool = false
     var experimentalFeaturesEnabled: Bool = false
     var experimentalFeaturesLastChangedAt: Double = 0
@@ -129,6 +131,7 @@ struct BackupData: Codable {
     var experimentalMPVShowRemainingTime: Bool = true
     var experimentalMPVPreciseProgress: Bool = true
     var experimentalMPVIgnoreSpecialSubtitleStyles: Bool = false
+    var experimentalMPVPreloadAutoClear: Bool = true
     var experimentalICloudSyncEnabled: Bool = false
 
     // Subtitle Styling
@@ -137,6 +140,7 @@ struct BackupData: Codable {
     var subtitleStrokeWidth: Double = 1.0
     var subtitleFontSize: Double = 30.0
     var subtitleVerticalOffset: Double = -6.0
+    var subtitlesVisible: Bool = false
 
     // UI Preferences
     var showKanzen: Bool = false
@@ -147,6 +151,9 @@ struct BackupData: Codable {
     var useClassicScheduleUI: Bool = false
     var heroBannerCatalogId: String = "trending"
     var heroBannerBehavior: String = HeroBannerBehavior.static.rawValue
+    /// JSON blob of per-catalog home layout overrides (keyed by catalog id). "" when none.
+    var homeCatalogLayoutOverrides: String = ""
+    var homeAnimatedBackgroundEnabled: Bool?
     var experimentalMediaDesignPreset: String = ExperimentalMediaDesignPreset.defaultValue.rawValue
     var experimentalHeroBleedLevel: String = ExperimentalHeroBleedLevel.defaultValue.rawValue
     var experimentalHomeCardShape: String = ExperimentalHomeCardShape.defaultValue.rawValue
@@ -195,6 +202,7 @@ struct BackupData: Codable {
     var readerAnimatePageTransitions: Bool = true
     var readerUpscaleImages: Bool = false
     var readerUpscaleMaxHeight: Int = 2000
+    var readerUpscaleModelName: String = "None"
     var readerPagesToPreload: Int = 3
     var readerPagedPageLayout: String = "single"
     var readerPagedPageOffset: Bool = false
@@ -243,7 +251,11 @@ struct BackupData: Codable {
     var performanceModeEnabled: Bool = PerformanceModeSettings.defaultEnabled
     var performanceModeSkipAniListTraversalForAnimeDetails: Bool = false
     var performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:]
-    
+
+    // Kanzen home / search
+    var kanzenHomeSelectedSourceID: String = ""
+    var kanzenRecentSourceSearches: [String] = []
+
     // Collections (Library)
     var collections: [BackupCollection] = []
     
@@ -433,12 +445,13 @@ struct BackupData: Codable {
         case version, createdDate
         case accentColor, settingsGradientColor, readerAccentColor, tmdbLanguage, selectedAppearance, readerSelectedAppearance, readerGlobalAppearanceEnabled, readerSettingsGradientColor, enableSubtitlesByDefault, defaultSubtitleLanguage, playerSubtitleAppearanceEnabled, enableVLCSubtitleEditMenu, preferredAnimeAudioLanguage, inAppPlayer, playerChoice, showScheduleTab, showLocalScheduleTime, defaultScheduleMode
         case defaultPlaybackSpeed, holdSpeedPlayer, externalPlayer, preferDownloadedMedia, alwaysLandscape, aniSkipEnabled, introDBEnabled, introDBAppEnabled, aniSkipAutoSkip, skip85sEnabled, skip85sAlwaysVisible, showNextEpisodeButton, showEpisodeBrowserButton, showVLCEpisodeBrowserButton, showNextEpisodePosterButton, nextEpisodeThreshold, vlcHeaderProxyEnabled
-        case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerCenterTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, smartInAppPlayerChoosingEnabled, experimentalFeaturesEnabled, experimentalFeaturesLastChangedAt, experimentalMPVPreloadEnabled, experimentalMPVSmoothTransitionEnabled, experimentalMPVPreloadCellularEnabled, experimentalMPVPreloadWifiLimitMB, experimentalMPVPreloadCellularLimitMB, experimentalMPVShowRemainingTime, experimentalMPVPreciseProgress, experimentalMPVIgnoreSpecialSubtitleStyles, experimentalICloudSyncEnabled
-        case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset
-        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, experimentalMediaDesignPreset, experimentalHeroBleedLevel, experimentalHomeCardShape, experimentalMultiGradientPalette, experimentalHeroHeightScale, experimentalHeroBleedStrength, experimentalHeroFadeDistanceScale, experimentalSectionSpacingScale, experimentalCardRadiusScale, experimentalMediaCardScale, experimentalGlassStrength, experimentalGradientBaseDarkness, experimentalGradientAccentIntensity, experimentalGradientScrollMotion, experimentalGradientUseCustomColors, experimentalGradientColorA, experimentalGradientColorB, experimentalGradientColorC, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
-        case readingMode, kanzenReaderMode, kanzenReaderModeOverrides, readerDownsampleImages, readerCropBorders, readerDisableQuickActions, readerDisableDoubleTap, readerLiveText, readerHideBarsOnSwipe, readerBackgroundColor, readerOrientation, readerTapZones, readerInvertTapZones, readerAnimatePageTransitions, readerUpscaleImages, readerUpscaleMaxHeight, readerPagesToPreload, readerPagedPageLayout, readerPagedPageOffset, readerPagedPageOffsetOverrides, readerSplitWideImages, readerReverseSplitOrder, readerVerticalInfiniteScroll, readerPillarbox, readerPillarboxAmount, readerPillarboxOrientation, readerOrientationLockEnabled, readerOrientationLockMask, readerReadThresholdPercent
+        case playerBrightnessGestureEnabled, playerVolumeGestureEnabled, vlcBrightnessGestureEnabled, vlcVolumeGestureEnabled, playerTwoFingerTapPlayPauseEnabled, playerCenterTapPlayPauseEnabled, playerDoubleTapSeekEnabled, vlcDoubleTapSeekEnabled, playerDoubleTapSeekSeconds, vlcDoubleTapSeekSeconds, playerOpenSubtitlesEnabled, vlcOpenSubtitlesEnabled, playerOpenSubtitlesAutoFallbackEnabled, vlcOpenSubtitlesAutoFallbackEnabled, playerPerformanceOverlayEnabled, mpvForegroundFPS, mpvRenderBackend, mpvMetalQualityProfile, mpvAppExitPictureInPictureEnabled, mpvHDRMode, mpvSurroundSoundEnabled, smartInAppPlayerChoosingEnabled, experimentalFeaturesEnabled, experimentalFeaturesLastChangedAt, experimentalMPVPreloadEnabled, experimentalMPVSmoothTransitionEnabled, experimentalMPVPreloadCellularEnabled, experimentalMPVPreloadWifiLimitMB, experimentalMPVPreloadCellularLimitMB, experimentalMPVShowRemainingTime, experimentalMPVPreciseProgress, experimentalMPVIgnoreSpecialSubtitleStyles, experimentalMPVPreloadAutoClear, experimentalICloudSyncEnabled
+        case subtitleForegroundColor, subtitleStrokeColor, subtitleStrokeWidth, subtitleFontSize, subtitleVerticalOffset, subtitlesVisible
+        case showKanzen, hideSplashScreen, kanzenAutoUpdateModules, seasonMenu, horizontalEpisodeList, useClassicScheduleUI, heroBannerCatalogId, heroBannerBehavior, homeCatalogLayoutOverrides, homeAnimatedBackgroundEnabled, experimentalMediaDesignPreset, experimentalHeroBleedLevel, experimentalHomeCardShape, experimentalMultiGradientPalette, experimentalHeroHeightScale, experimentalHeroBleedStrength, experimentalHeroFadeDistanceScale, experimentalSectionSpacingScale, experimentalCardRadiusScale, experimentalMediaCardScale, experimentalGlassStrength, experimentalGradientBaseDarkness, experimentalGradientAccentIntensity, experimentalGradientScrollMotion, experimentalGradientUseCustomColors, experimentalGradientColorA, experimentalGradientColorB, experimentalGradientColorC, atmosphereStyle, atmosphereSolidColorSource, atmosphereSolidColor, readerAtmosphereStyle, readerAtmosphereSolidColorSource, readerAtmosphereSolidColor, mediaDetailElementOrder, mediaDetailHiddenElements, readerDetailElementOrder, readerDetailHiddenElements, mediaColumnsPortrait, mediaColumnsLandscape
+        case readingMode, kanzenReaderMode, kanzenReaderModeOverrides, readerDownsampleImages, readerCropBorders, readerDisableQuickActions, readerDisableDoubleTap, readerLiveText, readerHideBarsOnSwipe, readerBackgroundColor, readerOrientation, readerTapZones, readerInvertTapZones, readerAnimatePageTransitions, readerUpscaleImages, readerUpscaleMaxHeight, readerUpscaleModelName, readerPagesToPreload, readerPagedPageLayout, readerPagedPageOffset, readerPagedPageOffsetOverrides, readerSplitWideImages, readerReverseSplitOrder, readerVerticalInfiniteScroll, readerPillarbox, readerPillarboxAmount, readerPillarboxOrientation, readerOrientationLockEnabled, readerOrientationLockMask, readerReadThresholdPercent
         case readerFontSize, readerFontFamily, readerFontWeight, readerColorPreset, readerTextAlignment, readerLineSpacing, readerMargin
         case autoClearCacheEnabled, autoClearCacheThresholdMB, highQualityThreshold, backgroundHLSPipelineEnabled, readerDownloadsBackgroundEnabled, readerDownloadsWifiOnly, readerDownloadsParallelLimit, autoUpdateServicesEnabled, servicesAutoModeEnabled, servicesAutoSelectEpisodesEnabled, servicesAutoModeSourceIds, servicesAutoModeSourceOrderIds, servicesAutoModeQualityPreference, githubReleaseAutoCheckEnabled, githubReleaseUpdateAvailable, githubReleaseLatestVersion, githubReleaseURL, githubReleaseShowAlertPending, githubReleaseLastPromptedVersion, filterHorrorContent = "filterHorror", selectedSimilarityAlgorithm, performanceModeEnabled, performanceModeSkipAniListTraversalForAnimeDetails, performanceModeFastAnimeCatalogOverrides
+        case kanzenHomeSelectedSourceID, kanzenRecentSourceSearches
         case collections, progressData, trackerState, catalogs, services, stremioAddons, nuvioPlugins
         case mangaCollections, mangaReadingProgress, mangaCatalogs, kanzenModules, aidokuState
         case searchHistory, recommendationCache
@@ -520,6 +533,8 @@ struct BackupData: Codable {
         mpvRenderBackend = Self.sanitizedMPVRenderBackend(try container.decodeIfPresent(String.self, forKey: .mpvRenderBackend))
         mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(try container.decodeIfPresent(String.self, forKey: .mpvMetalQualityProfile))
         mpvAppExitPictureInPictureEnabled = try container.decodeIfPresent(Bool.self, forKey: .mpvAppExitPictureInPictureEnabled) ?? false
+        mpvHDRMode = MPVHDRMode(rawValue: try container.decodeIfPresent(String.self, forKey: .mpvHDRMode) ?? MPVHDRMode.defaultMode.rawValue)?.rawValue ?? MPVHDRMode.defaultMode.rawValue
+        mpvSurroundSoundEnabled = try container.decodeIfPresent(Bool.self, forKey: .mpvSurroundSoundEnabled) ?? true
         smartInAppPlayerChoosingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartInAppPlayerChoosingEnabled) ?? false
         experimentalFeaturesEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalFeaturesEnabled) ?? false
         experimentalFeaturesLastChangedAt = try container.decodeIfPresent(Double.self, forKey: .experimentalFeaturesLastChangedAt) ?? 0
@@ -531,6 +546,7 @@ struct BackupData: Codable {
         experimentalMPVShowRemainingTime = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVShowRemainingTime) ?? true
         experimentalMPVPreciseProgress = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreciseProgress) ?? true
         experimentalMPVIgnoreSpecialSubtitleStyles = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVIgnoreSpecialSubtitleStyles) ?? false
+        experimentalMPVPreloadAutoClear = try container.decodeIfPresent(Bool.self, forKey: .experimentalMPVPreloadAutoClear) ?? true
         experimentalICloudSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalICloudSyncEnabled) ?? false
 
         // Subtitle styling
@@ -539,6 +555,7 @@ struct BackupData: Codable {
         subtitleStrokeWidth = try container.decodeIfPresent(Double.self, forKey: .subtitleStrokeWidth) ?? 1.0
         subtitleFontSize = try container.decodeIfPresent(Double.self, forKey: .subtitleFontSize) ?? 30.0
         subtitleVerticalOffset = try container.decodeIfPresent(Double.self, forKey: .subtitleVerticalOffset) ?? -6.0
+        subtitlesVisible = try container.decodeIfPresent(Bool.self, forKey: .subtitlesVisible) ?? false
 
         // UI preferences
         showKanzen = try container.decodeIfPresent(Bool.self, forKey: .showKanzen) ?? false
@@ -548,6 +565,8 @@ struct BackupData: Codable {
         horizontalEpisodeList = try container.decodeIfPresent(Bool.self, forKey: .horizontalEpisodeList) ?? false
         useClassicScheduleUI = try container.decodeIfPresent(Bool.self, forKey: .useClassicScheduleUI) ?? false
         heroBannerCatalogId = Self.sanitizedNonEmptyString(try container.decodeIfPresent(String.self, forKey: .heroBannerCatalogId), defaultValue: "trending")
+        homeCatalogLayoutOverrides = try container.decodeIfPresent(String.self, forKey: .homeCatalogLayoutOverrides) ?? ""
+        homeAnimatedBackgroundEnabled = try container.decodeIfPresent(Bool.self, forKey: .homeAnimatedBackgroundEnabled)
         heroBannerBehavior = Self.sanitizedHeroBannerBehavior(try container.decodeIfPresent(String.self, forKey: .heroBannerBehavior))
         experimentalMediaDesignPreset = Self.sanitizedExperimentalMediaDesignPreset(try container.decodeIfPresent(String.self, forKey: .experimentalMediaDesignPreset))
         experimentalHeroBleedLevel = Self.sanitizedExperimentalHeroBleedLevel(try container.decodeIfPresent(String.self, forKey: .experimentalHeroBleedLevel))
@@ -607,6 +626,7 @@ struct BackupData: Codable {
         readerAnimatePageTransitions = try container.decodeIfPresent(Bool.self, forKey: .readerAnimatePageTransitions) ?? true
         readerUpscaleImages = try container.decodeIfPresent(Bool.self, forKey: .readerUpscaleImages) ?? false
         readerUpscaleMaxHeight = Self.sanitizedReaderUpscaleMaxHeight(try container.decodeIfPresent(Int.self, forKey: .readerUpscaleMaxHeight))
+        readerUpscaleModelName = try container.decodeIfPresent(String.self, forKey: .readerUpscaleModelName) ?? "None"
         readerPagesToPreload = Self.sanitizedReaderPagesToPreload(try container.decodeIfPresent(Int.self, forKey: .readerPagesToPreload))
         readerPagedPageLayout = Self.sanitizedReaderPagedPageLayout(try container.decodeIfPresent(String.self, forKey: .readerPagedPageLayout))
         readerPagedPageOffset = try container.decodeIfPresent(Bool.self, forKey: .readerPagedPageOffset) ?? false
@@ -656,6 +676,8 @@ struct BackupData: Codable {
         performanceModeSkipAniListTraversalForAnimeDetails = try container.decodeIfPresent(Bool.self, forKey: .performanceModeSkipAniListTraversalForAnimeDetails) ?? false
         let decodedPerformanceOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .performanceModeFastAnimeCatalogOverrides) ?? [:]
         performanceModeFastAnimeCatalogOverrides = decodedPerformanceOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
+        kanzenHomeSelectedSourceID = try container.decodeIfPresent(String.self, forKey: .kanzenHomeSelectedSourceID) ?? ""
+        kanzenRecentSourceSearches = try container.decodeIfPresent([String].self, forKey: .kanzenRecentSourceSearches) ?? []
 
         collections = try container.decodeIfPresent([BackupCollection].self, forKey: .collections) ?? []
         progressData = try container.decodeIfPresent(ProgressData.self, forKey: .progressData) ?? ProgressData()
@@ -781,6 +803,8 @@ struct BackupData: Codable {
         try container.encode(mpvRenderBackend, forKey: .mpvRenderBackend)
         try container.encode(mpvMetalQualityProfile, forKey: .mpvMetalQualityProfile)
         try container.encode(mpvAppExitPictureInPictureEnabled, forKey: .mpvAppExitPictureInPictureEnabled)
+        try container.encode(mpvHDRMode, forKey: .mpvHDRMode)
+        try container.encode(mpvSurroundSoundEnabled, forKey: .mpvSurroundSoundEnabled)
         try container.encode(smartInAppPlayerChoosingEnabled, forKey: .smartInAppPlayerChoosingEnabled)
         try container.encode(experimentalFeaturesEnabled, forKey: .experimentalFeaturesEnabled)
         try container.encode(experimentalFeaturesLastChangedAt, forKey: .experimentalFeaturesLastChangedAt)
@@ -792,6 +816,7 @@ struct BackupData: Codable {
         try container.encode(experimentalMPVShowRemainingTime, forKey: .experimentalMPVShowRemainingTime)
         try container.encode(experimentalMPVPreciseProgress, forKey: .experimentalMPVPreciseProgress)
         try container.encode(experimentalMPVIgnoreSpecialSubtitleStyles, forKey: .experimentalMPVIgnoreSpecialSubtitleStyles)
+        try container.encode(experimentalMPVPreloadAutoClear, forKey: .experimentalMPVPreloadAutoClear)
         try container.encode(experimentalICloudSyncEnabled, forKey: .experimentalICloudSyncEnabled)
 
         // Subtitle styling
@@ -800,6 +825,7 @@ struct BackupData: Codable {
         try container.encode(subtitleStrokeWidth, forKey: .subtitleStrokeWidth)
         try container.encode(subtitleFontSize, forKey: .subtitleFontSize)
         try container.encode(subtitleVerticalOffset, forKey: .subtitleVerticalOffset)
+        try container.encode(subtitlesVisible, forKey: .subtitlesVisible)
 
         // UI preferences
         try container.encode(showKanzen, forKey: .showKanzen)
@@ -809,6 +835,8 @@ struct BackupData: Codable {
         try container.encode(horizontalEpisodeList, forKey: .horizontalEpisodeList)
         try container.encode(useClassicScheduleUI, forKey: .useClassicScheduleUI)
         try container.encode(heroBannerCatalogId, forKey: .heroBannerCatalogId)
+        try container.encode(homeCatalogLayoutOverrides, forKey: .homeCatalogLayoutOverrides)
+        try container.encodeIfPresent(homeAnimatedBackgroundEnabled, forKey: .homeAnimatedBackgroundEnabled)
         try container.encode(Self.sanitizedHeroBannerBehavior(heroBannerBehavior), forKey: .heroBannerBehavior)
         try container.encode(Self.sanitizedExperimentalMediaDesignPreset(experimentalMediaDesignPreset), forKey: .experimentalMediaDesignPreset)
         try container.encode(Self.sanitizedExperimentalHeroBleedLevel(experimentalHeroBleedLevel), forKey: .experimentalHeroBleedLevel)
@@ -858,6 +886,7 @@ struct BackupData: Codable {
         try container.encode(readerAnimatePageTransitions, forKey: .readerAnimatePageTransitions)
         try container.encode(readerUpscaleImages, forKey: .readerUpscaleImages)
         try container.encode(Self.sanitizedReaderUpscaleMaxHeight(readerUpscaleMaxHeight), forKey: .readerUpscaleMaxHeight)
+        try container.encode(readerUpscaleModelName, forKey: .readerUpscaleModelName)
         try container.encode(Self.sanitizedReaderPagesToPreload(readerPagesToPreload), forKey: .readerPagesToPreload)
         try container.encode(Self.sanitizedReaderPagedPageLayout(readerPagedPageLayout), forKey: .readerPagedPageLayout)
         try container.encode(readerPagedPageOffset, forKey: .readerPagedPageOffset)
@@ -906,6 +935,8 @@ struct BackupData: Codable {
         try container.encode(performanceModeEnabled, forKey: .performanceModeEnabled)
         try container.encode(performanceModeSkipAniListTraversalForAnimeDetails, forKey: .performanceModeSkipAniListTraversalForAnimeDetails)
         try container.encode(performanceModeFastAnimeCatalogOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }, forKey: .performanceModeFastAnimeCatalogOverrides)
+        try container.encode(kanzenHomeSelectedSourceID, forKey: .kanzenHomeSelectedSourceID)
+        try container.encode(kanzenRecentSourceSearches, forKey: .kanzenRecentSourceSearches)
 
         try container.encode(collections, forKey: .collections)
         try container.encode(progressData, forKey: .progressData)
@@ -975,6 +1006,8 @@ struct BackupData: Codable {
         mpvRenderBackend: String = MPVRenderBackend.defaultBackend.rawValue,
         mpvMetalQualityProfile: String = MPVMetalQualityProfile.defaultProfile.rawValue,
         mpvAppExitPictureInPictureEnabled: Bool = false,
+        mpvHDRMode: String = MPVHDRMode.defaultMode.rawValue,
+        mpvSurroundSoundEnabled: Bool = true,
         smartInAppPlayerChoosingEnabled: Bool = false,
         experimentalFeaturesEnabled: Bool = false,
         experimentalFeaturesLastChangedAt: Double = 0,
@@ -986,6 +1019,7 @@ struct BackupData: Codable {
         experimentalMPVShowRemainingTime: Bool = true,
         experimentalMPVPreciseProgress: Bool = true,
         experimentalMPVIgnoreSpecialSubtitleStyles: Bool = false,
+        experimentalMPVPreloadAutoClear: Bool = true,
         experimentalICloudSyncEnabled: Bool = false,
 
         // Subtitle styling
@@ -994,6 +1028,7 @@ struct BackupData: Codable {
         subtitleStrokeWidth: Double = 1.0,
         subtitleFontSize: Double = 30.0,
         subtitleVerticalOffset: Double = -6.0,
+        subtitlesVisible: Bool = false,
 
         // UI preferences
         showKanzen: Bool = false,
@@ -1004,6 +1039,8 @@ struct BackupData: Codable {
         useClassicScheduleUI: Bool = false,
         heroBannerCatalogId: String = "trending",
         heroBannerBehavior: String = HeroBannerBehavior.static.rawValue,
+        homeCatalogLayoutOverrides: String = "",
+        homeAnimatedBackgroundEnabled: Bool? = nil,
         experimentalMediaDesignPreset: String = ExperimentalMediaDesignPreset.defaultValue.rawValue,
         experimentalHeroBleedLevel: String = ExperimentalHeroBleedLevel.defaultValue.rawValue,
         experimentalHomeCardShape: String = ExperimentalHomeCardShape.defaultValue.rawValue,
@@ -1052,6 +1089,7 @@ struct BackupData: Codable {
         readerAnimatePageTransitions: Bool = true,
         readerUpscaleImages: Bool = false,
         readerUpscaleMaxHeight: Int = 2000,
+        readerUpscaleModelName: String = "None",
         readerPagesToPreload: Int = 3,
         readerPagedPageLayout: String = "single",
         readerPagedPageOffset: Bool = false,
@@ -1100,6 +1138,8 @@ struct BackupData: Codable {
         performanceModeEnabled: Bool = PerformanceModeSettings.defaultEnabled,
         performanceModeSkipAniListTraversalForAnimeDetails: Bool = false,
         performanceModeFastAnimeCatalogOverrides: [String: Bool] = [:],
+        kanzenHomeSelectedSourceID: String = "",
+        kanzenRecentSourceSearches: [String] = [],
 
         collections: [BackupCollection] = [],
         progressData: ProgressData = ProgressData(),
@@ -1166,6 +1206,8 @@ struct BackupData: Codable {
         self.mpvRenderBackend = Self.sanitizedMPVRenderBackend(mpvRenderBackend)
         self.mpvMetalQualityProfile = Self.sanitizedMPVMetalQualityProfile(mpvMetalQualityProfile)
         self.mpvAppExitPictureInPictureEnabled = mpvAppExitPictureInPictureEnabled
+        self.mpvHDRMode = MPVHDRMode(rawValue: mpvHDRMode)?.rawValue ?? MPVHDRMode.defaultMode.rawValue
+        self.mpvSurroundSoundEnabled = mpvSurroundSoundEnabled
         self.smartInAppPlayerChoosingEnabled = smartInAppPlayerChoosingEnabled
         self.experimentalFeaturesEnabled = experimentalFeaturesEnabled
         self.experimentalFeaturesLastChangedAt = experimentalFeaturesLastChangedAt
@@ -1177,6 +1219,7 @@ struct BackupData: Codable {
         self.experimentalMPVShowRemainingTime = experimentalMPVShowRemainingTime
         self.experimentalMPVPreciseProgress = experimentalMPVPreciseProgress
         self.experimentalMPVIgnoreSpecialSubtitleStyles = experimentalMPVIgnoreSpecialSubtitleStyles
+        self.experimentalMPVPreloadAutoClear = experimentalMPVPreloadAutoClear
         self.experimentalICloudSyncEnabled = experimentalICloudSyncEnabled
 
         self.subtitleForegroundColor = subtitleForegroundColor
@@ -1184,6 +1227,7 @@ struct BackupData: Codable {
         self.subtitleStrokeWidth = subtitleStrokeWidth
         self.subtitleFontSize = subtitleFontSize
         self.subtitleVerticalOffset = subtitleVerticalOffset
+        self.subtitlesVisible = subtitlesVisible
 
         self.showKanzen = showKanzen
         self.hideSplashScreen = hideSplashScreen
@@ -1193,6 +1237,8 @@ struct BackupData: Codable {
         self.useClassicScheduleUI = useClassicScheduleUI
         self.heroBannerCatalogId = Self.sanitizedNonEmptyString(heroBannerCatalogId, defaultValue: "trending")
         self.heroBannerBehavior = Self.sanitizedHeroBannerBehavior(heroBannerBehavior)
+        self.homeCatalogLayoutOverrides = homeCatalogLayoutOverrides
+        self.homeAnimatedBackgroundEnabled = homeAnimatedBackgroundEnabled
         self.experimentalMediaDesignPreset = Self.sanitizedExperimentalMediaDesignPreset(experimentalMediaDesignPreset)
         self.experimentalHeroBleedLevel = Self.sanitizedExperimentalHeroBleedLevel(experimentalHeroBleedLevel)
         self.experimentalHomeCardShape = Self.sanitizedExperimentalHomeCardShape(experimentalHomeCardShape)
@@ -1240,6 +1286,7 @@ struct BackupData: Codable {
         self.readerAnimatePageTransitions = readerAnimatePageTransitions
         self.readerUpscaleImages = readerUpscaleImages
         self.readerUpscaleMaxHeight = Self.sanitizedReaderUpscaleMaxHeight(readerUpscaleMaxHeight)
+        self.readerUpscaleModelName = readerUpscaleModelName
         self.readerPagesToPreload = Self.sanitizedReaderPagesToPreload(readerPagesToPreload)
         self.readerPagedPageLayout = Self.sanitizedReaderPagedPageLayout(readerPagedPageLayout)
         self.readerPagedPageOffset = readerPagedPageOffset
@@ -1286,6 +1333,8 @@ struct BackupData: Codable {
         self.performanceModeEnabled = performanceModeEnabled
         self.performanceModeSkipAniListTraversalForAnimeDetails = performanceModeSkipAniListTraversalForAnimeDetails
         self.performanceModeFastAnimeCatalogOverrides = performanceModeFastAnimeCatalogOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
+        self.kanzenHomeSelectedSourceID = kanzenHomeSelectedSourceID
+        self.kanzenRecentSourceSearches = Self.sanitizedStringList(kanzenRecentSourceSearches)
 
         self.collections = collections
         self.progressData = progressData
@@ -1902,6 +1951,8 @@ class BackupManager {
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(userDefaults.string(forKey: "mpvRenderBackend"))
         let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(userDefaults.string(forKey: "mpvMetalQualityProfile"))
         let mpvAppExitPictureInPictureEnabled = userDefaults.bool(forKey: "mpvAppExitPictureInPictureEnabled")
+        let mpvHDRMode = MPVHDRMode(rawValue: userDefaults.string(forKey: "mpvHDRMode") ?? MPVHDRMode.defaultMode.rawValue)?.rawValue ?? MPVHDRMode.defaultMode.rawValue
+        let mpvSurroundSoundEnabled = userDefaults.object(forKey: "mpvSurroundSoundEnabled") == nil ? true : userDefaults.bool(forKey: "mpvSurroundSoundEnabled")
         let smartInAppPlayerChoosingEnabled = false
         ExperimentalFeatureState.registerDefaults(defaults: userDefaults)
         let experimentalFeaturesEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.enabledKey)
@@ -1914,6 +1965,7 @@ class BackupManager {
         let experimentalMPVShowRemainingTime = userDefaults.bool(forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
         let experimentalMPVPreciseProgress = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         let experimentalMPVIgnoreSpecialSubtitleStyles = userDefaults.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
+        let experimentalMPVPreloadAutoClear = userDefaults.bool(forKey: ExperimentalFeatureState.mpvPreloadAutoClearKey)
         let experimentalICloudSyncEnabled = userDefaults.bool(forKey: ExperimentalFeatureState.iCloudSyncEnabledKey)
 
         // Subtitle styling
@@ -1931,6 +1983,7 @@ class BackupManager {
         } else {
             subtitleVerticalOffset = -6.0
         }
+        let subtitlesVisible = userDefaults.bool(forKey: "subtitles_isVisible")
 
         // UI preferences
         let showKanzen = userDefaults.bool(forKey: "showKanzen")
@@ -1941,6 +1994,8 @@ class BackupManager {
         let useClassicScheduleUI = userDefaults.bool(forKey: "useClassicScheduleUI")
         let heroBannerCatalogId = BackupData.sanitizedNonEmptyString(userDefaults.string(forKey: "heroBannerCatalogId"), defaultValue: "trending")
         let heroBannerBehavior = BackupData.sanitizedHeroBannerBehavior(userDefaults.string(forKey: "heroBannerBehavior"))
+        let homeCatalogLayoutOverrides = userDefaults.data(forKey: HomeCatalogLayoutStore.storageKey).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let homeAnimatedBackgroundEnabled = HomeAnimatedBackgroundSettings.isEnabled(defaults: userDefaults)
         let experimentalMediaDesignPreset = BackupData.sanitizedExperimentalMediaDesignPreset(userDefaults.string(forKey: ExperimentalMediaDesignPreset.storageKey))
         let experimentalHeroBleedLevel = BackupData.sanitizedExperimentalHeroBleedLevel(userDefaults.string(forKey: ExperimentalHeroBleedLevel.storageKey))
         let experimentalHomeCardShape = BackupData.sanitizedExperimentalHomeCardShape(userDefaults.string(forKey: ExperimentalHomeCardShape.storageKey))
@@ -1996,6 +2051,7 @@ class BackupManager {
         let readerAnimatePageTransitions = userDefaults.object(forKey: "Reader.animatePageTransitions") == nil ? true : userDefaults.bool(forKey: "Reader.animatePageTransitions")
         let readerUpscaleImages = userDefaults.bool(forKey: "Reader.upscaleImages")
         let readerUpscaleMaxHeight = BackupData.sanitizedReaderUpscaleMaxHeight(BackupData.optionalInt(from: userDefaults.object(forKey: "Reader.upscaleMaxHeight"), defaultValue: 2000))
+        let readerUpscaleModelName = userDefaults.string(forKey: "Reader.upscaleModelName") ?? "None"
         let readerPagesToPreload = BackupData.sanitizedReaderPagesToPreload(BackupData.optionalInt(from: userDefaults.object(forKey: "Reader.pagesToPreload"), defaultValue: 3))
         let readerPagedPageLayout = BackupData.sanitizedReaderPagedPageLayout(userDefaults.string(forKey: "Reader.pagedPageLayout"))
         let readerPagedPageOffset = userDefaults.bool(forKey: "Reader.pagedPageOffset")
@@ -2055,6 +2111,8 @@ class BackupManager {
         let performanceModeEnabled = PerformanceModeSettings.isEnabled
         let performanceModeSkipAniListTraversalForAnimeDetails = PerformanceModeSettings.skipsAniListTraversalForAnimeDetails
         let performanceModeFastAnimeCatalogOverrides = PerformanceModeSettings.fastAnimeCatalogOverrides
+        let kanzenHomeSelectedSourceID = userDefaults.string(forKey: "kanzenHomeSelectedSourceID") ?? ""
+        let kanzenRecentSourceSearches = BackupData.sanitizedStringList(userDefaults.stringArray(forKey: "kanzenRecentSourceSearches"))
         let searchHistory: BackupSearchHistory
         if let historyData = userDefaults.data(forKey: "searchHistory"),
            let decoded = try? JSONDecoder().decode([String].self, from: historyData) {
@@ -2200,6 +2258,8 @@ class BackupManager {
             mpvRenderBackend: mpvRenderBackend,
             mpvMetalQualityProfile: mpvMetalQualityProfile,
             mpvAppExitPictureInPictureEnabled: mpvAppExitPictureInPictureEnabled,
+            mpvHDRMode: mpvHDRMode,
+            mpvSurroundSoundEnabled: mpvSurroundSoundEnabled,
             smartInAppPlayerChoosingEnabled: smartInAppPlayerChoosingEnabled,
             experimentalFeaturesEnabled: experimentalFeaturesEnabled,
             experimentalFeaturesLastChangedAt: experimentalFeaturesLastChangedAt,
@@ -2211,6 +2271,7 @@ class BackupManager {
             experimentalMPVShowRemainingTime: experimentalMPVShowRemainingTime,
             experimentalMPVPreciseProgress: experimentalMPVPreciseProgress,
             experimentalMPVIgnoreSpecialSubtitleStyles: experimentalMPVIgnoreSpecialSubtitleStyles,
+            experimentalMPVPreloadAutoClear: experimentalMPVPreloadAutoClear,
             experimentalICloudSyncEnabled: experimentalICloudSyncEnabled,
 
             subtitleForegroundColor: subtitleForegroundColor,
@@ -2218,6 +2279,7 @@ class BackupManager {
             subtitleStrokeWidth: subtitleStrokeWidth,
             subtitleFontSize: subtitleFontSize,
             subtitleVerticalOffset: subtitleVerticalOffset,
+            subtitlesVisible: subtitlesVisible,
 
             showKanzen: showKanzen,
             hideSplashScreen: hideSplashScreen,
@@ -2227,6 +2289,8 @@ class BackupManager {
             useClassicScheduleUI: useClassicScheduleUI,
             heroBannerCatalogId: heroBannerCatalogId,
             heroBannerBehavior: heroBannerBehavior,
+            homeCatalogLayoutOverrides: homeCatalogLayoutOverrides,
+            homeAnimatedBackgroundEnabled: homeAnimatedBackgroundEnabled,
             experimentalMediaDesignPreset: experimentalMediaDesignPreset,
             experimentalHeroBleedLevel: experimentalHeroBleedLevel,
             experimentalHomeCardShape: experimentalHomeCardShape,
@@ -2274,6 +2338,7 @@ class BackupManager {
             readerAnimatePageTransitions: readerAnimatePageTransitions,
             readerUpscaleImages: readerUpscaleImages,
             readerUpscaleMaxHeight: readerUpscaleMaxHeight,
+            readerUpscaleModelName: readerUpscaleModelName,
             readerPagesToPreload: readerPagesToPreload,
             readerPagedPageLayout: readerPagedPageLayout,
             readerPagedPageOffset: readerPagedPageOffset,
@@ -2320,6 +2385,8 @@ class BackupManager {
             performanceModeEnabled: performanceModeEnabled,
             performanceModeSkipAniListTraversalForAnimeDetails: performanceModeSkipAniListTraversalForAnimeDetails,
             performanceModeFastAnimeCatalogOverrides: performanceModeFastAnimeCatalogOverrides,
+            kanzenHomeSelectedSourceID: kanzenHomeSelectedSourceID,
+            kanzenRecentSourceSearches: kanzenRecentSourceSearches,
 
             collections: backupCollections,
             progressData: progressData,
@@ -2444,6 +2511,8 @@ class BackupManager {
         let mpvRenderBackend = BackupData.sanitizedMPVRenderBackend(json["mpvRenderBackend"] as? String)
         let mpvMetalQualityProfile = BackupData.sanitizedMPVMetalQualityProfile(json["mpvMetalQualityProfile"] as? String)
         let mpvAppExitPictureInPictureEnabled = json["mpvAppExitPictureInPictureEnabled"] as? Bool ?? false
+        let mpvHDRMode = MPVHDRMode(rawValue: json["mpvHDRMode"] as? String ?? MPVHDRMode.defaultMode.rawValue)?.rawValue ?? MPVHDRMode.defaultMode.rawValue
+        let mpvSurroundSoundEnabled = json["mpvSurroundSoundEnabled"] as? Bool ?? true
         let smartInAppPlayerChoosingEnabled = false
         let experimentalFeaturesEnabled = json["experimentalFeaturesEnabled"] as? Bool ?? false
         let experimentalFeaturesLastChangedAt = json["experimentalFeaturesLastChangedAt"] as? Double ?? 0
@@ -2455,6 +2524,7 @@ class BackupManager {
         let experimentalMPVShowRemainingTime = json["experimentalMPVShowRemainingTime"] as? Bool ?? true
         let experimentalMPVPreciseProgress = json["experimentalMPVPreciseProgress"] as? Bool ?? true
         let experimentalMPVIgnoreSpecialSubtitleStyles = json["experimentalMPVIgnoreSpecialSubtitleStyles"] as? Bool ?? false
+        let experimentalMPVPreloadAutoClear = json["experimentalMPVPreloadAutoClear"] as? Bool ?? true
         let experimentalICloudSyncEnabled = json["experimentalICloudSyncEnabled"] as? Bool ?? false
 
         // Subtitle styling
@@ -2463,6 +2533,7 @@ class BackupManager {
         let subtitleStrokeWidth = json["subtitleStrokeWidth"] as? Double ?? 1.0
         let subtitleFontSize = json["subtitleFontSize"] as? Double ?? 30.0
         let subtitleVerticalOffset = json["subtitleVerticalOffset"] as? Double ?? -6.0
+        let subtitlesVisible = json["subtitlesVisible"] as? Bool ?? false
 
         // UI preferences
         let showKanzen = json["showKanzen"] as? Bool ?? false
@@ -2473,6 +2544,8 @@ class BackupManager {
         let useClassicScheduleUI = json["useClassicScheduleUI"] as? Bool ?? false
         let heroBannerCatalogId = BackupData.sanitizedNonEmptyString(json["heroBannerCatalogId"] as? String, defaultValue: "trending")
         let heroBannerBehavior = BackupData.sanitizedHeroBannerBehavior(json["heroBannerBehavior"] as? String)
+        let homeCatalogLayoutOverrides = json["homeCatalogLayoutOverrides"] as? String ?? ""
+        let homeAnimatedBackgroundEnabled = json["homeAnimatedBackgroundEnabled"] as? Bool
         let experimentalMediaDesignPreset = BackupData.sanitizedExperimentalMediaDesignPreset(json["experimentalMediaDesignPreset"] as? String)
         let experimentalHeroBleedLevel = BackupData.sanitizedExperimentalHeroBleedLevel(json["experimentalHeroBleedLevel"] as? String)
         let experimentalHomeCardShape = BackupData.sanitizedExperimentalHomeCardShape(json["experimentalHomeCardShape"] as? String)
@@ -2522,6 +2595,7 @@ class BackupManager {
         let readerAnimatePageTransitions = json["readerAnimatePageTransitions"] as? Bool ?? true
         let readerUpscaleImages = json["readerUpscaleImages"] as? Bool ?? false
         let readerUpscaleMaxHeight = BackupData.sanitizedReaderUpscaleMaxHeight(BackupData.optionalInt(from: json["readerUpscaleMaxHeight"], defaultValue: 2000))
+        let readerUpscaleModelName = json["readerUpscaleModelName"] as? String ?? "None"
         let readerPagesToPreload = BackupData.sanitizedReaderPagesToPreload(BackupData.optionalInt(from: json["readerPagesToPreload"], defaultValue: 3))
         let readerPagedPageLayout = BackupData.sanitizedReaderPagedPageLayout(json["readerPagedPageLayout"] as? String)
         let readerPagedPageOffset = json["readerPagedPageOffset"] as? Bool ?? false
@@ -2571,6 +2645,8 @@ class BackupManager {
         let performanceModeSkipAniListTraversalForAnimeDetails = json["performanceModeSkipAniListTraversalForAnimeDetails"] as? Bool ?? false
         let rawPerformanceModeOverrides = json["performanceModeFastAnimeCatalogOverrides"] as? [String: Bool] ?? [:]
         let performanceModeFastAnimeCatalogOverrides = rawPerformanceModeOverrides.filter { PerformanceModeSettings.animeCatalogIds.contains($0.key) }
+        let kanzenHomeSelectedSourceID = json["kanzenHomeSelectedSourceID"] as? String ?? ""
+        let kanzenRecentSourceSearches = BackupData.stringList(from: json["kanzenRecentSourceSearches"])
         
         // Try to decode complex objects individually
         var collections: [BackupCollection] = []
@@ -2767,6 +2843,8 @@ class BackupManager {
             mpvRenderBackend: mpvRenderBackend,
             mpvMetalQualityProfile: mpvMetalQualityProfile,
             mpvAppExitPictureInPictureEnabled: mpvAppExitPictureInPictureEnabled,
+            mpvHDRMode: mpvHDRMode,
+            mpvSurroundSoundEnabled: mpvSurroundSoundEnabled,
             smartInAppPlayerChoosingEnabled: smartInAppPlayerChoosingEnabled,
             experimentalFeaturesEnabled: experimentalFeaturesEnabled,
             experimentalFeaturesLastChangedAt: experimentalFeaturesLastChangedAt,
@@ -2778,12 +2856,14 @@ class BackupManager {
             experimentalMPVShowRemainingTime: experimentalMPVShowRemainingTime,
             experimentalMPVPreciseProgress: experimentalMPVPreciseProgress,
             experimentalMPVIgnoreSpecialSubtitleStyles: experimentalMPVIgnoreSpecialSubtitleStyles,
+            experimentalMPVPreloadAutoClear: experimentalMPVPreloadAutoClear,
             experimentalICloudSyncEnabled: experimentalICloudSyncEnabled,
             subtitleForegroundColor: subtitleForegroundColor,
             subtitleStrokeColor: subtitleStrokeColor,
             subtitleStrokeWidth: subtitleStrokeWidth,
             subtitleFontSize: subtitleFontSize,
             subtitleVerticalOffset: subtitleVerticalOffset,
+            subtitlesVisible: subtitlesVisible,
             showKanzen: showKanzen,
             hideSplashScreen: hideSplashScreen,
             kanzenAutoUpdateModules: kanzenAutoUpdateModules,
@@ -2792,6 +2872,8 @@ class BackupManager {
             useClassicScheduleUI: useClassicScheduleUI,
             heroBannerCatalogId: heroBannerCatalogId,
             heroBannerBehavior: heroBannerBehavior,
+            homeCatalogLayoutOverrides: homeCatalogLayoutOverrides,
+            homeAnimatedBackgroundEnabled: homeAnimatedBackgroundEnabled,
             experimentalMediaDesignPreset: experimentalMediaDesignPreset,
             experimentalHeroBleedLevel: experimentalHeroBleedLevel,
             experimentalHomeCardShape: experimentalHomeCardShape,
@@ -2838,6 +2920,7 @@ class BackupManager {
             readerAnimatePageTransitions: readerAnimatePageTransitions,
             readerUpscaleImages: readerUpscaleImages,
             readerUpscaleMaxHeight: readerUpscaleMaxHeight,
+            readerUpscaleModelName: readerUpscaleModelName,
             readerPagesToPreload: readerPagesToPreload,
             readerPagedPageLayout: readerPagedPageLayout,
             readerPagedPageOffset: readerPagedPageOffset,
@@ -2882,6 +2965,8 @@ class BackupManager {
             performanceModeEnabled: performanceModeEnabled,
             performanceModeSkipAniListTraversalForAnimeDetails: performanceModeSkipAniListTraversalForAnimeDetails,
             performanceModeFastAnimeCatalogOverrides: performanceModeFastAnimeCatalogOverrides,
+            kanzenHomeSelectedSourceID: kanzenHomeSelectedSourceID,
+            kanzenRecentSourceSearches: kanzenRecentSourceSearches,
             collections: collections,
             progressData: progressData,
             trackerState: trackerState,
@@ -2967,6 +3052,8 @@ class BackupManager {
         userDefaults.set(BackupData.sanitizedMPVRenderBackend(backup.mpvRenderBackend), forKey: "mpvRenderBackend")
         userDefaults.set(BackupData.sanitizedMPVMetalQualityProfile(backup.mpvMetalQualityProfile), forKey: "mpvMetalQualityProfile")
         userDefaults.set(backup.mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled")
+        userDefaults.set(MPVHDRMode(rawValue: backup.mpvHDRMode)?.rawValue ?? MPVHDRMode.defaultMode.rawValue, forKey: "mpvHDRMode")
+        userDefaults.set(backup.mpvSurroundSoundEnabled, forKey: "mpvSurroundSoundEnabled")
         userDefaults.set(backup.smartInAppPlayerChoosingEnabled, forKey: "smartInAppPlayerChoosingEnabled")
         userDefaults.set(backup.experimentalFeaturesEnabled, forKey: ExperimentalFeatureState.enabledKey)
         userDefaults.set(backup.experimentalFeaturesLastChangedAt, forKey: ExperimentalFeatureState.lastChangedAtKey)
@@ -2978,6 +3065,7 @@ class BackupManager {
         userDefaults.set(backup.experimentalMPVShowRemainingTime, forKey: ExperimentalFeatureState.mpvShowRemainingTimeKey)
         userDefaults.set(backup.experimentalMPVPreciseProgress, forKey: ExperimentalFeatureState.mpvPreciseProgressKey)
         userDefaults.set(backup.experimentalMPVIgnoreSpecialSubtitleStyles, forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
+        userDefaults.set(backup.experimentalMPVPreloadAutoClear, forKey: ExperimentalFeatureState.mpvPreloadAutoClearKey)
         userDefaults.set(backup.experimentalICloudSyncEnabled && ExperimentalCloudSyncAvailability.current.isAvailable, forKey: ExperimentalFeatureState.iCloudSyncEnabledKey)
 
         // Subtitle styling
@@ -2990,6 +3078,7 @@ class BackupManager {
         userDefaults.set(backup.subtitleStrokeWidth, forKey: "subtitles_strokeWidth")
         userDefaults.set(backup.subtitleFontSize, forKey: "subtitles_fontSize")
         userDefaults.set(backup.subtitleVerticalOffset, forKey: "playerSubtitleOverlayBottomConstant")
+        userDefaults.set(backup.subtitlesVisible, forKey: "subtitles_isVisible")
 
         // UI preferences
         userDefaults.set(backup.showKanzen, forKey: "showKanzen")
@@ -3002,6 +3091,15 @@ class BackupManager {
         userDefaults.set(backup.useClassicScheduleUI, forKey: "useClassicScheduleUI")
         userDefaults.set(BackupData.sanitizedNonEmptyString(backup.heroBannerCatalogId, defaultValue: "trending"), forKey: "heroBannerCatalogId")
         userDefaults.set(BackupData.sanitizedHeroBannerBehavior(backup.heroBannerBehavior), forKey: "heroBannerBehavior")
+        if let overridesData = backup.homeCatalogLayoutOverrides.data(using: .utf8), !backup.homeCatalogLayoutOverrides.isEmpty {
+            userDefaults.set(overridesData, forKey: HomeCatalogLayoutStore.storageKey)
+        } else {
+            userDefaults.removeObject(forKey: HomeCatalogLayoutStore.storageKey)
+        }
+        HomeCatalogLayoutStore.shared.reloadFromStorage()
+        if let homeAnimatedBackgroundEnabled = backup.homeAnimatedBackgroundEnabled {
+            userDefaults.set(homeAnimatedBackgroundEnabled, forKey: HomeAnimatedBackgroundSettings.enabledKey)
+        }
         userDefaults.set(BackupData.sanitizedExperimentalMediaDesignPreset(backup.experimentalMediaDesignPreset), forKey: ExperimentalMediaDesignPreset.storageKey)
         userDefaults.set(BackupData.sanitizedExperimentalHeroBleedLevel(backup.experimentalHeroBleedLevel), forKey: ExperimentalHeroBleedLevel.storageKey)
         userDefaults.set(BackupData.sanitizedExperimentalHomeCardShape(backup.experimentalHomeCardShape), forKey: ExperimentalHomeCardShape.storageKey)
@@ -3065,6 +3163,7 @@ class BackupManager {
         userDefaults.set(backup.readerAnimatePageTransitions, forKey: "Reader.animatePageTransitions")
         userDefaults.set(backup.readerUpscaleImages, forKey: "Reader.upscaleImages")
         userDefaults.set(BackupData.sanitizedReaderUpscaleMaxHeight(backup.readerUpscaleMaxHeight), forKey: "Reader.upscaleMaxHeight")
+        userDefaults.set(backup.readerUpscaleModelName, forKey: "Reader.upscaleModelName")
         userDefaults.set(BackupData.sanitizedReaderPagesToPreload(backup.readerPagesToPreload), forKey: "Reader.pagesToPreload")
         userDefaults.set(BackupData.sanitizedReaderPagedPageLayout(backup.readerPagedPageLayout), forKey: "Reader.pagedPageLayout")
         userDefaults.set(backup.readerPagedPageOffset, forKey: "Reader.pagedPageOffset")
@@ -3117,6 +3216,8 @@ class BackupManager {
         userDefaults.set(backup.githubReleaseLastPromptedVersion, forKey: "githubReleaseLastPromptedVersion")
         userDefaults.set(backup.filterHorrorContent, forKey: "filterHorror")
         userDefaults.set(BackupData.sanitizedSimilarityAlgorithm(backup.selectedSimilarityAlgorithm), forKey: "selectedSimilarityAlgorithm")
+        userDefaults.set(backup.kanzenHomeSelectedSourceID, forKey: "kanzenHomeSelectedSourceID")
+        userDefaults.set(backup.kanzenRecentSourceSearches, forKey: "kanzenRecentSourceSearches")
         userDefaults.set(backup.performanceModeEnabled, forKey: PerformanceModeSettings.enabledKey)
         userDefaults.set(backup.performanceModeSkipAniListTraversalForAnimeDetails, forKey: PerformanceModeSettings.skipAniListTraversalForAnimeDetailsKey)
         PerformanceModeSettings.fastAnimeCatalogOverrides = backup.performanceModeFastAnimeCatalogOverrides

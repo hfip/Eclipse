@@ -57,6 +57,10 @@ enum HeroBannerBehavior: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Behaviors offered in the UI. `.launch` is retained for backward compatibility
+    /// with existing saved values and backups but is no longer user-selectable.
+    static let selectableCases: [HeroBannerBehavior] = [.static, .carousel]
+
     var displayName: String {
         switch self {
         case .static: return "Static"
