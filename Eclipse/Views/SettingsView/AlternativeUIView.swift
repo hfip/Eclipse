@@ -303,7 +303,7 @@ struct AlternativeUIView: View {
         } header: {
             Text("Media Detail Page")
         } footer: {
-            Text("Drag rows to change their order. Hidden rows will not appear on media detail pages. Episodes only appear for series.")
+            Text("Drag rows to change their order. Hidden rows will not appear on media detail pages. Episodes only appear for series. Stills and Trailers appear in the Modern interface.")
         }
         .environment(\.editMode, .constant(.active))
     }

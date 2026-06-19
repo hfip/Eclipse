@@ -159,16 +159,12 @@ struct HomeView: View {
 #endif
     }
 
-    private var tracksHomeScrollOffset: Bool {
-        tracksBackgroundScroll || homeAnimatedBackgroundEnabled
-    }
-
     private var backgroundScrollOffset: CGFloat {
         tracksBackgroundScroll ? scrollOffset : 0
     }
 
-    private var animatedBackgroundTopClearance: CGFloat {
-        max(heroHeight - max(scrollOffset, 0), 0)
+    private var postHeroAnimationClearance: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch ? 88 : 56
     }
 
     private var scrollOffsetUpdateThreshold: CGFloat {
@@ -211,16 +207,6 @@ struct HomeView: View {
                 .ignoresSafeArea(.all)
             }
 
-            if homeAnimatedBackgroundEnabled {
-                HomeAmbientMotionBackground(
-                    topClearance: animatedBackgroundTopClearance,
-                    ambientColor: heroBleedColor,
-                    accentColor: theme.scopedGradientColor(),
-                    motionEnabled: !reduceMotion
-                )
-                .ignoresSafeArea(.all)
-            }
-            
             if homeViewModel.isLoading {
                 loadingView
             } else if let errorMessage = homeViewModel.errorMessage {
@@ -332,12 +318,11 @@ struct HomeView: View {
         ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 0) {
                 heroSection
-                continueWatchingSection
-                contentSections
+                postHeroSections
             }
             .background(
                 Group {
-                    if tracksHomeScrollOffset {
+                    if tracksBackgroundScroll {
                         GeometryReader { geo in
                             Color.clear.preference(
                                 key: ScrollOffsetPreferenceKey.self,
@@ -356,11 +341,28 @@ struct HomeView: View {
         }
         .coordinateSpace(name: "homeScroll")
         .onPreferenceChange(ScrollOffsetPreferenceKey.self) { newOffset in
-            guard tracksHomeScrollOffset else { return }
+            guard tracksBackgroundScroll else { return }
             guard abs(scrollOffset - newOffset) >= scrollOffsetUpdateThreshold else { return }
             scrollOffset = newOffset
         }
         .ignoresSafeArea(edges: [.top, .leading, .trailing])
+    }
+
+    private var postHeroSections: some View {
+        VStack(spacing: 0) {
+            continueWatchingSection
+            contentSections
+        }
+        .background(alignment: .top) {
+            if homeAnimatedBackgroundEnabled {
+                HomeAmbientMotionBackground(
+                    topClearance: postHeroAnimationClearance,
+                    ambientColor: heroBleedColor,
+                    accentColor: theme.scopedGradientColor(),
+                    motionEnabled: !reduceMotion
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -1103,14 +1105,14 @@ private struct HomeAmbientMotionBackground: View {
     @State private var counterRingRotation: Double = 14
 
     private let particles: [(x: CGFloat, y: CGFloat, size: CGFloat, drift: CGFloat, opacity: Double)] = [
-        (0.16, 0.14, 2.0, 18, 0.20),
-        (0.78, 0.20, 2.8, -16, 0.24),
-        (0.34, 0.34, 1.8, 12, 0.18),
-        (0.88, 0.42, 2.2, -20, 0.16),
-        (0.12, 0.58, 2.6, 15, 0.18),
-        (0.58, 0.70, 2.0, -12, 0.20),
-        (0.28, 0.86, 1.8, 14, 0.15),
-        (0.84, 0.88, 2.4, -15, 0.14)
+        (0.16, 0.14, 2.0, 18, 0.30),
+        (0.78, 0.20, 2.8, -16, 0.34),
+        (0.34, 0.34, 1.8, 12, 0.26),
+        (0.88, 0.42, 2.2, -20, 0.24),
+        (0.12, 0.58, 2.6, 15, 0.27),
+        (0.58, 0.70, 2.0, -12, 0.30),
+        (0.28, 0.86, 1.8, 14, 0.22),
+        (0.84, 0.88, 2.4, -15, 0.22)
     ]
 
     private var primaryColor: Color {
@@ -1163,8 +1165,8 @@ private struct HomeAmbientMotionBackground: View {
         return ZStack {
             RadialGradient(
                 colors: [
-                    primaryColor.opacity(0.18),
-                    primaryColor.opacity(0.08),
+                    primaryColor.opacity(0.30),
+                    primaryColor.opacity(0.13),
                     .clear
                 ],
                 center: .center,
@@ -1176,8 +1178,8 @@ private struct HomeAmbientMotionBackground: View {
 
             RadialGradient(
                 colors: [
-                    Color(red: 0.12, green: 0.62, blue: 0.72).opacity(0.13),
-                    Color(red: 0.54, green: 0.28, blue: 0.82).opacity(0.06),
+                    Color(red: 0.12, green: 0.62, blue: 0.72).opacity(0.22),
+                    Color(red: 0.54, green: 0.28, blue: 0.82).opacity(0.10),
                     .clear
                 ],
                 center: .center,
@@ -1192,9 +1194,9 @@ private struct HomeAmbientMotionBackground: View {
                     AngularGradient(
                         colors: [
                             .white.opacity(0),
-                            accentColor.opacity(0.12),
-                            Color(red: 0.18, green: 0.72, blue: 0.78).opacity(0.08),
-                            primaryColor.opacity(0.10),
+                            accentColor.opacity(0.20),
+                            Color(red: 0.18, green: 0.72, blue: 0.78).opacity(0.14),
+                            primaryColor.opacity(0.18),
                             .white.opacity(0)
                         ],
                         center: .center
@@ -1204,15 +1206,15 @@ private struct HomeAmbientMotionBackground: View {
                 .frame(width: min(max(width * 1.25, 420), 760), height: min(max(width * 1.25, 420), 760))
                 .rotationEffect(.degrees(ringRotation))
                 .offset(y: drifting ? height * 0.04 : -height * 0.02)
-                .opacity(0.75)
+                .opacity(0.92)
 
             Circle()
                 .trim(from: 0.08, to: 0.72)
                 .stroke(
                     LinearGradient(
                         colors: [
-                            .white.opacity(0.10),
-                            Color(red: 0.38, green: 0.76, blue: 0.88).opacity(0.07),
+                            .white.opacity(0.18),
+                            Color(red: 0.38, green: 0.76, blue: 0.88).opacity(0.14),
                             .white.opacity(0)
                         ],
                         startPoint: .topLeading,
@@ -1223,7 +1225,7 @@ private struct HomeAmbientMotionBackground: View {
                 .frame(width: min(max(width * 0.92, 320), 620), height: min(max(width * 0.92, 320), 620))
                 .rotationEffect(.degrees(counterRingRotation))
                 .offset(x: drifting ? width * 0.18 : width * 0.08, y: drifting ? height * 0.22 : height * 0.12)
-                .opacity(0.70)
+                .opacity(0.88)
 
             ForEach(particles.indices, id: \.self) { index in
                 let particle = particles[index]
@@ -1235,7 +1237,7 @@ private struct HomeAmbientMotionBackground: View {
             }
         }
         .blendMode(.screen)
-        .opacity(0.86)
+        .opacity(0.96)
         .compositingGroup()
     }
 

@@ -19,6 +19,7 @@ struct SettingsView: View {
     @StateObject private var catalogManager = CatalogManager.shared
     @AppStorage("showKanzen") private var showKanzen: Bool = false
     @AppStorage("hideSplashScreen") private var hideSplashScreen = false
+    @AppStorage(HomeAnimatedBackgroundSettings.enabledKey) private var homeAnimatedBackgroundEnabled = HomeAnimatedBackgroundSettings.defaultEnabled
     @State private var isCheckingGitHubRelease = false
 
     private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
@@ -156,6 +157,14 @@ struct SettingsView: View {
                             Toggle("", isOn: $hideSplashScreen)
                                 .labelsHidden()
                                 .tint(.indigo)
+                        }
+
+                        GlassDivider()
+
+                        GlassSettingsRow(icon: "sparkles", iconColor: .cyan, title: "Animated Home Background") {
+                            Toggle("", isOn: $homeAnimatedBackgroundEnabled)
+                                .labelsHidden()
+                                .tint(.cyan)
                         }
 
                         GlassDivider()
@@ -377,6 +386,7 @@ struct SettingsView: View {
                 Text("Performance Mode")
             }
             Toggle("Hide Splash Screen", isOn: $hideSplashScreen)
+            Toggle("Animated Home Background", isOn: $homeAnimatedBackgroundEnabled)
         } header: {
             Text("TMDB Settings")
         }

@@ -26,6 +26,8 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
     case ratingNotes
     case traktComments
     case episodes
+    case stills
+    case trailers
 
     var id: String { rawValue }
 
@@ -40,7 +42,9 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
         .cast,
         .ratingNotes,
         .traktComments,
-        .episodes
+        .episodes,
+        .stills,
+        .trailers
     ]
 
     var displayName: String {
@@ -59,6 +63,10 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
             return "Trakt Reviews"
         case .episodes:
             return "Episodes"
+        case .stills:
+            return "Stills"
+        case .trailers:
+            return "Trailers"
         }
     }
 
@@ -78,6 +86,10 @@ enum MediaDetailElement: String, CaseIterable, Identifiable {
             return "Community reviews and comments from Trakt."
         case .episodes:
             return "Seasons, specials, and episode list for series."
+        case .stills:
+            return "Backdrop stills and gallery images."
+        case .trailers:
+            return "Trailer and teaser cards."
         }
     }
 

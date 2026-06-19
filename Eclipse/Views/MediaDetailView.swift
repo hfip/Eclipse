@@ -202,6 +202,9 @@ struct MediaDetailView: View {
 
     private var visibleMediaDetailElements: [MediaDetailElement] {
         MediaDetailElement.orderedElements(from: mediaDetailElementOrder).filter { element in
+            guard ExperimentalFeatureState.isEnabledAtLaunch || (element != .stills && element != .trailers) else {
+                return false
+            }
             guard MediaDetailElement.isVisible(
                 element,
                 hiddenRawValue: mediaDetailHiddenElements,
@@ -372,6 +375,12 @@ struct MediaDetailView: View {
             if hasLoadedContent {
                 startTraktFeatureLoad()
             }
+        }
+        .onChange(of: mediaDetailElementOrder) { _ in
+            handleMediaDetailLayoutPreferenceChange()
+        }
+        .onChange(of: mediaDetailHiddenElements) { _ in
+            handleMediaDetailLayoutPreferenceChange()
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestNextEpisode)) { notification in
             guard let userInfo = notification.userInfo,
@@ -676,6 +685,13 @@ struct MediaDetailView: View {
         }
     }
 
+    private func handleMediaDetailLayoutPreferenceChange() {
+        refreshDetailContentLayout(reason: "media-detail-layout-preferences")
+        if hasLoadedContent {
+            startExperimentalExtrasLoadIfNeeded()
+        }
+    }
+
     private func playerCloseNotificationMatchesDetail(_ notification: Notification) -> Bool {
         guard let tmdbId = notification.userInfo?["tmdbId"] as? Int else {
             return true
@@ -735,10 +751,6 @@ struct MediaDetailView: View {
             ) {
                 ForEach(visibleBodyMediaDetailElements) { element in
                     mediaDetailElementView(element)
-                }
-
-                if ExperimentalFeatureState.isEnabledAtLaunch {
-                    experimentalExtrasSection
                 }
                 
                 Spacer(minLength: 50)
@@ -1257,6 +1269,10 @@ struct MediaDetailView: View {
             traktCommentsSection
         case .episodes:
             episodesSection
+        case .stills:
+            experimentalStillsSection
+        case .trailers:
+            experimentalTrailersSection
         }
     }
 
@@ -1341,15 +1357,6 @@ struct MediaDetailView: View {
             libraryManager.toggleBookmark(for: searchResult)
             updateBookmarkStatus()
         }
-    }
-
-    @ViewBuilder
-    private var experimentalExtrasSection: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            experimentalStillsSection
-            experimentalTrailersSection
-        }
-        .padding(.top, 4)
     }
 
     @ViewBuilder
@@ -1639,10 +1646,6 @@ struct MediaDetailView: View {
         if isAnimeShow && (isLoadingAnimeSpecials || !animeSpecialEntries.isEmpty) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .font(.title3)
-                        .foregroundStyle(accentManager.currentAccentColor)
-
                     Text("Specials & OVAs")
                         .font(.title2)
                         .fontWeight(.bold)
@@ -2450,6 +2453,14 @@ struct MediaDetailView: View {
         experimentalExtrasLoadTask?.cancel()
 
         guard ExperimentalFeatureState.isEnabledAtLaunch else {
+            detailStills = []
+            detailTrailers = []
+            isLoadingExperimentalExtras = false
+            return
+        }
+
+        let shouldLoadExtras = visibleMediaDetailElements.contains(.stills) || visibleMediaDetailElements.contains(.trailers)
+        guard shouldLoadExtras else {
             detailStills = []
             detailTrailers = []
             isLoadingExperimentalExtras = false
