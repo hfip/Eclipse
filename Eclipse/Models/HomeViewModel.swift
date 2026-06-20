@@ -115,6 +115,13 @@ final class HomeViewModel: ObservableObject {
                     self.catalogResults = tmdbLoadedCatalogs
                     self.applyHeroBannerSelection()
                     self.errorMessage = nil
+                    // Reveal the home as soon as the first batch of content is ready.
+                    // Anime, recommendations, widgets, Stremio and Trakt rows keep
+                    // streaming in below without blocking the initial render or the
+                    // splash dismissal (which is gated on hasCompletedInitialLoad).
+                    self.isLoading = false
+                    self.hasLoadedContent = true
+                    self.hasCompletedInitialLoad = true
                 }
             }
 
