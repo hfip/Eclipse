@@ -1539,6 +1539,13 @@ class Settings: ObservableObject {
         }
     }
 
+    /// Shows the on-screen Metal/mpv performance HUD (CPU, thermal state, active quality profile).
+    /// Off by default; toggled from Player settings → MPV Rendering.
+    var mpvPerformanceOverlayEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "mpvPerformanceOverlayEnabled") }
+    }
+
     var mpvAppExitPictureInPictureEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvAppExitPictureInPictureEnabled") }

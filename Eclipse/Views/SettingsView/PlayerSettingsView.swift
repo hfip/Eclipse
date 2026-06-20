@@ -171,6 +171,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvMetalQualityProfile.rawValue, forKey: "mpvMetalQualityProfile") }
     }
 
+    @Published var mpvPerformanceOverlayEnabled: Bool {
+        didSet { UserDefaults.standard.set(mpvPerformanceOverlayEnabled, forKey: "mpvPerformanceOverlayEnabled") }
+    }
+
     @Published var mpvAppExitPictureInPictureEnabled: Bool {
         didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
     }
@@ -336,6 +340,7 @@ final class PlayerSettingsStore: ObservableObject {
         self.mpvRenderBackend = MPVRenderBackend(rawValue: backendRaw) ?? .defaultBackend
         let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
         self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
+        self.mpvPerformanceOverlayEnabled = UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled")
         self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
         let hdrModeRaw = UserDefaults.standard.string(forKey: "mpvHDRMode") ?? MPVHDRMode.defaultMode.rawValue
         self.mpvHDRMode = MPVHDRMode(rawValue: hdrModeRaw) ?? .defaultMode
@@ -367,6 +372,7 @@ struct PlayerSettingsView: View {
     @State private var subtitleStrokeWidth: Double = 1.0
     @State private var subtitleFontSizePresetName: String = "Medium"
     @State private var subtitleVerticalOffset: Double = -6.0
+    @State private var subtitleClosedCaptionBackground: Bool = false
     @State private var expandedGroups: Set<String> = []
     @AppStorage("enableSubtitlesByDefault") private var enableSubtitlesByDefault = false
     @AppStorage("defaultSubtitleLanguage") private var defaultSubtitleLanguage = "eng"
@@ -616,21 +622,16 @@ struct PlayerSettingsView: View {
             }
 
             GlassDivider(leadingInset: 16)
-            GlassDetailRow(title: String(format: "Subtitle Stroke Width: %.1f", subtitleStrokeWidthBinding.wrappedValue), subtitle: "Outline thickness for in-app subtitle rendering.") {
-#if os(tvOS)
+            GlassDetailRow(title: "Subtitle Stroke Width", subtitle: "Outline thickness for in-app subtitle rendering.") {
                 Picker("", selection: subtitleStrokeWidthBinding) {
-                    Text("0.0").tag(0.0)
-                    Text("0.5").tag(0.5)
-                    Text("1.0").tag(1.0)
-                    Text("1.5").tag(1.5)
-                    Text("2.0").tag(2.0)
+                    Text("None").tag(0.0)
+                    Text("Thin").tag(0.5)
+                    Text("Normal").tag(1.0)
+                    Text("Medium").tag(1.5)
+                    Text("Thick").tag(2.0)
                 }
                 .pickerStyle(.menu)
                 .tint(.white.opacity(0.7))
-#else
-                Stepper("", value: subtitleStrokeWidthBinding, in: 0.0...2.0, step: 0.5)
-                    .labelsHidden()
-#endif
             }
 
             GlassDivider(leadingInset: 16)
@@ -645,20 +646,24 @@ struct PlayerSettingsView: View {
             }
 
             GlassDivider(leadingInset: 16)
-            GlassDetailRow(title: String(format: "Subtitle Vertical Offset: %.0f", subtitleVerticalOffsetBinding.wrappedValue), subtitle: "Numeric offset for subtitle height. Higher values place subtitles lower on screen.") {
-#if os(tvOS)
+            GlassDetailRow(title: "Subtitle Vertical Position", subtitle: "Where subtitles sit on screen. Matches the in-player menu.") {
                 Picker("", selection: subtitleVerticalOffsetBinding) {
-                    ForEach(Array(stride(from: -24, through: 24, by: 2)), id: \.self) { value in
-                        Text("\(value)").tag(Double(value))
-                    }
+                    Text("Highest").tag(-24.0)
+                    Text("Higher").tag(-16.0)
+                    Text("Default").tag(-6.0)
+                    Text("Lower").tag(6.0)
+                    Text("Lowest").tag(18.0)
                 }
                 .pickerStyle(.menu)
                 .tint(.white.opacity(0.7))
-#else
-                Stepper("", value: subtitleVerticalOffsetBinding, in: -24...24, step: 1)
-                    .labelsHidden()
-#endif
             }
+
+            GlassDivider(leadingInset: 16)
+            settingsToggleRow(
+                title: "Caption Background",
+                detail: "Show a translucent box behind subtitles for better visibility, like YouTube captions.",
+                binding: subtitleClosedCaptionBackgroundBinding
+            )
 
             GlassDivider(leadingInset: 16)
             Button(action: resetPlayerSubtitleStyleDefaults) {
@@ -696,6 +701,13 @@ struct PlayerSettingsView: View {
                     .pickerStyle(.menu)
                     .tint(.white.opacity(0.7))
                 }
+
+                GlassDivider(leadingInset: 16)
+                settingsToggleRow(
+                    title: "Performance Overlay",
+                    detail: "Show a small on-screen HUD during Metal playback with live CPU usage, thermal state, and the active quality profile (Sharp / Balanced / Low Heat).",
+                    binding: $store.mpvPerformanceOverlayEnabled
+                )
 
                 GlassDivider(leadingInset: 16)
                 GlassDetailRow(title: "HDR Output", subtitle: "How HDR video (HDR10/HLG/Dolby Vision) is sent to the display.\n\(store.mpvHDRMode.settingsDescription)") {
@@ -939,7 +951,7 @@ struct PlayerSettingsView: View {
             GlassDivider(leadingInset: 16)
             settingsToggleRow(title: "Precise Progress Adjustment", detail: "Use finer slider updates for MPV progress adjustments.", binding: $store.experimentalMPVPreciseProgress)
             GlassDivider(leadingInset: 16)
-            settingsToggleRow(title: "Ignore Special Subtitle Styles", detail: "Prefer app subtitle styling over embedded ASS effects when MPV exposes compatible tracks.", binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles)
+            settingsToggleRow(title: "Ignore Special Subtitle Styles", detail: "Override embedded ASS subtitle styling and effects with the app's own subtitle style. Also reduces player heat and battery use on styled or animated embedded subtitles, most noticeably at higher playback speeds. Applies on the next playback.", binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles)
             GlassSectionFooter("These are best-effort accelerations. Because sources differ wildly in how they serve streams, warmup and next-episode staging won't always kick in — playback still works normally when they don't.")
         }
     }
@@ -1022,6 +1034,16 @@ struct PlayerSettingsView: View {
         )
     }
 
+    private var subtitleClosedCaptionBackgroundBinding: Binding<Bool> {
+        Binding(
+            get: { subtitleClosedCaptionBackground },
+            set: {
+                subtitleClosedCaptionBackground = $0
+                UserDefaults.standard.set($0, forKey: "subtitles_closedCaptionBackground")
+            }
+        )
+    }
+
     private func loadSubtitleColor(forKey key: String, defaultColor: UIColor) -> UIColor {
         guard let data = UserDefaults.standard.data(forKey: key),
               let color = try? NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: data) else {
@@ -1042,6 +1064,7 @@ struct PlayerSettingsView: View {
         UserDefaults.standard.set(1.0, forKey: "subtitles_strokeWidth")
         UserDefaults.standard.set(30.0, forKey: "subtitles_fontSize")
         UserDefaults.standard.set(-6.0, forKey: "playerSubtitleOverlayBottomConstant")
+        UserDefaults.standard.set(false, forKey: "subtitles_closedCaptionBackground")
         refreshPlayerSubtitleStyleStateFromDefaults()
     }
 
@@ -1074,5 +1097,7 @@ struct PlayerSettingsView: View {
         }
         let savedBottomConstant = UserDefaults.standard.double(forKey: "playerSubtitleOverlayBottomConstant")
         subtitleVerticalOffset = UserDefaults.standard.object(forKey: "playerSubtitleOverlayBottomConstant") != nil ? max(-24, min(savedBottomConstant, 24)) : -6.0
+
+        subtitleClosedCaptionBackground = UserDefaults.standard.bool(forKey: "subtitles_closedCaptionBackground")
     }
 }

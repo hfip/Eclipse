@@ -30,6 +30,33 @@ enum PlaybackSourceKind: String {
     case plugin
 }
 
+/// Padded, monospaced label backing the Metal/mpv performance HUD. Subclassing UILabel keeps
+/// the overlay a single constrained view while still giving the text breathing room inside its
+/// rounded background.
+final class PlayerPerformanceOverlayLabel: UILabel {
+    var textInsets = UIEdgeInsets(top: 6, left: 9, bottom: 6, right: 9)
+
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.inset(by: textInsets))
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(
+            width: size.width + textInsets.left + textInsets.right,
+            height: size.height + textInsets.top + textInsets.bottom
+        )
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let fitted = super.sizeThatFits(size)
+        return CGSize(
+            width: fitted.width + textInsets.left + textInsets.right,
+            height: fitted.height + textInsets.top + textInsets.bottom
+        )
+    }
+}
+
 struct PlaybackLaunchContext {
     let sourceId: String
     let sourceName: String
@@ -292,14 +319,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return v
     }()
 
-    private let performanceOverlayLabel: UILabel = {
-        let label = UILabel()
+    private let metalPerformanceOverlayLabel: PlayerPerformanceOverlayLabel = {
+        let label = PlayerPerformanceOverlayLabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.backgroundColor = UIColor.black.withAlphaComponent(0.62)
-        label.textColor = UIColor.systemGreen
-        label.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        label.textColor = .white
+        label.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
         label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
+        label.textAlignment = .left
+        label.lineBreakMode = .byClipping
         label.layer.cornerRadius = 8
         label.layer.masksToBounds = true
         label.alpha = 0.0
@@ -783,7 +811,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             case .critical:
                 return .lowHeat(reason: "auto thermal=critical; \(device.reason)")
             case .serious:
-                return .balanced(reason: "auto thermal=serious; \(device.reason)")
+                return .lowHeat(reason: "auto thermal=serious; \(device.reason)")
+            case .fair:
+                // A device that feels warm in the hand is typically only at .fair — iOS
+                // reserves .serious/.critical for when it is already actively throttling
+                // the SoC. Step down proactively here so we shed heat before it escalates,
+                // instead of staying on full 4K/Sharp until the device is already hot.
+                return .balanced(reason: "auto thermal=fair; \(device.reason)")
             default:
                 let safeText = classification.safeReason ?? "no risky stream markers"
                 if let riskReason = classification.riskReason {
@@ -1182,6 +1216,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var nextEpisodePreview: PlayerEpisodeBrowserItem?
     private var nextEpisodePreviewKey: String?
     private var experimentalStagedNextEpisodeKey: String?
+    /// A fully-resolved playback request for the next episode, captured during staging so the
+    /// "Next" tap can skip the redundant async source re-resolution and load straight from the
+    /// warmed cache. Keyed by the same current-episode key as `experimentalStagedNextEpisodeKey`.
+    private var stagedNextEpisodeRequest: PlayerResolvedPlaybackRequest?
+    private var stagedNextEpisodeRequestKey: String?
     private var nextEpisodePreviewTask: Task<Void, Never>?
     private var nextEpisodePreviewUnavailableKeys: Set<String> = []
     private var nextEpisodeArtworkTask: URLSessionDataTask?
@@ -1776,11 +1815,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         Logger.shared.log("[PlayerVC.Subtitles] applied VLC overlay bottom constant=\(String(format: "%.1f", constant))", type: "Player")
     }
 
+    /// The last style pushed to the renderer. Used to skip redundant re-applies driven by
+    /// the UserDefaults observer, which also fires for unrelated settings.
+    private var lastAppliedSubtitleStyleSnapshot: SubtitleStyle?
+
     private func rendererApplySubtitleStyle(_ style: SubtitleStyle) {
+        lastAppliedSubtitleStyleSnapshot = style
         if vlcRenderer != nil {
             logVLCUI("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth)) offset=\(String(format: "%.1f", style.verticalOffset))", type: "Player")
         } else {
-            logMPV("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth)) offset=\(String(format: "%.1f", style.verticalOffset))")
+            logMPV("rendererApplySubtitleStyle visible=\(style.isVisible) font=\(String(format: "%.1f", style.fontSize)) stroke=\(String(format: "%.1f", style.strokeWidth)) offset=\(String(format: "%.1f", style.verticalOffset)) ccBackground=\(style.closedCaptionBackground)")
         }
         renderer.applySubtitleStyle(style)
     }
@@ -1792,7 +1836,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             strokeWidth: subtitleModel.strokeWidth,
             fontSize: subtitleModel.fontSize,
             verticalOffset: subtitleModel.verticalOffset,
-            isVisible: visible ?? subtitleModel.isVisible
+            isVisible: visible ?? subtitleModel.isVisible,
+            closedCaptionBackground: subtitleModel.closedCaptionBackground
         )
     }
     
@@ -2348,7 +2393,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 if !isLoading { saveSubtitleSettings() }
             }
         }
-        
+        @Published var closedCaptionBackground: Bool = false {
+            didSet {
+                if !isLoading { saveSubtitleSettings() }
+            }
+        }
+
         init() {
             loadSubtitleSettings()
             isLoading = false
@@ -2384,6 +2434,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             if let strokeData = try? NSKeyedArchiver.archivedData(withRootObject: strokeColor, requiringSecureCoding: false) {
                 defaults.set(strokeData, forKey: "subtitles_strokeColor")
             }
+            defaults.set(closedCaptionBackground, forKey: "subtitles_closedCaptionBackground")
         }
         
         private func loadSubtitleSettings() {
@@ -2421,6 +2472,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 verticalOffset = max(-24, min(offset, 24))
             } else {
                 verticalOffset = -6.0
+            }
+
+            if defaults.object(forKey: "subtitles_closedCaptionBackground") != nil {
+                closedCaptionBackground = defaults.bool(forKey: "subtitles_closedCaptionBackground")
             }
         }
     }
@@ -2482,10 +2537,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         return UserDefaults.standard.bool(forKey: "playerVolumeGestureEnabled")
     }
-    private var isPerformanceOverlayEnabled: Bool {
+    private var isMetalPerformanceOverlayActive: Bool {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        return metalMPVRenderer != nil && Settings.shared.mpvPerformanceOverlayEnabled
+#else
         return false
+#endif
     }
-    
+
     private var originalSpeed: Double = 1.0
     private var holdGesture: UILongPressGestureRecognizer?
     
@@ -2495,7 +2554,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var playPauseRevealSuppressionToken = 0
     private var pendingSeekTime: Double?
     private var defaultPlaybackSpeedApplied = false
-    private var performanceOverlayTimer: Timer?
+    private var metalPerformanceOverlayTimer: Timer?
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
     private var metalThermalQualityTimer: Timer?
     /// One-shot latch so the thermal notice appears once per bad-thermal episode.
@@ -2579,7 +2638,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         updateProgressHostingController()
         updateSpeedMenu()
-        updatePerformanceOverlayVisibility()
+        updateMetalPerformanceOverlayVisibility()
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
         startMetalThermalQualityMonitoringIfNeeded()
 #endif
@@ -2694,7 +2753,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         setIdleTimerDisabledForPlayback(false, reason: "deinit")
         audioMenuDebounceTimer?.invalidate()
         subtitleMenuDebounceTimer?.invalidate()
-        performanceOverlayTimer?.invalidate()
+        metalPerformanceOverlayTimer?.invalidate()
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
         metalThermalQualityTimer?.invalidate()
 #endif
@@ -2732,6 +2791,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         displayLayer.removeFromSuperlayer()
 
         pendingUserDefaultsChangeWorkItem?.cancel()
+        subtitleMenuRefreshWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -3179,7 +3239,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         videoContainer.addSubview(skipBackwardButton)
         videoContainer.addSubview(skipForwardButton)
         videoContainer.addSubview(speedIndicatorLabel)
-        videoContainer.addSubview(performanceOverlayLabel)
+        videoContainer.addSubview(metalPerformanceOverlayLabel)
         videoContainer.addSubview(vlcSubtitleOverlayLabel)
         videoContainer.addSubview(subtitleButton)
         if supportsSharedPlayerControls {
@@ -3298,9 +3358,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             speedIndicatorLabel.topAnchor.constraint(equalTo: videoContainer.safeAreaLayoutGuide.topAnchor, constant: 20),
             speedIndicatorLabel.centerXAnchor.constraint(equalTo: videoContainer.centerXAnchor),
 
-            performanceOverlayLabel.topAnchor.constraint(equalTo: videoContainer.safeAreaLayoutGuide.topAnchor, constant: 64),
-            performanceOverlayLabel.trailingAnchor.constraint(equalTo: videoContainer.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            performanceOverlayLabel.widthAnchor.constraint(lessThanOrEqualTo: videoContainer.safeAreaLayoutGuide.widthAnchor, multiplier: 0.72),
+            metalPerformanceOverlayLabel.topAnchor.constraint(equalTo: videoContainer.safeAreaLayoutGuide.topAnchor, constant: 64),
+            metalPerformanceOverlayLabel.trailingAnchor.constraint(equalTo: videoContainer.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            metalPerformanceOverlayLabel.widthAnchor.constraint(lessThanOrEqualTo: videoContainer.safeAreaLayoutGuide.widthAnchor, multiplier: 0.72),
             speedIndicatorLabel.widthAnchor.constraint(equalToConstant: 100),
             speedIndicatorLabel.heightAnchor.constraint(equalToConstant: 40),
 
@@ -3435,57 +3495,167 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         skipForwardButton.accessibilityLabel = "Seek Forward \(seconds) Seconds"
     }
 
-    private func updatePerformanceOverlayVisibility() {
-        let enabled = supportsSharedPlayerControls && isPerformanceOverlayEnabled
-        performanceOverlayLabel.isHidden = !enabled
-        performanceOverlayLabel.alpha = enabled ? 1.0 : 0.0
-        if enabled {
-            videoContainer.bringSubviewToFront(performanceOverlayLabel)
-            updatePerformanceOverlayText()
-            startPerformanceOverlayTimerIfNeeded()
+    // MARK: - Metal/mpv performance overlay (HUD)
+    //
+    // A lightweight on-screen HUD for the single-instance Metal sample-buffer renderer. It
+    // surfaces the three signals that matter for the auto-quality/heat system: process CPU
+    // load, the system thermal state, and the quality profile the renderer is actually
+    // running ("Sharp" / "Balanced" / "Low Heat"). It is gated behind a settings toggle and
+    // only ever shows while the Metal renderer is the active backend.
+
+    private func updateMetalPerformanceOverlayVisibility() {
+        let active = isMetalPerformanceOverlayActive
+        metalPerformanceOverlayLabel.isHidden = !active
+        metalPerformanceOverlayLabel.alpha = active ? 1.0 : 0.0
+        if active {
+            videoContainer.bringSubviewToFront(metalPerformanceOverlayLabel)
+            refreshMetalPerformanceOverlay()
+            startMetalPerformanceOverlayTimerIfNeeded()
         } else {
-            stopPerformanceOverlayTimer()
+            stopMetalPerformanceOverlayTimer()
         }
     }
 
-    private func startPerformanceOverlayTimerIfNeeded() {
-        guard performanceOverlayTimer == nil else { return }
+    private func startMetalPerformanceOverlayTimerIfNeeded() {
+        guard metalPerformanceOverlayTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.updatePerformanceOverlayText()
+            self?.refreshMetalPerformanceOverlay()
         }
-        performanceOverlayTimer = timer
+        metalPerformanceOverlayTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func stopPerformanceOverlayTimer() {
-        performanceOverlayTimer?.invalidate()
-        performanceOverlayTimer = nil
+    private func stopMetalPerformanceOverlayTimer() {
+        metalPerformanceOverlayTimer?.invalidate()
+        metalPerformanceOverlayTimer = nil
     }
 
-    private func updatePerformanceOverlayText() {
-        guard supportsSharedPlayerControls, isPerformanceOverlayEnabled else { return }
-        performanceOverlayLabel.text = systemPerformanceOverlayText()
-        videoContainer.bringSubviewToFront(performanceOverlayLabel)
+    private func refreshMetalPerformanceOverlay() {
+        guard isMetalPerformanceOverlayActive else {
+            stopMetalPerformanceOverlayTimer()
+            return
+        }
+        metalPerformanceOverlayLabel.attributedText = metalPerformanceOverlayText()
+        videoContainer.bringSubviewToFront(metalPerformanceOverlayLabel)
     }
 
-    private func systemPerformanceOverlayText() -> String {
+    private func metalPerformanceOverlayText() -> NSAttributedString {
         let cpuText = processCPUUsagePercent().map { String(format: "%.0f%%", $0) } ?? "n/a"
-        return "CPU \(cpuText)\nThermal \(thermalStateText())\nGPU \(gpuPerformanceOverlayText())"
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let text = NSMutableAttributedString()
+        text.append(metalPerformanceOverlayRow(label: "CPU", value: cpuText, valueColor: .white))
+        text.append(NSAttributedString(string: "\n"))
+        text.append(metalPerformanceOverlayRow(
+            label: "Thermal",
+            value: metalPerformanceThermalName(thermalState),
+            valueColor: metalPerformanceThermalColor(thermalState)
+        ))
+        text.append(NSAttributedString(string: "\n"))
+        text.append(metalPerformanceOverlayRow(
+            label: "Quality",
+            value: metalPerformanceQualityText(),
+            valueColor: metalPerformanceQualityColor()
+        ))
+
+        // Stream/source quality — best-effort, from the resolved stream metadata. Reveals the
+        // advertised codec/bit-depth/HDR tags (e.g. "1080p x265 10bit HDR") that the renderer
+        // itself doesn't surface, so a hot vs cool stream can be compared at a glance.
+        if let streamName = playbackLaunchContext?.streamName?
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines), !streamName.isEmpty {
+            let clipped = streamName.count > 52 ? String(streamName.prefix(51)) + "…" : streamName
+            text.append(NSAttributedString(string: "\n"))
+            text.append(metalPerformanceOverlayRow(label: "Stream", value: clipped, valueColor: .white))
+        }
+
+        // Authoritative runtime facts from the renderer: what resolution it actually rasterizes,
+        // the dynamic range, and whether the costly high-bit-depth (HDR) path is engaged.
+        if let diag = metalPerformanceDiagnostics() {
+            var videoValue = "\(Int(diag.renderSize.width))x\(Int(diag.renderSize.height))  \(diag.dynamicRangeText)"
+            if diag.highBitDepthActive { videoValue += "  16-bit" }
+            text.append(NSAttributedString(string: "\n"))
+            text.append(metalPerformanceOverlayRow(label: "Video", value: videoValue, valueColor: diag.isHDR ? .systemOrange : .white))
+
+            // Active subtitle codec settles the "are these plain subs?" question: "ass" is styled
+            // (costlier to rasterize), "subrip" is plain text, "off" means hard-subbed/none.
+            let subValue = diag.subtitleCodec ?? "off"
+            text.append(NSAttributedString(string: "\n"))
+            text.append(metalPerformanceOverlayRow(label: "Subs", value: subValue, valueColor: diag.subtitleCodec == "ass" ? .systemYellow : .white))
+        }
+
+        return text
     }
 
-    private func thermalStateText() -> String {
-        switch ProcessInfo.processInfo.thermalState {
-        case .nominal: return "nominal"
-        case .fair: return "fair"
-        case .serious: return "serious"
-        case .critical: return "critical"
-        @unknown default: return "unknown"
+    private func metalPerformanceOverlayRow(label: String, value: String, valueColor: UIColor) -> NSAttributedString {
+        let row = NSMutableAttributedString(
+            string: label + "  ",
+            attributes: [
+                .foregroundColor: UIColor.white.withAlphaComponent(0.55),
+                .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+            ]
+        )
+        row.append(NSAttributedString(
+            string: value,
+            attributes: [
+                .foregroundColor: valueColor,
+                .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+            ]
+        ))
+        return row
+    }
+
+    /// Local (compile-guard-free) thermal name so the overlay builds regardless of which
+    /// renderer feature flags are set. Mirrors `metalThermalStateName(_:)`.
+    private func metalPerformanceThermalName(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return "Nominal"
+        case .fair: return "Fair"
+        case .serious: return "Serious"
+        case .critical: return "Critical"
+        @unknown default: return "Unknown"
         }
     }
 
-    private func gpuPerformanceOverlayText() -> String {
-        // iOS does not expose public per-app GPU utilization.
-        return "n/a"
+    private func metalPerformanceThermalColor(_ state: ProcessInfo.ThermalState) -> UIColor {
+        switch state {
+        case .nominal: return .systemGreen
+        case .fair: return .systemYellow
+        case .serious: return .systemOrange
+        case .critical: return .systemRed
+        @unknown default: return .white
+        }
+    }
+
+    private func metalPerformanceQualityText() -> String {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        let active = metalMPVRenderer?.activeQualityProfileName ?? "—"
+        // Annotate when the profile is being driven automatically by the thermal system, so a
+        // drop to "Low Heat" is legible as the auto-protection kicking in rather than a manual pick.
+        return Settings.shared.mpvMetalQualityProfile == .auto ? "\(active) · Auto" : active
+#else
+        return "—"
+#endif
+    }
+
+    private func metalPerformanceQualityColor() -> UIColor {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        switch metalMPVRenderer?.activeQualityProfileName {
+        case "Sharp": return .systemGreen
+        case "Balanced": return .systemYellow
+        case "Low Heat": return .systemOrange
+        default: return .white
+        }
+#else
+        return .white
+#endif
+    }
+
+    private func metalPerformanceDiagnostics() -> MetalPlaybackDiagnostics? {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        return metalMPVRenderer?.currentPlaybackDiagnostics()
+#else
+        return nil
+#endif
     }
 
     private func processCPUUsagePercent() -> Double? {
@@ -4028,7 +4198,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ) { [weak self] _ in
                 self?.subtitleModel.foregroundColor = color
                 self?.updateCurrentSubtitleAppearance()
-                self?.refreshActiveSubtitleMenu()
+                self?.scheduleSubtitleMenuRefresh()
             }
         }
         
@@ -4048,7 +4218,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ) { [weak self] _ in
                 self?.subtitleModel.strokeColor = color
                 self?.updateCurrentSubtitleAppearance()
-                self?.refreshActiveSubtitleMenu()
+                self?.scheduleSubtitleMenuRefresh()
             }
         }
         
@@ -4069,7 +4239,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ) { [weak self] _ in
                 self?.subtitleModel.strokeWidth = width
                 self?.updateCurrentSubtitleAppearance()
-                self?.refreshActiveSubtitleMenu()
+                self?.scheduleSubtitleMenuRefresh()
             }
         }
         
@@ -4092,7 +4262,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ) { [weak self] _ in
                 self?.subtitleModel.fontSize = size
                 self?.updateCurrentSubtitleAppearance()
-                self?.refreshActiveSubtitleMenu()
+                self?.scheduleSubtitleMenuRefresh()
             }
         }
         
@@ -4113,18 +4283,30 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ) { [weak self] _ in
                 self?.subtitleModel.verticalOffset = offset
                 self?.updateCurrentSubtitleAppearance()
-                self?.refreshActiveSubtitleMenu()
+                self?.scheduleSubtitleMenuRefresh()
             }
         }
 
         let verticalOffsetMenu = UIMenu(title: "Vertical Position", image: UIImage(systemName: "arrow.up.and.down"), children: verticalOffsetActions)
-        
+
+        let closedCaptionBackgroundAction = UIAction(
+            title: "Caption Background",
+            image: UIImage(systemName: "rectangle.fill"),
+            state: subtitleModel.closedCaptionBackground ? .on : .off
+        ) { [weak self] _ in
+            self?.subtitleModel.closedCaptionBackground.toggle()
+            self?.updateCurrentSubtitleAppearance()
+            self?.scheduleSubtitleMenuRefresh()
+        }
+        let closedCaptionBackgroundMenu = UIMenu(title: "", options: .displayInline, children: [closedCaptionBackgroundAction])
+
         return UIMenu(title: "Appearance", image: UIImage(systemName: "paintbrush"), children: [
             foregroundColorMenu,
             strokeColorMenu,
             strokeWidthMenu,
             fontSizeMenu,
-            verticalOffsetMenu
+            verticalOffsetMenu,
+            closedCaptionBackgroundMenu
         ])
     }
     
@@ -4171,6 +4353,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         vlcSubtitleOverlayLabel.attributedText = styled
         vlcSubtitleOverlayLabel.isHidden = false
         vlcSubtitleOverlayLabel.alpha = 1.0
+    }
+
+    private var subtitleMenuRefreshWorkItem: DispatchWorkItem?
+
+    /// Coalesces subtitle-menu rebuilds. Changing appearance options (and the settings
+    /// observer) can trigger several rebuilds of the whole UIMenu tree in quick succession,
+    /// which is the main remaining source of player-menu lag, so debounce them.
+    private func scheduleSubtitleMenuRefresh() {
+        subtitleMenuRefreshWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.subtitleMenuRefreshWorkItem = nil
+            self?.refreshActiveSubtitleMenu()
+        }
+        subtitleMenuRefreshWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: item)
     }
 
     private func refreshActiveSubtitleMenu() {
@@ -4473,6 +4670,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         nextEpisodePreview = nil
         nextEpisodePreviewKey = nil
         experimentalStagedNextEpisodeKey = nil
+        stagedNextEpisodeRequest = nil
+        stagedNextEpisodeRequestKey = nil
         nextEpisodePreviewUnavailableKeys.removeAll()
         nextEpisodePreviewTask?.cancel()
         nextEpisodePreviewTask = nil
@@ -5550,6 +5749,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let nextEpisodeNumber = episodeNumber + 1
         Logger.shared.log("NextEpisode: User requested S\(seasonNumber)E\(nextEpisodeNumber)", type: "Player")
+        // Fast path: if staging already resolved this exact next episode, replay that request
+        // directly instead of re-opening the source sheet and re-resolving the stream over the
+        // network. The warmed starter cache then makes the load start almost immediately.
+        if let staged = stagedNextEpisodeRequest,
+           stagedNextEpisodeRequestKey == nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber) {
+            Logger.shared.log("[PlayerVC.MPV] next-episode using staged request (skipping source re-resolve)", type: "MPV")
+            hideNextEpisodeButton()
+            stagedNextEpisodeRequest = nil
+            stagedNextEpisodeRequestKey = nil
+            replacePlayback(with: staged, reason: "next-episode-staged-request")
+            return
+        }
         if let preview = nextEpisodePreview {
             hideNextEpisodeButton()
             handleEpisodeBrowserSelection(preview, reason: "next-episode-button-preview")
@@ -5775,6 +5986,47 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return (season, episode, nextContext)
     }
 
+    /// Captures a fully-resolved playback request for the next episode from a staging-time
+    /// resolution, so `nextEpisodeButtonTapped` can replay it instantly instead of re-resolving
+    /// the source on tap. Must run on the main thread (reads live episode state). Only kept while
+    /// we are still staging from the same episode it was resolved for.
+    private func stashStagedNextEpisodeRequest(
+        streamURL: URL,
+        headers: [String: String]?,
+        tmdbSeason: Int?,
+        tmdbEpisode: Int?,
+        context: EpisodePlaybackContext?
+    ) {
+        guard case .episode(let showId, let currentSeason, let currentEpisode, let showTitle, let posterURL, let isAnime) = mediaInfo else { return }
+        let key = nextEpisodeKey(seasonNumber: currentSeason, episodeNumber: currentEpisode)
+        guard experimentalStagedNextEpisodeKey == key else { return }
+        let preset = initialPreset ?? PlayerPreset.presets.first ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: [])
+        let nextMediaInfo = MediaInfo.episode(
+            showId: showId,
+            seasonNumber: currentSeason,
+            episodeNumber: currentEpisode + 1,
+            showTitle: showTitle,
+            showPosterURL: posterURL,
+            isAnime: isAnime
+        )
+        stagedNextEpisodeRequest = PlayerResolvedPlaybackRequest(
+            url: streamURL,
+            preset: preset,
+            headers: headers,
+            subtitles: nil,
+            subtitleNames: nil,
+            mediaInfo: nextMediaInfo,
+            imdbId: imdbId,
+            isAnimeHint: isAnime,
+            originalTMDBSeasonNumber: tmdbSeason,
+            originalTMDBEpisodeNumber: tmdbEpisode,
+            episodePlaybackContext: context,
+            launchContext: playbackLaunchContext
+        )
+        stagedNextEpisodeRequestKey = key
+        Logger.shared.log("[PlayerVC.MPV] next-episode staged request ready key=\(key) target=\(streamURL.absoluteString)", type: "MPV")
+    }
+
     /// JS-service next episode: re-fetch the module's episode list, find the next episode href,
     /// extract + select its stream, and warm it. Runs the (light, one-shot) JS resolution inline.
     private func prewarmNextEpisodeViaService(
@@ -5824,6 +6076,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     headers: finalHeaders,
                     label: "next-S\(currentSeasonNumber)E\(nextEpisodeNumber)"
                 )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.stashStagedNextEpisodeRequest(streamURL: streamURL, headers: finalHeaders, tmdbSeason: currentSeasonNumber, tmdbEpisode: nextEpisodeNumber, context: self.episodePlaybackContext?.forEpisodeNumber(nextEpisodeNumber))
+                }
             }
         }
     }
@@ -5882,6 +6138,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 headers: finalHeaders,
                 label: "next-plugin-S\(currentSeasonNumber)E\(nextEpisodeNumber)"
             )
+            DispatchQueue.main.async { [weak self] in
+                self?.stashStagedNextEpisodeRequest(streamURL: streamURL, headers: finalHeaders, tmdbSeason: lookup.season, tmdbEpisode: lookup.episode, context: lookup.context)
+            }
         }
     }
 
@@ -5950,6 +6209,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 headers: finalHeaders,
                 label: "next-stremio-S\(currentSeasonNumber)E\(nextEpisodeNumber)"
             )
+            DispatchQueue.main.async { [weak self] in
+                self?.stashStagedNextEpisodeRequest(streamURL: streamURL, headers: finalHeaders, tmdbSeason: lookupSeason, tmdbEpisode: lookupEpisode, context: nextContext)
+            }
         }
     }
 
@@ -7414,7 +7676,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             updateVolumeControlVisibility()
 #endif
             updateEpisodeBrowserButtonVisibility()
-            updatePerformanceOverlayVisibility()
+            updateMetalPerformanceOverlayVisibility()
             return
         }
         Logger.shared.log("[PlayerVC.Settings] UserDefaults changed; evaluating in-app player subtitle mode", type: "Player")
@@ -7424,13 +7686,19 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             applyVLCSubtitleModeSettingIfNeeded()
             applyVLCSubtitleOverlayPositionSetting()
         } else {
-            rendererApplySubtitleStyle(currentSubtitleStyle())
+            // Only cross into mpv when the subtitle style actually changed — this observer
+            // also fires for unrelated defaults, and a menu-driven change has usually
+            // already applied this exact style.
+            let style = currentSubtitleStyle()
+            if style != lastAppliedSubtitleStyleSnapshot {
+                rendererApplySubtitleStyle(style)
+            }
         }
         configureMPVAppExitPictureInPictureAutomation(reason: "settings")
         updatePiPButtonVisibility()
         updateEpisodeBrowserButtonVisibility()
-        updatePerformanceOverlayVisibility()
-        updateSubtitleTracksMenu()
+        updateMetalPerformanceOverlayVisibility()
+        scheduleSubtitleMenuRefresh()
         prefetchOpenSubtitlesIfEnabled(reason: "settings")
         prefetchStremioSubtitlesIfAvailable(reason: "settings")
 #if !os(tvOS)
@@ -8180,7 +8448,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         videoContainer.bringSubviewToFront(skipBackwardButton)
         videoContainer.bringSubviewToFront(skipForwardButton)
         videoContainer.bringSubviewToFront(speedIndicatorLabel)
-        videoContainer.bringSubviewToFront(performanceOverlayLabel)
+        videoContainer.bringSubviewToFront(metalPerformanceOverlayLabel)
         videoContainer.bringSubviewToFront(subtitleButton)
         if supportsSharedPlayerControls {
             videoContainer.bringSubviewToFront(episodeBrowserButton)

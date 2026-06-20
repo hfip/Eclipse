@@ -17,12 +17,27 @@ import Metal
 import MPVKitSampleBufferGPL
 #endif
 
+/// True when the user has opted to override embedded ASS subtitle styling on a Metal
+/// (sample-buffer / gpu-next) renderer. This doubles as the subtitle *performance* switch: in
+/// this mode libass is told to discard the script's own styling and effects, which sharply
+/// lowers the per-frame rasterization cost of styled or animated embedded subtitles on the CPU
+/// software sample-buffer render path — the dominant controllable heat source during fast
+/// (e.g. 2x) playback, where hard-subbed streams pay nothing and embedded ASS pays per frame.
+private func subtitlePerformanceModeActive(isMetalRenderer: Bool) -> Bool {
+    guard isMetalRenderer, ExperimentalFeatureState.canUseExperimentalMPVPlayback else { return false }
+    return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
+}
+
 private func experimentalSubtitleASSOverrideValue(isMetalRenderer: Bool) -> String {
     guard isMetalRenderer,
           ExperimentalFeatureState.canUseExperimentalMPVPlayback else {
         return "yes"
     }
-    return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey) ? "yes" : "no"
+    // `force` (rather than `yes`) makes libass drop the embedded script's own styles/effects in
+    // favour of the app's flat subtitle style. This honours the "ignore special styles" intent
+    // and, on the software render path, avoids re-rasterizing heavy/animated ASS every frame.
+    // `no` keeps full embedded ASS fidelity (default).
+    return subtitlePerformanceModeActive(isMetalRenderer: isMetalRenderer) ? "force" : "no"
 }
 
 /// Raise (or restore) the shared AVAudioSession's preferred output channel count so multichannel
@@ -119,6 +134,8 @@ struct SubtitleStyle {
     let fontSize: CGFloat
     let verticalOffset: CGFloat
     let isVisible: Bool
+    /// YouTube-style translucent box drawn behind the text for legibility.
+    var closedCaptionBackground: Bool = false
 
     static let `default` = SubtitleStyle(
         foregroundColor: .white,
@@ -126,8 +143,21 @@ struct SubtitleStyle {
         strokeWidth: 1.0,
         fontSize: 38.0,
         verticalOffset: -6.0,
-        isVisible: false
+        isVisible: false,
+        closedCaptionBackground: false
     )
+}
+
+extension SubtitleStyle: Equatable {
+    static func == (lhs: SubtitleStyle, rhs: SubtitleStyle) -> Bool {
+        lhs.foregroundColor.isEqual(rhs.foregroundColor) &&
+        lhs.strokeColor.isEqual(rhs.strokeColor) &&
+        lhs.strokeWidth == rhs.strokeWidth &&
+        lhs.fontSize == rhs.fontSize &&
+        lhs.verticalOffset == rhs.verticalOffset &&
+        lhs.isVisible == rhs.isVisible &&
+        lhs.closedCaptionBackground == rhs.closedCaptionBackground
+    }
 }
 
 private func mpvSubtitlePosition(for verticalOffset: CGFloat, maxPosition: CGFloat = 150) -> String {
@@ -140,6 +170,25 @@ private func mpvSubtitlePosition(for verticalOffset: CGFloat, maxPosition: CGFlo
     // is clipped off-screen — those callers pass maxPosition: 100 to keep subs visible.
     let position = max(0, min(maxPosition, 100 + (verticalOffset - defaultOffset)))
     return String(format: "%.0f", position)
+}
+
+/// The software sample-buffer renderer applies `sub-font-size` verbatim and skips the
+/// viewport up-scaling the GPU paths apply (see `adjustedSubtitleFontSize`), so its
+/// subtitles render about two size tiers smaller than the other renderers. Shift the
+/// selected size up by two tiers on this path so it visually matches the menu intent.
+private func sampleBufferBumpedSubtitleFontSize(_ fontSize: CGFloat) -> CGFloat {
+    // Mirrors the font-size ladder offered in the player UI / Settings.
+    let ladder: [CGFloat] = [20, 24, 30, 34, 38, 42, 46]
+    let bump = 2
+    let nearestIndex = ladder.indices.min(by: {
+        abs(ladder[$0] - fontSize) < abs(ladder[$1] - fontSize)
+    }) ?? 0
+    let targetIndex = nearestIndex + bump
+    if targetIndex < ladder.count {
+        return ladder[targetIndex]
+    }
+    // Past the top of the ladder, keep growing by the ~4pt top step per extra tier.
+    return ladder[ladder.count - 1] + CGFloat(targetIndex - (ladder.count - 1)) * 4
 }
 
 protocol MPVNativeRendererDelegate: AnyObject {
@@ -2569,6 +2618,8 @@ final class MPVNativeRenderer: PlayerRenderer {
         setProperty(name: "sub-pos", value: mpvSubtitlePosition(for: style.verticalOffset))
         setProperty(name: "sub-shadow-offset", value: "0")
         setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: false))
+        setProperty(name: "sub-border-style", value: style.closedCaptionBackground ? "background-box" : "outline-and-shadow")
+        setProperty(name: "sub-back-color", value: style.closedCaptionBackground ? "0.0/0.0/0.0/0.75" : "0.0/0.0/0.0/0.0")
     }
 
     private func refreshSubtitleStyleIfViewportChanged() {
@@ -2615,6 +2666,22 @@ private func performOnMainSync(_ block: () -> Void) {
     } else {
         DispatchQueue.main.sync(execute: block)
     }
+}
+
+/// Lightweight per-stream facts surfaced by the performance overlay so heat can be *correlated*
+/// with what is actually being decoded and rendered — resolution, dynamic range, the high-bit
+/// (HDR) render path, and the active subtitle codec — instead of guessed. Plain data so it can
+/// cross the renderer feature-flag compile guards.
+struct MetalPlaybackDiagnostics {
+    let renderSize: CGSize
+    let isHDR: Bool
+    /// "SDR" / "HDR PQ" / "HDR HLG".
+    let dynamicRangeText: String
+    /// True while the expensive rgba64 -> RGBA16F high-bit-depth render path is active.
+    let highBitDepthActive: Bool
+    /// Active subtitle track codec ("ass" / "subrip" / "hdmv_pgs_subtitle"); nil when subtitles
+    /// are off or the stream is hard-subbed (no subtitle track at all).
+    let subtitleCodec: String?
 }
 
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
@@ -2715,6 +2782,9 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     var isPausedState: Bool { isPaused }
     var currentTime: Double { sampleRenderer.currentTime }
     var duration: Double { sampleRenderer.duration }
+    /// Human-readable name of the quality profile currently driving the sample-buffer
+    /// renderer ("Sharp" / "Balanced" / "Low Heat"). Read by the performance overlay HUD.
+    var activeQualityProfileName: String { qualityProfile.name }
     var supportsBitmapSubtitleTracks: Bool {
         MPVRenderBackendSupport.metalBitmapSubtitlesAllowed
     }
@@ -2966,13 +3036,43 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
                 foregroundColor: style.foregroundColor.cgColor,
                 strokeColor: style.strokeColor.cgColor,
                 strokeWidth: style.strokeWidth,
-                fontSize: style.fontSize,
+                fontSize: sampleBufferBumpedSubtitleFontSize(style.fontSize),
                 isVisible: style.isVisible
             )
         )
         _ = sampleRenderer.command(["set", "sub-pos", mpvSubtitlePosition(for: style.verticalOffset, maxPosition: 100)])
         _ = sampleRenderer.command(["set", "sub-shadow-offset", "0"])
         _ = sampleRenderer.command(["set", "sub-ass-override", experimentalSubtitleASSOverrideValue(isMetalRenderer: true)])
+        _ = sampleRenderer.command(["set", "sub-border-style", style.closedCaptionBackground ? "background-box" : "outline-and-shadow"])
+        _ = sampleRenderer.command(["set", "sub-back-color", style.closedCaptionBackground ? "0.0/0.0/0.0/0.75" : "0.0/0.0/0.0/0.0"])
+        // Subtitle performance mode: also stop libass blur from scaling with the render
+        // resolution, so any inline blur/edges that survive the style override stay cheap on the
+        // CPU sample-buffer path. No-op visually for plain dialogue; reverts to mpv's default
+        // (resolution-scaled, VSFilter-compatible) blur when the mode is off.
+        _ = sampleRenderer.command(["set", "sub-ass-vsfilter-blur-compat", subtitlePerformanceModeActive(isMetalRenderer: true) ? "no" : "yes"])
+    }
+
+    /// Snapshot of what the sample-buffer renderer is currently decoding/rendering, for the
+    /// performance overlay. Derived entirely from the renderer's existing public diagnostics —
+    /// no extra mpv work beyond one track-list read.
+    func currentPlaybackDiagnostics() -> MetalPlaybackDiagnostics {
+        let diag = sampleRenderer.diagnosticsSnapshot()
+        let transfer = diag.videoTransferFunction.lowercased()
+        let primaries = diag.videoColorPrimaries.lowercased()
+        let isHDR = diag.videoSignalPeak > 1.0
+            || transfer.contains("pq")
+            || transfer.contains("2084")
+            || transfer.contains("hlg")
+            || primaries.contains("2020")
+        let rangeText = isHDR ? (transfer.contains("hlg") ? "HDR HLG" : "HDR PQ") : "SDR"
+        let subtitleCodec = sampleRenderer.subtitleTracks().first(where: { $0.selected })?.codec
+        return MetalPlaybackDiagnostics(
+            renderSize: diag.lastFrameSize,
+            isHDR: isHDR,
+            dynamicRangeText: rangeText,
+            highBitDepthActive: diag.highBitDepthRenderingActive,
+            subtitleCodec: subtitleCodec
+        )
     }
 
     func canStartSampleBufferPictureInPicture() -> Bool {
@@ -3779,6 +3879,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         setProperty(name: "sub-pos", value: mpvSubtitlePosition(for: style.verticalOffset))
         setProperty(name: "sub-shadow-offset", value: "0")
         setProperty(name: "sub-ass-override", value: experimentalSubtitleASSOverrideValue(isMetalRenderer: true))
+        setProperty(name: "sub-border-style", value: style.closedCaptionBackground ? "background-box" : "outline-and-shadow")
+        setProperty(name: "sub-back-color", value: style.closedCaptionBackground ? "0.0/0.0/0.0/0.75" : "0.0/0.0/0.0/0.0")
         if isUsingPiPBridge {
             pipBridge.applySubtitleStyle(style)
         }
