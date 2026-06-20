@@ -632,7 +632,14 @@ final class AidokuSourceManager: ObservableObject {
             throw AidokuSourceError.duplicateSourceList
         }
 
-        let loaded = try await loadSourceList(url: url)
+        ReaderLogger.shared.log("Adding Aidoku source list \(AidokuNetworkClient.redact(url: url))", type: "AidokuSource")
+        let loaded: (name: String, sources: [AidokuExternalSourceInfo])
+        do {
+            loaded = try await loadSourceList(url: url)
+        } catch {
+            ReaderLogger.shared.log("Failed to add Aidoku source list \(AidokuNetworkClient.redact(url: url)): \(error.localizedDescription)", type: "AidokuSource")
+            throw error
+        }
         sourceLists.append(
             AidokuSourceListRecord(
                 url: url.absoluteString,
@@ -661,6 +668,7 @@ final class AidokuSourceManager: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
+        ReaderLogger.shared.log("Refreshing Aidoku source lists count=\(sourceLists.count)", type: "AidokuSource")
         var refreshedEntries: [AidokuSourceListEntry] = []
         for index in sourceLists.indices {
             guard let url = URL(string: sourceLists[index].url) else { continue }
@@ -682,6 +690,7 @@ final class AidokuSourceManager: ObservableObject {
 
         availableSources = deduplicatedAvailableSources(refreshedEntries)
         saveSourceLists()
+        ReaderLogger.shared.log("Finished refreshing Aidoku source lists available=\(availableSources.count)", type: "AidokuSource")
     }
 
     func install(_ entry: AidokuSourceListEntry) async throws {
@@ -689,14 +698,20 @@ final class AidokuSourceManager: ObservableObject {
             throw AidokuSourceError.missingDownloadURL
         }
         try validateVersion(entry.info)
-        let installed = try await importSourcePackage(
-            from: downloadURL,
-            externalInfo: entry.info,
-            sourceListURL: entry.listURL.absoluteString,
-            packageURL: downloadURL.absoluteString,
-            externalIconURL: entry.iconURLString
-        )
-        ReaderLogger.shared.log("Installed Aidoku source \(installed.id) \(installed.name) version=\(installed.version)", type: "AidokuSource")
+        ReaderLogger.shared.log("Installing Aidoku source \(entry.id) from \(entry.listName)", type: "AidokuSource")
+        do {
+            let installed = try await importSourcePackage(
+                from: downloadURL,
+                externalInfo: entry.info,
+                sourceListURL: entry.listURL.absoluteString,
+                packageURL: downloadURL.absoluteString,
+                externalIconURL: entry.iconURLString
+            )
+            ReaderLogger.shared.log("Installed Aidoku source \(installed.id) \(installed.name) version=\(installed.version)", type: "AidokuSource")
+        } catch {
+            ReaderLogger.shared.log("Failed to install Aidoku source \(entry.id): \(error.localizedDescription)", type: "AidokuSource")
+            throw error
+        }
     }
 
     func ensureRuntimeReady() async {
@@ -742,6 +757,7 @@ final class AidokuSourceManager: ObservableObject {
         let now = Date()
         lastAutoUpdate = now
         UserDefaults.standard.set(now, forKey: Self.lastAutoUpdateKey)
+        ReaderLogger.shared.log("Finished updating Aidoku sources reason=\(reason)", type: "AidokuSource")
     }
 
     func updateInstalledSource(_ source: AidokuInstalledSource) async {
@@ -753,6 +769,7 @@ final class AidokuSourceManager: ObservableObject {
             return
         }
 
+        ReaderLogger.shared.log("Updating Aidoku source \(source.id)", type: "AidokuSource")
         do {
             let info = AidokuExternalSourceInfo(
                 id: source.id,
@@ -808,6 +825,10 @@ final class AidokuSourceManager: ObservableObject {
         guard let index = installedSources.firstIndex(where: { $0.id == source.id }) else { return }
         installedSources[index].isEnabled.toggle()
         saveInstalledSources()
+        ReaderLogger.shared.log(
+            "\(installedSources[index].isEnabled ? "Enabled" : "Disabled") Aidoku source \(source.id)",
+            type: "AidokuSource"
+        )
     }
 
     func move(from offsets: IndexSet, to destination: Int) {
@@ -821,12 +842,14 @@ final class AidokuSourceManager: ObservableObject {
         }
         installedSources = ordered
         saveInstalledSources()
+        ReaderLogger.shared.log("Reordered Aidoku sources moved=\(offsets.count) destination=\(destination)", type: "AidokuSource")
     }
 
     func reloadInstalledSources() async {
         ensureDirectories()
-        var loadedRuntime: [String: AidokuRunner.Source] = [:]
         var updatedMetadata = installedSources
+        let installedIDs = Set(updatedMetadata.map(\.id))
+        var loadedRuntime = runtimeSources.filter { installedIDs.contains($0.key) }
 
         for index in updatedMetadata.indices {
             let sourceId = updatedMetadata[index].id
@@ -845,6 +868,9 @@ final class AidokuSourceManager: ObservableObject {
                 updatedMetadata[index].iconPath = runtime.imageUrl?.path
             } catch {
                 updatedMetadata[index].lastError = error.localizedDescription
+                if loadedRuntime[sourceId] != nil {
+                    ReaderLogger.shared.log("Preserving previous Aidoku runtime for \(sourceId) after reload failure: \(error.localizedDescription)", type: "AidokuRuntime")
+                }
                 ReaderLogger.shared.log("Failed to load Aidoku source \(sourceId): \(error.localizedDescription)", type: "AidokuRuntime")
             }
         }
@@ -1029,6 +1055,7 @@ final class AidokuSourceManager: ObservableObject {
 
         isRuntimeReady = true
         saveInstalledSources()
+        ReaderLogger.shared.log("Imported Aidoku source payload \(metadata.id) version=\(metadata.version)", type: "AidokuSource")
         return metadata
     }
 

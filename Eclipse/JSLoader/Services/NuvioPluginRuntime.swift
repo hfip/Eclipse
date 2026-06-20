@@ -421,15 +421,80 @@ enum NuvioPluginRuntime {
     private static func headers(from value: JSValue?) -> [String: String] {
         guard let raw = value,
               !raw.isNull,
-              !raw.isUndefined,
-              let dictionary = raw.toDictionary() as? [String: Any] else {
+              !raw.isUndefined else {
             return [:]
         }
-        return dictionary.compactMapValues { value in
-            if let value = value as? String { return value }
-            if let value = value as? NSNumber { return value.stringValue }
-            return nil
+
+        if let dictionary = raw.toDictionary() {
+            let direct = cleanHeaderDictionary(dictionary)
+            if !direct.isEmpty { return direct }
+
+            if let nested = dictionary["_headers"] as? [AnyHashable: Any] {
+                let nestedHeaders = cleanHeaderDictionary(nested)
+                if !nestedHeaders.isEmpty { return nestedHeaders }
+            } else if let nested = dictionary["_headers"] as? [String: Any] {
+                let nestedHeaders = cleanHeaderDictionary(Dictionary(uniqueKeysWithValues: nested.map { (AnyHashable($0.key), $0.value) }))
+                if !nestedHeaders.isEmpty { return nestedHeaders }
+            }
         }
+
+        let nested = raw.forProperty("_headers")
+        if let nested,
+           !nested.isNull,
+           !nested.isUndefined,
+           let dictionary = nested.toDictionary() {
+            let nestedHeaders = cleanHeaderDictionary(dictionary)
+            if !nestedHeaders.isEmpty { return nestedHeaders }
+        }
+
+        if let entries = raw.invokeMethod("entries", withArguments: [])?.toArray() {
+            let entryHeaders = cleanHeaderEntries(entries)
+            if !entryHeaders.isEmpty { return entryHeaders }
+        }
+
+        return [:]
+    }
+
+    private static func cleanHeaderDictionary(_ dictionary: [AnyHashable: Any]) -> [String: String] {
+        let pairs = dictionary.compactMap { key, value -> (String, String)? in
+            let headerName = String(describing: key).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !headerName.isEmpty,
+                  !headerName.caseInsensitiveCompare("Range").isSame,
+                  let headerValue = cleanString(value),
+                  !headerValue.isEmpty else {
+                return nil
+            }
+            return (headerName, String(headerValue.prefix(maxHeaderValueCharacters)))
+        }
+        var headers: [String: String] = [:]
+        for (key, value) in pairs {
+            headers[key] = value
+        }
+        return headers
+    }
+
+    private static func cleanHeaderEntries(_ entries: [Any]) -> [String: String] {
+        let pairs = entries.compactMap { entry -> (String, String)? in
+            guard let pair = entry as? [Any],
+                  pair.count >= 2,
+                  let key = cleanString(pair[0]),
+                  let value = cleanString(pair[1]) else {
+                return nil
+            }
+            let headerName = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            let headerValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !headerName.isEmpty,
+                  !headerName.caseInsensitiveCompare("Range").isSame,
+                  !headerValue.isEmpty else {
+                return nil
+            }
+            return (headerName, String(headerValue.prefix(maxHeaderValueCharacters)))
+        }
+        var headers: [String: String] = [:]
+        for (key, value) in pairs {
+            headers[key] = value
+        }
+        return headers
     }
 
     private static func moduleWrapped(_ code: String) -> String {
@@ -484,10 +549,19 @@ enum NuvioPluginRuntime {
         globalThis.btoa = function(value) { return __base64_encode(String(value)); };
 
         if (!Array.prototype.flat) {
-            Array.prototype.flat = function() { return [].concat.apply([], this); };
+            Array.prototype.flat = function(depth) {
+                depth = depth === undefined ? 1 : Math.floor(depth);
+                if (depth < 1) return Array.prototype.slice.call(this);
+                function flatten(items, level) {
+                    return items.reduce(function(output, item) {
+                        return output.concat(Array.isArray(item) && level > 0 ? flatten(item, level - 1) : item);
+                    }, []);
+                }
+                return flatten(this, depth);
+            };
         }
         if (!Array.prototype.flatMap) {
-            Array.prototype.flatMap = function(fn, thisArg) { return this.map(fn, thisArg).flat(); };
+            Array.prototype.flatMap = function(fn, thisArg) { return this.map(fn, thisArg).flat(1); };
         }
         if (!Object.entries) {
             Object.entries = function(obj) { var out = []; for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) out.push([k, obj[k]]); return out; };
@@ -500,7 +574,28 @@ enum NuvioPluginRuntime {
         }
 
         function HeadersShim(headers) {
-            this._headers = headers || {};
+            this._headers = {};
+            var self = this;
+            function add(name, value) {
+                if (name == null || value == null) return;
+                self._headers[String(name)] = String(value);
+            }
+            if (headers instanceof HeadersShim) {
+                headers.forEach(function(value, name) { add(name, value); });
+            } else if (Array.isArray(headers)) {
+                headers.forEach(function(pair) {
+                    if (pair && pair.length >= 2) add(pair[0], pair[1]);
+                });
+            } else if (headers && typeof headers.entries === "function" && !headers._pairs) {
+                var entries = headers.entries();
+                if (Array.isArray(entries)) {
+                    entries.forEach(function(pair) {
+                        if (pair && pair.length >= 2) add(pair[0], pair[1]);
+                    });
+                }
+            } else if (headers && typeof headers === "object") {
+                Object.keys(headers).forEach(function(name) { add(name, headers[name]); });
+            }
         }
         HeadersShim.prototype.get = function(name) {
             var needle = String(name).toLowerCase();
@@ -509,11 +604,44 @@ enum NuvioPluginRuntime {
             }
             return null;
         };
+        HeadersShim.prototype.set = function(name, value) { this._headers[String(name)] = String(value); };
+        HeadersShim.prototype.append = function(name, value) { this.set(name, value); };
+        HeadersShim.prototype.has = function(name) { return this.get(name) !== null; };
+        HeadersShim.prototype.delete = function(name) {
+            var needle = String(name).toLowerCase();
+            for (var key in this._headers) {
+                if (String(key).toLowerCase() === needle) delete this._headers[key];
+            }
+        };
+        HeadersShim.prototype.entries = function() {
+            var self = this;
+            return Object.keys(this._headers).map(function(key) { return [key, self._headers[key]]; });
+        };
+        HeadersShim.prototype.keys = function() { return Object.keys(this._headers); };
+        HeadersShim.prototype.values = function() {
+            var self = this;
+            return Object.keys(this._headers).map(function(key) { return self._headers[key]; });
+        };
+        HeadersShim.prototype.forEach = function(callback) {
+            var self = this;
+            Object.keys(this._headers).forEach(function(key) { callback(self._headers[key], key, self); });
+        };
+        if (typeof Symbol !== "undefined" && Symbol.iterator) {
+            HeadersShim.prototype[Symbol.iterator] = function() { return this.entries()[Symbol.iterator](); };
+        }
+        globalThis.Headers = HeadersShim;
+
+        function headersToObject(headers) {
+            var out = {};
+            var shim = new HeadersShim(headers || {});
+            shim.forEach(function(value, name) { out[name] = value; });
+            return out;
+        }
 
         globalThis.fetch = function(url, options) {
             options = options || {};
             var method = options.method || "GET";
-            var headers = options.headers || {};
+            var headers = headersToObject(options.headers || {});
             var body = options.body == null ? null : String(options.body);
             var redirect = options.redirect === "manual" ? false : true;
             return new Promise(function(resolve, reject) {
@@ -535,9 +663,32 @@ enum NuvioPluginRuntime {
             });
         };
 
-        globalThis.AbortController = function() { this.signal = { aborted: false }; };
-        globalThis.AbortController.prototype.abort = function() { this.signal.aborted = true; };
-        globalThis.AbortSignal = function() {};
+        globalThis.AbortSignal = function() {
+            this.aborted = false;
+            this.reason = undefined;
+            this._listeners = [];
+        };
+        globalThis.AbortSignal.prototype.addEventListener = function(type, listener) {
+            if (type === "abort" && typeof listener === "function") this._listeners.push(listener);
+        };
+        globalThis.AbortSignal.prototype.removeEventListener = function(type, listener) {
+            if (type !== "abort") return;
+            this._listeners = this._listeners.filter(function(value) { return value !== listener; });
+        };
+        globalThis.AbortSignal.prototype.dispatchEvent = function(event) {
+            if (!event || event.type !== "abort") return true;
+            this._listeners.forEach(function(listener) {
+                try { listener.call(this, event); } catch (_) {}
+            }, this);
+            return true;
+        };
+        globalThis.AbortController = function() { this.signal = new globalThis.AbortSignal(); };
+        globalThis.AbortController.prototype.abort = function(reason) {
+            if (this.signal.aborted) return;
+            this.signal.aborted = true;
+            this.signal.reason = reason;
+            this.signal.dispatchEvent({ type: "abort" });
+        };
 
         (function() {
             var __nuvioTimers = {};
@@ -575,15 +726,33 @@ enum NuvioPluginRuntime {
             this.protocol = parsed.protocol || "";
             this.host = parsed.host || "";
             this.hostname = parsed.hostname || "";
+            this.port = parsed.port || "";
             this.pathname = parsed.pathname || "";
             this.search = parsed.search || "";
             this.hash = parsed.hash || "";
             this.origin = parsed.origin || "";
+            this.searchParams = new globalThis.URLSearchParams(this.search || "");
         };
         globalThis.URL.prototype.toString = function() { return this.href; };
 
         globalThis.URLSearchParams = function(value) {
             this._pairs = [];
+            if (value && value._pairs && Array.isArray(value._pairs)) {
+                this._pairs = value._pairs.map(function(pair) { return [String(pair[0]), String(pair[1])]; });
+                return;
+            }
+            if (Array.isArray(value)) {
+                for (var pairIndex = 0; pairIndex < value.length; pairIndex++) {
+                    var item = value[pairIndex];
+                    if (item && item.length >= 2) this._pairs.push([String(item[0]), String(item[1])]);
+                }
+                return;
+            }
+            if (value && typeof value === "object") {
+                var self = this;
+                Object.keys(value).forEach(function(key) { self._pairs.push([String(key), String(value[key])]); });
+                return;
+            }
             var text = value == null ? "" : String(value);
             if (text.charAt(0) === "?") text = text.slice(1);
             if (text.length > 0) {
@@ -626,9 +795,15 @@ enum NuvioPluginRuntime {
         globalThis.URLSearchParams.prototype.forEach = function(callback) {
             for (var i = 0; i < this._pairs.length; i++) callback(this._pairs[i][1], this._pairs[i][0], this);
         };
+        globalThis.URLSearchParams.prototype.sort = function() {
+            this._pairs.sort(function(lhs, rhs) { return lhs[0] < rhs[0] ? -1 : (lhs[0] > rhs[0] ? 1 : 0); });
+        };
         globalThis.URLSearchParams.prototype.toString = function() {
             return this._pairs.map(function(pair) { return encodeURIComponent(pair[0]) + "=" + encodeURIComponent(pair[1]); }).join("&");
         };
+        if (typeof Symbol !== "undefined" && Symbol.iterator) {
+            globalThis.URLSearchParams.prototype[Symbol.iterator] = function() { return this.entries()[Symbol.iterator](); };
+        }
 
         function __hexToWords(hex) {
             var words = [];
@@ -841,15 +1016,20 @@ enum NuvioPluginRuntime {
         }
         guard let url else { return ["href": value] }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let hostname = url.host ?? ""
+        let port = url.port.map(String.init) ?? ""
+        let host = port.isEmpty ? hostname : "\(hostname):\(port)"
+        let pathname = url.path.isEmpty ? "/" : url.path
         return [
             "href": url.absoluteString,
             "protocol": (url.scheme ?? "").isEmpty ? "" : "\(url.scheme!):",
-            "host": url.host ?? "",
-            "hostname": url.host ?? "",
-            "pathname": url.path,
+            "host": host,
+            "hostname": hostname,
+            "port": port,
+            "pathname": pathname,
             "search": components?.percentEncodedQuery.map { "?\($0)" } ?? "",
             "hash": components?.percentEncodedFragment.map { "#\($0)" } ?? "",
-            "origin": "\(url.scheme ?? "")://\(url.host ?? "")"
+            "origin": "\(url.scheme ?? "")://\(host)"
         ]
     }
 

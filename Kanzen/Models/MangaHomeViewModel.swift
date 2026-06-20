@@ -405,6 +405,7 @@ final class MangaHomeViewModel: ObservableObject {
         guard loadTokens[source.id] == token, let sourceId = source.sourceId else { return }
 
         do {
+            await AidokuSourceManager.shared.ensureRuntimeReady()
             guard let runtime = AidokuSourceManager.shared.source(id: sourceId) else {
                 throw AidokuSourceError.sourceNotInstalled
             }

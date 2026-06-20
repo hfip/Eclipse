@@ -331,10 +331,11 @@ private struct SourceIconView: View {
                 .scaledToFit()
         } placeholder: {
             Image(systemName: fallbackSystemName)
+                .font(.caption)
                 .foregroundColor(.secondary)
         }
-        .frame(width: 30, height: 30)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .frame(width: 24, height: 24)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 

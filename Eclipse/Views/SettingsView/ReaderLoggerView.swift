@@ -175,14 +175,17 @@ final class ReaderLoggerManager: ObservableObject {
     }
 
     private func parseLogsString(_ logsString: String) -> [LogEntry] {
-        let logSections = logsString.components(separatedBy: "\n----\n")
+        let logLines = logsString
+            .replacingOccurrences(of: "\n----\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: true)
         var parsedLogs: [LogEntry] = []
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd-MM HH:mm:ss"
 
-        for section in logSections {
-            guard !section.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+        for line in logLines {
+            let section = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !section.isEmpty else { continue }
 
             let pattern = #"\[([^\]]+)\] \[([^\]]+)\] (.+)"#
             if let regex = try? NSRegularExpression(pattern: pattern, options: []),
