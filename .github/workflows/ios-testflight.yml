@@ -277,13 +277,6 @@ jobs:
 
           echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
 
-      - name: Upload IPA artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: Eclipse-iOS-TestFlight-${{ env.BUILD_NUMBER }}
-          path: ${{ env.IPA_PATH }}
-          if-no-files-found: error
-
       - name: Upload to App Store Connect
         if: ${{ inputs.upload }}
         env:
