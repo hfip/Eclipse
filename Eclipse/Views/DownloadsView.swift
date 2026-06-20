@@ -322,8 +322,12 @@ struct DownloadsView: View {
                     .foregroundColor(actionColor(for: item.status))
                     .frame(width: 32, height: 32)
             }
+            // .borderless isolates each button's tap region. Without it, SwiftUI
+            // treats the whole List row as one tap target and a tap on Pause also
+            // fires the adjacent Cancel button, deleting the download.
+            .buttonStyle(.borderless)
             .disabled(item.status == .queued)
-            
+
             // Cancel / Delete button
             Button(action: {
                 downloadManager.cancelDownload(id: item.id)
@@ -333,6 +337,7 @@ struct DownloadsView: View {
                     .foregroundColor(.red.opacity(0.8))
                     .frame(width: 32, height: 32)
             }
+            .buttonStyle(.borderless)
         }
     }
     

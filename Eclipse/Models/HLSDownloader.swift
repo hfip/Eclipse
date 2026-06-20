@@ -37,7 +37,18 @@ final class HLSDownloader: @unchecked Sendable {
     private let headers: [String: String]
     private let destinationURL: URL
     private let downloadId: String
-    
+
+    /// Number of segments already written to the partial file from a prior run.
+    private let resumeFromSegment: Int
+    /// Byte length of the partial file at the last checkpoint; the partial is
+    /// truncated back to this before appending (discards a torn segment).
+    private let resumeByteCount: Int64
+    /// Variant playlist chosen on the first run, reused on resume so the segment
+    /// list is identical. When nil, the variant is selected fresh.
+    private let pinnedVariantURL: URL?
+    /// Segment count recorded on the first run, used to validate a resume.
+    private let expectedTotalSegments: Int
+
     private var isCancelled = false
     private var cancellationError: HLSError = .cancelled
     private var workerTask: Task<Void, Never>?
@@ -52,13 +63,25 @@ final class HLSDownloader: @unchecked Sendable {
     var onProgress: ((Double) -> Void)?
     /// Completion callback: (Result<URL, Error>)
     var onCompletion: ((Result<URL, Error>) -> Void)?
-    
-    init(streamURL: URL, headers: [String: String], destinationURL: URL, downloadId: String) {
+    /// Reports the resolved variant playlist URL and its segment count once per run,
+    /// so the caller can pin the same variant when resuming. Called on the main queue.
+    var onVariantResolved: ((URL, Int) -> Void)?
+    /// Checkpoint after each segment write: (segmentsWritten, partialByteCount).
+    /// Called on the main queue.
+    var onCheckpoint: ((Int, Int64) -> Void)?
+
+    init(streamURL: URL, headers: [String: String], destinationURL: URL, downloadId: String,
+         resumeFromSegment: Int = 0, resumeByteCount: Int64 = 0,
+         pinnedVariantURL: URL? = nil, expectedTotalSegments: Int = 0) {
         self.streamURL = streamURL
         self.headers = headers
         self.destinationURL = destinationURL
         self.downloadId = downloadId
-        
+        self.resumeFromSegment = resumeFromSegment
+        self.resumeByteCount = resumeByteCount
+        self.pinnedVariantURL = pinnedVariantURL
+        self.expectedTotalSegments = expectedTotalSegments
+
         let config = URLSessionConfiguration.default
         config.httpMaximumConnectionsPerHost = 4
         config.timeoutIntervalForRequest = 30
@@ -99,14 +122,19 @@ final class HLSDownloader: @unchecked Sendable {
                 let mediaPlaylistURL: URL
                 let mediaPlaylistContent: String
                 
-                if self.isMasterPlaylist(playlistContent) {
+                if let pinned = self.pinnedVariantURL {
+                    // Resuming: reuse the exact variant chosen on the first run so the
+                    // segment list is byte-for-byte identical to what we already wrote.
+                    mediaPlaylistContent = try await self.fetchPlaylist(url: pinned)
+                    mediaPlaylistURL = pinned
+                } else if self.isMasterPlaylist(playlistContent) {
                     // Parse master playlist and select best variant
                     let variants = self.parseMasterPlaylist(playlistContent, baseURL: self.streamURL)
                     guard let best = self.selectBestVariant(variants) else {
                         throw HLSError.noVariantsFound
                     }
                     Logger.shared.log("HLS: Selected variant \(best.resolution ?? "unknown") @ \(best.bandwidth)bps", type: "Download")
-                    
+
                     mediaPlaylistContent = try await self.fetchPlaylist(url: best.url)
                     mediaPlaylistURL = best.url
                 } else {
@@ -122,8 +150,27 @@ final class HLSDownloader: @unchecked Sendable {
                 guard !segments.isEmpty else {
                     throw HLSError.noSegmentsFound
                 }
-                
+
                 Logger.shared.log("HLS: Found \(segments.count) segments to download", type: "Download")
+
+                // Pin the resolved variant + segment count so a later resume can reuse
+                // the identical playlist and validate the partial against it.
+                let resolvedVariant = mediaPlaylistURL
+                let totalSegmentCount = segments.count
+                DispatchQueue.main.async { [weak self] in
+                    self?.onVariantResolved?(resolvedVariant, totalSegmentCount)
+                }
+
+                // If the playlist no longer matches what we checkpointed (token expired,
+                // different ABR rendition, re-encoded source), restart from scratch
+                // rather than appending mismatched segments onto the partial.
+                var effectiveResumeSegment = self.resumeFromSegment
+                if effectiveResumeSegment > 0,
+                   self.expectedTotalSegments > 0,
+                   segments.count != self.expectedTotalSegments {
+                    Logger.shared.log("HLS: resume mismatch (playlist has \(segments.count) segments, expected \(self.expectedTotalSegments)); restarting from scratch", type: "Download")
+                    effectiveResumeSegment = 0
+                }
                 
                 // Step 4: Parse encryption info if present
                 let encryptionKey = self.parseEncryptionKey(from: mediaPlaylistContent, baseURL: mediaPlaylistURL)
@@ -145,7 +192,9 @@ final class HLSDownloader: @unchecked Sendable {
                     initSegmentURL: initSegmentURL,
                     encryptionKey: encryptionKey,
                     keyData: keyData,
-                    to: self.destinationURL
+                    to: self.destinationURL,
+                    resumeFromSegment: effectiveResumeSegment,
+                    resumeByteCount: self.resumeByteCount
                 )
                 
                 try self.checkCancelled()
@@ -347,7 +396,9 @@ final class HLSDownloader: @unchecked Sendable {
         initSegmentURL: URL?,
         encryptionKey: HLSEncryptionKey?,
         keyData: Data?,
-        to outputURL: URL
+        to outputURL: URL,
+        resumeFromSegment: Int,
+        resumeByteCount: Int64
     ) async throws {
         try checkSystemBackoff()
 
@@ -355,53 +406,82 @@ final class HLSDownloader: @unchecked Sendable {
             .deletingLastPathComponent()
             .appendingPathComponent(".\(outputURL.lastPathComponent).partial")
         var completed = false
+        var preservePartial = false
 
-        try? FileManager.default.removeItem(at: partialURL)
-        guard FileManager.default.createFile(atPath: partialURL.path, contents: nil) else {
-            throw HLSError.couldNotCreateOutput
+        // Resume only when we have a checkpoint AND the on-disk partial is at least as
+        // long as that checkpoint. The partial may be longer (checkpoint saves are
+        // throttled); we truncate the surplus so a torn final segment from a hard kill
+        // is discarded and we restart exactly on a segment boundary.
+        let partialSize = Self.fileSize(at: partialURL)
+        let isResuming = resumeFromSegment > 0
+            && resumeByteCount > 0
+            && partialSize >= resumeByteCount
+
+        let fileHandle: FileHandle
+        if isResuming {
+            fileHandle = try FileHandle(forWritingTo: partialURL)
+            try fileHandle.truncate(atOffset: UInt64(resumeByteCount))
+            try fileHandle.seekToEnd()
+            Logger.shared.log("HLS: resuming from segment \(resumeFromSegment) (\(resumeByteCount) bytes on disk)", type: "Download")
+        } else {
+            try? FileManager.default.removeItem(at: partialURL)
+            guard FileManager.default.createFile(atPath: partialURL.path, contents: nil) else {
+                throw HLSError.couldNotCreateOutput
+            }
+            fileHandle = try FileHandle(forWritingTo: partialURL)
         }
 
-        let fileHandle = try FileHandle(forWritingTo: partialURL)
         defer {
             try? fileHandle.close()
-            if !completed {
+            // Keep the partial when the stop is resumable (pause / background expiry /
+            // thermal backoff); discard it only after a successful move or a hard failure.
+            if !completed && !preservePartial {
                 try? FileManager.default.removeItem(at: partialURL)
             }
         }
-        
-        // Write initialization segment first if present
-        if let initURL = initSegmentURL {
-            try checkSystemBackoff()
-            let initData = try await fetchData(url: initURL)
-            try checkCancelled()
-            let decrypted = try decryptIfNeeded(data: initData, key: encryptionKey, keyData: keyData, segmentIndex: -1)
-            fileHandle.write(decrypted)
-        }
-        
-        // Download segments sequentially and append
-        let totalSegments = segments.count
-        
-        for (index, segmentURL) in segments.enumerated() {
-            try checkCancelled()
 
-            try checkSystemBackoff()
-            
-            let segmentData = try await fetchSegmentWithRetry(url: segmentURL, maxRetries: 3)
-            try checkCancelled()
-            let decrypted = try decryptIfNeeded(data: segmentData, key: encryptionKey, keyData: keyData, segmentIndex: index)
-            
-            fileHandle.write(decrypted)
-            
-            // Report progress
-            let progress = Double(index + 1) / Double(totalSegments)
-            DispatchQueue.main.async { [weak self] in
-                self?.onProgress?(progress)
+        do {
+            // Initialization segment (fMP4 #EXT-X-MAP) is written exactly once, on a
+            // fresh run — never re-appended on resume.
+            if !isResuming, let initURL = initSegmentURL {
+                try checkSystemBackoff()
+                let initData = try await fetchData(url: initURL)
+                try checkCancelled()
+                let decrypted = try decryptIfNeeded(data: initData, key: encryptionKey, keyData: keyData, segmentIndex: -1)
+                fileHandle.write(decrypted)
             }
-        }
 
-        try? FileManager.default.removeItem(at: outputURL)
-        try FileManager.default.moveItem(at: partialURL, to: outputURL)
-        completed = true
+            let totalSegments = segments.count
+            let startIndex = isResuming ? resumeFromSegment : 0
+
+            for index in startIndex..<totalSegments {
+                try checkCancelled()
+                try checkSystemBackoff()
+
+                let segmentData = try await fetchSegmentWithRetry(url: segments[index], maxRetries: 3)
+                try checkCancelled()
+                let decrypted = try decryptIfNeeded(data: segmentData, key: encryptionKey, keyData: keyData, segmentIndex: index)
+
+                fileHandle.write(decrypted)
+
+                // Checkpoint AFTER the write lands so the recorded byte count never
+                // exceeds what is actually on disk.
+                let writtenSegments = index + 1
+                let byteOffset = (try? fileHandle.offset()).map(Int64.init) ?? resumeByteCount
+                let progress = Double(writtenSegments) / Double(totalSegments)
+                DispatchQueue.main.async { [weak self] in
+                    self?.onProgress?(progress)
+                    self?.onCheckpoint?(writtenSegments, byteOffset)
+                }
+            }
+
+            try? FileManager.default.removeItem(at: outputURL)
+            try FileManager.default.moveItem(at: partialURL, to: outputURL)
+            completed = true
+        } catch {
+            preservePartial = isResumableInterruption(error)
+            throw error
+        }
     }
     
     private func fetchSegmentWithRetry(url: URL, maxRetries: Int) async throws -> Data {
@@ -553,6 +633,26 @@ final class HLSDownloader: @unchecked Sendable {
         let error = cancellationError
         stateLock.unlock()
         return error
+    }
+
+    /// Whether an interruption should preserve the partial file for a later resume,
+    /// as opposed to discarding it (genuine failure).
+    private func isResumableInterruption(_ error: Error) -> Bool {
+        if let hlsError = error as? HLSError {
+            switch hlsError {
+            case .cancelled, .backgroundTimeExpired, .systemBackoff:
+                return true
+            default:
+                return false
+            }
+        }
+        return isCancellationError(error)
+    }
+
+    private static func fileSize(at url: URL) -> Int64 {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int64 else { return 0 }
+        return size
     }
 
     private func clearWorkerTask() {

@@ -46,6 +46,12 @@ struct DownloadItem: Codable, Identifiable {
     var dateAdded: Date
     var dateCompleted: Date?
     let isAnime: Bool
+
+    // HLS resume checkpoint (nil for non-HLS or downloads with no progress yet).
+    var hlsResumeSegmentIndex: Int?   // segments fully written to the partial file
+    var hlsResumeByteCount: Int64?    // partial byte length at that checkpoint
+    var hlsVariantURL: String?        // pinned variant playlist for an identical resume
+    var hlsTotalSegments: Int?        // segment count, used to validate a resume
     
     var isHLS: Bool {
         streamURL.lowercased().contains(".m3u8")
@@ -120,6 +126,7 @@ final class DownloadManager: NSObject, ObservableObject {
     private var activeTasks: [String: URLSessionDownloadTask] = [:]
     private var resumeDataStore: [String: Data] = [:]
     private var lastProgressUpdate: [String: Date] = [:]
+    private var lastHLSCheckpointSave: [String: Date] = [:]
     private var activeHLSDownloaders: [String: HLSDownloader] = [:]
     #if canImport(UIKit)
     private var lifecycleObservers: [NSObjectProtocol] = []
@@ -316,8 +323,9 @@ final class DownloadManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.downloads[index].status = .queued
             self.downloads[index].error = nil
-            // HLS downloads restart from scratch since they don't support resume data
-            if self.downloads[index].isHLS {
+            // HLS downloads resume from the last checkpointed segment when one exists;
+            // otherwise they restart from scratch.
+            if self.downloads[index].isHLS && self.downloads[index].hlsResumeSegmentIndex == nil {
                 self.downloads[index].progress = 0
                 self.downloads[index].downloadedBytes = 0
                 self.downloads[index].totalBytes = 0
@@ -339,9 +347,10 @@ final class DownloadManager: NSObject, ObservableObject {
             activeHLSDownloaders.removeValue(forKey: id)
         }
         resumeDataStore.removeValue(forKey: id)
+        lastHLSCheckpointSave.removeValue(forKey: id)
         removeDownload(id: id, deleteFile: true)
         processQueue()
-        
+
         Logger.shared.log("Cancelled download: \(id)", type: "Download")
     }
     
@@ -354,6 +363,11 @@ final class DownloadManager: NSObject, ObservableObject {
             if deleteFile, let subFile = downloads[index].subtitleFileName {
                 let subURL = downloadsDirectory.appendingPathComponent(subFile)
                 try? fileManager.removeItem(at: subURL)
+            }
+            if deleteFile {
+                // Remove any in-progress HLS partial file as well.
+                let partialURL = downloadsDirectory.appendingPathComponent(".\(id).ts.partial")
+                try? fileManager.removeItem(at: partialURL)
             }
             DispatchQueue.main.async {
                 self.downloads.remove(at: index)
@@ -636,14 +650,50 @@ final class DownloadManager: NSObject, ObservableObject {
         
         let fileName = "\(item.id).ts"
         let destURL = downloadsDirectory.appendingPathComponent(fileName)
-        
+
+        let resumeSegment = item.hlsResumeSegmentIndex ?? 0
+        let resumeBytes = item.hlsResumeByteCount ?? 0
+        let pinnedVariant = item.hlsVariantURL.flatMap { URL(string: $0) }
+        let expectedTotal = item.hlsTotalSegments ?? 0
+
         let downloader = HLSDownloader(
             streamURL: url,
             headers: item.headers,
             destinationURL: destURL,
-            downloadId: item.id
+            downloadId: item.id,
+            resumeFromSegment: resumeSegment,
+            resumeByteCount: resumeBytes,
+            pinnedVariantURL: pinnedVariant,
+            expectedTotalSegments: expectedTotal
         )
-        
+
+        downloader.onVariantResolved = { [weak self] variantURL, totalSegments in
+            guard let self = self else { return }
+            if let index = self.downloads.firstIndex(where: { $0.id == item.id }) {
+                self.downloads[index].hlsVariantURL = variantURL.absoluteString
+                self.downloads[index].hlsTotalSegments = totalSegments
+                self.saveDownloads()
+            }
+        }
+
+        downloader.onCheckpoint = { [weak self] segmentsWritten, byteCount in
+            guard let self = self else { return }
+            guard let index = self.downloads.firstIndex(where: { $0.id == item.id }),
+                  self.downloads[index].status == .downloading else { return }
+            self.downloads[index].hlsResumeSegmentIndex = segmentsWritten
+            self.downloads[index].hlsResumeByteCount = byteCount
+            self.downloads[index].downloadedBytes = byteCount
+            // In-memory state is always current for instant pause/resume; throttle the
+            // disk write to a couple of seconds. On a hard kill we lose at most the last
+            // throttle window, and the partial is truncated back to the saved checkpoint.
+            let now = Date()
+            if let last = self.lastHLSCheckpointSave[item.id], now.timeIntervalSince(last) < 2.0 {
+                return
+            }
+            self.lastHLSCheckpointSave[item.id] = now
+            self.saveDownloads()
+        }
+
         downloader.onProgress = { [weak self] progress in
             guard let self = self else { return }
             if let index = self.downloads.firstIndex(where: { $0.id == item.id }),
@@ -671,9 +721,14 @@ final class DownloadManager: NSObject, ObservableObject {
                             self.downloads[index].totalBytes = size
                             self.downloads[index].downloadedBytes = size
                         }
-                        
+
+                        // Checkpoint no longer needed once the file is finalized.
+                        self.downloads[index].hlsResumeSegmentIndex = nil
+                        self.downloads[index].hlsResumeByteCount = nil
+
                         self.saveDownloads()
                     }
+                    self.lastHLSCheckpointSave.removeValue(forKey: item.id)
                     self.processQueue()
                     Logger.shared.log("HLS download completed: \(item.displayTitle) -> \(fileName)", type: "Download")
 
@@ -704,13 +759,17 @@ final class DownloadManager: NSObject, ObservableObject {
         if let index = downloads.firstIndex(where: { $0.id == item.id }) {
             DispatchQueue.main.async {
                 self.downloads[index].status = .downloading
-                self.downloads[index].progress = 0
-                self.downloads[index].downloadedBytes = 0
-                self.downloads[index].totalBytes = 0
+                // Only zero progress on a genuine fresh start. When resuming we keep the
+                // checkpointed progress/bytes so the bar doesn't snap back to zero.
+                if resumeSegment == 0 {
+                    self.downloads[index].progress = 0
+                    self.downloads[index].downloadedBytes = 0
+                    self.downloads[index].totalBytes = 0
+                }
                 self.saveDownloads()
             }
         }
-        
+
         downloader.start()
         
         // Also download subtitle if available
@@ -906,6 +965,10 @@ final class DownloadManager: NSObject, ObservableObject {
         for item in downloads {
             if let f = item.localFileName { trackedFileNames.insert(f) }
             if let s = item.subtitleFileName { trackedFileNames.insert(s) }
+            // Preserve in-progress HLS partials so paused/interrupted downloads can resume.
+            if item.isHLS && item.status != .completed {
+                trackedFileNames.insert(".\(item.id).ts.partial")
+            }
         }
         
         var removedCount = 0
