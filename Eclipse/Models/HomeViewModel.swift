@@ -115,13 +115,6 @@ final class HomeViewModel: ObservableObject {
                     self.catalogResults = tmdbLoadedCatalogs
                     self.applyHeroBannerSelection()
                     self.errorMessage = nil
-                    // Reveal the home as soon as the first batch of content is ready.
-                    // Anime, recommendations, widgets, Stremio and Trakt rows keep
-                    // streaming in below without blocking the initial render or the
-                    // splash dismissal (which is gated on hasCompletedInitialLoad).
-                    self.isLoading = false
-                    self.hasLoadedContent = true
-                    self.hasCompletedInitialLoad = true
                 }
             }
 
@@ -166,79 +159,51 @@ final class HomeViewModel: ObservableObject {
             }
 
             let loadedCatalogCount = loadedCatalogs.values.filter { !$0.isEmpty }.count
-            if loadedCatalogCount > 0 {
-                // Generate "Just For You" recommendations after catalogs are populated
-                let currentResults = await MainActor.run { self.catalogResults }
-                if enabledCatalogSnapshot.contains(where: { $0.id == "forYou" }) {
-                    let rawForYou = await RecommendationEngine.shared.generateRecommendations(
-                        catalogResults: currentResults,
-                        tmdbService: tmdbService
-                    )
-                    let forYou = contentFilter.filterSearchResults(rawForYou)
-                    if !forYou.isEmpty {
-                        await MainActor.run {
-                            self.catalogResults["forYou"] = forYou
-                            self.applyHeroBannerSelection()
-                        }
-                    }
-                }
 
-                // Generate "Because you watched X" catalog
-                if enabledCatalogSnapshot.contains(where: { $0.id == "becauseYouWatched" }) {
-                    let (bywTitle, rawBYWResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
-                        tmdbService: tmdbService
-                    )
-                    let bywResults = contentFilter.filterSearchResults(rawBYWResults)
-                    if !bywResults.isEmpty {
-                        await MainActor.run {
-                            self.catalogResults["becauseYouWatched"] = bywResults
-                            self.becauseYouWatchedTitle = bywTitle
-                            self.applyHeroBannerSelection()
-                        }
-                    }
-                }
-
-            }
-
-            // Load enabled widget/catalog rows before ending the initial media-home load.
-            await self.loadWidgetData(tmdbService: tmdbService, enabledCatalogs: enabledCatalogSnapshot, contentFilter: contentFilter)
-            guard !Task.isCancelled else { return }
-
-            let stremioCatalogs = await self.loadStremioCatalogs(
+            // Run the remaining independent row sources concurrently instead of one
+            // after another. catalogResults/widgetData are only ever *merged* into
+            // below (never reassigned), so the concurrent main-actor writes are safe,
+            // and the home is revealed in a single pass once they all finish — no
+            // staggered pop-in as rows shift the layout.
+            async let stremioCatalogs = self.loadStremioCatalogs(
                 enabledCatalogs: enabledCatalogSnapshot,
                 tmdbService: tmdbService,
                 contentFilter: contentFilter
             )
-            guard !Task.isCancelled else { return }
-            if !stremioCatalogs.isEmpty {
-                await MainActor.run {
-                    self.catalogResults.merge(stremioCatalogs) { _, stremio in stremio }
-                    self.hasLoadedContent = true
-                    self.errorMessage = nil
-                    self.applyHeroBannerSelection()
-                }
-            }
-
-            let traktCatalogs = await self.loadTraktCatalogs(
+            async let traktCatalogs = self.loadTraktCatalogs(
                 enabledCatalogs: enabledCatalogSnapshot,
                 tmdbService: tmdbService,
                 contentFilter: contentFilter
             )
-            guard !Task.isCancelled else { return }
-            if !traktCatalogs.isEmpty {
-                await MainActor.run {
-                    self.catalogResults.merge(traktCatalogs) { _, trakt in trakt }
-                    self.hasLoadedContent = true
-                    self.errorMessage = nil
-                    self.applyHeroBannerSelection()
-                }
-            }
+            async let widgetsLoaded: Void = self.loadWidgetData(
+                tmdbService: tmdbService,
+                enabledCatalogs: enabledCatalogSnapshot,
+                contentFilter: contentFilter
+            )
+            async let recommendationsLoaded: Void = self.loadRecommendationCatalogs(
+                enabledCatalogs: enabledCatalogSnapshot,
+                tmdbService: tmdbService,
+                contentFilter: contentFilter,
+                hasLoadedCatalogs: loadedCatalogCount > 0
+            )
 
-            let finalLoadedCount = await MainActor.run {
-                self.catalogResults.values.filter { !$0.isEmpty }.count + self.widgetData.values.filter { !$0.isEmpty }.count
-            }
+            let loadedStremioCatalogs = await stremioCatalogs
+            let loadedTraktCatalogs = await traktCatalogs
+            _ = await widgetsLoaded
+            _ = await recommendationsLoaded
+            guard !Task.isCancelled else { return }
 
             await MainActor.run {
+                if !loadedStremioCatalogs.isEmpty {
+                    self.catalogResults.merge(loadedStremioCatalogs) { _, stremio in stremio }
+                }
+                if !loadedTraktCatalogs.isEmpty {
+                    self.catalogResults.merge(loadedTraktCatalogs) { _, trakt in trakt }
+                }
+
+                let finalLoadedCount = self.catalogResults.values.filter { !$0.isEmpty }.count
+                    + self.widgetData.values.filter { !$0.isEmpty }.count
+                self.applyHeroBannerSelection()
                 self.isLoading = false
                 self.hasLoadedContent = finalLoadedCount > 0
                 self.hasCompletedInitialLoad = true
@@ -246,6 +211,49 @@ final class HomeViewModel: ObservableObject {
                     ? "Unable to load home catalogs. Check your internet connection and API configuration, then try again."
                     : nil
                 self.activeLoadTask = nil
+            }
+        }
+    }
+
+    /// Generates the local recommendation rows ("Just For You" / "Because You Watched")
+    /// once the TMDB + anime catalogs are populated. Mutates `catalogResults` by keyed
+    /// assignment only, so it is safe to run concurrently with the other row sources.
+    private func loadRecommendationCatalogs(
+        enabledCatalogs: [Catalog],
+        tmdbService: TMDBService,
+        contentFilter: TMDBContentFilter,
+        hasLoadedCatalogs: Bool
+    ) async {
+        guard hasLoadedCatalogs else { return }
+
+        // Generate "Just For You" recommendations after catalogs are populated
+        if enabledCatalogs.contains(where: { $0.id == "forYou" }) {
+            let currentResults = await MainActor.run { self.catalogResults }
+            let rawForYou = await RecommendationEngine.shared.generateRecommendations(
+                catalogResults: currentResults,
+                tmdbService: tmdbService
+            )
+            let forYou = contentFilter.filterSearchResults(rawForYou)
+            if !forYou.isEmpty {
+                await MainActor.run {
+                    self.catalogResults["forYou"] = forYou
+                    self.applyHeroBannerSelection()
+                }
+            }
+        }
+
+        // Generate "Because you watched X" catalog
+        if enabledCatalogs.contains(where: { $0.id == "becauseYouWatched" }) {
+            let (bywTitle, rawBYWResults) = await RecommendationEngine.shared.generateBecauseYouWatched(
+                tmdbService: tmdbService
+            )
+            let bywResults = contentFilter.filterSearchResults(rawBYWResults)
+            if !bywResults.isEmpty {
+                await MainActor.run {
+                    self.catalogResults["becauseYouWatched"] = bywResults
+                    self.becauseYouWatchedTitle = bywTitle
+                    self.applyHeroBannerSelection()
+                }
             }
         }
     }

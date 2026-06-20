@@ -583,11 +583,28 @@ struct ExperimentalCloudSyncAvailability {
 
     static var current: ExperimentalCloudSyncAvailability {
 #if os(iOS)
-        if FileManager.default.ubiquityIdentityToken != nil {
+        let fileManager = FileManager.default
+        if fileManager.url(forUbiquityContainerIdentifier: nil) != nil {
             return ExperimentalCloudSyncAvailability(
                 isAvailable: true,
                 statusTitle: "iCloud Available",
                 statusMessage: "This build has access to the signed-in iCloud account. Eclipse will sync only personal state and safe source definitions when enabled."
+            )
+        }
+
+        if fileManager.ubiquityIdentityToken == nil {
+            return ExperimentalCloudSyncAvailability(
+                isAvailable: false,
+                statusTitle: "iCloud Account Required",
+                statusMessage: "Sign in to iCloud and enable iCloud Drive on this device, then reopen Eclipse. TestFlight is required, but the device account still has to expose iCloud Drive."
+            )
+        }
+
+        if isTestFlightBuild {
+            return ExperimentalCloudSyncAvailability(
+                isAvailable: false,
+                statusTitle: "iCloud Container Unavailable",
+                statusMessage: "This TestFlight build is installed, but iOS has not exposed Eclipse's iCloud container. Rebuild with an iCloud Documents provisioning profile, or reinstall after the profile is updated."
             )
         }
 #endif
@@ -597,6 +614,13 @@ struct ExperimentalCloudSyncAvailability {
             statusMessage: "iCloud requires the app entitlement. Sideloaded builds stay local-only; TestFlight builds can enable this once the entitlement is present."
         )
     }
+
+#if os(iOS)
+    private static var isTestFlightBuild: Bool {
+        let channel = Bundle.main.infoDictionary?["EclipseDistributionChannel"] as? String
+        return channel?.caseInsensitiveCompare("TestFlight") == .orderedSame
+    }
+#endif
 }
 
 @MainActor

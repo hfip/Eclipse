@@ -157,6 +157,18 @@ jobs:
               echo "::error::Provisioning profile '$PROFILE_NAME' does not include iCloud container '$ICLOUD_CONTAINER_ID'. Enable iCloud on the App ID, configure the container, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
               exit 1
             fi
+
+            PROFILE_UBIQUITY_CONTAINERS=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.ubiquity-container-identifiers" "$PROFILE_PLIST" 2>/dev/null || true)
+            if ! printf '%s\n' "$PROFILE_UBIQUITY_CONTAINERS" | grep -Fq "$ICLOUD_CONTAINER_ID"; then
+              echo "::error::Provisioning profile '$PROFILE_NAME' does not include ubiquity container '$ICLOUD_CONTAINER_ID'. Enable iCloud Documents on the App ID, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
+              exit 1
+            fi
+
+            PROFILE_ICLOUD_SERVICES=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.icloud-services" "$PROFILE_PLIST" 2>/dev/null || true)
+            if ! printf '%s\n' "$PROFILE_ICLOUD_SERVICES" | grep -Fq "CloudDocuments"; then
+              echo "::error::Provisioning profile '$PROFILE_NAME' does not include iCloud Documents. Enable iCloud Documents on the App ID, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
+              exit 1
+            fi
           fi
 
           PROFILE_INCREASED_MEMORY=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.kernel.increased-memory-limit" "$PROFILE_PLIST" 2>/dev/null || true)
