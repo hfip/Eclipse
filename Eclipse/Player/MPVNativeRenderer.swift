@@ -117,6 +117,11 @@ protocol PlayerRenderer: AnyObject {
     func loadExternalSubtitles(urls: [String], names: [String]?, enforce: Bool)
     func applySubtitleStyle(_ style: SubtitleStyle)
 
+    /// Sets the mpv audio-filter chain (the `af` property) for "comfort"/anime-like audio
+    /// processing. Pass an empty string to clear all filters (passthrough). No-op on renderers
+    /// that don't support runtime audio filters.
+    func applyAudioFilterChain(_ chain: String)
+
     func canStartSampleBufferPictureInPicture() -> Bool
     func prepareForPictureInPictureStart()
     func finishPictureInPicture()
@@ -125,6 +130,12 @@ protocol PlayerRenderer: AnyObject {
     func isPictureInPicturePrimed() -> Bool
     func resumeForegroundRendering(reason: String)
     func pictureInPictureDebugSnapshot() -> String
+}
+
+extension PlayerRenderer {
+    /// Default: renderers that don't support runtime mpv audio filters (e.g. the legacy MoltenVK
+    /// renderer or non-mpv backends) ignore the comfort-audio chain.
+    func applyAudioFilterChain(_ chain: String) {}
 }
 
 struct SubtitleStyle {
@@ -178,8 +189,10 @@ private func mpvSubtitlePosition(for verticalOffset: CGFloat, maxPosition: CGFlo
 /// selected size up by two tiers on this path so it visually matches the menu intent.
 private func sampleBufferBumpedSubtitleFontSize(_ fontSize: CGFloat) -> CGFloat {
     // Mirrors the font-size ladder offered in the player UI / Settings.
+    // The software sample-buffer path renders subtitles smaller than the GL/Metal paths, so we
+    // shift the chosen size up the ladder to compensate (bumped twice on user request).
     let ladder: [CGFloat] = [20, 24, 30, 34, 38, 42, 46]
-    let bump = 2
+    let bump = 4
     let nearestIndex = ladder.indices.min(by: {
         abs(ladder[$0] - fontSize) < abs(ladder[$1] - fontSize)
     }) ?? 0
@@ -2543,6 +2556,11 @@ final class MPVNativeRenderer: PlayerRenderer {
         setProperty(name: "aid", value: String(id))
     }
 
+    func applyAudioFilterChain(_ chain: String) {
+        logMPV("applyAudioFilterChain \(chain.isEmpty ? "(cleared)" : chain)")
+        setProperty(name: "af", value: chain)
+    }
+
     func getSubtitleTracks() -> [(Int, String)] {
         fetchTrackList()
             .filter { $0.type == "sub" }
@@ -2685,6 +2703,679 @@ struct MetalPlaybackDiagnostics {
 }
 
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+
+/// Hosts the GPU renderer's inline `CAMetalLayer`, keeping it sized to the view bounds and
+/// reporting layout changes so the renderer can resize its Metal drawable.
+final class MPVGPUInlineHostView: UIView {
+    var onLayoutChange: ((CGRect) -> Void)?
+    private weak var hostedLayer: CAMetalLayer?
+
+    func host(_ metalLayer: CAMetalLayer) {
+        guard hostedLayer !== metalLayer else { return }
+        hostedLayer?.removeFromSuperlayer()
+        hostedLayer = metalLayer
+        metalLayer.frame = bounds
+        layer.addSublayer(metalLayer)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if let hostedLayer {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            hostedLayer.frame = bounds
+            CATransaction.commit()
+        }
+        onLayoutChange?(bounds)
+    }
+}
+
+/// PlayerRenderer that renders inline playback on the GPU — mpv `vo=gpu-next` via MoltenVK into a
+/// `CAMetalLayer` with zero-copy `hwdec=videotoolbox` (no CPU frame readback) — and hands off to
+/// the shared `AVSampleBufferDisplayLayer` only for Picture in Picture. Backed by the kit's
+/// `MPVGPUPlayerRenderer`. This replaces the all-CPU software sample-buffer render that
+/// `MPVSampleBufferPiPBridge` uses for inline playback, which is the dominant heat source at speed.
+final class MPVGPUPlayerBridge: PlayerRenderer {
+    static var isAvailable: Bool { MPVGPUPlayerRenderer.isSupported }
+
+    weak var delegate: MPVNativeRendererDelegate?
+
+    private let gpuRenderer: MPVGPUPlayerRenderer
+    private let hostView = MPVGPUInlineHostView(frame: .zero)
+    private var currentPreset: PlayerPreset?
+    private var currentURL: URL?
+    private var currentHeaders: [String: String]?
+    private var pendingInitialSeek: Double?
+    private var lastAppliedSubtitleStyle: SubtitleStyle = .default
+    private var isRunning = false
+    private var isPaused = true
+    private var isReadyToSeek = false
+    private var isLoading = false
+    private var isAwaitingReadyForCurrentLoad = true
+    private var isPictureInPictureActive = false
+    private var positionUpdateTimer: Timer?
+    private var lastPositionUpdateAt: CFTimeInterval = 0
+    private let positionUpdateInterval: CFTimeInterval = 0.5
+    private var lastLoggedState = ""
+    /// Drives the GPU quality profile: scaler/deband selection (via `gpuNextScalers`) and the
+    /// drawable downscale (`renderScale` → `renderScaleMultiplier`). Mirrors the sample-buffer
+    /// path's profiles so the same Auto/Sharp/Balanced/Low Heat controls work on the GPU.
+    private var qualityProfile: MPVMetalSampleBufferQualityProfile
+    /// Fraction of native drawable resolution the inline gpu-next surface is rendered at (from the
+    /// active profile's `renderScale`). Lower = less fragment-shader work and heat; CAMetalLayer
+    /// upscales to the view bounds.
+    private var renderScaleMultiplier: CGFloat = 1.0
+    private var lastLoggedScalers = ""
+    /// Last applied HDR decision signature (mode|gamma|primaries|passthrough) so repeated
+    /// VIDEO_RECONFIG events don't redundantly reconfigure. Mirrors the MoltenVK reference path.
+    private var lastHDRConfigurationSignature = ""
+
+    var isPausedState: Bool { isPaused }
+    var currentTime: Double { gpuRenderer.currentTime }
+    var duration: Double { gpuRenderer.duration }
+    var supportsBitmapSubtitleTracks: Bool { MPVRenderBackendSupport.metalBitmapSubtitlesAllowed }
+    /// True so the PiP sample-buffer renderer is activated (begun, producing frames into the shared
+    /// display layer) BEFORE AVPictureInPictureController.startPictureInPicture(), the same handshake
+    /// the OpenGL/MoltenVK path uses. The GPU path needs its separate PiP instance running before
+    /// AVKit attaches the layer; `activatePictureInPictureLayer()` guards against the watchdog
+    /// re-activating, so the extra activate is a safe no-op.
+    var prefersPictureInPictureLayerActivationBeforeStart: Bool { true }
+    /// Human-readable name of the active quality profile ("Sharp" / "Balanced" / "Low Heat").
+    /// Read by the performance overlay HUD, mirroring the sample-buffer bridge.
+    var activeQualityProfileName: String { qualityProfile.name }
+
+    init(pictureInPictureDisplayLayer: AVSampleBufferDisplayLayer, qualityProfile: MPVMetalSampleBufferQualityProfile) {
+        self.qualityProfile = qualityProfile
+        self.renderScaleMultiplier = max(0.1, qualityProfile.renderScale)
+        gpuRenderer = MPVGPUPlayerRenderer(
+            inlineLayer: MPVGPUPlayerMetalLayer(),
+            pictureInPictureDisplayLayer: pictureInPictureDisplayLayer,
+            options: Self.makeOptions()
+        )
+        Logger.shared.log("[MPVGPUPlayerBridge] init \(qualityProfile.logDescription)", type: "MPV")
+        hostView.backgroundColor = .black
+        hostView.isUserInteractionEnabled = false
+        hostView.host(gpuRenderer.inlineLayer)
+        hostView.onLayoutChange = { [weak self] bounds in
+            guard let self else { return }
+            self.gpuRenderer.updateInlineLayerLayout(bounds: bounds, contentsScale: self.effectiveContentsScale())
+        }
+    }
+
+    /// Native drawable scale of the screen the inline layer is on (falls back to UIScreen.main).
+    private func currentBaseContentsScale() -> CGFloat {
+        let screen = hostView.window?.screen ?? UIScreen.main
+        let scale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale
+        return scale > 0 ? scale : 2.0
+    }
+
+    /// Native scale × the active profile's renderScale — the drawable resolution gpu-next renders at.
+    private func effectiveContentsScale() -> CGFloat {
+        max(0.5, currentBaseContentsScale() * renderScaleMultiplier)
+    }
+
+    private static func makeOptions() -> MPVGPUPlayerRendererOptions {
+        MPVGPUPlayerRendererOptions(
+            maximumPiPFrameSize: CGSize(width: 1280, height: 720),
+            preferredPiPFramesPerSecond: 24,
+            inlineProfile: "fast",
+            hardwareDecoding: "videotoolbox",
+            // HDR/EDR starts off; applyHDRConfiguration() enables passthrough per-content and per the
+            // user's HDR Output setting once the colorspace is known (matches the reference path),
+            // so SDR content and non-EDR displays are never affected.
+            enablesTargetColorspaceHint: false,
+            pausesInlineRendererDuringPictureInPicture: true,
+            additionalMPVOptions: makeAdditionalMPVOptions()
+        )
+    }
+
+    /// Parity init options the kit's gpu-next renderer doesn't set itself, mirroring the OpenGL and
+    /// sample-buffer renderers so the GPU path is robust as the default: surround/stereo downmix,
+    /// software-decode fallback, and network cache + demuxer buffering. (HDR, fps, and quality are
+    /// applied separately.) Applied at init time before mpv_initialize.
+    private static func makeAdditionalMPVOptions() -> [String: String] {
+        [
+            "audio-channels": Settings.shared.mpvSurroundSoundEnabled ? "auto" : "stereo",
+            "vd-lavc-software-fallback": "yes",
+            "demuxer-thread": "yes",
+            "cache": "yes",
+            "cache-pause-wait": "5",
+            "demuxer-max-bytes": "80M",
+            "demuxer-readahead-secs": "10"
+        ]
+    }
+
+    // MARK: View / layout
+
+    func getRenderingView() -> UIView {
+        hostView.host(gpuRenderer.inlineLayer)
+        return hostView
+    }
+
+    func renderingLayoutDidChange(containerSize: CGSize) {
+        let bounds = CGRect(origin: .zero, size: containerSize)
+        let apply = { [weak self] in
+            guard let self else { return }
+            self.hostView.frame = bounds
+            self.gpuRenderer.updateInlineLayerLayout(bounds: bounds, contentsScale: self.effectiveContentsScale())
+        }
+        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
+    }
+
+    /// Re-applies the current profile's drawable scale to the inline layer (used after a quality
+    /// profile change so the new renderScale takes effect without waiting for a layout pass).
+    private func reapplyInlineLayout() {
+        let apply = { [weak self] in
+            guard let self else { return }
+            self.gpuRenderer.updateInlineLayerLayout(bounds: self.hostView.bounds, contentsScale: self.effectiveContentsScale())
+        }
+        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
+    }
+
+    /// Applies the active profile's gpu-next scalers/deband at runtime. mpv keeps these until
+    /// changed, so they persist across loads on this handle. No-op before mpv is initialized
+    /// (command returns < 0 with no handle); `start()` re-applies once the handle exists.
+    private func applyGPUQualityScalers() {
+        let s = qualityProfile.gpuNextScalers
+        _ = gpuRenderer.command(["set", "scale", s.scale])
+        _ = gpuRenderer.command(["set", "cscale", s.cscale])
+        _ = gpuRenderer.command(["set", "dscale", s.dscale])
+        _ = gpuRenderer.command(["set", "deband", s.deband])
+        let signature = "\(s.scale)/\(s.cscale)/\(s.dscale)/deband=\(s.deband)"
+        if signature != lastLoggedScalers {
+            lastLoggedScalers = signature
+            Logger.shared.log("[MPVGPUPlayerBridge] gpu-next quality=\(qualityProfile.name) scalers=\(signature) renderScale=\(String(format: "%.2f", renderScaleMultiplier))", type: "MPV")
+        }
+    }
+
+    /// Live quality profile update for the GPU path (scaler tier + drawable downscale). Returns
+    /// true when the render settings actually changed. Mirrors the sample-buffer bridge's
+    /// `updateSampleBufferQualityProfile` so the Auto thermal system can drive both renderers.
+    @discardableResult
+    func updateQualityProfile(_ newProfile: MPVMetalSampleBufferQualityProfile) -> Bool {
+        let changed = !qualityProfile.hasSameRenderSettings(as: newProfile)
+        qualityProfile = newProfile
+        renderScaleMultiplier = max(0.1, newProfile.renderScale)
+        applyGPUQualityScalers()
+        if changed {
+            reapplyInlineLayout()
+            Logger.shared.log("[MPVGPUPlayerBridge] live gpu-next profile update \(newProfile.logDescription)", type: "MPV")
+        }
+        return changed
+    }
+
+    // MARK: Lifecycle
+
+    func start() throws {
+        guard !isRunning else { return }
+        gpuRenderer.onStateChange = { [weak self] state in
+            DispatchQueue.main.async { self?.handleState(state) }
+        }
+        gpuRenderer.onError = { [weak self] message in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.delegate?.renderer(self, didFailWithError: message)
+            }
+        }
+        // Re-evaluate HDR/colorspace whenever the decoded video parameters resolve or change
+        // (file loaded / VIDEO_RECONFIG). Fired on the main thread by the kit.
+        gpuRenderer.onVideoReconfigure = { [weak self] in
+            self?.applyHDRConfiguration(reason: "video-reconfigure")
+        }
+        // Activate the playback audio session (category/mode + preferred multichannel output) like
+        // the OpenGL/sample-buffer renderers do — the kit renderer doesn't own this.
+        ensureAudioSessionActive()
+        try gpuRenderer.start()
+        // mpv handle now exists — apply the profile's scalers/deband and drawable scale (the
+        // init-time `set` calls were no-ops without a handle), then evaluate HDR for the layer.
+        applyGPUQualityScalers()
+        reapplyInlineLayout()
+        applyHDRConfiguration(reason: "start")
+        isRunning = true
+        startPositionUpdateTimer()
+    }
+
+    func stop() {
+        gpuRenderer.stop()
+        stopPositionUpdateTimer()
+        gpuRenderer.onStateChange = nil
+        gpuRenderer.onError = nil
+        gpuRenderer.onDiagnostics = nil
+        gpuRenderer.onVideoReconfigure = nil
+        isRunning = false
+        isReadyToSeek = false
+        isLoading = false
+        isAwaitingReadyForCurrentLoad = true
+        isPictureInPictureActive = false
+        lastPositionUpdateAt = 0
+        lastHDRConfigurationSignature = ""
+    }
+
+    func load(url: URL, with preset: PlayerPreset, headers: [String: String]?) {
+        currentURL = url
+        currentPreset = preset
+        currentHeaders = headers
+        isReadyToSeek = false
+        isLoading = true
+        isAwaitingReadyForCurrentLoad = true
+        // New file: force HDR re-evaluation once its colorspace resolves.
+        lastHDRConfigurationSignature = ""
+        applyPreset(preset)
+        delegate?.renderer(self, didChangeLoading: true)
+        gpuRenderer.load(url, headers: headers)
+        gpuRenderer.play()
+        applySubtitleStyle(lastAppliedSubtitleStyle)
+    }
+
+    func reloadCurrentItem() {
+        guard let currentURL, let currentPreset else { return }
+        load(url: currentURL, with: currentPreset, headers: currentHeaders)
+    }
+
+    func applyPreset(_ preset: PlayerPreset) {
+        currentPreset = preset
+        for command in preset.commands {
+            _ = gpuRenderer.command(command)
+        }
+    }
+
+    func prepareInitialSeek(to seconds: Double?) {
+        pendingInitialSeek = seconds.map { max(0, $0) }
+        if isReadyToSeek {
+            applyPendingInitialSeekIfNeeded(reason: "prepare-ready")
+        }
+    }
+
+    func performanceOverlaySnapshot() -> String {
+        let d = gpuRenderer.diagnosticsSnapshot()
+        return "MPV gpu-next \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", d.currentTime))/\(String(format: "%.1f", d.duration))\nmode \(d.presentationMode.rawValue) vo=\(d.inlineVideoOutput) api=\(d.inlineGPUAPI) ctx=\(d.inlineGPUContext)"
+    }
+
+    func beginForegroundUIStallRecovery(reason: String) { _ = reason }
+
+    // MARK: Playback
+
+    func play() {
+        isPaused = false
+        gpuRenderer.play()
+        delegate?.renderer(self, didChangePause: false)
+        emitPositionUpdate(force: true)
+    }
+
+    func pausePlayback() {
+        isPaused = true
+        gpuRenderer.pause()
+        delegate?.renderer(self, didChangePause: true)
+        emitPositionUpdate(force: true)
+    }
+
+    func togglePause() {
+        isPaused ? play() : pausePlayback()
+    }
+
+    func seek(to seconds: Double) {
+        gpuRenderer.seek(to: seconds)
+        emitPositionUpdate(force: true)
+    }
+
+    func seek(by seconds: Double) {
+        gpuRenderer.seek(by: seconds)
+        emitPositionUpdate(force: true)
+    }
+
+    func setSpeed(_ speed: Double) {
+        gpuRenderer.setSpeed(speed)
+    }
+
+    func getSpeed() -> Double {
+        gpuRenderer.getSpeed()
+    }
+
+    // MARK: Tracks
+
+    func getAudioTracksDetailed() -> [(Int, String, String)] {
+        gpuRenderer.audioTracks().map { ($0.id, $0.title, $0.language) }
+    }
+
+    func getAudioTracks() -> [(Int, String)] {
+        gpuRenderer.audioTracks().map { ($0.id, $0.title) }
+    }
+
+    func getCurrentAudioTrackId() -> Int {
+        gpuRenderer.currentAudioTrackID()
+    }
+
+    func setAudioTrack(id: Int) {
+        gpuRenderer.setAudioTrack(id: id)
+        // Keep the track UI/caches in sync (parity with the sample-buffer bridge).
+        delegate?.rendererDidChangeTracks(self)
+    }
+
+    func getSubtitleTracks() -> [(Int, String)] {
+        gpuRenderer.subtitleTracks().map { ($0.id, $0.title) }
+    }
+
+    func getSubtitleTracksDetailed() -> [(Int, String, String, Bool)] {
+        gpuRenderer.subtitleTracks().map { ($0.id, $0.title, $0.language, $0.selected) }
+    }
+
+    func getCurrentSubtitleTrackId() -> Int {
+        gpuRenderer.currentSubtitleTrackID()
+    }
+
+    func setSubtitleTrack(id: Int) {
+        gpuRenderer.setSubtitleTrack(id: id)
+        // Sync the subtitle button state + track menus (parity with the sample-buffer bridge).
+        delegate?.renderer(self, subtitleTrackDidChange: id)
+        delegate?.rendererDidChangeTracks(self)
+    }
+
+    func disableSubtitles() {
+        gpuRenderer.disableSubtitles()
+        delegate?.renderer(self, subtitleTrackDidChange: -1)
+    }
+
+    func refreshSubtitleOverlay() {
+        applySubtitleStyle(lastAppliedSubtitleStyle)
+    }
+
+    func loadExternalSubtitles(urls: [String], names: [String]?, enforce: Bool) {
+        gpuRenderer.loadExternalSubtitles(urls: urls, names: names, selectFirst: enforce)
+        delegate?.rendererDidChangeTracks(self)
+    }
+
+    func applySubtitleStyle(_ style: SubtitleStyle) {
+        lastAppliedSubtitleStyle = style
+        gpuRenderer.applySubtitleStyle(
+            MPVMetalSampleBufferSubtitleStyle(
+                foregroundColor: style.foregroundColor.cgColor,
+                strokeColor: style.strokeColor.cgColor,
+                strokeWidth: style.strokeWidth,
+                fontSize: sampleBufferBumpedSubtitleFontSize(style.fontSize),
+                isVisible: style.isVisible
+            )
+        )
+        _ = gpuRenderer.command(["set", "sub-pos", mpvSubtitlePosition(for: style.verticalOffset, maxPosition: 100)])
+        _ = gpuRenderer.command(["set", "sub-shadow-offset", "0"])
+        _ = gpuRenderer.command(["set", "sub-ass-override", experimentalSubtitleASSOverrideValue(isMetalRenderer: true)])
+        _ = gpuRenderer.command(["set", "sub-border-style", style.closedCaptionBackground ? "background-box" : "outline-and-shadow"])
+        _ = gpuRenderer.command(["set", "sub-back-color", style.closedCaptionBackground ? "0.0/0.0/0.0/0.75" : "0.0/0.0/0.0/0.0"])
+        _ = gpuRenderer.command(["set", "sub-ass-vsfilter-blur-compat", subtitlePerformanceModeActive(isMetalRenderer: true) ? "no" : "yes"])
+    }
+
+    func applyAudioFilterChain(_ chain: String) {
+        Logger.shared.log("[MPVGPUPlayerBridge] applyAudioFilterChain \(chain.isEmpty ? "(cleared)" : chain)", type: "MPV")
+        // Route through the kit so the chain is mirrored onto the PiP renderer (a separate mpv
+        // instance) — otherwise comfort audio would be lost while in Picture in Picture.
+        gpuRenderer.setAudioFilterChain(chain)
+    }
+
+    /// Snapshot for the performance overlay. Reads the kit's gpu-next diagnostics (which query
+    /// mpv's `video-params/*` and `hwdec-current`), so dynamic range / HDR / bit depth are now
+    /// detected the same way as the sample-buffer path rather than guessed. Resolution prefers the
+    /// decoded video frame size; falls back to the GPU drawable size (which reflects the active
+    /// profile's renderScale downscale) before the first frame.
+    func currentPlaybackDiagnostics() -> MetalPlaybackDiagnostics {
+        let d = gpuRenderer.diagnosticsSnapshot()
+        let transfer = d.videoTransferFunction.lowercased()
+        let primaries = d.videoColorPrimaries.lowercased()
+        let isHDR = d.videoSignalPeak > 1.0
+            || transfer.contains("pq")
+            || transfer.contains("2084")
+            || transfer.contains("hlg")
+            || primaries.contains("2020")
+        let rangeText = isHDR ? (transfer.contains("hlg") ? "HDR HLG" : "HDR PQ") : "SDR"
+        let pixelFormat = d.videoPixelFormat.lowercased()
+        let highBitDepth = isHDR
+            || pixelFormat.contains("10")
+            || pixelFormat.contains("12")
+            || pixelFormat.contains("16")
+        let renderSize: CGSize = (d.videoWidth > 0 && d.videoHeight > 0)
+            ? CGSize(width: d.videoWidth, height: d.videoHeight)
+            : gpuRenderer.inlineLayer.drawableSize
+        let subtitleCodec = gpuRenderer.subtitleTracks().first(where: { $0.selected })?.codec
+        return MetalPlaybackDiagnostics(
+            renderSize: renderSize,
+            isHDR: isHDR,
+            dynamicRangeText: rangeText,
+            highBitDepthActive: highBitDepth,
+            subtitleCodec: subtitleCodec
+        )
+    }
+
+    // MARK: Picture in Picture
+    //
+    // PiP renders through the kit renderer's internal sample-buffer instance into the shared
+    // AVSampleBufferDisplayLayer (the same layer the PiPController is bound to). prepare loads &
+    // primes that instance; activate performs the inline→PiP swap; finish/resume restores inline.
+
+    func canStartSampleBufferPictureInPicture() -> Bool {
+        true
+    }
+
+    func prepareForPictureInPictureStart() {
+        // Recover the shared PiP display layer if it failed (e.g. while backgrounded) before the
+        // PiP renderer starts feeding it — a safe, idempotent point matching the sample-buffer path.
+        recoverDisplayLayerIfNeeded(reason: "prepare-pip")
+        _ = gpuRenderer.prepareForPictureInPictureStart()
+    }
+
+    func finishPictureInPicture() {
+        recoverDisplayLayerIfNeeded(reason: "finish-pip")
+        gpuRenderer.endPictureInPicture(restoringInlinePlayback: true)
+        isPictureInPictureActive = false
+    }
+
+    func primePictureInPictureFrames(reason: String) {
+        // Incrementally accumulate buffered frames (does NOT re-prepare), matching the
+        // sample-buffer path's multi-prime warmup before the AVKit hand-off.
+        gpuRenderer.primePictureInPictureFrames(reason: reason, count: 6)
+    }
+
+    func activatePictureInPictureLayer() {
+        // Guard against re-activation: the start path activates before startPictureInPicture() and
+        // the watchdog may call again — beginPictureInPicture isn't re-entrant-safe (it re-seeks).
+        guard !isPictureInPictureActive else { return }
+        recoverDisplayLayerIfNeeded(reason: "activate-pip")
+        gpuRenderer.beginPictureInPicture()
+        isPictureInPictureActive = true
+    }
+
+    func isPictureInPicturePrimed() -> Bool {
+        (gpuRenderer.diagnosticsSnapshot().pictureInPictureDiagnostics?.frameCount ?? 0) > 0
+    }
+
+    func resumeForegroundRendering(reason: String) {
+        _ = reason
+        guard isPictureInPictureActive else { return }
+        gpuRenderer.endPictureInPicture(restoringInlinePlayback: true)
+        isPictureInPictureActive = false
+    }
+
+    /// Recovers the shared PiP `AVSampleBufferDisplayLayer` if it entered a failed state, mirroring
+    /// the sample-buffer bridge. Called only at safe transition boundaries (before the PiP renderer
+    /// uses the layer) so it can't race the kit's reactive recovery during active enqueue.
+    private func recoverDisplayLayerIfNeeded(reason: String) {
+        let displayLayer = gpuRenderer.pictureInPictureDisplayLayer
+        guard displayLayer.status == .failed else { return }
+        let nsError = displayLayer.error.map { $0 as NSError }
+        let errorText = nsError.map { "\($0.domain)#\($0.code)" } ?? "nil"
+        Logger.shared.log("[MPVGPUPlayerBridge] recovering failed PiP display layer reason=\(reason) error=\(errorText)", type: "MPV")
+        displayLayer.controlTimebase = nil
+        if #available(iOS 18.0, *) {
+            displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: false, completionHandler: nil)
+        } else {
+            displayLayer.flush()
+        }
+    }
+
+    // MARK: HDR / audio session
+
+    /// Detects whether the loaded video is HDR and, honoring the user's HDR Output setting and the
+    /// display's EDR capability, switches the inline gpu-next layer between HDR passthrough and SDR.
+    /// Mirrors the MoltenVK reference path; safe for SDR sources and deduplicated by signature.
+    func applyHDRConfiguration(reason: String) {
+        guard isRunning else { return }
+        let diagnostics = gpuRenderer.diagnosticsSnapshot()
+        let gamma = diagnostics.videoTransferFunction.lowercased()
+        let primaries = diagnostics.videoColorPrimaries.lowercased()
+        let isHDRSource = diagnostics.videoSignalPeak > 1.0
+            || gamma == "pq" || gamma == "hlg" || gamma == "st2084"
+            || primaries == "bt.2020"
+
+        let mode = Settings.shared.mpvHDRMode
+        let wantsPassthrough: Bool
+        switch mode {
+        case .sdr:
+            wantsPassthrough = false
+        case .hdr:
+            wantsPassthrough = isHDRSource
+        case .auto:
+            wantsPassthrough = isHDRSource && displaySupportsEDR()
+        }
+
+        let signature = "\(mode.rawValue)|\(gamma)|\(primaries)|\(wantsPassthrough)"
+        guard signature != lastHDRConfigurationSignature else { return }
+        lastHDRConfigurationSignature = signature
+
+        _ = gpuRenderer.command(["set", "target-colorspace-hint", wantsPassthrough ? "yes" : "no"])
+        let layer = gpuRenderer.inlineLayer
+        let applyEDR = {
+            if #available(iOS 16.0, *) { layer.wantsExtendedDynamicRangeContent = wantsPassthrough }
+        }
+        if Thread.isMainThread { applyEDR() } else { DispatchQueue.main.async(execute: applyEDR) }
+
+        Logger.shared.log("[MPVGPUPlayerBridge] HDR config reason=\(reason) mode=\(mode.rawValue) gamma=\(gamma.isEmpty ? "nil" : gamma) primaries=\(primaries.isEmpty ? "nil" : primaries) hdrSource=\(isHDRSource) passthrough=\(wantsPassthrough)", type: "MPV")
+    }
+
+    private func displaySupportsEDR() -> Bool {
+        guard #available(iOS 16.0, *) else { return false }
+        let screen = hostView.window?.screen
+            ?? UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
+            ?? UIScreen.main
+        return screen.potentialEDRHeadroom > 1.0
+    }
+
+    private func ensureAudioSessionActive() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback)
+            try session.setActive(true)
+            eclipseApplyPreferredOutputChannels(log: { Logger.shared.log("[MPVGPUPlayerBridge] \($0)", type: "MPV") })
+            EclipseAudioRouteWatcher.shared.ensureInstalled()
+        } catch {
+            Logger.shared.log("[MPVGPUPlayerBridge] failed to activate AVAudioSession: \(error)", type: "MPV")
+        }
+    }
+
+    func pictureInPictureDebugSnapshot() -> String {
+        let d = gpuRenderer.diagnosticsSnapshot()
+        return "mode=gpu-next-inline presentation=\(d.presentationMode.rawValue) vo=\(d.inlineVideoOutput) api=\(d.inlineGPUAPI) ctx=\(d.inlineGPUContext) running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pip=\(isPictureInPictureActive) pos=\(String(format: "%.2f", d.currentTime))/\(String(format: "%.2f", d.duration))"
+    }
+
+    // MARK: Position / state
+
+    private func startPositionUpdateTimer() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.startPositionUpdateTimer() }
+            return
+        }
+        positionUpdateTimer?.invalidate()
+        let timer = Timer(timeInterval: positionUpdateInterval, repeats: true) { [weak self] _ in
+            self?.emitPositionUpdate(force: false)
+        }
+        positionUpdateTimer = timer
+        RunLoop.main.add(timer, forMode: .default)
+        emitPositionUpdate(force: true)
+    }
+
+    private func stopPositionUpdateTimer() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.stopPositionUpdateTimer() }
+            return
+        }
+        positionUpdateTimer?.invalidate()
+        positionUpdateTimer = nil
+    }
+
+    private func emitPositionUpdate(force: Bool) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in self?.emitPositionUpdate(force: force) }
+            return
+        }
+        guard isRunning, !isAwaitingReadyForCurrentLoad else { return }
+        // Apply a resume seek that was deferred until the demuxer published a real duration; a
+        // seek against an unknown (0) duration is clamped and dropped, restarting at 0:00.
+        if pendingInitialSeek != nil, gpuRenderer.duration > 0 {
+            applyPendingInitialSeekIfNeeded(reason: "duration-known")
+            return
+        }
+        let now = CACurrentMediaTime()
+        guard force || now - lastPositionUpdateAt >= positionUpdateInterval else { return }
+        lastPositionUpdateAt = now
+        delegate?.renderer(self, didUpdatePosition: gpuRenderer.currentTime, duration: gpuRenderer.duration)
+    }
+
+    private func applyPendingInitialSeekIfNeeded(reason: String) {
+        guard let initialSeek = pendingInitialSeek else { return }
+        if initialSeek > 0, !(gpuRenderer.duration > 0) {
+            Logger.shared.log("[MPVGPUPlayerBridge] deferring pending initial seek \(String(format: "%.2f", initialSeek))s reason=\(reason) durationUnknown", type: "MPV")
+            return
+        }
+        pendingInitialSeek = nil
+        Logger.shared.log("[MPVGPUPlayerBridge] applying pending initial seek \(String(format: "%.2f", initialSeek))s reason=\(reason)", type: "MPV")
+        gpuRenderer.seek(to: initialSeek)
+        emitPositionUpdate(force: true)
+    }
+
+    private func markReadyIfNeeded(reason: String) {
+        guard !isReadyToSeek else { return }
+        isReadyToSeek = true
+        isAwaitingReadyForCurrentLoad = false
+        applyPendingInitialSeekIfNeeded(reason: reason)
+        delegate?.renderer(self, didBecomeReadyToSeek: true)
+    }
+
+    private func handleState(_ state: MPVGPUPlayerRendererState) {
+        let label = "\(state)"
+        if label != lastLoggedState {
+            lastLoggedState = label
+            Logger.shared.log("[MPVGPUPlayerBridge] state=\(label)", type: "MPV")
+        }
+        switch state {
+        case .starting, .loading:
+            isLoading = true
+            delegate?.renderer(self, didChangeLoading: true)
+        case .playing:
+            isLoading = false
+            isPaused = false
+            delegate?.renderer(self, didChangeLoading: false)
+            delegate?.renderer(self, didChangePause: false)
+            markReadyIfNeeded(reason: "playing")
+        case .paused:
+            isLoading = false
+            isPaused = true
+            delegate?.renderer(self, didChangeLoading: false)
+            delegate?.renderer(self, didChangePause: true)
+            // A load can settle straight into .paused (e.g. PiP entered while paused) without
+            // passing through .playing, so mark ready here too or the resume seek never lands.
+            if currentURL != nil { markReadyIfNeeded(reason: "paused") }
+        case .pictureInPicture:
+            isLoading = false
+            delegate?.renderer(self, didChangeLoading: false)
+        case .ready:
+            isLoading = false
+            delegate?.renderer(self, didChangeLoading: false)
+        case .failed(let message):
+            delegate?.renderer(self, didFailWithError: message)
+        case .idle, .stopped:
+            break
+        }
+    }
+}
+#endif
+
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
 struct MPVMetalSampleBufferQualityProfile: Equatable {
     let name: String
     let maximumFrameSize: CGSize
@@ -2745,6 +3436,22 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
             reason: reason
         )
     }
+
+    /// gpu-next scaler/deband options for the GPU inline renderer (set at runtime via mpv `set`).
+    /// Unlike the CPU sample-buffer path — where `MPV_RENDER_API_TYPE_SW` bypasses mpv's shader
+    /// pipeline so these are inert — gpu-next actually runs them, so they are a real heat/quality
+    /// knob here. Sharp = EWA Lanczos + deband (highest fragment cost); Balanced = spline36;
+    /// Low Heat = bilinear, no deband (cheapest). Combined with `renderScale` (drawable downscale).
+    var gpuNextScalers: (scale: String, cscale: String, dscale: String, deband: String) {
+        switch name {
+        case "Sharp":
+            return ("ewa_lanczossharp", "ewa_lanczossoft", "mitchell", "yes")
+        case "Low Heat":
+            return ("bilinear", "bilinear", "bilinear", "no")
+        default: // Balanced (and any future tier)
+            return ("spline36", "spline36", "mitchell", "no")
+        }
+    }
 }
 
 final class MPVSampleBufferPiPBridge: PlayerRenderer {
@@ -2761,6 +3468,10 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     private let displayLayer: AVSampleBufferDisplayLayer
     private let sampleRenderer: MPVMetalSampleBufferRenderer
     private var qualityProfile: MPVMetalSampleBufferQualityProfile
+    /// While the player UI/menus are on screen, the main-thread software render is throttled to
+    /// this frame rate so the UI (which shares the main thread with the render) stays responsive.
+    private var isInteractiveRenderThrottleActive = false
+    private static let interactiveThrottleFPS = 30
     private let placeholderView = UIView(frame: .zero)
     private var currentPreset: PlayerPreset?
     private var currentURL: URL?
@@ -2931,8 +3642,14 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
             .first ?? UIScreen.main
         let configuration = Self.sampleBufferConfiguration(for: newProfile, screen: screen)
         qualityProfile = newProfile
-        sampleRenderer.updateOptions(configuration.options)
-        Logger.shared.log("[MPVSampleBufferPiPBridge] live sample-buffer profile update fps=\(configuration.targetFPS) pipFPS=\(configuration.pipFramesPerSecond) \(newProfile.logDescription)", type: "MPV")
+        var options = configuration.options
+        // Keep the interactive throttle in effect if a thermal profile change lands while the
+        // player UI is up, so the menus don't briefly jump back to the full render rate.
+        if isInteractiveRenderThrottleActive {
+            options.preferredFramesPerSecond = min(options.preferredFramesPerSecond, Self.interactiveThrottleFPS)
+        }
+        sampleRenderer.updateOptions(options)
+        Logger.shared.log("[MPVSampleBufferPiPBridge] live sample-buffer profile update fps=\(options.preferredFramesPerSecond) pipFPS=\(configuration.pipFramesPerSecond) throttled=\(isInteractiveRenderThrottleActive) \(newProfile.logDescription)", type: "MPV")
         return true
     }
 #endif
@@ -3052,6 +3769,11 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         _ = sampleRenderer.command(["set", "sub-ass-vsfilter-blur-compat", subtitlePerformanceModeActive(isMetalRenderer: true) ? "no" : "yes"])
     }
 
+    func applyAudioFilterChain(_ chain: String) {
+        Logger.shared.log("[MPVSampleBufferPiPBridge] applyAudioFilterChain \(chain.isEmpty ? "(cleared)" : chain)", type: "MPV")
+        _ = sampleRenderer.command(["set", "af", chain])
+    }
+
     /// Snapshot of what the sample-buffer renderer is currently decoding/rendering, for the
     /// performance overlay. Derived entirely from the renderer's existing public diagnostics —
     /// no extra mpv work beyond one track-list read.
@@ -3126,6 +3848,24 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func beginForegroundUIStallRecovery(reason: String) {
         _ = reason
+    }
+
+    /// Throttle the main-thread software render to a low frame rate while the player UI/menus are
+    /// visible, then restore the current quality profile's rate when dismissed. The render shares
+    /// the main thread with UIKit, so a full-rate 60fps render starves menu navigation; dropping
+    /// it frees the thread. fps-only option changes are cheap (no pixel-buffer-pool churn), and
+    /// the video sits dimmed behind the controls so the lower rate is barely visible.
+    func setInteractiveRenderThrottle(_ throttled: Bool) {
+        guard isInteractiveRenderThrottleActive != throttled else { return }
+        isInteractiveRenderThrottleActive = throttled
+        let screen = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.screen }
+            .first ?? UIScreen.main
+        var options = Self.sampleBufferConfiguration(for: qualityProfile, screen: screen).options
+        if throttled {
+            options.preferredFramesPerSecond = min(options.preferredFramesPerSecond, Self.interactiveThrottleFPS)
+        }
+        sampleRenderer.updateOptions(options)
     }
 
     private static func sampleBufferConfiguration(

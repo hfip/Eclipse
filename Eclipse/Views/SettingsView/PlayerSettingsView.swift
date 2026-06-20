@@ -175,12 +175,24 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvPerformanceOverlayEnabled, forKey: "mpvPerformanceOverlayEnabled") }
     }
 
+    @Published var mpvUseLegacyCPURenderer: Bool {
+        didSet { UserDefaults.standard.set(mpvUseLegacyCPURenderer, forKey: "mpvUseLegacyCPURenderer") }
+    }
+
     @Published var mpvAppExitPictureInPictureEnabled: Bool {
         didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
     }
 
     @Published var mpvHDRMode: MPVHDRMode {
         didSet { UserDefaults.standard.set(mpvHDRMode.rawValue, forKey: "mpvHDRMode") }
+    }
+
+    @Published var audioComfortMode: AudioComfortMode {
+        didSet { UserDefaults.standard.set(audioComfortMode.rawValue, forKey: "audioComfortMode") }
+    }
+
+    @Published var audioComfortScopeCategories: Set<AudioComfortContentCategory> {
+        didSet { UserDefaults.standard.set(audioComfortScopeCategories.map { $0.rawValue }, forKey: "audioComfortScopeCategories") }
     }
 
     @Published var mpvSurroundSoundEnabled: Bool {
@@ -341,9 +353,17 @@ final class PlayerSettingsStore: ObservableObject {
         let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
         self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
         self.mpvPerformanceOverlayEnabled = UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled")
+        self.mpvUseLegacyCPURenderer = UserDefaults.standard.bool(forKey: "mpvUseLegacyCPURenderer")
         self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
         let hdrModeRaw = UserDefaults.standard.string(forKey: "mpvHDRMode") ?? MPVHDRMode.defaultMode.rawValue
         self.mpvHDRMode = MPVHDRMode(rawValue: hdrModeRaw) ?? .defaultMode
+        let audioComfortModeRaw = UserDefaults.standard.string(forKey: "audioComfortMode") ?? AudioComfortMode.defaultMode.rawValue
+        self.audioComfortMode = AudioComfortMode(rawValue: audioComfortModeRaw) ?? .defaultMode
+        if let rawScopes = UserDefaults.standard.array(forKey: "audioComfortScopeCategories") as? [String] {
+            self.audioComfortScopeCategories = Set(rawScopes.compactMap { AudioComfortContentCategory(rawValue: $0) })
+        } else {
+            self.audioComfortScopeCategories = AudioComfortContentCategory.defaultScope
+        }
         self.mpvSurroundSoundEnabled = UserDefaults.standard.object(forKey: "mpvSurroundSoundEnabled") == nil
             ? true
             : UserDefaults.standard.bool(forKey: "mpvSurroundSoundEnabled")
@@ -710,7 +730,14 @@ struct PlayerSettingsView: View {
                 )
 
                 GlassDivider(leadingInset: 16)
-                GlassDetailRow(title: "HDR Output", subtitle: "How HDR video (HDR10/HLG/Dolby Vision) is sent to the display.\n\(store.mpvHDRMode.settingsDescription)") {
+                settingsToggleRow(
+                    title: "Use Legacy CPU Renderer",
+                    detail: "Eclipse renders inline playback on the GPU (mpv gpu-next) by default — far less heat and battery use, especially at higher speeds. Turn this on only if you hit a problem and need the older CPU renderer as a fallback. Applies on the next playback.",
+                    binding: $store.mpvUseLegacyCPURenderer
+                )
+
+                GlassDivider(leadingInset: 16)
+                GlassDetailRow(title: "HDR Output", subtitle: "How standard HDR video is sent to the display.\n\(store.mpvHDRMode.settingsDescription)") {
                     Picker("", selection: $store.mpvHDRMode) {
                         ForEach(MPVHDRMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
@@ -728,6 +755,51 @@ struct PlayerSettingsView: View {
                 detail: "Output 5.1/7.1 audio on connected receivers (USB-C, HDMI, AirPlay) when the track has it. Built-in speakers always play stereo.",
                 binding: $store.mpvSurroundSoundEnabled
             )
+
+            GlassDivider(leadingInset: 16)
+            GlassDetailRow(title: "Comfort Audio", subtitle: store.audioComfortMode.settingsDescription) {
+                Picker("", selection: $store.audioComfortMode) {
+                    ForEach(AudioComfortMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white.opacity(0.7))
+            }
+
+            if store.audioComfortMode != .original {
+                GlassDivider(leadingInset: 16)
+                settingsToggleRow(
+                    title: "Apply to All",
+                    detail: "Apply the audio mode to every kind of content. Turn off to choose specific types below.",
+                    binding: Binding(
+                        get: { store.audioComfortScopeCategories == Set(AudioComfortContentCategory.allCases) },
+                        set: { isOn in store.audioComfortScopeCategories = isOn ? Set(AudioComfortContentCategory.allCases) : [] }
+                    )
+                )
+                ForEach(AudioComfortContentCategory.allCases) { category in
+                    let detail: String = {
+                        switch category {
+                        case .anime: return "Japanese/Asian animation."
+                        case .westernAnimation: return "Cartoons and other non-anime animation."
+                        case .liveAction: return "Films, series — everything that isn't animation."
+                        }
+                    }()
+                    GlassDivider(leadingInset: 16)
+                    settingsToggleRow(
+                        title: category.displayName,
+                        detail: detail,
+                        binding: Binding(
+                            get: { store.audioComfortScopeCategories.contains(category) },
+                            set: { isOn in
+                                var set = store.audioComfortScopeCategories
+                                if isOn { set.insert(category) } else { set.remove(category) }
+                                store.audioComfortScopeCategories = set
+                            }
+                        )
+                    )
+                }
+            }
 
             GlassDivider(leadingInset: 16)
             GlassDetailRow(title: "Inline Frame Rate", subtitle: "Most media will look normal in 30 fps, but in the rare case of 60fps media, switch this to 60 fps.") {

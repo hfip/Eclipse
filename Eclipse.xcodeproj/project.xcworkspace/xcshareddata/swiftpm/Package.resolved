@@ -33,7 +33,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Soupy-dev/MPVKit",
       "state" : {
-        "revision" : "2861ff1a95b85ce03b525dc50cd9f75ef984fe88"
+        "revision" : "dfe90269d4fb6adb000a05a28332aa8a20283a11"
       }
     },
     {

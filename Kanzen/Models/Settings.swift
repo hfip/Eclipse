@@ -340,7 +340,92 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     static let defaultProfile: MPVMetalQualityProfile = .auto
 }
 
-/// Controls how the Metal/gpu-next renderer treats HDR (HDR10/HLG/Dolby Vision P8) content.
+/// "Comfort"/anime-like audio presets applied through mpv audio filters (ffmpeg lavfi: dynamic
+/// range compression + loudness normalization + peak limiting). Live-action mixes swing from
+/// near-silent dialogue to loud impacts; these presets pull that range together so playback is
+/// easier on the ears — without truly turning a wide mix into a flat anime one. `original` (off)
+/// is the default. Applied to whichever mpv renderer is active (OpenGL / sample-buffer / GPU).
+enum AudioComfortMode: String, CaseIterable, Identifiable {
+    /// No processing — the stream's audio is passed through untouched.
+    case original
+    /// Gentle compression + steady loudness + soft peak limit. Good default for headphones.
+    case comfort
+    /// Voice-forward: low-rumble cut, stronger compression, mild presence boost around 2.5 kHz.
+    case dialogue
+    /// Most aggressive: tighter compression, low-end reduction, presence lift, hard peak limit —
+    /// the closest to a flat, forward "anime-like" mix that won't stab your ears at night.
+    case night
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .original: return "Original"
+        case .comfort: return "Comfort"
+        case .dialogue: return "Dialogue"
+        case .night: return "Night / Anime-like"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .original:
+            return "No audio processing — plays the stream's original mix."
+        case .comfort:
+            return "Gently compresses dynamic range and steadies loudness so quiet dialogue and loud impacts sit closer together, with a soft peak limiter."
+        case .dialogue:
+            return "Emphasizes voices: cuts low rumble, compresses harder, and lifts presence around 2.5 kHz so speech stays clear."
+        case .night:
+            return "Strongest leveling — tight compression, reduced low-end boom, a presence lift, and a hard peak limiter so sudden sounds never stab your ears. The most \"anime-like\" mix."
+        }
+    }
+
+    /// The mpv `af` value. An empty string clears all filters (passthrough). The non-empty values
+    /// use the ffmpeg lavfi bridge so they work on any libavfilter-enabled mpv build; if a filter
+    /// is unavailable the set simply fails and audio plays unprocessed (logged by the caller).
+    var mpvAudioFilterChain: String {
+        switch self {
+        case .original:
+            return ""
+        case .comfort:
+            return "lavfi=[acompressor=ratio=3:threshold=0.1:attack=20:release=250:makeup=2,dynaudnorm=f=200:g=11:p=0.9:m=10:r=0.5,alimiter=limit=0.9]"
+        case .dialogue:
+            return "lavfi=[highpass=f=90,acompressor=ratio=4:threshold=0.063:attack=10:release=200:makeup=2,equalizer=f=2500:width_type=q:width=1.4:gain=3.5,dynaudnorm=f=200:g=11:p=0.9:m=10,alimiter=limit=0.9]"
+        case .night:
+            return "lavfi=[acompressor=ratio=4:threshold=0.05:attack=15:release=250:makeup=2.5,equalizer=f=3000:width_type=q:width=1.5:gain=2,equalizer=f=110:width_type=q:width=1.0:gain=-4,dynaudnorm=f=150:g=9:p=0.9:m=12,alimiter=limit=0.85]"
+        }
+    }
+
+    static let defaultMode: AudioComfortMode = .original
+}
+
+/// Content categories the `AudioComfortMode` processing can be scoped to. Each playing title is
+/// classified into exactly one of these; the comfort filter applies when the title's category is in
+/// the user's selected set. The scope is multi-select (e.g. {anime, westernAnimation} = all
+/// animation), and selecting every category is the "All" behavior (the default).
+enum AudioComfortContentCategory: String, CaseIterable, Identifiable {
+    /// Japanese/Asian animation (anime markers: tracker context, AniList/Kitsu IDs, anime flag).
+    case anime
+    /// Non-anime animation — western cartoons (TMDB Animation genre 16, not detected as anime).
+    case westernAnimation
+    /// Everything else (films, series, documentaries).
+    case liveAction
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .anime: return "Anime"
+        case .westernAnimation: return "Western Animation"
+        case .liveAction: return "Live Action"
+        }
+    }
+
+    /// The default scope: apply to all content (equivalent to selecting "All").
+    static var defaultScope: Set<AudioComfortContentCategory> { Set(allCases) }
+}
+
+/// Controls how the Metal/gpu-next renderer treats standard HDR video.
 enum MPVHDRMode: String, CaseIterable, Identifiable {
     /// Pass HDR through to the display when it has EDR headroom; tone-map to SDR otherwise.
     case auto
@@ -362,7 +447,7 @@ enum MPVHDRMode: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Outputs true HDR on HDR-capable displays and cleanly tone-maps to SDR everywhere else. Recommended."
+            return "Uses HDR/EDR output on capable displays and cleanly tone-maps to SDR everywhere else. Recommended."
         case .hdr:
             return "Always sends HDR content to the display as HDR. May look washed out or too dark on non-HDR screens."
         case .sdr:
@@ -837,12 +922,14 @@ final class ExperimentalMPVPreloadManager {
         pathMonitor.start(queue: pathQueue)
 #endif
         migrateLegacyCacheFileNamesIfNeeded()
-        // Auto-clear (default ON): wipe any warmup starters left over from a previous app
-        // session at startup, so the cache never accumulates across launches. Starters are
-        // only useful within a session (30-minute TTL), so this never affects same-session
-        // warmups. When disabled, the cache is still bounded by the size limit + TTL.
+        // On launch, bound the leftover cache to the configured size limit (evicting the oldest
+        // starters) rather than wiping it wholesale. Eviction is now driven by the size limit
+        // continuously — writeStarterCache() trims after every warmup — so the cache self-manages
+        // at the limit during a session instead of only being cleared on relaunch. Stale starters
+        // are dropped on read via the 30-minute TTL, so keeping recent ones across a quick
+        // relaunch is harmless.
         if Self.autoClearEnabled {
-            clearCache()
+            pruneCacheIfNeeded(limitBytes: currentCacheLimitBytes())
         }
     }
 
@@ -992,8 +1079,9 @@ final class ExperimentalMPVPreloadManager {
         if let networkSkipReason = currentNetworkPreloadSkipReason() {
             return networkSkipReason
         }
-        guard cacheSizeBytes < currentCacheLimitBytes() else { return "cache-limit-reached" }
-
+        // A full cache no longer blocks warmup: writeStarterCache() trims the oldest starters
+        // back under the limit after writing, so reaching the limit evicts and keeps staging
+        // going rather than stalling until the next relaunch.
         let path = url.pathExtension.lowercased()
         return isWarmupCompatiblePathExtension(path) ? nil : "unsupported-extension-\(path)"
     }
@@ -1179,8 +1267,20 @@ final class ExperimentalMPVPreloadManager {
         var total = files.reduce(Int64(0)) { $0 + $1.size }
         guard total > limitBytes else { return }
 
+        // Don't evict starters that are mid-write (in-flight warmups) — the just-staged next
+        // episode, and any concurrent warmup — so trimming the cache to fit never deletes a
+        // partial file out from under an active staging operation. The active playback's own
+        // starter is only read during the first seconds of playback and is long-consumed by the
+        // time staging (≈85% through the episode) triggers a trim, so age-ordered eviction of the
+        // remaining (older, already-used) starters is safe.
+        lock.lock()
+        let protectedKeys = activeKeys
+        lock.unlock()
+
         files.sort { $0.modified < $1.modified }
         for file in files where total > limitBytes {
+            let key = file.url.deletingPathExtension().lastPathComponent
+            if protectedKeys.contains(key) { continue }
             try? fileManager.removeItem(at: file.url)
             total -= file.size
         }
@@ -1546,6 +1646,15 @@ class Settings: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "mpvPerformanceOverlayEnabled") }
     }
 
+    /// The GPU gpu-next renderer (MoltenVK, zero-copy decode) is the default Metal renderer. This
+    /// opt-out forces the legacy CPU software sample-buffer path instead — a manual safety escape
+    /// if a device hits a gpu-next issue. Off by default. gpu-next also auto-falls back to the
+    /// sample-buffer path when Metal/gpu-next is unavailable, regardless of this setting.
+    var mpvUseLegacyCPURenderer: Bool {
+        get { UserDefaults.standard.bool(forKey: "mpvUseLegacyCPURenderer") }
+        set { UserDefaults.standard.set(newValue, forKey: "mpvUseLegacyCPURenderer") }
+    }
+
     var mpvAppExitPictureInPictureEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvAppExitPictureInPictureEnabled") }
@@ -1559,6 +1668,34 @@ class Settings: ObservableObject {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "mpvHDRMode")
+        }
+    }
+
+    /// "Comfort"/anime-like audio processing preset (dynamic range compression + loudness
+    /// normalization + peak limiting via mpv audio filters). `original` (off) by default.
+    var audioComfortMode: AudioComfortMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "audioComfortMode")
+                ?? AudioComfortMode.defaultMode.rawValue
+            return AudioComfortMode(rawValue: raw) ?? .defaultMode
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "audioComfortMode")
+        }
+    }
+
+    /// The set of content categories the `audioComfortMode` processing applies to (multi-select:
+    /// anime / western animation / live action). The full set is the "All" behavior and the
+    /// default. Persisted as an array of rawValues; an empty stored array means "apply to none".
+    var audioComfortScopeCategories: Set<AudioComfortContentCategory> {
+        get {
+            guard let raw = UserDefaults.standard.array(forKey: "audioComfortScopeCategories") as? [String] else {
+                return AudioComfortContentCategory.defaultScope
+            }
+            return Set(raw.compactMap { AudioComfortContentCategory(rawValue: $0) })
+        }
+        set {
+            UserDefaults.standard.set(newValue.map { $0.rawValue }, forKey: "audioComfortScopeCategories")
         }
     }
 

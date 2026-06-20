@@ -471,7 +471,8 @@ struct MediaDetailView: View {
                 originalTMDBSeasonNumber: playbackContext?.resolvedTMDBSeasonNumber,
                 originalTMDBEpisodeNumber: playbackContext?.resolvedTMDBEpisodeNumber,
                 episodePlaybackContext: playbackContext,
-                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
+                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
+                isAnimationGenre16: detailGenres.contains { $0.id == 16 }
             )
             .id(playSheetRequestId)
         }
@@ -504,7 +505,8 @@ struct MediaDetailView: View {
                 originalTMDBEpisodeNumber: playbackContext?.resolvedTMDBEpisodeNumber,
                 episodePlaybackContext: playbackContext,
                 downloadMode: true,
-                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
+                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
+                isAnimationGenre16: detailGenres.contains { $0.id == 16 }
             )
         }
         .sheet(item: $specialSearchRequest) { request in
@@ -523,7 +525,8 @@ struct MediaDetailView: View {
                 originalTMDBEpisodeNumber: request.originalEpisodeNumber,
                 specialTitleOnlySearch: request.titleOnly,
                 episodePlaybackContext: request.playbackContext,
-                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
+                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
+                isAnimationGenre16: detailGenres.contains { $0.id == 16 }
             )
         }
         .sheet(isPresented: $showingAddToCollection) {

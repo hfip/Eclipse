@@ -1665,6 +1665,7 @@ struct ContinueWatchingCard: View {
     @State private var pendingOpenSheet = false
     @State private var imdbId: String? = nil
     @State private var enrichedPlaybackContext: EpisodePlaybackContext? = nil
+    @State private var detailGenres: [TMDBGenre] = []
 
     // Continue Watching follows the global card-size control (Modern UI, non-tvOS only).
     private var globalCardSizeScale: CGFloat {
@@ -1880,7 +1881,8 @@ struct ContinueWatchingCard: View {
                     Task { @MainActor in
                         self.presentResolvedPlayback(request)
                     }
-                }
+                },
+                isAnimationGenre16: detailGenres.contains { $0.id == 16 }
             )
         }
         .contextMenu {
@@ -1996,6 +1998,7 @@ struct ContinueWatchingCard: View {
                     }
                     self.originalTitle = romaji
                     self.imdbId = details.externalIds?.imdbId
+                    self.detailGenres = details.genres
                     self.isLoaded = true
                 }
 
@@ -2210,6 +2213,7 @@ struct ContinueWatchingCard: View {
                 imdbId: request.imdbId
             )
             pvc.isAnimeHint = request.isAnimeHint
+            pvc.isAnimationContentHint = request.isAnimationContentHint
             pvc.originalTMDBSeasonNumber = request.originalTMDBSeasonNumber
             pvc.originalTMDBEpisodeNumber = request.originalTMDBEpisodeNumber
             pvc.episodePlaybackContext = request.episodePlaybackContext

@@ -30,6 +30,7 @@ struct PlayerResolvedPlaybackRequest {
     let mediaInfo: MediaInfo?
     let imdbId: String?
     let isAnimeHint: Bool
+    let isAnimationContentHint: Bool?
     let originalTMDBSeasonNumber: Int?
     let originalTMDBEpisodeNumber: Int?
     let episodePlaybackContext: EpisodePlaybackContext?
@@ -159,7 +160,9 @@ struct ModulesSearchResultsSheet: View {
     var onSkipRequested: (() -> Void)? = nil
     /// When provided, selecting a source resolves a request instead of presenting a new player.
     var onResolvedPlaybackRequest: ((PlayerResolvedPlaybackRequest) -> Void)? = nil
-    
+    /// TMDB genre 16 (animation) hint, used to distinguish western cartoons from live action.
+    var isAnimationGenre16: Bool = false
+
     @Environment(\.presentationMode) var presentationMode
     @StateObject private var viewModel = ModulesSearchResultsViewModel()
     @StateObject private var serviceManager = ServiceManager.shared
@@ -2813,6 +2816,7 @@ struct ModulesSearchResultsSheet: View {
                     mediaInfo: playerMediaInfo,
                     imdbId: imdbId,
                     isAnimeHint: resolvedAnimeHint,
+                    isAnimationContentHint: isAnimationGenre16,
                     originalTMDBSeasonNumber: effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber,
                     originalTMDBEpisodeNumber: effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber,
                     episodePlaybackContext: effectivePlaybackContext,
@@ -2851,6 +2855,7 @@ struct ModulesSearchResultsSheet: View {
                 configurePlaybackRecovery(pvc, context: launchContext)
                 let isAnimeHint = hasAnimeLookupContext
                 pvc.isAnimeHint = isAnimeHint
+                pvc.isAnimationContentHint = isAnimationGenre16
                 pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
                 pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber
                 pvc.episodePlaybackContext = effectivePlaybackContext
@@ -3086,6 +3091,7 @@ struct ModulesSearchResultsSheet: View {
                     mediaInfo: playerMediaInfo,
                     imdbId: imdbId,
                     isAnimeHint: hasAnimeLookupContext,
+                    isAnimationContentHint: isAnimationGenre16,
                     originalTMDBSeasonNumber: effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber,
                     originalTMDBEpisodeNumber: effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber,
                     episodePlaybackContext: effectivePlaybackContext,
@@ -3107,6 +3113,7 @@ struct ModulesSearchResultsSheet: View {
                 )
                 configurePlaybackRecovery(pvc, context: launchContext)
                 pvc.isAnimeHint = hasAnimeLookupContext
+                pvc.isAnimationContentHint = isAnimationGenre16
                 pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
                 pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber
                 pvc.episodePlaybackContext = effectivePlaybackContext
@@ -3889,6 +3896,7 @@ struct ModulesSearchResultsSheet: View {
                     mediaInfo: resolvedPlayerMediaInfo,
                     imdbId: imdbId,
                     isAnimeHint: resolvedAnimeHint,
+                    isAnimationContentHint: isAnimationGenre16,
                     originalTMDBSeasonNumber: effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber,
                     originalTMDBEpisodeNumber: effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber,
                     episodePlaybackContext: effectivePlaybackContext,
@@ -3934,6 +3942,7 @@ struct ModulesSearchResultsSheet: View {
                 configurePlaybackRecovery(pvc, context: launchContext)
                 let isAnimeHint = hasAnimeLookupContext
                 pvc.isAnimeHint = isAnimeHint
+                pvc.isAnimationContentHint = isAnimationGenre16
                 pvc.originalTMDBSeasonNumber = effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber
                 pvc.originalTMDBEpisodeNumber = effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber
                 pvc.episodePlaybackContext = effectivePlaybackContext

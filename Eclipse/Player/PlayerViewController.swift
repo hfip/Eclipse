@@ -735,8 +735,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVSampleBufferPiPBridge.isAvailable)
         if effectiveBackend == .metal {
+            // GPU gpu-next is the default Metal renderer. Fall through to the legacy CPU
+            // sample-buffer path only when the user opts out, or when gpu-next is unavailable.
+            if !Settings.shared.mpvUseLegacyCPURenderer, MPVGPUPlayerBridge.isAvailable {
+                let gpuQualityProfile = metalSampleBufferQualityProfile()
+                Logger.shared.log("[PlayerVC.MPV] using GPU inline renderer (mpv gpu-next/MoltenVK inline, sample-buffer PiP) \(gpuQualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+                let r = MPVGPUPlayerBridge(pictureInPictureDisplayLayer: displayLayer, qualityProfile: gpuQualityProfile)
+                r.delegate = self
+                return r
+            }
             let qualityProfile = metalSampleBufferQualityProfile()
-            Logger.shared.log("[PlayerVC.MPV] using single-instance Metal sample-buffer renderer (inline + PiP, one mpv handle) \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            let legacyReason = Settings.shared.mpvUseLegacyCPURenderer ? "user opt-out" : "gpu-next unavailable"
+            Logger.shared.log("[PlayerVC.MPV] using single-instance Metal sample-buffer renderer (inline + PiP, one mpv handle) reason=\(legacyReason) \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
             let r = MPVSampleBufferPiPBridge(displayLayer: displayLayer, qualityProfile: qualityProfile)
             r.delegate = self
             return r
@@ -763,17 +773,37 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var metalMPVRenderer: MPVSampleBufferPiPBridge? {
         return renderer as? MPVSampleBufferPiPBridge
     }
+
+    /// The GPU inline renderer (mpv gpu-next), when the opt-in GPU path is active. Distinct from
+    /// `metalMPVRenderer` (the CPU sample-buffer path) so sample-buffer-only logic (quality
+    /// profiles, software perf overlay, render throttle) is correctly skipped for it.
+    private var gpuMPVRenderer: MPVGPUPlayerBridge? {
+        return renderer as? MPVGPUPlayerBridge
+    }
 #endif
 
     private var isMPVRenderer: Bool {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        return mpvRenderer != nil || metalMPVRenderer != nil
+        return mpvRenderer != nil || metalMPVRenderer != nil || gpuMPVRenderer != nil
 #else
         return mpvRenderer != nil
 #endif
     }
 
+    /// True for any Metal-based advanced mpv renderer (CPU sample-buffer *or* GPU gpu-next).
+    /// Gates warmup/staging/advanced controls/resume-retry, which both paths support.
     private var isMetalMPVRenderer: Bool {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        return metalMPVRenderer != nil || gpuMPVRenderer != nil
+#else
+        return false
+#endif
+    }
+
+    /// True only for the CPU sample-buffer renderer, which hosts the display layer inside its own
+    /// rendering view. The GPU renderer instead renders inline via a CAMetalLayer and keeps the
+    /// display layer as a hidden PiP-only layer, so it must take the non-sample-buffer layout path.
+    private var isSampleBufferMetalRenderer: Bool {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         return metalMPVRenderer != nil
 #else
@@ -783,6 +813,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private var mpvRendererName: String {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        if gpuMPVRenderer != nil { return "metal-gpu-next" }
         if metalMPVRenderer != nil { return "metal-sample-buffer" }
 #endif
         if mpvRenderer != nil { return "opengl" }
@@ -884,7 +915,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
 #if ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
     private func startMetalThermalQualityMonitoringIfNeeded() {
-        guard Settings.shared.mpvMetalQualityProfile == .auto, metalMPVRenderer != nil else { return }
+        guard Settings.shared.mpvMetalQualityProfile == .auto,
+              metalMPVRenderer != nil || gpuMPVRenderer != nil else { return }
         evaluateMetalThermalQuality(reason: "startup")
         metalThermalQualityTimer?.invalidate()
         let timer = Timer(timeInterval: 8.0, repeats: true) { [weak self] _ in
@@ -899,15 +931,24 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func evaluateMetalThermalQuality(reason: String) {
-        guard Settings.shared.mpvMetalQualityProfile == .auto,
-              let metalMPVRenderer else { return }
+        guard Settings.shared.mpvMetalQualityProfile == .auto else { return }
 
         // Re-resolve and apply on every tick so quality tracks the thermal state in both
         // directions: it steps down further as things worsen (sharp -> balanced -> low heat)
-        // and climbs back up as the device cools.
+        // and climbs back up as the device cools. Routes to whichever Metal renderer is active —
+        // the CPU sample-buffer path (resolution/fps caps) or the GPU gpu-next path (scaler tier
+        // + drawable downscale).
         let resolvedProfile = metalSampleBufferQualityProfile()
-        if metalMPVRenderer.updateSampleBufferQualityProfile(resolvedProfile) {
-            Logger.shared.log("[PlayerVC.MPV] Auto Metal quality changed reason=\(reason) \(resolvedProfile.logDescription)", type: "MPV")
+        let changed: Bool
+        if let metalMPVRenderer {
+            changed = metalMPVRenderer.updateSampleBufferQualityProfile(resolvedProfile)
+        } else if let gpuMPVRenderer {
+            changed = gpuMPVRenderer.updateQualityProfile(resolvedProfile)
+        } else {
+            return
+        }
+        if changed {
+            Logger.shared.log("[PlayerVC.MPV] Auto Metal quality changed reason=\(reason) renderer=\(mpvRendererName) \(resolvedProfile.logDescription)", type: "MPV")
         }
 
         // Notice is one-shot per bad-thermal episode: show it once when we enter a bad
@@ -1040,6 +1081,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     var playerTitleOverride: String?
     // Optional override: when true, treat content as anime regardless of tracker mapping
     var isAnimeHint: Bool?
+    /// Optional broad-animation hint (TMDB genre 16 — anime *and* western cartoons), set by
+    /// callers that have the title's genres in scope. Lets `audioComfortCategory()` classify a
+    /// genre-16, non-anime title as `.westernAnimation` rather than `.liveAction`; nil falls back
+    /// to anime-only detection (so such a title would be treated as live action).
+    var isAnimationContentHint: Bool?
     /// Original TMDB season/episode numbers for anime (before AniList restructuring).
     /// Used by TheIntroDB which requires TMDB numbering, not AniList-restructured S/E.
     var originalTMDBSeasonNumber: Int?
@@ -2539,7 +2585,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     private var isMetalPerformanceOverlayActive: Bool {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        return metalMPVRenderer != nil && Settings.shared.mpvPerformanceOverlayEnabled
+        return (metalMPVRenderer != nil || gpuMPVRenderer != nil) && Settings.shared.mpvPerformanceOverlayEnabled
 #else
         return false
 #endif
@@ -2549,7 +2595,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var holdGesture: UILongPressGestureRecognizer?
     
     private var controlsHideWorkItem: DispatchWorkItem?
-    private var controlsVisible: Bool = true
+    private var controlsVisible: Bool = true {
+        didSet {
+            guard controlsVisible != oldValue else { return }
+            applyInteractiveRenderThrottle()
+        }
+    }
     private var suppressNextPlayPauseControlReveal = false
     private var playPauseRevealSuppressionToken = 0
     private var pendingSeekTime: Double?
@@ -2565,6 +2616,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var lastCPUProcessTime: TimeInterval?
     private var lastCPUWallTime: CFTimeInterval?
     private var lastCPUUsagePercent: Double?
+    /// Lazily created on first overlay use; nil when IOReport GPU stats are unavailable.
+    private lazy var gpuUsageSampler: GPUUsageSampler? = GPUUsageSampler()
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -3167,13 +3220,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             displayLayer.isHidden = true
             displayLayer.opacity = 0.0
             logVLCUI("setupLayout skipped sample-buffer displayLayer for VLC renderer", type: "Player")
-        } else if isMetalMPVRenderer {
+        } else if isSampleBufferMetalRenderer {
             // Single-instance Metal sample-buffer renderer hosts and shows the display
             // layer inside its own rendering view (added below) for both inline and PiP,
             // so there is no separate hidden PiP-only layer to attach to the container.
             displayLayer.isHidden = false
             displayLayer.opacity = 1.0
         } else {
+            // OpenGL/MoltenVK and the GPU gpu-next renderer render inline through their own
+            // view; the sample-buffer display layer stays hidden behind them and is used only
+            // for PiP handoff.
             displayLayer.isHidden = true
             displayLayer.opacity = 0.0
             displayLayer.zPosition = -1
@@ -3541,9 +3597,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func metalPerformanceOverlayText() -> NSAttributedString {
         let cpuText = processCPUUsagePercent().map { String(format: "%.0f%%", $0) } ?? "n/a"
+        let gpuText = gpuUsagePercent().map { String(format: "%.0f%%", $0) } ?? "n/a"
         let thermalState = ProcessInfo.processInfo.thermalState
         let text = NSMutableAttributedString()
         text.append(metalPerformanceOverlayRow(label: "CPU", value: cpuText, valueColor: .white))
+        text.append(NSAttributedString(string: "\n"))
+        text.append(metalPerformanceOverlayRow(label: "GPU", value: gpuText, valueColor: .white))
         text.append(NSAttributedString(string: "\n"))
         text.append(metalPerformanceOverlayRow(
             label: "Thermal",
@@ -3628,7 +3687,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func metalPerformanceQualityText() -> String {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        let active = metalMPVRenderer?.activeQualityProfileName ?? "—"
+        let active = metalMPVRenderer?.activeQualityProfileName ?? gpuMPVRenderer?.activeQualityProfileName ?? "—"
         // Annotate when the profile is being driven automatically by the thermal system, so a
         // drop to "Low Heat" is legible as the auto-protection kicking in rather than a manual pick.
         return Settings.shared.mpvMetalQualityProfile == .auto ? "\(active) · Auto" : active
@@ -3639,7 +3698,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func metalPerformanceQualityColor() -> UIColor {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        switch metalMPVRenderer?.activeQualityProfileName {
+        switch metalMPVRenderer?.activeQualityProfileName ?? gpuMPVRenderer?.activeQualityProfileName {
         case "Sharp": return .systemGreen
         case "Balanced": return .systemYellow
         case "Low Heat": return .systemOrange
@@ -3652,9 +3711,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func metalPerformanceDiagnostics() -> MetalPlaybackDiagnostics? {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        return metalMPVRenderer?.currentPlaybackDiagnostics()
+        return metalMPVRenderer?.currentPlaybackDiagnostics() ?? gpuMPVRenderer?.currentPlaybackDiagnostics()
 #else
         return nil
+#endif
+    }
+
+    /// Throttles the Metal sample-buffer render rate while the controls/menus are on screen so the
+    /// main-thread software render stops starving menu navigation. No-op on other renderers.
+    private func applyInteractiveRenderThrottle() {
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        metalMPVRenderer?.setInteractiveRenderThrottle(controlsVisible)
 #endif
     }
 
@@ -3690,6 +3757,129 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #else
         return nil
 #endif
+    }
+
+    /// Device GPU utilization (0–100) over the last sample interval, or nil if unavailable. iOS has
+    /// no public per-process GPU-usage API; this reads the private `IOReport` GPU performance-state
+    /// residencies (the source the Xcode GPU gauges use). During fullscreen playback the device's
+    /// GPU work is dominated by the video, so it's a good proxy for the player's GPU load.
+    private func gpuUsagePercent() -> Double? {
+        gpuUsageSampler?.sample()
+    }
+
+    /// Best-effort GPU sampler. `init?` fails (→ nil, overlay shows "n/a") when the private
+    /// `IOReport` symbols or the "GPU Stats" channel group are unavailable; every step is
+    /// nil-guarded so a missing/renamed symbol degrades gracefully rather than crashing.
+    final class GPUUsageSampler {
+        private typealias CopyChannelsInGroup = @convention(c)
+            (CFString?, CFString?, UInt64, UInt64, UInt64) -> Unmanaged<CFMutableDictionary>?
+        private typealias CreateSubscription = @convention(c)
+            (UnsafeMutableRawPointer?, CFMutableDictionary, UnsafeMutablePointer<Unmanaged<CFMutableDictionary>?>?, UInt64, CFTypeRef?) -> Unmanaged<AnyObject>?
+        private typealias CreateSamples = @convention(c)
+            (AnyObject?, CFMutableDictionary?, CFTypeRef?) -> Unmanaged<CFDictionary>?
+        private typealias CreateSamplesDelta = @convention(c)
+            (CFDictionary, CFDictionary, CFTypeRef?) -> Unmanaged<CFDictionary>?
+        private typealias StateGetCount = @convention(c) (CFDictionary) -> Int32
+        private typealias StateGetNameForIndex = @convention(c) (CFDictionary, Int32) -> Unmanaged<CFString>?
+        private typealias StateGetResidency = @convention(c) (CFDictionary, Int32) -> Int64
+        private typealias IterateBlock = @convention(block) (CFDictionary) -> Int32
+        private typealias Iterate = @convention(c) (CFDictionary, IterateBlock) -> Void
+
+        private let createSamples: CreateSamples
+        private let createSamplesDelta: CreateSamplesDelta
+        private let stateGetCount: StateGetCount
+        private let stateGetNameForIndex: StateGetNameForIndex
+        private let stateGetResidency: StateGetResidency
+        private let iterate: Iterate
+        private let subscription: AnyObject
+        private let subscribedChannels: CFMutableDictionary
+        private var previousSample: CFDictionary?
+        private var lastValue: Double?
+
+        init?() {
+            guard let lib = dlopen("/usr/lib/libIOReport.dylib", RTLD_NOW) else { return nil }
+            func sym<T>(_ name: String, _ type: T.Type) -> T? {
+                guard let ptr = dlsym(lib, name) else { return nil }
+                return unsafeBitCast(ptr, to: T.self)
+            }
+            guard
+                let copyChannels = sym("IOReportCopyChannelsInGroup", CopyChannelsInGroup.self),
+                let createSub = sym("IOReportCreateSubscription", CreateSubscription.self),
+                let samples = sym("IOReportCreateSamples", CreateSamples.self),
+                let delta = sym("IOReportCreateSamplesDelta", CreateSamplesDelta.self),
+                let getCount = sym("IOReportStateGetCount", StateGetCount.self),
+                let getName = sym("IOReportStateGetNameForIndex", StateGetNameForIndex.self),
+                let getResidency = sym("IOReportStateGetResidency", StateGetResidency.self),
+                let iter = sym("IOReportIterate", Iterate.self)
+            else { return nil }
+
+            guard let channels = copyChannels("GPU Stats" as CFString, nil, 0, 0, 0)?.takeRetainedValue() else { return nil }
+            var subbed: Unmanaged<CFMutableDictionary>?
+            // Subscription return value follows the CF Create rule (+1) → takeRetainedValue. The
+            // `subbed` out-param's ownership is ambiguous, so take it unretained (ARC adds its own
+            // retain on store): worst case a 1-object/session leak, never an over-release crash.
+            guard let sub = createSub(nil, channels, &subbed, 0, nil)?.takeRetainedValue(),
+                  let subbedChannels = subbed?.takeUnretainedValue() else { return nil }
+
+            self.createSamples = samples
+            self.createSamplesDelta = delta
+            self.stateGetCount = getCount
+            self.stateGetNameForIndex = getName
+            self.stateGetResidency = getResidency
+            self.iterate = iter
+            self.subscription = sub
+            self.subscribedChannels = subbedChannels
+        }
+
+        /// Utilization over the interval since the previous call. First call primes the baseline
+        /// and returns nil; thereafter returns a busy/(busy+idle) percentage from the GPU
+        /// performance-state residencies.
+        func sample() -> Double? {
+            guard let now = createSamples(subscription, subscribedChannels, nil)?.takeRetainedValue() else {
+                return lastValue
+            }
+            defer { previousSample = now }
+            guard let previous = previousSample,
+                  let delta = createSamplesDelta(previous, now, nil)?.takeRetainedValue() else {
+                return nil
+            }
+
+            var busy: Double = 0
+            var idle: Double = 0
+            iterate(delta) { [weak self] channel in
+                guard let self else { return 0 }
+                let count = self.stateGetCount(channel)
+                guard count > 0 else { return 0 }
+                var busyLocal: Double = 0
+                var idleLocal: Double = 0
+                var sawIdle = false
+                for index in 0..<count {
+                    let residency = Double(self.stateGetResidency(channel, index))
+                    if residency < 0 { continue }
+                    let nameCF = self.stateGetNameForIndex(channel, index)?.takeUnretainedValue()
+                    let name = (nameCF.map { $0 as String } ?? "").uppercased()
+                    if name.contains("IDLE") || name.contains("OFF") || name.contains("DOWN") {
+                        idleLocal += residency
+                        sawIdle = true
+                    } else {
+                        busyLocal += residency
+                    }
+                }
+                // Only count channels that actually look like GPU performance-state residencies
+                // (i.e. have an idle state), so simple counters don't pollute the ratio.
+                if sawIdle {
+                    busy += busyLocal
+                    idle += idleLocal
+                }
+                return 0
+            }
+
+            let total = busy + idle
+            guard total > 0 else { return lastValue }
+            let percent = min(max(busy / total * 100.0, 0), 100)
+            lastValue = percent
+            return percent
+        }
     }
 
     private func setupActions() {
@@ -3771,6 +3961,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             twoFingerTap.numberOfTouchesRequired = 2
             twoFingerTap.delegate = self
             playerGestureSurfaceView.addGestureRecognizer(twoFingerTap)
+            // The single-tap reveals the controls; require it to fail when a two-finger tap is
+            // recognized so the play/pause gesture never also wakes the player UI (the previous
+            // cancel-on-handler approach lost the race when the single tap fired afterwards).
+            containerTapGesture?.require(toFail: twoFingerTap)
         }
         #endif
     }
@@ -4551,6 +4745,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             mediaInfo: downloadItem.mediaInfo,
             imdbId: item.imdbId,
             isAnimeHint: downloadItem.isAnime,
+            isAnimationContentHint: nil, // offline downloads carry no TMDB genres
             originalTMDBSeasonNumber: item.originalTMDBSeasonNumber,
             originalTMDBEpisodeNumber: item.originalTMDBEpisodeNumber,
             episodePlaybackContext: downloadItem.episodePlaybackContext ?? item.playbackContext,
@@ -4578,7 +4773,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
             onResolvedPlaybackRequest: { [weak self] request in
                 self?.replacePlayback(with: request, reason: "\(reason)-resolved-source")
-            }
+            },
+            // Same show as the one playing — propagate its animation classification.
+            // (Must follow onResolvedPlaybackRequest: it is declared after it on the view.)
+            isAnimationGenre16: isAnimationContentHint ?? false
         )
         let host = UIHostingController(rootView: sheet)
         present(host, animated: true, completion: nil)
@@ -5079,6 +5277,42 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         case .episode(_, _, _, _, _, let isAnime):
             return isAnime
         }
+    }
+
+    /// Classifies the current title into exactly one comfort-audio category. Anime takes priority
+    /// (it's also genre-16, so it must be checked first); a genre-16 hint that isn't anime is a
+    /// western cartoon; everything else (incl. unknown) is live action.
+    private func audioComfortCategory() -> AudioComfortContentCategory {
+        if isAnimeContent() { return .anime }
+        if isAnimationContentHint == true { return .westernAnimation }
+        return .liveAction
+    }
+
+    // MARK: - Comfort / anime-like audio processing
+    //
+    // Applies the user's AudioComfortMode (mpv `af` filter chain) to the active mpv renderer,
+    // scoped to a multi-select set of content categories (anime / western animation / live action).
+    // mpv keeps the `af` property across the session, so it's set once playback is ready and re-set
+    // whenever the mode/scope could change.
+
+    /// The `af` chain to apply right now: empty (passthrough) when the mode is Original or the
+    /// current title's category isn't in the selected scope set; otherwise the mode's filter chain.
+    private func resolvedAudioComfortFilterChain() -> String {
+        let mode = Settings.shared.audioComfortMode
+        guard mode != .original else { return "" }
+        let applies = Settings.shared.audioComfortScopeCategories.contains(audioComfortCategory())
+        return applies ? mode.mpvAudioFilterChain : ""
+    }
+
+    private func applyAudioComfortFilterIfNeeded(reason: String) {
+        // `af` is an mpv-only feature; the protocol default is a no-op for other backends, but
+        // skip the work (and the log) entirely when no mpv renderer is active.
+        guard isMPVRenderer else { return }
+        let mode = Settings.shared.audioComfortMode
+        let scope = Settings.shared.audioComfortScopeCategories.map { $0.rawValue }.sorted().joined(separator: "+")
+        let chain = resolvedAudioComfortFilterChain()
+        Logger.shared.log("[PlayerVC.Audio] comfort mode=\(mode.rawValue) scope=[\(scope)] category=\(audioComfortCategory().rawValue) reason=\(reason) -> \(chain.isEmpty ? "(passthrough)" : chain)", type: "MPV")
+        renderer.applyAudioFilterChain(chain)
     }
 
     // MARK: - Skip Data Integration (AniSkip + TheIntroDB)
@@ -6018,6 +6252,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             mediaInfo: nextMediaInfo,
             imdbId: imdbId,
             isAnimeHint: isAnime,
+            // Next episode is the same show — carry the current animation classification forward.
+            isAnimationContentHint: isAnimationContentHint,
             originalTMDBSeasonNumber: tmdbSeason,
             originalTMDBEpisodeNumber: tmdbEpisode,
             episodePlaybackContext: context,
@@ -7695,6 +7931,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
         }
         configureMPVAppExitPictureInPictureAutomation(reason: "settings")
+        // Re-apply the comfort-audio filter so a mode/scope change in Settings takes effect on the
+        // current stream, not just the next load. Reads Settings fresh and clears to passthrough
+        // when set back to Original. Cheap and idempotent (mpv keeps `af` across the session).
+        applyAudioComfortFilterIfNeeded(reason: "settings")
+#if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
+        // Re-evaluate HDR passthrough on the GPU path when the HDR Output setting changes.
+        gpuMPVRenderer?.applyHDRConfiguration(reason: "settings")
+#endif
         updatePiPButtonVisibility()
         updateEpisodeBrowserButtonVisibility()
         updateMetalPerformanceOverlayVisibility()
@@ -10096,6 +10340,7 @@ extension PlayerViewController: MPVNativeRendererDelegate {
                 self.pendingSeekTime = nil
             }
             self.applyDefaultPlaybackSpeed()
+            self.applyAudioComfortFilterIfNeeded(reason: "ready")
 
             // Fetch skip data once MPV is ready
             self.fetchSkipData()

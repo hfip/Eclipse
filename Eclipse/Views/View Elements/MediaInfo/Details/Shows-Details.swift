@@ -389,7 +389,8 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 originalTMDBEpisodeNumber: selectedEpisodePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBNumbers?.episode,
                 specialTitleOnlySearch: selectedEpisodePlaybackContext?.titleOnlySearch ?? false,
                 episodePlaybackContext: selectedEpisodePlaybackContext,
-                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled")
+                autoModeOnly: UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled"),
+                isAnimationGenre16: tvShow?.genres.contains { $0.id == 16 } ?? false
             )
         }
         .sheet(isPresented: $showingDownloadSheet, onDismiss: {
@@ -438,7 +439,8 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 } : nil,
                 onSkipRequested: isDownloadingAll ? {
                     downloadWasSkipped = true
-                } : nil
+                } : nil,
+                isAnimationGenre16: tvShow?.genres.contains { $0.id == 16 } ?? false
             )
         }
         .alert("No Active Services", isPresented: $showingNoServicesAlert) {
@@ -783,6 +785,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                 mediaInfo: item.mediaInfo
             )
             pvc.isAnimeHint = item.isAnime || item.episodePlaybackContext?.hasAnimeMediaId == true
+            pvc.isAnimationContentHint = tvShow?.genres.contains { $0.id == 16 }
             pvc.episodePlaybackContext = item.episodePlaybackContext
             pvc.originalTMDBSeasonNumber = item.episodePlaybackContext?.resolvedTMDBSeasonNumber
             pvc.originalTMDBEpisodeNumber = item.episodePlaybackContext?.resolvedTMDBEpisodeNumber
