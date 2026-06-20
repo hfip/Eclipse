@@ -130,9 +130,15 @@ struct SubtitleStyle {
     )
 }
 
-private func mpvSubtitlePosition(for verticalOffset: CGFloat) -> String {
+private func mpvSubtitlePosition(for verticalOffset: CGFloat, maxPosition: CGFloat = 150) -> String {
     let defaultOffset: CGFloat = -6.0
-    let position = max(0, min(150, 100 + (verticalOffset - defaultOffset)))
+    // sub-pos is a percentage where 100 == the bottom of the OSD canvas. Renderers
+    // whose OSD canvas is larger than the video (gpu-next / OpenGL render into the full
+    // view, including the letterbox bars) can use values up to 150 and still show
+    // subtitles inside the bars. The software sample-buffer path renders into a buffer
+    // sized exactly to the video frame, so anything above 100 lands below the frame and
+    // is clipped off-screen — those callers pass maxPosition: 100 to keep subs visible.
+    let position = max(0, min(maxPosition, 100 + (verticalOffset - defaultOffset)))
     return String(format: "%.0f", position)
 }
 
@@ -2964,7 +2970,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
                 isVisible: style.isVisible
             )
         )
-        _ = sampleRenderer.command(["set", "sub-pos", mpvSubtitlePosition(for: style.verticalOffset)])
+        _ = sampleRenderer.command(["set", "sub-pos", mpvSubtitlePosition(for: style.verticalOffset, maxPosition: 100)])
         _ = sampleRenderer.command(["set", "sub-shadow-offset", "0"])
         _ = sampleRenderer.command(["set", "sub-ass-override", experimentalSubtitleASSOverrideValue(isMetalRenderer: true)])
     }
@@ -3086,6 +3092,13 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
             return
         }
         guard isRunning, !isAwaitingReadyForCurrentLoad else { return }
+        // Apply a resume seek that was deferred because the duration wasn't known yet
+        // (see applyPendingInitialSeekIfNeeded). Once the demuxer reports a real
+        // duration the seek lands correctly instead of being dropped against 0.
+        if pendingInitialSeek != nil, sampleRenderer.duration > 0 {
+            applyPendingInitialSeekIfNeeded(reason: "duration-known")
+            return
+        }
         let now = CACurrentMediaTime()
         guard force || now - lastPositionUpdateAt >= positionUpdateInterval else { return }
         lastPositionUpdateAt = now
@@ -3094,6 +3107,17 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     private func applyPendingInitialSeekIfNeeded(reason: String) {
         guard let initialSeek = pendingInitialSeek else { return }
+        // The sample-buffer renderer reports .ready/.playing as soon as the first frame
+        // is decodable — which can be *before* the demuxer has parsed the container and
+        // published a real duration. A resume seek issued in that window is clamped
+        // against an unknown (0) duration and silently dropped, so playback restarts at
+        // 0:00 instead of the saved position. Defer any non-zero resume seek until the
+        // duration is known; emitPositionUpdate() re-drives this from the position timer
+        // once duration becomes > 0.
+        if initialSeek > 0, !(sampleRenderer.duration > 0) {
+            Logger.shared.log("[MPVSampleBufferPiPBridge] deferring pending initial seek \(String(format: "%.2f", initialSeek))s reason=\(reason) durationUnknown", type: "MPV")
+            return
+        }
         pendingInitialSeek = nil
         Logger.shared.log("[MPVSampleBufferPiPBridge] applying pending initial seek \(String(format: "%.2f", initialSeek))s reason=\(reason)", type: "MPV")
         sampleRenderer.seek(to: initialSeek)

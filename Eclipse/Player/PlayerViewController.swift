@@ -2730,7 +2730,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         rendererStop()
         
         displayLayer.removeFromSuperlayer()
-        
+
+        pendingUserDefaultsChangeWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -7378,6 +7379,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         updateSubtitleTracksMenu()
     }
 
+    private var pendingUserDefaultsChangeWorkItem: DispatchWorkItem?
+
     @objc private func handleUserDefaultsDidChange() {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
@@ -7386,6 +7389,23 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
+        // UserDefaults.didChangeNotification posts once per defaults.set(). A single
+        // subtitle-appearance change writes ~6 keys (see SubtitleModel.saveSubtitleSettings),
+        // so this observer fires ~6x in a synchronous burst. Each run does heavy work:
+        // ~8 synchronous mpv property sets via rendererApplySubtitleStyle, a subtitle-menu
+        // rebuild and a PiP-automation reconfigure, which visibly lags the player menus.
+        // Coalesce the burst into a single rebuild on the next runloop hop.
+        pendingUserDefaultsChangeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingUserDefaultsChangeWorkItem = nil
+            self.applyUserDefaultsChange()
+        }
+        pendingUserDefaultsChangeWorkItem = workItem
+        DispatchQueue.main.async(execute: workItem)
+    }
+
+    private func applyUserDefaultsChange() {
         guard isVLCPlayer || isMPVRenderer else { return }
         if isVLCPlaybackStartupInProgress {
             Logger.shared.log("[PlayerVC.Settings] UserDefaults changed during VLC startup; deferring subtitle/settings rebuild", type: "Player")
