@@ -459,8 +459,8 @@ enum MPVHDRMode: String, CaseIterable, Identifiable {
 }
 
 struct MPVRenderBackendSupport {
-    static let bundledMPVKitVersion = "0.41.0-eclipse-metal.5"
-    static let bundledMPVKitRevision = "c5dfd61d4cdafcb7797e8c12de8d54a30a1ba9b8"
+    static let bundledMPVKitVersion = "0.41.0"
+    static let bundledMPVKitRevision = "104faf8e40b94af93c624594c4dab66aad4e24e8"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
     static let metalRendererEnabled = true
 
