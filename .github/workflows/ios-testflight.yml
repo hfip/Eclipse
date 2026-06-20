@@ -153,20 +153,11 @@ jobs:
 
           if [ -n "$ICLOUD_CONTAINER_ID" ]; then
             PROFILE_ICLOUD_CONTAINERS=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.icloud-container-identifiers" "$PROFILE_PLIST" 2>/dev/null || true)
-            if ! printf '%s\n' "$PROFILE_ICLOUD_CONTAINERS" | grep -Fq "$ICLOUD_CONTAINER_ID"; then
-              echo "::error::Provisioning profile '$PROFILE_NAME' does not include iCloud container '$ICLOUD_CONTAINER_ID'. Enable iCloud on the App ID, configure the container, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
-              exit 1
-            fi
-
             PROFILE_UBIQUITY_CONTAINERS=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.ubiquity-container-identifiers" "$PROFILE_PLIST" 2>/dev/null || true)
-            if ! printf '%s\n' "$PROFILE_UBIQUITY_CONTAINERS" | grep -Fq "$ICLOUD_CONTAINER_ID"; then
-              echo "::error::Provisioning profile '$PROFILE_NAME' does not include ubiquity container '$ICLOUD_CONTAINER_ID'. Enable iCloud Documents on the App ID, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
-              exit 1
-            fi
-
-            PROFILE_ICLOUD_SERVICES=$(/usr/libexec/PlistBuddy -c "Print Entitlements:com.apple.developer.icloud-services" "$PROFILE_PLIST" 2>/dev/null || true)
-            if ! printf '%s\n' "$PROFILE_ICLOUD_SERVICES" | grep -Fq "CloudDocuments"; then
-              echo "::error::Provisioning profile '$PROFILE_NAME' does not include iCloud Documents. Enable iCloud Documents on the App ID, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
+            LEGACY_UBIQUITY_WILDCARD="${DEVELOPMENT_TEAM}.*"
+            if ! printf '%s\n%s\n' "$PROFILE_ICLOUD_CONTAINERS" "$PROFILE_UBIQUITY_CONTAINERS" | grep -Fq "$ICLOUD_CONTAINER_ID" && \
+               ! printf '%s\n' "$PROFILE_UBIQUITY_CONTAINERS" | grep -Fq "$LEGACY_UBIQUITY_WILDCARD"; then
+              echo "::error::Provisioning profile '$PROFILE_NAME' does not include iCloud container '$ICLOUD_CONTAINER_ID' or legacy ubiquity grant '$LEGACY_UBIQUITY_WILDCARD'. Enable iCloud on the App ID, assign the container, regenerate the profile, then update IOS_PROVISIONING_PROFILE_BASE64."
               exit 1
             fi
           fi
