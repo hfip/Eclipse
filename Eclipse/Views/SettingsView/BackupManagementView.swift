@@ -44,7 +44,10 @@ struct BackupManagementView: View {
     @State private var selectedBackupIsTemporary = false
     @State private var backupFileToExport: Data? = nil
     @State private var backupFileName = ""
-    @State private var showAlternateDocumentPicker = false
+    @State private var importContentTypes: [UTType] = [.json]
+    #if !os(tvOS)
+    @State private var pendingImportMode: ImportMode = .direct
+    #endif
     
     var body: some View {
         ScrollView {
@@ -68,7 +71,11 @@ struct BackupManagementView: View {
 
                 GlassSection(header: "Import") {
                     VStack(spacing: 0) {
-                        Button(action: { showDocumentPicker = true }) {
+                        Button(action: {
+                            #if !os(tvOS)
+                            startImport(mode: .direct)
+                            #endif
+                        }) {
                             GlassDetailRow(icon: "arrow.down.doc.fill", iconColor: .blue, title: "Import Backup") {
                                 if isProcessing {
                                     ProgressView()
@@ -84,7 +91,11 @@ struct BackupManagementView: View {
 
                         GlassDivider()
 
-                        Button(action: { showAlternateDocumentPicker = true }) {
+                        Button(action: {
+                            #if !os(tvOS)
+                            startImport(mode: .coordinatedCopy)
+                            #endif
+                        }) {
                             GlassDetailRow(icon: "arrow.down.doc", iconColor: .indigo, title: "Alternative Import Backup") {
                                 if isProcessing {
                                     ProgressView()
@@ -126,17 +137,10 @@ struct BackupManagementView: View {
         #if !os(tvOS)
         .fileImporter(
             isPresented: $showDocumentPicker,
-            allowedContentTypes: [.json],
+            allowedContentTypes: importContentTypes,
             allowsMultipleSelection: false
         ) { result in
-            handleImportResult(result, mode: .direct)
-        }
-        .fileImporter(
-            isPresented: $showAlternateDocumentPicker,
-            allowedContentTypes: BackupDocument.importableContentTypes,
-            allowsMultipleSelection: false
-        ) { result in
-            handleImportResult(result, mode: .coordinatedCopy)
+            handleImportResult(result, mode: pendingImportMode)
         }
         .fileExporter(
             isPresented: $showBackupExporter,
@@ -207,6 +211,13 @@ struct BackupManagementView: View {
     private enum ImportMode {
         case direct
         case coordinatedCopy
+    }
+
+    private func startImport(mode: ImportMode) {
+        guard !isProcessing else { return }
+        pendingImportMode = mode
+        importContentTypes = mode == .direct ? [.json] : BackupDocument.importableContentTypes
+        showDocumentPicker = true
     }
 
     private func handleImportResult(_ result: Result<[URL], Error>, mode: ImportMode) {
