@@ -296,7 +296,7 @@ enum MPVRenderBackend: String, CaseIterable, Identifiable {
         case .openGL:
             return "OpenGL"
         case .metal:
-            return "Metal"
+            return "MoltenVK"
         }
     }
 
@@ -327,13 +327,13 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .auto:
-            return "Starts sharp and automatically lowers Metal resolution, frame pacing, and high-bit-depth HDR work when the device gets hot, then restores quality as it cools."
+            return "Starts sharp and automatically lowers MoltenVK resolution, frame pacing, and high-bit-depth HDR work when the device gets hot, then restores quality as it cools."
         case .balanced:
-            return "Caps Metal/sample-buffer output below native 4K while preserving high-bit-depth HDR for lower heat with minimal visible softening."
+            return "Caps MoltenVK/sample-buffer output below native 4K while preserving high-bit-depth HDR for lower heat with minimal visible softening."
         case .lowHeat:
-            return "Caps Metal/sample-buffer output aggressively and disables high-bit-depth HDR to minimize heat and power use; video looks softer."
+            return "Caps MoltenVK/sample-buffer output aggressively and disables high-bit-depth HDR to minimize heat and power use; video looks softer."
         case .sharp:
-            return "Allows full-resolution Metal output and high-bit-depth HDR for maximum fidelity at higher power cost."
+            return "Allows full-resolution MoltenVK output and high-bit-depth HDR for maximum fidelity at higher power cost."
         }
     }
 
@@ -425,7 +425,7 @@ enum AudioComfortContentCategory: String, CaseIterable, Identifiable {
     static var defaultScope: Set<AudioComfortContentCategory> { Set(allCases) }
 }
 
-/// Controls how the Metal/gpu-next renderer treats standard HDR video.
+/// Controls how the MoltenVK/gpu-next renderer treats standard HDR video.
 enum MPVHDRMode: String, CaseIterable, Identifiable {
     /// Pass HDR through to the display when it has EDR headroom; tone-map to SDR otherwise.
     case auto
@@ -505,7 +505,7 @@ struct MPVRenderBackendSupport {
             "moltenVKInline=\(bundledMPVKitSupportsMoltenVKInlineRendering)",
             "inlineRenderer=\(moltenVKInlineRendererAvailable)",
             "gpuSampleBufferPiP=\(sampleBufferPictureInPictureBridgeAvailable)",
-            "metalRendererEnabled=\(metalRendererEnabled)",
+            "moltenVKRendererEnabled=\(metalRendererEnabled)",
             "bitmapSubsAllowed=\(metalBitmapSubtitlesAllowed)",
             "bitmapSubsValidated=\(metalBitmapSubtitlesValidated)",
             "liveQuality=\(metalLiveQualityReconfigurationAvailable)"
@@ -514,22 +514,22 @@ struct MPVRenderBackendSupport {
 
     static var settingsDescription: String {
         if metalIsFullySupported {
-            return "Applies to the next player session. Metal is the default MPV renderer and uses MoltenVK inline playback with a GPU sample-buffer handoff for PiP; OpenGL remains the fallback."
+            return "Applies to the next player session. MoltenVK is the default MPV renderer and uses gpu-next inline playback with a GPU sample-buffer handoff for PiP; OpenGL remains the fallback."
         }
         if !metalRendererEnabled {
             return "Applies to the next player session. OpenGL is active in this build."
         }
-        return "Applies to the next player session. Metal is remembered but falls back to OpenGL until the MoltenVK inline renderer is available."
+        return "Applies to the next player session. MoltenVK is remembered but falls back to OpenGL until the inline renderer is available."
     }
 
     static var settingsStatusLine: String {
         if metalIsFullySupported {
-            return "Metal backend: MoltenVK inline renderer with GPU sample-buffer PiP handoff"
+            return "MoltenVK backend: gpu-next inline renderer with GPU sample-buffer PiP handoff"
         }
         if !metalRendererEnabled {
-            return "Metal backend: hidden in this build"
+            return "MoltenVK backend: hidden in this build"
         }
-        return "Metal backend: waiting for MoltenVK inline renderer"
+        return "MoltenVK backend: waiting for inline renderer"
     }
 
     static func effectiveBackend(requested: MPVRenderBackend, hasMetalDevice: Bool) -> MPVRenderBackend {
@@ -540,8 +540,8 @@ struct MPVRenderBackendSupport {
 
     static func fallbackReason(requested: MPVRenderBackend, hasMetalDevice: Bool) -> String? {
         guard requested == .metal else { return nil }
-        guard metalRendererEnabled else { return "Metal renderer hidden in this build" }
-        guard hasMetalDevice else { return "Metal device unavailable" }
+        guard metalRendererEnabled else { return "MoltenVK renderer hidden in this build" }
+        guard hasMetalDevice else { return "MoltenVK device unavailable" }
         guard moltenVKInlineRendererAvailable else {
             return "MPVKit \(bundledMPVKitVersion) bundled in this build does not expose the MoltenVK inline renderer path"
         }
@@ -643,10 +643,10 @@ enum ExperimentalFeatureState {
 
         let raw = UserDefaults.standard.string(forKey: "mpvRenderBackend") ?? MPVRenderBackend.defaultBackend.rawValue
         let requested = MPVRenderBackend(rawValue: raw) ?? .defaultBackend
-        guard requested == .metal else { return "renderer-not-metal" }
+        guard requested == .metal else { return "renderer-not-moltenvk" }
 
         guard MPVRenderBackendSupport.effectiveBackend(requested: requested, hasMetalDevice: true) == .metal else {
-            return MPVRenderBackendSupport.fallbackReason(requested: requested, hasMetalDevice: true) ?? "metal-renderer-unavailable"
+            return MPVRenderBackendSupport.fallbackReason(requested: requested, hasMetalDevice: true) ?? "moltenvk-renderer-unavailable"
         }
 
         return nil
@@ -1639,17 +1639,17 @@ class Settings: ObservableObject {
         }
     }
 
-    /// Shows the on-screen Metal/mpv performance HUD (CPU, thermal state, active quality profile).
+    /// Shows the on-screen MoltenVK/mpv performance HUD (CPU, thermal state, active quality profile).
     /// Off by default; toggled from Player settings → MPV Rendering.
     var mpvPerformanceOverlayEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvPerformanceOverlayEnabled") }
     }
 
-    /// The GPU gpu-next renderer (MoltenVK, zero-copy decode) is the default Metal renderer. This
+    /// The GPU gpu-next renderer (MoltenVK, zero-copy decode) is the default MoltenVK renderer. This
     /// opt-out forces the legacy CPU software sample-buffer path instead — a manual safety escape
     /// if a device hits a gpu-next issue. Off by default. gpu-next also auto-falls back to the
-    /// sample-buffer path when Metal/gpu-next is unavailable, regardless of this setting.
+    /// sample-buffer path when MoltenVK/gpu-next is unavailable, regardless of this setting.
     var mpvUseLegacyCPURenderer: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvUseLegacyCPURenderer") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvUseLegacyCPURenderer") }

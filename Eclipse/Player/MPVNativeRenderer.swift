@@ -17,7 +17,7 @@ import Metal
 import MPVKitSampleBufferGPL
 #endif
 
-/// True when the user has opted to override embedded ASS subtitle styling on a Metal
+/// True when the user has opted to override embedded ASS subtitle styling on a MoltenVK
 /// (sample-buffer / gpu-next) renderer. This doubles as the subtitle *performance* switch: in
 /// this mode libass is told to discard the script's own styling and effects, which sharply
 /// lowers the per-frame rasterization cost of styled or animated embedded subtitles on the CPU
@@ -189,7 +189,7 @@ private func mpvSubtitlePosition(for verticalOffset: CGFloat, maxPosition: CGFlo
 /// selected size up by two tiers on this path so it visually matches the menu intent.
 private func sampleBufferBumpedSubtitleFontSize(_ fontSize: CGFloat) -> CGFloat {
     // Mirrors the font-size ladder offered in the player UI / Settings.
-    // The software sample-buffer path renders subtitles smaller than the GL/Metal paths, so we
+    // The software sample-buffer path renders subtitles smaller than the GL/MoltenVK paths, so we
     // shift the chosen size up the ladder to compensate (bumped twice on user request).
     let ladder: [CGFloat] = [20, 24, 30, 34, 38, 42, 46]
     let bump = 4
@@ -284,7 +284,7 @@ private final class MPVMoltenVKView: UIView {
         layer as! MPVMoltenVKLayer
     }
 
-    /// Multiplier (0.1...1.0) applied on top of the native screen scale when sizing the Metal
+    /// Multiplier (0.1...1.0) applied on top of the native screen scale when sizing the MoltenVK
     /// drawable. Driven by the active quality profile so the inline MoltenVK surface can be
     /// rendered below native resolution to cut GPU load / heat. The layer keeps its full
     /// `contentsScale`, so a smaller drawable is simply upscaled to the view bounds.
@@ -2705,7 +2705,7 @@ struct MetalPlaybackDiagnostics {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
 
 /// Hosts the GPU renderer's inline `CAMetalLayer`, keeping it sized to the view bounds and
-/// reporting layout changes so the renderer can resize its Metal drawable.
+/// reporting layout changes so the renderer can resize its MoltenVK drawable.
 final class MPVGPUInlineHostView: UIView {
     var onLayoutChange: ((CGRect) -> Void)?
     private weak var hostedLayer: CAMetalLayer?
@@ -3627,7 +3627,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func performanceOverlaySnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "MPV sample-buffer-pip \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)\nbackend \(snapshot.presentationBackend.rawValue) api=\(snapshot.renderAPI) source=\(snapshot.sourcePixelFormatDescription) pixel=\(snapshot.pixelFormatDescription) hdr=\(snapshot.hdrMetadataApplied) highBitDepth=\(snapshot.highBitDepthRenderingActive) highBitDepthFailures=\(snapshot.highBitDepthRenderingFailureCount) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount)"
+        return "MPV sample-buffer-pip \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", sampleRenderer.currentTime))/\(String(format: "%.1f", sampleRenderer.duration))\nframes \(snapshot.frameCount) attempts \(snapshot.renderAttemptCount) failures \(snapshot.renderFailureCount)\nlayer \(snapshot.displayLayerStatus) ready=\(snapshot.displayLayerReadyForMoreMediaData) moltenVKProbe=\(snapshot.metalCompatibilityProbeSucceeded)\nbackend \(snapshot.presentationBackend.rawValue) api=\(snapshot.renderAPI) source=\(snapshot.sourcePixelFormatDescription) pixel=\(snapshot.pixelFormatDescription) hdr=\(snapshot.hdrMetadataApplied) highBitDepth=\(snapshot.highBitDepthRenderingActive) highBitDepthFailures=\(snapshot.highBitDepthRenderingFailureCount) moltenVKFrames=\(snapshot.metalPresentationFrameCount) moltenVKFailures=\(snapshot.metalPresentationFailureCount)"
     }
 
 #if ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
@@ -3843,7 +3843,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     func pictureInPictureDebugSnapshot() -> String {
         let snapshot = sampleRenderer.diagnosticsSnapshot()
-        return "mode=sample-buffer-pip backend=\(snapshot.presentationBackend.rawValue) api=\(snapshot.renderAPI) source=\(snapshot.sourcePixelFormatDescription) pixel=\(snapshot.pixelFormatDescription) hdr=\(snapshot.hdrMetadataApplied) highBitDepth=\(snapshot.highBitDepthRenderingActive) highBitDepthFailures=\(snapshot.highBitDepthRenderingFailureCount) primaries=\(snapshot.videoColorPrimaries.isEmpty ? "unknown" : snapshot.videoColorPrimaries) transfer=\(snapshot.videoTransferFunction.isEmpty ? "unknown" : snapshot.videoTransferFunction) sigPeak=\(String(format: "%.2f", snapshot.videoSignalPeak)) running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) frames=\(snapshot.frameCount) attempts=\(snapshot.renderAttemptCount) failures=\(snapshot.renderFailureCount) metalFrames=\(snapshot.metalPresentationFrameCount) metalFailures=\(snapshot.metalPresentationFailureCount) layer=\(snapshot.displayLayerStatus) metalProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
+        return "mode=sample-buffer-pip backend=\(snapshot.presentationBackend.rawValue) api=\(snapshot.renderAPI) source=\(snapshot.sourcePixelFormatDescription) pixel=\(snapshot.pixelFormatDescription) hdr=\(snapshot.hdrMetadataApplied) highBitDepth=\(snapshot.highBitDepthRenderingActive) highBitDepthFailures=\(snapshot.highBitDepthRenderingFailureCount) primaries=\(snapshot.videoColorPrimaries.isEmpty ? "unknown" : snapshot.videoColorPrimaries) transfer=\(snapshot.videoTransferFunction.isEmpty ? "unknown" : snapshot.videoTransferFunction) sigPeak=\(String(format: "%.2f", snapshot.videoSignalPeak)) running=\(isRunning) paused=\(isPaused) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", sampleRenderer.currentTime))/\(String(format: "%.2f", sampleRenderer.duration)) frames=\(snapshot.frameCount) attempts=\(snapshot.renderAttemptCount) failures=\(snapshot.renderFailureCount) moltenVKFrames=\(snapshot.metalPresentationFrameCount) moltenVKFailures=\(snapshot.metalPresentationFailureCount) layer=\(snapshot.displayLayerStatus) moltenVKProbe=\(snapshot.metalCompatibilityProbeSucceeded)"
     }
 
     func beginForegroundUIStallRecovery(reason: String) {
@@ -4040,7 +4040,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         lastLoggedDiagnosticsFrameCount = diagnostics.frameCount
         lastLoggedDiagnosticsFailures = totalFailures
         Logger.shared.log(
-            "[MPVSampleBufferPiPBridge] diagnostics backend=\(diagnostics.presentationBackend.rawValue) api=\(diagnostics.renderAPI) source=\(diagnostics.sourcePixelFormatDescription) pixel=\(diagnostics.pixelFormatDescription) hdr=\(diagnostics.hdrMetadataApplied) highBitDepth=\(diagnostics.highBitDepthRenderingActive) highBitDepthFail=\(diagnostics.highBitDepthRenderingFailureCount) primaries=\(diagnostics.videoColorPrimaries.isEmpty ? "unknown" : diagnostics.videoColorPrimaries) transfer=\(diagnostics.videoTransferFunction.isEmpty ? "unknown" : diagnostics.videoTransferFunction) sigPeak=\(String(format: "%.2f", diagnostics.videoSignalPeak)) metalFrames=\(diagnostics.metalPresentationFrameCount) metalFail=\(diagnostics.metalPresentationFailureCount) frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) metalProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
+            "[MPVSampleBufferPiPBridge] diagnostics backend=\(diagnostics.presentationBackend.rawValue) api=\(diagnostics.renderAPI) source=\(diagnostics.sourcePixelFormatDescription) pixel=\(diagnostics.pixelFormatDescription) hdr=\(diagnostics.hdrMetadataApplied) highBitDepth=\(diagnostics.highBitDepthRenderingActive) highBitDepthFail=\(diagnostics.highBitDepthRenderingFailureCount) primaries=\(diagnostics.videoColorPrimaries.isEmpty ? "unknown" : diagnostics.videoColorPrimaries) transfer=\(diagnostics.videoTransferFunction.isEmpty ? "unknown" : diagnostics.videoTransferFunction) sigPeak=\(String(format: "%.2f", diagnostics.videoSignalPeak)) moltenVKFrames=\(diagnostics.metalPresentationFrameCount) moltenVKFail=\(diagnostics.metalPresentationFailureCount) frames=\(diagnostics.frameCount) attempts=\(diagnostics.renderAttemptCount) renderFail=\(diagnostics.renderFailureCount) allocFail=\(diagnostics.allocationFailureCount) enqueueFail=\(diagnostics.enqueueFailureCount) lastStatus=\(diagnostics.lastRenderStatus) size=\(String(format: "%.0fx%.0f", diagnostics.lastFrameSize.width, diagnostics.lastFrameSize.height)) layer=\(diagnostics.displayLayerStatus) ready=\(diagnostics.displayLayerReadyForMoreMediaData) moltenVKProbe=\(diagnostics.metalCompatibilityProbeSucceeded)",
             type: "MPV"
         )
     }
@@ -4124,7 +4124,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
     private var runtimeHardwareDecodeFallbackApplied = false
     private var lastRenderingLayoutSize: CGSize = .zero
     private var lastMetalDrawableSize: CGSize = .zero
-    // True when the inline Metal layer is currently configured for HDR/EDR passthrough.
+    // True when the inline MoltenVK layer is currently configured for HDR/EDR passthrough.
     private var hdrPassthroughActive = false
     private var lastHDRConfigurationSignature = ""
 
@@ -4226,7 +4226,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             if self.isRunning, !self.isStopping, !self.isUsingPiPBridge, let handle = self.mpv {
                 mpv_wakeup(handle)
             }
-            self.logMPV("layout synchronized container=\(String(format: "%.0fx%.0f", targetSize.width, targetSize.height)) metalBounds=\(String(format: "%.0fx%.0f", self.metalView.bounds.width, self.metalView.bounds.height)) drawable=\(String(format: "%.0fx%.0f", drawableSize.width, drawableSize.height)) pipActive=\(self.isUsingPiPBridge)")
+            self.logMPV("layout synchronized container=\(String(format: "%.0fx%.0f", targetSize.width, targetSize.height)) moltenVKBounds=\(String(format: "%.0fx%.0f", self.metalView.bounds.width, self.metalView.bounds.height)) drawable=\(String(format: "%.0fx%.0f", drawableSize.width, drawableSize.height)) pipActive=\(self.isUsingPiPBridge)")
         }
         if Thread.isMainThread {
             updateLayout()
@@ -4326,7 +4326,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
 
         guard let handle = mpv else {
             setLoading(false)
-            delegate?.renderer(self, didFailWithError: "MPV Metal was not ready to load media")
+            delegate?.renderer(self, didFailWithError: "MPV MoltenVK was not ready to load media")
             return
         }
 
@@ -4344,7 +4344,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         let loadStatus = command(handle, loadCommand)
         if loadStatus < 0 {
             setLoading(false)
-            delegate?.renderer(self, didFailWithError: "MPV Metal rejected the media load command (\(loadStatus))")
+            delegate?.renderer(self, didFailWithError: "MPV MoltenVK rejected the media load command (\(loadStatus))")
             return
         }
         mpv_wakeup(handle)
@@ -4383,7 +4383,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             return fallbackRenderer.performanceOverlaySnapshot()
         }
         let size = currentVideoSize()
-        let mode = isUsingPiPBridge ? "metal-pip" : "moltenvk"
+        let mode = isUsingPiPBridge ? "moltenvk-pip" : "moltenvk"
         return "MPV \(mode) \(isPausedState ? "paused" : "playing")\(isLoading ? " loading" : "") \(qualityProfile.name)\npos \(String(format: "%.1f", cachedPosition))/\(String(format: "%.1f", cachedDuration))\nvideo \(String(format: "%.0fx%.0f", size.width, size.height))\n\(pipBridge.pictureInPictureDebugSnapshot())"
     }
 
@@ -4404,7 +4404,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         let previousScale = qualityProfile.renderScale
         qualityProfile = newProfile
         guard abs(previousScale - newProfile.renderScale) > 0.001 else {
-            logMPV("Metal quality profile updated, render scale unchanged \(newProfile.logDescription)")
+            logMPV("MoltenVK quality profile updated, render scale unchanged \(newProfile.logDescription)")
             return bridgeChanged
         }
         let applyChange = { [weak self] in
@@ -4420,7 +4420,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         } else {
             DispatchQueue.main.async(execute: applyChange)
         }
-        logMPV("Metal quality profile applied to inline renderer \(newProfile.logDescription)")
+        logMPV("MoltenVK quality profile applied to inline renderer \(newProfile.logDescription)")
         return true
     }
 #endif
@@ -4651,7 +4651,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
                 isPreparingPiPBridge = false
                 pipBridgeLoadGeneration = nil
                 logMPV("PiP hybrid bridge start failed error=\(error) foreground={\(pictureInPictureDebugSnapshot())}")
-                delegate?.renderer(self, didFailWithError: "MPV Metal sample-buffer PiP handoff failed to start")
+                delegate?.renderer(self, didFailWithError: "MPV MoltenVK sample-buffer PiP handoff failed to start")
                 return
             }
 
@@ -4824,7 +4824,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         let size = currentVideoSize()
         let vo = mpv.flatMap { getStringProperty(handle: $0, name: "vo-configured") } ?? "nil"
         let hwdec = mpv.flatMap { getStringProperty(handle: $0, name: "hwdec-current") } ?? "nil"
-        let mode = isUsingPiPBridge ? "metal-pip" : (isPreparingPiPBridge ? "moltenvk-pip-warmup" : "moltenvk")
+        let mode = isUsingPiPBridge ? "moltenvk-pip" : (isPreparingPiPBridge ? "moltenvk-pip-warmup" : "moltenvk")
         return "mode=\(mode) running=\(isRunning) paused=\(isPausedState) loading=\(isLoading) ready=\(isReadyToSeek) pos=\(String(format: "%.2f", cachedPosition))/\(String(format: "%.2f", cachedDuration)) video=\(String(format: "%.0fx%.0f", size.width, size.height)) vo=\(vo) hwdec=\(hwdec) hdr=\(hdrPassthroughActive ? "passthrough" : "sdr") bridgeGen=\(pipBridgeLoadGeneration ?? -1) currentGen=\(loadGeneration) bridge={\(pipBridge.pictureInPictureDebugSnapshot())}"
     }
 
@@ -4907,12 +4907,12 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             mpv_set_option(handle, namePointer, MPV_FORMAT_INT64, &wid)
         }
         if status < 0 {
-            logMPV("failed to set Metal layer wid status=\(status)")
+            logMPV("failed to set MoltenVK layer wid status=\(status)")
         }
     }
 
     /// Detects whether the loaded video is HDR and, honoring the user's HDR Output setting and the
-    /// display's EDR capability, switches the inline Metal layer between HDR passthrough and SDR
+    /// display's EDR capability, switches the inline MoltenVK layer between HDR passthrough and SDR
     /// tone-mapping. Safe for SDR sources (leaves the layer in its default SDR state) and a no-op
     /// while the PiP sample-buffer bridge owns presentation or the OpenGL fallback is active.
     private func applyHDRConfiguration(reason: String) {
@@ -5034,7 +5034,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             handleFileLoaded()
         case MPV_EVENT_END_FILE:
             if !isReadyToSeek {
-                let message = lastPlaybackErrorMessage ?? "MPV Metal ended before playback became ready"
+                let message = lastPlaybackErrorMessage ?? "MPV MoltenVK ended before playback became ready"
                 setLoading(false)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -5264,7 +5264,7 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
             self.logMPV("startup watchdog gen=\(generation) delay=\(String(format: "%.0f", delay))s elapsed=\(elapsed)s loading=\(self.isLoading) ready=\(self.isReadyToSeek) pos=\(String(format: "%.2f", self.cachedPosition)) dur=\(String(format: "%.2f", self.cachedDuration)) coreIdle=\(coreIdle) idleActive=\(idleActive)")
             if coreIdle == "yes", idleActive == "yes" {
                 self.setLoading(false)
-                self.delegate?.renderer(self, didFailWithError: "MPV Metal stayed idle after the stream was submitted")
+                self.delegate?.renderer(self, didFailWithError: "MPV MoltenVK stayed idle after the stream was submitted")
             }
         }
     }

@@ -30,7 +30,7 @@ enum PlaybackSourceKind: String {
     case plugin
 }
 
-/// Padded, monospaced label backing the Metal/mpv performance HUD. Subclassing UILabel keeps
+/// Padded, monospaced label backing the MoltenVK/mpv performance HUD. Subclassing UILabel keeps
 /// the overlay a single constrained view while still giving the text breathing room inside its
 /// rounded background.
 final class PlayerPerformanceOverlayLabel: UILabel {
@@ -735,7 +735,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         let effectiveBackend = MPVRenderBackendSupport.effectiveBackend(requested: requestedBackend, hasMetalDevice: MPVSampleBufferPiPBridge.isAvailable)
         if effectiveBackend == .metal {
-            // GPU gpu-next is the default Metal renderer. Fall through to the legacy CPU
+            // GPU gpu-next is the default MoltenVK renderer. Fall through to the legacy CPU
             // sample-buffer path only when the user opts out, or when gpu-next is unavailable.
             if !Settings.shared.mpvUseLegacyCPURenderer, MPVGPUPlayerBridge.isAvailable {
                 let gpuQualityProfile = metalSampleBufferQualityProfile()
@@ -746,17 +746,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
             let qualityProfile = metalSampleBufferQualityProfile()
             let legacyReason = Settings.shared.mpvUseLegacyCPURenderer ? "user opt-out" : "gpu-next unavailable"
-            Logger.shared.log("[PlayerVC.MPV] using single-instance Metal sample-buffer renderer (inline + PiP, one mpv handle) reason=\(legacyReason) \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            Logger.shared.log("[PlayerVC.MPV] using single-instance MoltenVK sample-buffer renderer (inline + PiP, one mpv handle) reason=\(legacyReason) \(qualityProfile.logDescription) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
             let r = MPVSampleBufferPiPBridge(displayLayer: displayLayer, qualityProfile: qualityProfile)
             r.delegate = self
             return r
         }
         if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: MPVSampleBufferPiPBridge.isAvailable) {
-            Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            Logger.shared.log("[PlayerVC.MPV] MoltenVK renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
         }
 #else
         if let fallback = MPVRenderBackendSupport.fallbackReason(requested: requestedBackend, hasMetalDevice: false) {
-            Logger.shared.log("[PlayerVC.MPV] Metal renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
+            Logger.shared.log("[PlayerVC.MPV] MoltenVK renderer fallback to OpenGL reason=\(fallback) \(MPVRenderBackendSupport.diagnosticsSummary)", type: "MPV")
         }
 #endif
         let r = MPVNativeRenderer(displayLayer: displayLayer)
@@ -790,7 +790,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
     }
 
-    /// True for any Metal-based advanced mpv renderer (CPU sample-buffer *or* GPU gpu-next).
+    /// True for any MoltenVK-based advanced mpv renderer (CPU sample-buffer *or* GPU gpu-next).
     /// Gates warmup/staging/advanced controls/resume-retry, which both paths support.
     private var isMetalMPVRenderer: Bool {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
@@ -813,8 +813,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private var mpvRendererName: String {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        if gpuMPVRenderer != nil { return "metal-gpu-next" }
-        if metalMPVRenderer != nil { return "metal-sample-buffer" }
+        if gpuMPVRenderer != nil { return "moltenvk-gpu-next" }
+        if metalMPVRenderer != nil { return "moltenvk-sample-buffer" }
 #endif
         if mpvRenderer != nil { return "opengl" }
         return "none"
@@ -935,7 +935,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         // Re-resolve and apply on every tick so quality tracks the thermal state in both
         // directions: it steps down further as things worsen (sharp -> balanced -> low heat)
-        // and climbs back up as the device cools. Routes to whichever Metal renderer is active —
+        // and climbs back up as the device cools. Routes to whichever MoltenVK renderer is active —
         // the CPU sample-buffer path (resolution/fps caps) or the GPU gpu-next path (scaler tier
         // + drawable downscale).
         let resolvedProfile = metalSampleBufferQualityProfile()
@@ -948,7 +948,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
         if changed {
-            Logger.shared.log("[PlayerVC.MPV] Auto Metal quality changed reason=\(reason) renderer=\(mpvRendererName) \(resolvedProfile.logDescription)", type: "MPV")
+            Logger.shared.log("[PlayerVC.MPV] Auto MoltenVK quality changed reason=\(reason) renderer=\(mpvRendererName) \(resolvedProfile.logDescription)", type: "MPV")
         }
 
         // Notice is one-shot per bad-thermal episode: show it once when we enter a bad
@@ -1778,7 +1778,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     // MARK: - Renderer track cache
     // Menu rebuilds (e.g. subtitle-appearance taps) read these snapshots instead of querying the
-    // renderer synchronously on every interaction. On the Metal sample-buffer path each live track
+    // renderer synchronously on every interaction. On the MoltenVK sample-buffer path each live track
     // query blocks the main thread, so repeated per-tap reads were felt as menu lag. The snapshots
     // are invalidated whenever tracks can actually change (new file load, explicit set/disable/
     // load-external, the track-change delegate, and the post-load readiness pollers) and lazily
@@ -2959,7 +2959,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     label: mediaInfoLabel
                 )
             } else if UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey) {
-                let reason = isMetalMPVRenderer ? (ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason ?? "advanced-unavailable") : "renderer-not-metal-active"
+                let reason = isMetalMPVRenderer ? (ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason ?? "advanced-unavailable") : "renderer-not-moltenvk-active"
                 Logger.shared.log("[PlayerVC.PlaybackStart] MPV warmup not started reason=\(reason) renderer=\(mpvRendererName) target=\(url.absoluteString)", type: "MPV")
             }
         }
@@ -3221,7 +3221,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             displayLayer.opacity = 0.0
             logVLCUI("setupLayout skipped sample-buffer displayLayer for VLC renderer", type: "Player")
         } else if isSampleBufferMetalRenderer {
-            // Single-instance Metal sample-buffer renderer hosts and shows the display
+            // Single-instance MoltenVK sample-buffer renderer hosts and shows the display
             // layer inside its own rendering view (added below) for both inline and PiP,
             // so there is no separate hidden PiP-only layer to attach to the container.
             displayLayer.isHidden = false
@@ -3551,13 +3551,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         skipForwardButton.accessibilityLabel = "Seek Forward \(seconds) Seconds"
     }
 
-    // MARK: - Metal/mpv performance overlay (HUD)
+    // MARK: - MoltenVK/mpv performance overlay (HUD)
     //
-    // A lightweight on-screen HUD for the single-instance Metal sample-buffer renderer. It
+    // A lightweight on-screen HUD for the single-instance MoltenVK sample-buffer renderer. It
     // surfaces the three signals that matter for the auto-quality/heat system: process CPU
     // load, the system thermal state, and the quality profile the renderer is actually
     // running ("Sharp" / "Balanced" / "Low Heat"). It is gated behind a settings toggle and
-    // only ever shows while the Metal renderer is the active backend.
+    // only ever shows while the MoltenVK renderer is the active backend.
 
     private func updateMetalPerformanceOverlayVisibility() {
         let active = isMetalPerformanceOverlayActive
@@ -3717,7 +3717,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
     }
 
-    /// Throttles the Metal sample-buffer render rate while the controls/menus are on screen so the
+    /// Throttles the MoltenVK sample-buffer render rate while the controls/menus are on screen so the
     /// main-thread software render stops starving menu navigation. No-op on other renderers.
     private func applyInteractiveRenderThrottle() {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
@@ -4508,7 +4508,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // Applying the style IS the overlay refresh — every renderer's refreshSubtitleOverlay()
         // simply re-applies lastAppliedSubtitleStyle — so apply it exactly once. The previous
         // trailing rendererRefreshSubtitleOverlay() re-applied the identical style, doubling the
-        // synchronous mpv `set` commands on every appearance tap (felt as lag on the Metal path).
+        // synchronous mpv `set` commands on every appearance tap (felt as lag on the MoltenVK path).
         rendererApplySubtitleStyle(currentSubtitleStyle())
 
         guard isVLCCustomSubtitleOverlayEnabled else { return }
@@ -6121,7 +6121,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         currentEpisodeNumber: Int,
         nextEpisodeNumber: Int
     ) {
-        // Only when the Metal MPV warmup path is actually usable and both toggles are on.
+        // Only when the MoltenVK MPV warmup path is actually usable and both toggles are on.
         guard ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason == nil,
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey),
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
@@ -6677,7 +6677,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         let proxySkipReason = isMetalMPVRenderer
             ? (ExperimentalMPVPreloadManager.shared.playbackProxySkipReason(for: originalURL) ?? "not-requested")
-            : "renderer-not-metal-active"
+            : "renderer-not-moltenvk-active"
         Logger.shared.log("[PlayerVC.PlaybackStart] MPV direct HTTP playback target=\(originalURL.absoluteString) warmupProxySkipped=\(proxySkipReason) renderer=\(mpvRendererName) headerKeys=[\(proxyHeaders.keys.sorted().joined(separator: ","))]", type: "MPV")
         return (originalURL, proxyHeaders.isEmpty ? headers : proxyHeaders)
     }
@@ -9288,7 +9288,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         pendingInitialResumeRetryCount += 1
         pendingInitialResumeLastRetryAt = now
         Logger.shared.log(
-            "[PlayerVC.progress] retrying Metal initial resume target=\(secondsText(target)) position=\(secondsText(currentPosition)) attempt=\(pendingInitialResumeRetryCount)",
+            "[PlayerVC.progress] retrying MoltenVK initial resume target=\(secondsText(target)) position=\(secondsText(currentPosition)) attempt=\(pendingInitialResumeRetryCount)",
             type: "MPV"
         )
         rendererSeek(to: target)
@@ -10715,8 +10715,8 @@ extension PlayerViewController: PiPControllerDelegate {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
         if metalMPVRenderer != nil {
             logPictureInPicture("scene-will-deactivate pending MoltenVK GPU sample-buffer PiP handoff until background confirmation")
-            primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate-metal")
-            scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate-metal", delay: 0.35)
+            primeMPVAppExitPictureInPictureIfNeeded(source: "scene-will-deactivate-moltenvk")
+            scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: "scene-will-deactivate-moltenvk", delay: 0.35)
             return
         }
 #endif
@@ -10850,7 +10850,7 @@ extension PlayerViewController: PiPControllerDelegate {
             guard !pending else {
                 // See appWillEnterForeground: starting PiP itself briefly foregrounds the
                 // app, so tearing down an in-flight start here races AVKit's didStart and
-                // makes the PiP window black (and breaks Metal's auto-PiP on backgrounding).
+                // makes the PiP window black (and breaks MoltenVK auto-PiP on backgrounding).
                 // Leave it alone; didStart -> activate shows it, recovery paths handle failure.
                 self.logPictureInPicture("\(source): keeping in-flight PiP start (no teardown) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
                 return

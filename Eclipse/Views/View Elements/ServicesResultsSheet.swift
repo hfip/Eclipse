@@ -3836,7 +3836,7 @@ struct ModulesSearchResultsSheet: View {
 
             // Warm the resolved stream as early as possible — while the player is still being
             // presented and MPV initializes — so the byte cache is primed before MPV requests
-            // the first range. This is self-gated inside prewarm() to the Metal MPV + warmup
+            // the first range. This is self-gated inside prewarm() to the MoltenVK MPV + warmup
             // path, so it is a no-op for other players/renderers/settings. Also covers the
             // next-episode launch, which re-enters this same resolution path.
             ExperimentalMPVPreloadManager.shared.prewarm(

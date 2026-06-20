@@ -421,12 +421,12 @@ struct PlayerSettingsView: View {
             return "MPV advanced features require external playback set to Default."
         }
         if store.mpvRenderBackend != .metal {
-            return "MPV advanced features require the Metal MPV renderer."
+            return "MPV advanced features require the MoltenVK MPV renderer."
         }
         if !MPVRenderBackendSupport.metalIsFullySupported {
-            return "MPV advanced features require the bundled Metal renderer."
+            return "MPV advanced features require the bundled MoltenVK renderer."
         }
-        return "MPV advanced features require the Metal MPV renderer."
+        return "MPV advanced features require the MoltenVK MPV renderer."
     }
 
     var body: some View {
@@ -545,7 +545,7 @@ struct PlayerSettingsView: View {
                             HStack(spacing: 10) {
                                 Image(systemName: "lock.fill")
                                     .foregroundColor(.white.opacity(0.5))
-                                Text("Requires Metal MPV")
+                                Text("Requires MoltenVK MPV")
                                     .font(.subheadline)
                                     .foregroundColor(.white.opacity(0.5))
                                 Spacer(minLength: 0)
@@ -553,7 +553,7 @@ struct PlayerSettingsView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
                         }
-                        GlassSectionFooter("Select MPV, keep external playback set to Default, and use the Metal renderer to enable MPV advanced playback features.")
+                        GlassSectionFooter("Select MPV, keep external playback set to Default, and use the MoltenVK renderer to enable MPV advanced playback features.")
                     }
                 }
             }
@@ -712,7 +712,7 @@ struct PlayerSettingsView: View {
                 }
 
                 GlassDivider(leadingInset: 16)
-                GlassDetailRow(title: "Metal Quality", subtitle: store.mpvMetalQualityProfile.settingsDescription) {
+                GlassDetailRow(title: "MoltenVK Quality", subtitle: store.mpvMetalQualityProfile.settingsDescription) {
                     Picker("", selection: $store.mpvMetalQualityProfile) {
                         ForEach(MPVMetalQualityProfile.allCases) { profile in
                             Text(profile.displayName).tag(profile)
@@ -725,7 +725,7 @@ struct PlayerSettingsView: View {
                 GlassDivider(leadingInset: 16)
                 settingsToggleRow(
                     title: "Performance Overlay",
-                    detail: "Show a small on-screen HUD during Metal playback with live CPU usage, thermal state, and the active quality profile (Sharp / Balanced / Low Heat).",
+                    detail: "Show a small on-screen HUD during MoltenVK playback with live CPU usage, thermal state, and the active quality profile (Sharp / Balanced / Low Heat).",
                     binding: $store.mpvPerformanceOverlayEnabled
                 )
 
