@@ -1212,13 +1212,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logMPV("rendererLoad url=\(url.absoluteString) preset=\(preset.id.rawValue) headers=\(headers?.count ?? 0) pendingSeek=\(secondsText(pendingSeekTime)) cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))")
         }
         renderer.load(url: url, with: preset, headers: headers)
+        invalidateRendererTrackCaches()
     }
-    
+
     private func rendererReloadCurrentItem() {
         if let vlc = vlcRenderer {
             logVLCUI("rendererReloadCurrentItem cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration))", type: "Stream")
         }
         renderer.reloadCurrentItem()
+        invalidateRendererTrackCaches()
     }
     
     private func rendererApplyPreset(_ preset: PlayerPreset) {
@@ -1635,6 +1637,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logMPV("rendererSetAudioTrack id=\(id) userSelected=\(userSelectedAudioTrack)")
         }
         renderer.setAudioTrack(id: id)
+        audioTrackCacheValid = false
     }
     
     private func rendererGetCurrentAudioTrackId() -> Int {
@@ -1666,6 +1669,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         lastRequestedEmbeddedSubtitleTrackId = id
         renderer.setSubtitleTrack(id: id)
+        subtitleTrackCacheValid = false
     }
     
     private func rendererGetCurrentSubtitleTrackId() -> Int {
@@ -1680,10 +1684,51 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         lastRequestedEmbeddedSubtitleTrackId = nil
         renderer.disableSubtitles()
+        subtitleTrackCacheValid = false
     }
     
     private func rendererRefreshSubtitleOverlay() {
         renderer.refreshSubtitleOverlay()
+    }
+
+    // MARK: - Renderer track cache
+    // Menu rebuilds (e.g. subtitle-appearance taps) read these snapshots instead of querying the
+    // renderer synchronously on every interaction. On the Metal sample-buffer path each live track
+    // query blocks the main thread, so repeated per-tap reads were felt as menu lag. The snapshots
+    // are invalidated whenever tracks can actually change (new file load, explicit set/disable/
+    // load-external, the track-change delegate, and the post-load readiness pollers) and lazily
+    // refreshed on the next read — staying correct while removing the per-tap round-trips.
+    private var cachedMenuSubtitleTrackDescriptors: [SubtitleTrackDescriptor] = []
+    private var subtitleTrackCacheValid = false
+    private var cachedMenuAudioDetailedTracks: [(Int, String, String)] = []
+    private var cachedMenuCurrentAudioTrackId: Int = -1
+    private var audioTrackCacheValid = false
+
+    private func invalidateRendererTrackCaches() {
+        subtitleTrackCacheValid = false
+        audioTrackCacheValid = false
+    }
+
+    private func menuSubtitleTrackDescriptors() -> [SubtitleTrackDescriptor] {
+        if !subtitleTrackCacheValid {
+            cachedMenuSubtitleTrackDescriptors = rendererGetSubtitleTrackDescriptors()
+            subtitleTrackCacheValid = true
+        }
+        return cachedMenuSubtitleTrackDescriptors
+    }
+
+    private func menuAudioDetailedTracks() -> [(Int, String, String)] {
+        if !audioTrackCacheValid {
+            cachedMenuAudioDetailedTracks = rendererGetAudioTracksDetailed()
+            cachedMenuCurrentAudioTrackId = rendererGetCurrentAudioTrackId()
+            audioTrackCacheValid = true
+        }
+        return cachedMenuAudioDetailedTracks
+    }
+
+    private func menuCurrentAudioTrackId() -> Int {
+        _ = menuAudioDetailedTracks()
+        return cachedMenuCurrentAudioTrackId
     }
     
     private func rendererLoadExternalSubtitles(urls: [String], names: [String]? = nil, enforce: Bool = false) {
@@ -1693,6 +1738,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logMPV("rendererLoadExternalSubtitles count=\(urls.count) names=\(names?.count ?? 0) enforce=\(enforce) urls=\(urls.joined(separator: " | "))")
         }
         renderer.loadExternalSubtitles(urls: urls, names: names, enforce: enforce)
+        subtitleTrackCacheValid = false
     }
 
     private func rendererDisableSubtitlesIfReady(reason: String) {
@@ -4082,17 +4128,18 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateCurrentSubtitleAppearance() {
+        // Applying the style IS the overlay refresh — every renderer's refreshSubtitleOverlay()
+        // simply re-applies lastAppliedSubtitleStyle — so apply it exactly once. The previous
+        // trailing rendererRefreshSubtitleOverlay() re-applied the identical style, doubling the
+        // synchronous mpv `set` commands on every appearance tap (felt as lag on the Metal path).
         rendererApplySubtitleStyle(currentSubtitleStyle())
 
-        if isVLCCustomSubtitleOverlayEnabled {
-            applyVLCSubtitleOverlayPositionSetting()
-            updateVLCSubtitleOverlay(for: cachedPosition)
-            if subtitleModel.isVisible && currentSubtitleIndex < subtitleURLs.count {
-                loadCurrentSubtitle()
-                return
-            }
+        guard isVLCCustomSubtitleOverlayEnabled else { return }
+        applyVLCSubtitleOverlayPositionSetting()
+        updateVLCSubtitleOverlay(for: cachedPosition)
+        if subtitleModel.isVisible && currentSubtitleIndex < subtitleURLs.count {
+            loadCurrentSubtitle()
         }
-        rendererRefreshSubtitleOverlay()
     }
 
     private func updateVLCSubtitleOverlay(for time: Double) {
@@ -4612,8 +4659,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func showMPVAudioMenu() {
-        let detailedTracks = rendererGetAudioTracksDetailed()
-        let currentAudioTrackId = rendererGetCurrentAudioTrackId()
+        let detailedTracks = menuAudioDetailedTracks()
+        let currentAudioTrackId = menuCurrentAudioTrackId()
         let actions: [PlayerOverlayMenuAction]
         if detailedTracks.isEmpty {
             actions = [makeOverlayAction(title: "No audio tracks available", isEnabled: false) {}]
@@ -4677,6 +4724,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateAudioTracksMenuWhenReady(attempt: Int = 0) {
+        // Tracks may have just appeared/changed (async discovery after load) — re-read fresh.
+        audioTrackCacheValid = false
         // Stop retrying if user manually selected a track
         if userSelectedAudioTrack {
             updateAudioTracksMenu()
@@ -4703,6 +4752,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func updateSubtitleTracksMenuWhenReady(attempt: Int = 0) {
+        // Tracks may have just appeared/changed (async discovery after load) — re-read fresh.
+        subtitleTrackCacheValid = false
         if userSelectedSubtitleTrack {
             updateSubtitleTracksMenu()
             return
@@ -4731,10 +4782,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateAudioTracksMenu() {
-        let detailedTracks = rendererGetAudioTracksDetailed()
+        let detailedTracks = menuAudioDetailedTracks()
         let tracks = detailedTracks.map { ($0.0, $0.1) }
         let isAnime = isAnimeContent()
-        let currentAudioTrackId = rendererGetCurrentAudioTrackId()
+        let currentAudioTrackId = menuCurrentAudioTrackId()
         
         // Always show the audio button so the user can view the menu even when empty
         audioButton.isHidden = false
@@ -6190,7 +6241,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func nativeSubtitleTracksForMenu(canReadNativeTracks: Bool = true) -> [SubtitleTrackDescriptor] {
         guard canReadNativeTracks else { return [] }
-        return rendererGetSubtitleTrackDescriptors()
+        return menuSubtitleTrackDescriptors()
             .filter {
                 $0.id >= 0 &&
                 !isDisabledTrackName($0.name) &&
@@ -9780,6 +9831,7 @@ extension PlayerViewController: MPVNativeRendererDelegate {
         if isClosing { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.invalidateRendererTrackCaches()
             self.updateAudioTracksMenu()
             self.updateSubtitleTracksMenu()
         }
