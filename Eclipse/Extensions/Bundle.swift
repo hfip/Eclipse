@@ -14,6 +14,16 @@ extension Bundle {
     var buildNumber: String {
         infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
+    var releaseVersion: String {
+        let version = infoDictionary?["EclipseReleaseVersion"] as? String
+        let trimmedVersion = version?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedVersion = trimmedVersion,
+           !trimmedVersion.isEmpty,
+           !trimmedVersion.hasPrefix("$(") {
+            return trimmedVersion
+        }
+        return appVersion
+    }
     var distributionChannel: String {
         let channel = infoDictionary?["EclipseDistributionChannel"] as? String
         let trimmedChannel = channel?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -99,7 +109,7 @@ enum GitHubReleaseChecker {
         do {
             let release = try await fetchLatestRelease()
             let latestVersion = normalizedVersionString(from: release.tagName)
-            let currentVersion = normalizedVersionString(from: Bundle.main.appVersion)
+            let currentVersion = normalizedVersionString(from: Bundle.main.releaseVersion)
             let updateAvailable = isVersion(latestVersion, newerThan: currentVersion)
 
             UserDefaults.standard.set(updateAvailable, forKey: updateAvailableKey)
@@ -116,9 +126,9 @@ enum GitHubReleaseChecker {
             }
 
             if updateAvailable {
-                Logger.shared.log("Update available: current=\(Bundle.main.appVersion), latest=\(release.tagName)", type: "Update")
+                Logger.shared.log("Update available: currentRelease=\(Bundle.main.releaseVersion), appVersion=\(Bundle.main.appVersion), latest=\(release.tagName)", type: "Update")
             } else {
-                Logger.shared.log("App is up to date: current=\(Bundle.main.appVersion), latest=\(release.tagName)", type: "Update")
+                Logger.shared.log("App is up to date: currentRelease=\(Bundle.main.releaseVersion), appVersion=\(Bundle.main.appVersion), latest=\(release.tagName)", type: "Update")
             }
         } catch {
             Logger.shared.log("GitHub release check failed: \(error.localizedDescription)", type: "Update")
@@ -139,7 +149,7 @@ enum GitHubReleaseChecker {
         }
 
         let latestVersion = defaults.string(forKey: latestVersionKey) ?? ""
-        let currentVersion = normalizedVersionString(from: Bundle.main.appVersion)
+        let currentVersion = normalizedVersionString(from: Bundle.main.releaseVersion)
         return isVersion(normalizedVersionString(from: latestVersion), newerThan: currentVersion)
     }
 
@@ -217,7 +227,7 @@ enum GitHubReleaseChecker {
         }
 
         let latestVersion = normalizedVersionString(from: defaults.string(forKey: latestVersionKey) ?? "")
-        let currentVersion = normalizedVersionString(from: Bundle.main.appVersion)
+        let currentVersion = normalizedVersionString(from: Bundle.main.releaseVersion)
         guard !latestVersion.isEmpty else {
             defaults.set(false, forKey: updateAvailableKey)
             defaults.set(false, forKey: pendingPromptKey)

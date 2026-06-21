@@ -46,7 +46,9 @@ class CatalogManager: ObservableObject {
             Catalog(id: "upcomingAnime", name: "Upcoming Anime", source: .anilist, isEnabled: false, order: 19),
             Catalog(id: "bestTVShows", name: "Best TV Shows", source: .tmdb, isEnabled: false, order: 20, displayStyle: .ranked),
             Catalog(id: "bestMovies", name: "Best Movies", source: .tmdb, isEnabled: false, order: 21, displayStyle: .ranked),
-            Catalog(id: "bestAnime", name: "Best Anime", source: .anilist, isEnabled: false, order: 22, displayStyle: .ranked)
+            Catalog(id: "bestAnime", name: "Best Anime", source: .anilist, isEnabled: false, order: 22, displayStyle: .ranked),
+            Catalog(id: Catalog.upNextCatalogId, name: "Up Next", source: .local, isEnabled: false, order: 23, displayStyle: .continueWatching),
+            Catalog(id: Catalog.traktContinueWatchingCatalogId, name: "Trakt Continue Watching", source: .trakt, isEnabled: false, order: 24, displayStyle: .continueWatching)
         ]
         
         // Try to load saved catalogs
@@ -85,8 +87,12 @@ class CatalogManager: ObservableObject {
     }
     
     func toggleCatalog(id: String) {
+        guard let catalog = catalogs.first(where: { $0.id == id }),
+              isCatalogVisible(catalog) else {
+            return
+        }
+
         if performanceModeEnabled,
-           let catalog = catalogs.first(where: { $0.id == id }),
            PerformanceModeSettings.isAnimeCatalog(catalog) {
             let current = isCatalogEffectivelyEnabled(catalog)
             setFastAnimeCatalogEnabled(id: id, isEnabled: !current)
@@ -127,7 +133,7 @@ class CatalogManager: ObservableObject {
 
     var traktPublicListCatalogs: [Catalog] {
         catalogs
-            .filter { $0.source == .trakt && $0.traktListEndpointPath != nil }
+            .filter { $0.source == .trakt && $0.traktListEndpointPath != nil && isCatalogVisible($0) }
             .sorted { $0.order < $1.order }
     }
 
@@ -189,9 +195,32 @@ class CatalogManager: ObservableObject {
         catalogs.move(fromOffsets: from, toOffset: to)
         normalizeOrdersAndSave(sortFirst: false)
     }
+
+    var visibleCatalogs: [Catalog] {
+        catalogs.filter { isCatalogVisible($0) }.sorted { $0.order < $1.order }
+    }
+
+    func moveVisibleCatalog(from source: IndexSet, to destination: Int) {
+        var visible = visibleCatalogs
+        visible.move(fromOffsets: source, toOffset: destination)
+        var visibleIterator = visible.makeIterator()
+
+        catalogs = catalogs.map { catalog in
+            guard isCatalogVisible(catalog) else { return catalog }
+            return visibleIterator.next() ?? catalog
+        }
+        normalizeOrdersAndSave(sortFirst: false)
+    }
     
     func getEnabledCatalogs() -> [Catalog] {
-        catalogs.filter { isCatalogEffectivelyEnabled($0) }.sorted { $0.order < $1.order }
+        catalogs.filter { isCatalogVisible($0) && isCatalogEffectivelyEnabled($0) }.sorted { $0.order < $1.order }
+    }
+
+    func isCatalogVisible(_ catalog: Catalog) -> Bool {
+        if catalog.requiresTraktConnection {
+            return TrackerManager.shared.trackerState.getAccount(for: .trakt) != nil
+        }
+        return true
     }
 
     func syncStremioAddonCatalogs(from addons: [StremioAddon]) {
@@ -348,6 +377,9 @@ enum PerformanceModeSettings {
 }
 
 struct Catalog: Identifiable, Codable {
+    static let upNextCatalogId = "upNext"
+    static let traktContinueWatchingCatalogId = "traktContinueWatching"
+
     let id: String
     let name: String
     let source: CatalogSource
@@ -387,6 +419,7 @@ struct Catalog: Identifiable, Codable {
         case company
         case ranked
         case featured
+        case continueWatching
     }
     
     init(
@@ -496,6 +529,10 @@ struct Catalog: Identifiable, Codable {
             return nil
         }
         return "\(user)/\(slug)"
+    }
+
+    var requiresTraktConnection: Bool {
+        source == .trakt
     }
 
     func updatingUserState(isEnabled: Bool, order: Int) -> Catalog {

@@ -11,6 +11,10 @@ on:
         description: "Bundle ID for this unsigned build. Empty uses IOS_BUNDLE_IDENTIFIER repo variable, then app.Eclipse.Soupy."
         required: false
         default: ""
+      release_version:
+        description: "GitHub updater release version stamped into the app. Empty uses MARKETING_VERSION."
+        required: false
+        default: ""
 
 concurrency:
   group: ios-unsigned-ipa-${{ github.ref }}
@@ -35,6 +39,7 @@ jobs:
         env:
           INPUT_APP_NAME: ${{ inputs.app_name }}
           INPUT_BUNDLE_IDENTIFIER: ${{ inputs.bundle_identifier }}
+          INPUT_RELEASE_VERSION: ${{ inputs.release_version }}
           VARIABLE_APP_NAME: ${{ vars.IOS_APP_NAME }}
           VARIABLE_BUNDLE_IDENTIFIER: ${{ vars.IOS_BUNDLE_IDENTIFIER }}
           VARIABLE_DEVELOPMENT_TEAM: ${{ vars.IOS_DEVELOPMENT_TEAM }}
@@ -44,9 +49,15 @@ jobs:
           APP_NAME="${INPUT_APP_NAME:-${VARIABLE_APP_NAME:-Eclipse}}"
           BUNDLE_IDENTIFIER="${INPUT_BUNDLE_IDENTIFIER:-${VARIABLE_BUNDLE_IDENTIFIER:-app.Eclipse.Soupy}}"
           DEVELOPMENT_TEAM="${VARIABLE_DEVELOPMENT_TEAM:-ANMK3Y568U}"
+          RELEASE_VERSION="${INPUT_RELEASE_VERSION:-}"
 
           if ! [[ "$BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$ ]]; then
             echo "::error::Bundle identifier '$BUNDLE_IDENTIFIER' does not look valid. Example: com.yourname.eclipse"
+            exit 1
+          fi
+
+          if [ -n "$RELEASE_VERSION" ] && ! [[ "$RELEASE_VERSION" =~ ^v?[0-9]+([.][0-9]+){0,3}([.-][A-Za-z0-9]+)*$ ]]; then
+            echo "::error::Release version '$RELEASE_VERSION' does not look valid. Example: 2.0.0 or v2.0.0"
             exit 1
           fi
 
@@ -54,6 +65,7 @@ jobs:
             echo "APP_NAME=$APP_NAME"
             echo "BUNDLE_IDENTIFIER=$BUNDLE_IDENTIFIER"
             echo "DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
+            echo "RELEASE_VERSION=$RELEASE_VERSION"
           } >> "$GITHUB_ENV"
 
       - name: Create local build config
@@ -78,6 +90,9 @@ jobs:
             printf 'APP_NAME = %s\n' "$APP_NAME"
             printf 'BUNDLE_IDENTIFIER = %s\n' "$BUNDLE_IDENTIFIER"
             printf 'DEVELOPMENT_TEAM = %s\n' "$DEVELOPMENT_TEAM"
+            if [ -n "${RELEASE_VERSION:-}" ]; then
+              printf 'ECLIPSE_RELEASE_VERSION = %s\n' "$RELEASE_VERSION"
+            fi
             printf '%s\n' 'CODE_SIGN_ENTITLEMENTS ='
             printf '%s\n' 'ICLOUD_CONTAINER_ID ='
             printf 'TMDB_API_KEY = %s\n' "${TMDB_API_KEY:-}"
@@ -96,11 +111,29 @@ jobs:
         run: |
           set -euo pipefail
 
+          # MPVKit tracks the eclipse-mpv-metal branch (kind = branch in project.pbxproj). The
+          # resolver is conservative: left alone it honors the revision committed in Package.resolved
+          # and never advances a branch dep to its tip, so a new kit "Build and Release" would be
+          # ignored until someone hand-edits the pin. Dropping just the MPVKit pin forces the resolver
+          # to fetch the current branch tip — the latest kit build — while every other dependency
+          # stays pinned (conservative resolution keeps satisfied pins untouched). No manual re-pin.
+          RESOLVED="Eclipse.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+          if command -v jq >/dev/null 2>&1 && [ -f "$RESOLVED" ]; then
+            tmp="$(mktemp)"
+            jq 'del(.pins[] | select(.identity == "mpvkit")) | del(.originHash)' "$RESOLVED" > "$tmp"
+            mv "$tmp" "$RESOLVED"
+            echo "Dropped MPVKit pin; resolver will use eclipse-mpv-metal branch tip."
+          fi
+
           xcodebuild -resolvePackageDependencies \
             -project Eclipse.xcodeproj \
             -scheme Eclipse \
             -skipPackagePluginValidation \
             -skipMacroValidation
+
+          if command -v jq >/dev/null 2>&1 && [ -f "$RESOLVED" ]; then
+            echo "Resolved MPVKit revision: $(jq -r '.pins[] | select(.identity == "mpvkit") | .state.revision' "$RESOLVED")"
+          fi
 
       - name: Build unsigned archive
         run: |

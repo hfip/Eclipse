@@ -2509,8 +2509,7 @@ final class TrackerManager: NSObject, ObservableObject {
     }
 
     func fetchTraktContinueWatchingItems() async -> [ContinueWatchingItem] {
-        guard trackerState.mergeTraktContinueWatching,
-              let account = trackerState.getAccount(for: .trakt) else {
+        guard let account = trackerState.getAccount(for: .trakt) else {
             return []
         }
 

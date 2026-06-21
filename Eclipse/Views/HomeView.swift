@@ -63,6 +63,8 @@ struct HomeView: View {
     @State private var isHoveringWatchNow = false
     @State private var isHoveringWatchlist = false
     @State private var continueWatchingItems: [ContinueWatchingItem] = []
+    @State private var upNextItems: [ContinueWatchingItem] = []
+    @State private var traktContinueWatchingItems: [ContinueWatchingItem] = []
     @State private var continueWatchingRefreshID = UUID()
     @State private var didReportStartupReady = false
     @State private var observedPerformanceMode = PerformanceModeSettings.isEnabled
@@ -258,6 +260,10 @@ struct HomeView: View {
         .onChangeComp(of: trackerManager.trackerState.mergeTraktContinueWatching) { _, _ in
             refreshContinueWatchingItems()
         }
+        .onReceive(trackerManager.$trackerState) { _ in
+            refreshContinueWatchingItems()
+            scheduleHomeCatalogReloadIfNeeded()
+        }
         .onChangeComp(of: contentFilter.filterHorror) { _, _ in
             if homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
@@ -270,6 +276,7 @@ struct HomeView: View {
             homeViewModel.refreshHeroContentForSettingsChange()
         }
         .onReceive(catalogManager.$catalogs) { _ in
+            refreshContinueWatchingItems()
             scheduleHomeCatalogReloadIfNeeded()
         }
         .onReceive(catalogManager.$performanceModeEnabled) { enabled in
@@ -846,6 +853,8 @@ struct HomeView: View {
                     return false
                 case .featured:
                     return !(homeViewModel.widgetData["featured"] ?? []).isEmpty
+                case .continueWatching:
+                    return !playbackItems(for: catalog).isEmpty
                 }
             }
             
@@ -913,6 +922,17 @@ struct HomeView: View {
                         tmdbService: tmdbService,
                         metrics: catalogMetrics
                     )
+
+                case .continueWatching:
+                    let items = playbackItems(for: catalog)
+                    if !items.isEmpty {
+                        ContinueWatchingSection(
+                            title: catalog.name,
+                            items: items,
+                            tmdbService: tmdbService,
+                            onDataChanged: refreshContinueWatchingItems
+                        )
+                    }
                 }
                 
                 if index < catalogs.count - 1 && !ExperimentalFeatureState.isEnabledAtLaunch {
@@ -991,23 +1011,43 @@ struct HomeView: View {
         continueWatchingRefreshID = refreshID
         let localItems = ProgressManager.shared.getContinueWatchingItems()
         continueWatchingItems = localItems
+        let enabledIds = Set(enabledCatalogs.map(\.id))
+        let shouldLoadUpNext = enabledIds.contains(Catalog.upNextCatalogId)
+        let shouldLoadTraktContinueWatching = enabledIds.contains(Catalog.traktContinueWatchingCatalogId)
+
+        if !shouldLoadUpNext {
+            upNextItems = []
+        }
+        if !shouldLoadTraktContinueWatching {
+            traktContinueWatchingItems = []
+        }
 
         Task { @MainActor in
-            async let traktItems = trackerManager.fetchTraktContinueWatchingItems()
-            async let watchNextItems = resolveWatchNextItems()
-            let mergedItems = mergeContinueWatchingItems(
-                localItems: localItems,
-                traktItems: await traktItems,
-                watchNextItems: await watchNextItems
-            )
+            async let watchNextItems: [ContinueWatchingItem] = shouldLoadUpNext ? resolveWatchNextItems() : []
+            async let traktItems: [ContinueWatchingItem] = shouldLoadTraktContinueWatching ? trackerManager.fetchTraktContinueWatchingItems() : []
+            let resolvedWatchNextItems = await watchNextItems
+            let resolvedTraktItems = await traktItems
             guard continueWatchingRefreshID == refreshID else { return }
-            continueWatchingItems = mergedItems
+            upNextItems = resolvedWatchNextItems
+            traktContinueWatchingItems = resolvedTraktItems
+        }
+    }
+
+    private func playbackItems(for catalog: Catalog) -> [ContinueWatchingItem] {
+        switch catalog.id {
+        case Catalog.upNextCatalogId:
+            return upNextItems
+        case Catalog.traktContinueWatchingCatalogId:
+            return traktContinueWatchingItems
+        default:
+            return []
         }
     }
 
     private func resolveWatchNextItems() async -> [ContinueWatchingItem] {
         var items: [ContinueWatchingItem] = []
-        for candidate in ProgressManager.shared.getWatchNextCandidates().prefix(10) {
+        for candidate in ProgressManager.shared.getWatchNextCandidates(limit: 20) {
+            guard items.count < 10 else { break }
             if let item = await resolveWatchNextItem(candidate) {
                 items.append(item)
             }
@@ -1018,17 +1058,27 @@ struct HomeView: View {
     private func resolveWatchNextItem(_ candidate: WatchNextCandidate) async -> ContinueWatchingItem? {
         if let playbackContext = candidate.playbackContext,
            playbackContext.hasAnimeMediaId {
-            guard !playbackContext.isSpecial,
-                  let episodeCount = playbackContext.animeSeasonEpisodeCount,
-                  candidate.episodeNumber < episodeCount else {
+            guard !playbackContext.isSpecial else {
                 return nil
             }
-            return makeWatchNextItem(
-                candidate: candidate,
-                seasonNumber: candidate.seasonNumber,
-                episodeNumber: candidate.episodeNumber + 1,
-                playbackContext: playbackContext.forEpisodeNumber(candidate.episodeNumber + 1)
-            )
+
+            if let episodeCount = playbackContext.animeSeasonEpisodeCount,
+               candidate.episodeNumber < episodeCount {
+                let nextEpisodeNumber = candidate.episodeNumber + 1
+                guard isWatchNextTargetAvailable(
+                    showId: candidate.tmdbId,
+                    seasonNumber: candidate.seasonNumber,
+                    episodeNumber: nextEpisodeNumber
+                ) else {
+                    return nil
+                }
+                return makeWatchNextItem(
+                    candidate: candidate,
+                    seasonNumber: candidate.seasonNumber,
+                    episodeNumber: nextEpisodeNumber,
+                    playbackContext: playbackContext.forEpisodeNumber(nextEpisodeNumber)
+                )
+            }
         }
 
         do {
@@ -1037,7 +1087,15 @@ struct HomeView: View {
                 seasonNumber: candidate.seasonNumber
             )
             if let nextEpisode = season.episodes
-                .filter({ $0.episodeNumber > candidate.episodeNumber && episodeHasAired($0) })
+                .filter({
+                    $0.episodeNumber > candidate.episodeNumber &&
+                    episodeHasAired($0) &&
+                    isWatchNextTargetAvailable(
+                        showId: candidate.tmdbId,
+                        seasonNumber: $0.seasonNumber,
+                        episodeNumber: $0.episodeNumber
+                    )
+                })
                 .min(by: { $0.episodeNumber < $1.episodeNumber }) {
                 return makeWatchNextItem(
                     candidate: candidate,
@@ -1056,7 +1114,14 @@ struct HomeView: View {
                     seasonNumber: nextSeason.seasonNumber
                 )
                 if let firstEpisode = season.episodes
-                    .filter({ episodeHasAired($0) })
+                    .filter({
+                        episodeHasAired($0) &&
+                        isWatchNextTargetAvailable(
+                            showId: candidate.tmdbId,
+                            seasonNumber: $0.seasonNumber,
+                            episodeNumber: $0.episodeNumber
+                        )
+                    })
                     .min(by: { $0.episodeNumber < $1.episodeNumber }) {
                     return makeWatchNextItem(
                         candidate: candidate,
@@ -1071,6 +1136,16 @@ struct HomeView: View {
         }
 
         return nil
+    }
+
+    private func isWatchNextTargetAvailable(showId: Int, seasonNumber: Int, episodeNumber: Int) -> Bool {
+        seasonNumber > 0 &&
+        episodeNumber > 0 &&
+        !ProgressManager.shared.hasStartedOrCompletedEpisode(
+            showId: showId,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber
+        )
     }
 
     private func makeWatchNextItem(
@@ -1105,36 +1180,6 @@ struct HomeView: View {
             return true
         }
         return parsedDate <= Date()
-    }
-
-    private func mergeContinueWatchingItems(
-        localItems: [ContinueWatchingItem],
-        traktItems: [ContinueWatchingItem],
-        watchNextItems: [ContinueWatchingItem],
-        limit: Int = 10
-    ) -> [ContinueWatchingItem] {
-        var itemByMediaKey: [String: ContinueWatchingItem] = [:]
-
-        for item in watchNextItems + localItems + traktItems {
-            let key = "\(item.isMovie ? "movie" : "show")|\(item.tmdbId)"
-            guard let existing = itemByMediaKey[key] else {
-                itemByMediaKey[key] = item
-                continue
-            }
-
-            if existing.isWatchNext != item.isWatchNext {
-                if existing.isWatchNext {
-                    itemByMediaKey[key] = item
-                }
-            } else if item.lastUpdated > existing.lastUpdated {
-                itemByMediaKey[key] = item
-            }
-        }
-
-        return itemByMediaKey.values
-            .sorted { $0.lastUpdated > $1.lastUpdated }
-            .prefix(limit)
-            .map { $0 }
     }
 
     private static let tmdbDateFormatter: DateFormatter = {
@@ -1608,6 +1653,7 @@ struct MediaCard: View {
 }
 
 struct ContinueWatchingSection: View {
+    var title: String = "Continue Watching"
     let items: [ContinueWatchingItem]
     let tmdbService: TMDBService
     let onDataChanged: () -> Void
@@ -1617,7 +1663,7 @@ struct ContinueWatchingSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Continue Watching")
+                Text(title)
                     .font(isTvOS ? .headline : .title2)
                     .fontWeight(.bold)
                     .foregroundColor(.white)

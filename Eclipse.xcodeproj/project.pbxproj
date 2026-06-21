@@ -1433,6 +1433,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				/* Do not change or else TestFlight will have issues. Use ECLIPSE_RELEASE_VERSION for GitHub updater releases. */
 				MARKETING_VERSION = 1.2.0;
 				OTHER_LDFLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = "${BUNDLE_IDENTIFIER}";
@@ -1489,6 +1490,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				/* Do not change or else TestFlight will have issues. Use ECLIPSE_RELEASE_VERSION for GitHub updater releases. */
 				MARKETING_VERSION = 1.2.0;
 				OTHER_LDFLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = "${BUNDLE_IDENTIFIER}";
@@ -1531,8 +1533,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/Soupy-dev/MPVKit";
 			requirement = {
-				kind = revision;
-				revision = 104faf8e40b94af93c624594c4dab66aad4e24e8;
+				branch = eclipse-mpv-metal;
+				kind = branch;
 			};
 		};
 		13A46CFB2EF5943400423BC6 /* XCRemoteSwiftPackageReference "FakeWebKit" */ = {

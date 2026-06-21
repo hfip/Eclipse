@@ -8,6 +8,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>EclipseDistributionChannel</key>
 	<string>$(ECLIPSE_DISTRIBUTION_CHANNEL)</string>
+	<key>EclipseReleaseVersion</key>
+	<string>$(ECLIPSE_RELEASE_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

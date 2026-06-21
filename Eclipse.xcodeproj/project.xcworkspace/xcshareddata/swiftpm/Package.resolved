@@ -33,7 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Soupy-dev/MPVKit",
       "state" : {
-        "revision" : "104faf8e40b94af93c624594c4dab66aad4e24e8"
+        "branch" : "eclipse-mpv-metal",
+        "revision" : "884a7d6d95cd0014836f58011330e575863fa715"
       }
     },
     {

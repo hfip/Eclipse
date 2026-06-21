@@ -2153,17 +2153,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func disarmMPVPictureInPictureRestartAfterStop(reason: String) {
         let appState = UIApplication.shared.applicationState
-        // Always drop automatic-from-inline immediately while PiP is stopping. For the
-        // OpenGL renderer the sample-buffer layer is the on-screen inline content AVKit
-        // watches, so leaving this enabled in the foreground lets AVKit re-trigger PiP the
-        // instant the user closes it — an endless close/reopen loop. It re-arms on the next
-        // backgrounding via primeMPVAppExitPictureInPictureIfNeeded -> configure...automation.
-        pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
-        if appState == .active {
-            cancelMPVPictureInPictureStartRequests(reason: reason)
-        } else {
-            suppressMPVAppExitPictureInPictureUntilForeground(reason: "\(reason)-\(applicationStateDescription(appState))")
-        }
+        logPictureInPicture("MPV PiP restart disarmed after stop reason=\(reason) appState=\(applicationStateDescription(appState)) -> suppress-until-foreground")
+        // Drop automatic-from-inline AND suppress the custom app-exit auto-PiP until the app
+        // genuinely returns to the foreground. Previously the .active case only cancelled pending
+        // requests, which let the next transient scene-will-deactivate (the PiP window appearing, a
+        // sheet, Control Center) eagerly restart PiP through the pre-background path in
+        // scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation — an endless close/reopen
+        // loop on the GPU path. (Unlike the OpenGL path, the inline surface AVKit watches is the
+        // Metal layer, not the sample-buffer layer, so dropping the system flag alone doesn't gate
+        // the custom restart.) Suppression lifts on a real foreground return (scene-phase-active /
+        // restoreUI); manual PiP via the button bypasses the auto-exit path and is unaffected.
+        suppressMPVAppExitPictureInPictureUntilForeground(reason: "\(reason)-\(applicationStateDescription(appState))")
     }
 
     private func primeMPVAppExitPictureInPictureIfNeeded(source: String) {

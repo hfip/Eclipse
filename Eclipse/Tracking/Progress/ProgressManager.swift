@@ -147,6 +147,8 @@ final class ProgressManager: ObservableObject {
     private var debounceTask: Task<Void, Never>?
     private let accessQueue = DispatchQueue(label: "app.eclipse.soupy.progress-manager", attributes: .concurrent)
     private var durationShrinkWarningKeys: Set<String> = []
+    private static let continueWatchingMinimumProgress = 0.05
+    private static let watchedProgressThreshold = 0.85
 
     private static let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     @Published private(set) var movieProgressList: [MovieProgressEntry] = []
@@ -514,7 +516,17 @@ final class ProgressManager: ObservableObject {
         var result: Bool = false
         accessQueue.sync {
             if let entry = self.progressData.findEpisode(showId: showId, season: seasonNumber, episode: episodeNumber) {
-                result = entry.isWatched || entry.progress >= 0.85
+                result = Self.isCompletedEpisode(entry)
+            }
+        }
+        return result
+    }
+
+    func hasStartedOrCompletedEpisode(showId: Int, seasonNumber: Int, episodeNumber: Int) -> Bool {
+        var result: Bool = false
+        accessQueue.sync {
+            if let entry = self.progressData.findEpisode(showId: showId, season: seasonNumber, episode: episodeNumber) {
+                result = entry.isWatched || entry.progress > Self.continueWatchingMinimumProgress
             }
         }
         return result
@@ -686,7 +698,7 @@ final class ProgressManager: ObservableObject {
         accessQueue.sync {
             // Add movies
             let movies = self.progressData.movieProgress
-                .filter { !$0.isWatched && $0.progress > 0.05 && $0.progress < 0.85 }
+                .filter { !$0.isWatched && $0.progress > Self.continueWatchingMinimumProgress && $0.progress < Self.watchedProgressThreshold }
                 .map { movie in
                     ContinueWatchingItem(
                         id: "movie_\(movie.id)",
@@ -710,7 +722,7 @@ final class ProgressManager: ObservableObject {
             
             // Add episodes (grouped by show, keep most recent)
             var showMap: [Int: EpisodeProgressEntry] = [:]
-            for episode in self.progressData.episodeProgress where !episode.isWatched && episode.progress > 0.05 && episode.progress < 0.85 {
+            for episode in self.progressData.episodeProgress where Self.isActiveContinueWatchingEpisode(episode) {
                 if let existing = showMap[episode.showId] {
                     if episode.lastUpdated > existing.lastUpdated {
                         showMap[episode.showId] = episode
@@ -752,32 +764,62 @@ final class ProgressManager: ObservableObject {
         return items
     }
 
-    func getWatchNextCandidates() -> [WatchNextCandidate] {
+    func getWatchNextCandidates(limit: Int = 10) -> [WatchNextCandidate] {
         var candidates: [WatchNextCandidate] = []
 
         accessQueue.sync {
-            let latestByShow = Dictionary(grouping: self.progressData.episodeProgress, by: \.showId)
-                .compactMapValues { episodes in
-                    episodes.max { $0.lastUpdated < $1.lastUpdated }
-                }
+            candidates = Dictionary(grouping: self.progressData.episodeProgress, by: \.showId)
+                .compactMap { showId, episodes in
+                    let regularEpisodes = episodes.filter(Self.isRegularEpisode)
+                    guard !regularEpisodes.contains(where: Self.isActiveContinueWatchingEpisode) else {
+                        return nil
+                    }
 
-            candidates = latestByShow.values.compactMap { episode in
-                guard episode.isWatched || episode.progress >= 0.85 else { return nil }
-                let showMeta = self.progressData.getShowMetadata(showId: episode.showId)
-                return WatchNextCandidate(
-                    tmdbId: episode.showId,
-                    title: showMeta?.title ?? "",
-                    posterURL: showMeta?.posterURL,
-                    seasonNumber: episode.seasonNumber,
-                    episodeNumber: episode.episodeNumber,
-                    lastUpdated: episode.lastUpdated,
-                    playbackContext: episode.playbackContext,
-                    isAnime: episode.isAnime == true || episode.playbackContext?.hasAnimeMediaId == true
-                )
-            }
+                    let completedEpisodes = regularEpisodes.filter(Self.isCompletedEpisode)
+                    guard let frontier = completedEpisodes.max(by: Self.isEpisodeBefore) else {
+                        return nil
+                    }
+
+                    let showMeta = self.progressData.getShowMetadata(showId: showId)
+                    let lastUpdated = completedEpisodes.map(\.lastUpdated).max() ?? frontier.lastUpdated
+                    return WatchNextCandidate(
+                        tmdbId: frontier.showId,
+                        title: showMeta?.title ?? "",
+                        posterURL: showMeta?.posterURL,
+                        seasonNumber: frontier.seasonNumber,
+                        episodeNumber: frontier.episodeNumber,
+                        lastUpdated: lastUpdated,
+                        playbackContext: frontier.playbackContext,
+                        isAnime: frontier.isAnime == true || frontier.playbackContext?.hasAnimeMediaId == true
+                    )
+                }
+                .sorted { $0.lastUpdated > $1.lastUpdated }
+                .prefix(limit)
+                .map { $0 }
         }
 
         return candidates
+    }
+
+    private static func isRegularEpisode(_ episode: EpisodeProgressEntry) -> Bool {
+        episode.seasonNumber > 0 && episode.episodeNumber > 0
+    }
+
+    private static func isCompletedEpisode(_ episode: EpisodeProgressEntry) -> Bool {
+        episode.isWatched || episode.progress >= watchedProgressThreshold
+    }
+
+    private static func isActiveContinueWatchingEpisode(_ episode: EpisodeProgressEntry) -> Bool {
+        !episode.isWatched &&
+        episode.progress > continueWatchingMinimumProgress &&
+        episode.progress < watchedProgressThreshold
+    }
+
+    private static func isEpisodeBefore(_ lhs: EpisodeProgressEntry, _ rhs: EpisodeProgressEntry) -> Bool {
+        if lhs.seasonNumber == rhs.seasonNumber {
+            return lhs.episodeNumber < rhs.episodeNumber
+        }
+        return lhs.seasonNumber < rhs.seasonNumber
     }
 
     func markContinueWatchingItemAsWatched(_ item: ContinueWatchingItem) {

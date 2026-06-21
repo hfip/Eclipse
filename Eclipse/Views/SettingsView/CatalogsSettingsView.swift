@@ -9,32 +9,33 @@ import SwiftUI
 
 struct CatalogsSettingsView: View {
     @ObservedObject private var catalogManager = CatalogManager.shared
+    @ObservedObject private var trackerManager = TrackerManager.shared
     @StateObject private var accentColorManager = AccentColorManager.shared
     @State private var editMode = EditMode.active
     
     var body: some View {
         List {
             Section {
-                ForEach(catalogManager.catalogs.indices, id: \.self) { index in
+                ForEach(catalogManager.visibleCatalogs) { catalog in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(catalogManager.catalogs[index].name)
+                            Text(catalog.name)
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                             
                             HStack(spacing: 6) {
-                                Text(sourceText(for: catalogManager.catalogs[index]))
+                                Text(sourceText(for: catalog))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
 
-                                if catalogManager.isCatalogLockedByPerformanceMode(catalogManager.catalogs[index]) {
+                                if catalogManager.isCatalogLockedByPerformanceMode(catalog) {
                                     Image(systemName: "lock.fill")
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                 }
                                 
-                                if catalogManager.catalogs[index].displayStyle != .standard {
-                                    Text("\u{00B7} \(catalogManager.catalogs[index].displayStyle.rawValue.capitalized)")
+                                if catalog.displayStyle != .standard {
+                                    Text("\u{00B7} \(displayStyleText(for: catalog.displayStyle))")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -44,17 +45,17 @@ struct CatalogsSettingsView: View {
                         Spacer()
                         
                         Toggle("", isOn: Binding(
-                            get: { catalogManager.isCatalogEffectivelyEnabled(catalogManager.catalogs[index]) },
-                            set: { _ in catalogManager.toggleCatalog(id: catalogManager.catalogs[index].id) }
+                            get: { catalogManager.isCatalogEffectivelyEnabled(catalog) },
+                            set: { _ in catalogManager.toggleCatalog(id: catalog.id) }
                         ))
                         .tint(accentColorManager.currentAccentColor)
                     }
                 }
-                .onMove(perform: catalogManager.moveCatalog)
+                .onMove(perform: catalogManager.moveVisibleCatalog)
             } header: {
                 Text("Content Catalogs")
             } footer: {
-                Text("Enable/disable content catalogs and drag to reorder them. The order here determines the order on your home screen. Stremio catalog addons may reduce performance or have visual inconsistencies.")
+                Text("Enable/disable content catalogs and drag to reorder them. The order here determines the order on your home screen. Stremio catalog addons may reduce performance or have visual inconsistencies. Trakt catalogs appear after Trakt is connected.")
             }
             .eclipseExperimentalSettingsRows()
             .background(EclipseScrollTracker())
@@ -78,6 +79,18 @@ struct CatalogsSettingsView: View {
             let mediaType = Catalog.normalizedTraktListMediaType(catalog.traktListMediaType) == "movies" ? "Movies" : "Shows"
             return "Source: Trakt - List \(listIdentifier) - \(mediaType)"
         }
+        if catalog.id == Catalog.traktContinueWatchingCatalogId {
+            return "Source: Trakt - Continue Watching"
+        }
         return "Source: \(catalog.source.rawValue)"
+    }
+
+    private func displayStyleText(for style: Catalog.CatalogDisplayStyle) -> String {
+        switch style {
+        case .continueWatching:
+            return "Playback"
+        default:
+            return style.rawValue.capitalized
+        }
     }
 }
