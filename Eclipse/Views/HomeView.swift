@@ -68,6 +68,8 @@ struct HomeView: View {
     @State private var observedHomeCatalogSignature = ""
     @State private var pendingHomeCatalogReloadTask: Task<Void, Never>?
     @State private var heroCarouselDirection: HeroCarouselDirection = .forward
+    @State private var selectedHeroForDetail: TMDBSearchResult?
+    @State private var showingHeroDetail = false
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var trackerManager = TrackerManager.shared
     @State private var scrollOffset: CGFloat = 0
@@ -275,6 +277,11 @@ struct HomeView: View {
         .onChangeComp(of: heroBannerBehavior) { _, _ in
             homeViewModel.refreshHeroContentForSettingsChange()
         }
+        .onChangeComp(of: showingHeroDetail) { _, isPresented in
+            if !isPresented {
+                selectedHeroForDetail = nil
+            }
+        }
         .onReceive(catalogManager.$catalogs) { _ in
             refreshContinueWatchingItems()
             scheduleHomeCatalogReloadIfNeeded()
@@ -285,8 +292,10 @@ struct HomeView: View {
             scheduleHomeCatalogReloadIfNeeded()
         }
         .onReceive(heroCarouselTimer) { _ in
+            guard !showingHeroDetail else { return }
             advanceHeroCarousel(.forward)
         }
+        .background(heroDetailNavigationHost)
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
@@ -388,14 +397,51 @@ struct HomeView: View {
     
     @ViewBuilder
     private var heroSection: some View {
-        if ExperimentalFeatureState.isEnabledAtLaunch, let hero = homeViewModel.heroContent {
-            NavigationLink(destination: MediaDetailView(searchResult: hero)) {
-                heroSectionBody
-            }
-            .buttonStyle(.plain)
+        if ExperimentalFeatureState.isEnabledAtLaunch, homeViewModel.heroContent != nil {
+            heroSectionBody
+                .onTapGesture {
+                    openCurrentHeroDetail()
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    openCurrentHeroDetail()
+                }
         } else {
             heroSectionBody
         }
+    }
+
+    @ViewBuilder
+    private var heroDetailNavigationHost: some View {
+        if #available(iOS 16.0, *) {
+            Color.clear
+                .navigationDestination(isPresented: $showingHeroDetail) {
+                    if let selectedHeroForDetail {
+                        MediaDetailView(searchResult: selectedHeroForDetail)
+                    }
+                }
+        } else {
+            NavigationLink(
+                isActive: $showingHeroDetail,
+                destination: {
+                    if let selectedHeroForDetail {
+                        MediaDetailView(searchResult: selectedHeroForDetail)
+                    }
+                },
+                label: { EmptyView() }
+            )
+            .hidden()
+        }
+    }
+
+    private func openCurrentHeroDetail() {
+        guard let hero = homeViewModel.heroContent else { return }
+        openHeroDetail(hero)
+    }
+
+    private func openHeroDetail(_ hero: TMDBSearchResult) {
+        selectedHeroForDetail = hero
+        showingHeroDetail = true
     }
 
     @ViewBuilder
@@ -613,7 +659,9 @@ struct HomeView: View {
             }
 
             HStack(spacing: 16) {
-                NavigationLink(destination: MediaDetailView(searchResult: hero)) {
+                Button(action: {
+                    openHeroDetail(hero)
+                }) {
                     HStack(spacing: 8) {
                         Image(systemName: "play.fill")
                             .font(.subheadline)
@@ -641,6 +689,7 @@ struct HomeView: View {
                             .applyLiquidGlassBackground(cornerRadius: 12)
                     })
                 }
+                .buttonStyle(.plain)
 
                 Button(action: {
                     if let hero = homeViewModel.heroContent {
