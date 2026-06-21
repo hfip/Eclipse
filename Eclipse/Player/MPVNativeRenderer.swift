@@ -2768,6 +2768,9 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     /// upscales to the view bounds.
     private var renderScaleMultiplier: CGFloat = 1.0
     private var lastLoggedScalers = ""
+    /// Last logged decode signature (hwdec-current|pixfmt) so the per-load decode-engagement log
+    /// fires only when it changes. Reset on each new load.
+    private var lastLoggedDecode = ""
     /// Decoded source video height (from the kit diagnostics), used by the "Upscale by one level"
     /// upscaling mode to decide whether a source is low-res enough to warrant EWA Lanczos + deband.
     /// 0 until the first video-reconfigure resolves it; reset to 0 on each new load.
@@ -2778,15 +2781,18 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     private var lastKnownSourceWidth: Int = 0
     /// Fresh-load fence for the next-episode / in-place replace transition. The kit reuses a single
     /// MPVGPUPlayerRenderer instance and does NOT reset its cached currentTime/duration on
-    /// stop/start/load, so right after a switch it briefly still reports the OUTGOING file's near-end
-    /// position+duration. Persisting that against the already-swapped incoming episode marks it
-    /// watched (~100% progress) — the next-episode-marked-watched bug. These hold position emits
-    /// until the kit reports a sample that clearly belongs to the new file. Mirrors the OpenGL/
-    /// MoltenVK reference renderers' `loadGeneration` fence, which the GPU bridge lacked.
+    /// stop/start/load (currentTime just returns the stored cachedPosition), so right after a switch
+    /// it briefly still reports the OUTGOING file's near-end position+duration. Persisting that
+    /// against the already-swapped incoming episode marks it watched (~100% progress) — the
+    /// next-episode-marked-watched bug. The fence holds position emits until the kit's reported
+    /// position DIFFERS from the value captured at load() (positionAtLoadStart): a stale read is
+    /// bit-identical to that capture, a fresh new-file sample is not. Race-free, no event-order
+    /// dependency. The GPU bridge previously lacked any such fence (the OpenGL/MoltenVK reference
+    /// renderers have a loadGeneration equivalent).
     private var hasConfirmedFreshPositionForCurrentLoad = false
-    private var hasReceivedVideoReconfigureForCurrentLoad = false
-    /// The kit's (stale) reported position captured at load() time, used to detect when the new
-    /// file's position has reset well below where the previous file left off.
+    /// The kit's (stale) cachedPosition captured at the START of load(), before the new file is
+    /// handed to mpv. While the kit still reports this exact value, emits are the OUTGOING file's
+    /// carry-over and are suppressed; the first reported value that differs belongs to the new file.
     private var positionAtLoadStart: Double = 0
     /// Last applied HDR decision signature (mode|gamma|primaries|passthrough) so repeated
     /// VIDEO_RECONFIG events don't redundantly reconfigure. Mirrors the MoltenVK reference path.
@@ -3023,9 +3029,6 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         // (file loaded / VIDEO_RECONFIG). Fired on the main thread by the kit.
         gpuRenderer.onVideoReconfigure = { [weak self] in
             guard let self else { return }
-            // The new file's video params have resolved — this load is genuinely fresh now, so let
-            // the position fence open (the kit's reported position/duration belong to the new file).
-            self.hasReceivedVideoReconfigureForCurrentLoad = true
             // Source dimensions are now known/updated — refresh the cached size and re-apply
             // scalers so the upscaling modes pick the right scaler for the real resolution.
             self.refreshSourceVideoDimensions()
@@ -3034,6 +3037,9 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
             // resolved — re-lay out the drawable so its resolution reflects the new cap.
             self.reapplyInlineLayout()
             self.applyHDRConfiguration(reason: "video-reconfigure")
+            // Surface whether videotoolbox HW decode actually attached vs a silent software
+            // fallback for this file — the decisive signal for the steady-state CPU question.
+            self.logDecodeEngagement()
         }
         // Activate the playback audio session (category/mode + preferred multichannel output) like
         // the OpenGL/sample-buffer renderers do — the kit renderer doesn't own this.
@@ -3072,18 +3078,18 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         isReadyToSeek = false
         isLoading = true
         isAwaitingReadyForCurrentLoad = true
-        // Arm the fresh-load fence: snapshot the kit's (still-stale) position so emits stay
-        // suppressed until the new file's position resets below it (or a video-reconfigure lands).
-        // Without this, the outgoing episode's near-end position is saved against the new episode
-        // and marks it watched on the gpu-next renderer (the next-episode-marked-watched bug).
+        // Arm the fresh-load fence: snapshot the kit's (still-stale) cached position so emits stay
+        // suppressed until the kit reports a value that DIFFERS from it (the new file's first
+        // sample). Without this, the outgoing episode's near-end position is saved against the new
+        // episode and marks it watched on the gpu-next renderer (the next-episode-marked-watched bug).
         hasConfirmedFreshPositionForCurrentLoad = false
-        hasReceivedVideoReconfigureForCurrentLoad = false
         positionAtLoadStart = gpuRenderer.currentTime
         // New file: force HDR re-evaluation once its colorspace resolves, and forget the previous
         // source size so the upscaling modes re-decide on the next video-reconfigure.
         lastHDRConfigurationSignature = ""
         lastKnownSourceHeight = 0
         lastKnownSourceWidth = 0
+        lastLoggedDecode = ""
         applyPreset(preset)
         delegate?.renderer(self, didChangeLoading: true)
         gpuRenderer.load(url, headers: headers)
@@ -3112,7 +3118,27 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
 
     func performanceOverlaySnapshot() -> String {
         let d = gpuRenderer.diagnosticsSnapshot()
-        return "MPV gpu-next \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", d.currentTime))/\(String(format: "%.1f", d.duration))\nmode \(d.presentationMode.rawValue) vo=\(d.inlineVideoOutput) api=\(d.inlineGPUAPI) ctx=\(d.inlineGPUContext)"
+        // decode=videotoolbox means HW decode on the ASIC; decode=SW means mpv silently fell back to
+        // libavcodec software decode (CPU-bound) — the key signal for steady-state CPU.
+        let decode = (d.hardwareDecoder.isEmpty || d.hardwareDecoder == "no") ? "SW" : d.hardwareDecoder
+        return "MPV gpu-next \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", d.currentTime))/\(String(format: "%.1f", d.duration))\nmode \(d.presentationMode.rawValue) vo=\(d.inlineVideoOutput) api=\(d.inlineGPUAPI) ctx=\(d.inlineGPUContext)\ndecode=\(decode) pixfmt=\(d.videoPixelFormat.isEmpty ? "?" : d.videoPixelFormat)"
+    }
+
+    /// Logs whether videotoolbox hardware decode actually attached for the current file. With
+    /// `vd-lavc-software-fallback=yes`, a failed VT attach silently drops to libavcodec software
+    /// decode (CPU-bound, scene-dependent) with no error — this surfaces it. Read-only diagnostic;
+    /// deduped so it logs once per (decoder, pixfmt) change.
+    private func logDecodeEngagement() {
+        let d = gpuRenderer.diagnosticsSnapshot()
+        let hwdec = (d.hardwareDecoder.isEmpty || d.hardwareDecoder == "no") ? "no" : d.hardwareDecoder
+        let signature = "\(hwdec)|\(d.videoPixelFormat)"
+        guard signature != lastLoggedDecode else { return }
+        lastLoggedDecode = signature
+        if hwdec == "no" {
+            Logger.shared.log("[MPVGPUPlayerBridge] software decode — hwdec-current=no pixfmt=\(d.videoPixelFormat) src=\(lastKnownSourceWidth)x\(lastKnownSourceHeight) (videotoolbox did not attach; CPU-bound, scene-dependent)", type: "MPV")
+        } else {
+            Logger.shared.log("[MPVGPUPlayerBridge] hardware decode hwdec-current=\(hwdec) pixfmt=\(d.videoPixelFormat) src=\(lastKnownSourceWidth)x\(lastKnownSourceHeight)", type: "MPV")
+        }
     }
 
     func beginForegroundUIStallRecovery(reason: String) { _ = reason }
@@ -3454,14 +3480,16 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
             return
         }
         // Fresh-load fence: the kit reuses one renderer instance and does NOT reset its cached
-        // currentTime/duration across stop/start/load, so right after a staged next-episode switch
-        // it briefly still reports the OUTGOING file's near-end values. Emitting those would persist
-        // ~100% progress against the already-swapped incoming episode and mark it watched. Hold
-        // emits until this load is confirmed fresh — a video-reconfigure for the new file has landed,
-        // or the reported position has reset well below where the previous file left off.
+        // currentTime/duration across stop/start/load (currentTime just returns the stored
+        // cachedPosition), so right after a staged next-episode switch it briefly still reports the
+        // OUTGOING file's near-end values. Emitting those would persist ~100% progress against the
+        // already-swapped incoming episode and mark it watched. Hold emits until the kit's reported
+        // position DIFFERS from the value captured at the start of load(): a stale carry-over read is
+        // bit-identical to that capture, and the first sample the new file publishes (via time-pos,
+        // or a resume/seek that sets cachedPosition) is not. Race-free — unlike a video-reconfigure
+        // signal, this cannot open the window while the position is still the stale value.
         if !hasConfirmedFreshPositionForCurrentLoad {
-            if hasReceivedVideoReconfigureForCurrentLoad
-                || gpuRenderer.currentTime < max(1.0, positionAtLoadStart - 1.0) {
+            if gpuRenderer.currentTime != positionAtLoadStart {
                 hasConfirmedFreshPositionForCurrentLoad = true
             } else {
                 return
