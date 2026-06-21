@@ -1,10 +1,3 @@
-//
-//  CatalogManager.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import Foundation
 import Combine
 

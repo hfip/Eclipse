@@ -1,10 +1,3 @@
-//
-//  BackupManager.swift
-//  Eclipse
-//
-//  Created by Soupy-dev on 05/01/2026.
-//
-
 import Foundation
 import UIKit
 

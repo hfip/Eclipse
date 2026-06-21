@@ -1,10 +1,3 @@
-//
-//  SearchView.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import SwiftUI
 
 struct SearchView: View {

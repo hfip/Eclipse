@@ -1,9 +1,3 @@
-//
-//  LibraryView.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 22/05/2025.
-//
 import SwiftUI
 import CoreData
 import Kingfisher

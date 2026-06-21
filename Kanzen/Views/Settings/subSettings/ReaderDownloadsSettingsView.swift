@@ -1,8 +1,3 @@
-//
-//  ReaderDownloadsSettingsView.swift
-//  Kanzen
-//
-
 #if !os(tvOS)
 import Kingfisher
 import SwiftUI

@@ -1,10 +1,3 @@
-//
-//  ServicesView.swift
-//  Sora
-//
-//  Created by Francesco on 09/08/25.
-//
-
 import SwiftUI
 import Kingfisher
 

@@ -1,9 +1,4 @@
-//
-//  EclipseTheme.swift
-//  Eclipse
-//
-//  Theme system with customizable gradient colors
-//
+// Theme system with customizable gradient colors
 
 import SwiftUI
 
@@ -420,7 +415,7 @@ class EclipseTheme: ObservableObject {
             let data = try NSKeyedArchiver.archivedData(withRootObject: UIColor(color), requiringSecureCoding: true)
             UserDefaults.standard.set(data, forKey: key)
         } catch {
-            // Silently fail — default will be used next launch
+            // Silently fail - default will be used next launch
         }
     }
     

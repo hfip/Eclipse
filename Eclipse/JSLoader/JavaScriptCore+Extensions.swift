@@ -1,10 +1,3 @@
-//
-//  JSContext+Extensions.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import SoraCore
 import JavaScriptCore
 

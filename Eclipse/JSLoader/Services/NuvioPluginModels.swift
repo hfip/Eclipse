@@ -1,8 +1,3 @@
-//
-//  NuvioPluginModels.swift
-//  Eclipse
-//
-
 import Foundation
 
 struct NuvioPluginManifest: Decodable {

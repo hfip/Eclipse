@@ -1,10 +1,3 @@
-//
-//  StremioModels.swift
-//  Eclipse
-//
-//  Created by Soupy on 2026.
-//
-
 import Foundation
 import CoreData
 

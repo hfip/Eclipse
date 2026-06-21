@@ -1,10 +1,3 @@
-//
-//  LiquidGlassBackground.swift
-//  Eclipse
-//
-//  Created by Francesco on 02/11/25.
-//
-
 import SwiftUI
 
 extension View {

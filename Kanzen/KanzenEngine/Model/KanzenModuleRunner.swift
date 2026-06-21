@@ -1,10 +1,3 @@
-//
-//  KanzenModuleRunner.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 12/05/2025.
-//
-
 import Foundation
 import JavaScriptCore
 
@@ -309,7 +302,6 @@ class KanzenModuleRunner
             let line = exception?.objectForKeyedSubscript("line")?.toInt32() ?? -1
             let column = exception?.objectForKeyedSubscript("column")?.toInt32() ?? -1
             let stack = exception?.objectForKeyedSubscript("stack")?.toString() ?? "no stack"
-            print("JS Error: \(errorMsg)")
             ReaderLogger.shared.log("JS Error: \(errorMsg) at line \(line) col \(column)", type: "Error")
             ReaderLogger.shared.log("JS Stack: \(stack)", type: "Error")
             self.lastJSException = "JS Error: \(errorMsg)"

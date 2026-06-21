@@ -1,10 +1,3 @@
-//
-//  PlayerSettingsView.swift
-//  Sora
-//
-//  Created by Francesco on 19/09/25.
-//
-
 import SwiftUI
 
 enum ExternalPlayer: String, CaseIterable, Identifiable {
@@ -734,7 +727,7 @@ struct PlayerSettingsView: View {
                 }
 
                 GlassDivider(leadingInset: 16)
-                GlassDetailRow(title: "Upscaling", subtitle: store.mpvUpscalingMode.settingsDescription + "\n\nApplies on the next playback. Affects the MoltenVK (default) renderer only — the legacy CPU and OpenGL renderers don't upscale.") {
+                GlassDetailRow(title: "Upscaling", subtitle: store.mpvUpscalingMode.settingsDescription + "\n\nApplies on the next playback. Affects the MoltenVK (default) renderer only - the legacy CPU and OpenGL renderers don't upscale.") {
                     Picker("", selection: $store.mpvUpscalingMode) {
                         ForEach(MPVUpscalingMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
@@ -754,7 +747,7 @@ struct PlayerSettingsView: View {
                 GlassDivider(leadingInset: 16)
                 settingsToggleRow(
                     title: "Use Legacy CPU Renderer",
-                    detail: "Eclipse renders inline playback on the GPU (mpv gpu-next) by default — far less heat and battery use, especially at higher speeds. Turn this on only if you hit a problem and need the older CPU renderer as a fallback. Applies on the next playback.",
+                    detail: "Eclipse renders inline playback on the GPU (mpv gpu-next) by default - far less heat and battery use, especially at higher speeds. Turn this on only if you hit a problem and need the older CPU renderer as a fallback. Applies on the next playback.",
                     binding: $store.mpvUseLegacyCPURenderer
                 )
 
@@ -804,7 +797,7 @@ struct PlayerSettingsView: View {
                         switch category {
                         case .anime: return "Japanese/Asian animation."
                         case .westernAnimation: return "Cartoons and other non-anime animation."
-                        case .liveAction: return "Films, series — everything that isn't animation."
+                        case .liveAction: return "Films, series - everything that isn't animation."
                         }
                     }()
                     GlassDivider(leadingInset: 16)
@@ -1054,7 +1047,7 @@ struct PlayerSettingsView: View {
             settingsToggleRow(title: "Precise Progress Adjustment", detail: "Use finer slider updates for MPV progress adjustments.", binding: $store.experimentalMPVPreciseProgress)
             GlassDivider(leadingInset: 16)
             settingsToggleRow(title: "Ignore Special Subtitle Styles", detail: "Override embedded ASS subtitle styling and effects with the app's own subtitle style. Also reduces player heat and battery use on styled or animated embedded subtitles, most noticeably at higher playback speeds. Applies on the next playback.", binding: $store.experimentalMPVIgnoreSpecialSubtitleStyles)
-            GlassSectionFooter("These are best-effort accelerations. Because sources differ wildly in how they serve streams, warmup and next-episode staging won't always kick in — playback still works normally when they don't.")
+            GlassSectionFooter("These are best-effort accelerations. Because sources differ wildly in how they serve streams, warmup and next-episode staging won't always kick in - playback still works normally when they don't.")
         }
     }
 

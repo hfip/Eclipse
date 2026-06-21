@@ -1,9 +1,4 @@
-//
-//  HomeWidgets.swift
-//  Eclipse
-//
-//  Forward-style discover widgets for the home page.
-//
+// Forward-style discover widgets for the home page.
 
 import SwiftUI
 import Kingfisher

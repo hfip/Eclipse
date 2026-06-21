@@ -1,10 +1,3 @@
-//
-//  MangaCatalogManager.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import Foundation
 import Combine
 import SwiftUI

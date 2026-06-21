@@ -1,10 +1,3 @@
-//
-//  TrackersSettingsView.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import SwiftUI
 import Foundation
 import Kingfisher

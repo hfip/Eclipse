@@ -1,10 +1,3 @@
-//
-//  CollectionDetailView.swift
-//  Sora
-//
-//  Created by Francesco on 08/09/25.
-//
-
 import SwiftUI
 import Kingfisher
 

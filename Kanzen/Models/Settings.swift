@@ -1,9 +1,3 @@
-//
-//  Settings.swift
-//  Eclipse
-//
-//  Created by Dawud Osman on 17/11/2025.
-//
 import SwiftUI
 #if canImport(CryptoKit)
 import CryptoKit
@@ -340,21 +334,15 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     static let defaultProfile: MPVMetalQualityProfile = .auto
 }
 
-/// Controls the gpu-next (MoltenVK) upscaling + debanding shaders. This is INDEPENDENT of
-/// `MPVMetalQualityProfile`, which only governs render resolution / frame pacing / HDR (the "heat"
-/// knobs). These scalers run per frame on the GPU and are inert on the legacy CPU and OpenGL paths
-/// (their software/`vo=libmpv` outputs bypass mpv's shader graph), so this setting only affects the
-/// default MoltenVK renderer. Defaults to `.off` — the old OpenGL renderer never upscaled or
-/// debanded either, so this matches long-standing behavior at the lowest power cost.
+/// Controls the gpu-next (MoltenVK) upscaling + debanding shaders.
 enum MPVUpscalingMode: String, CaseIterable, Identifiable {
-    /// No quality scaler, no deband — cheap bilinear scaling to fit the screen. The default.
+    /// No quality scaler, no deband - cheap bilinear scaling to fit the screen. The default.
     case off = "off"
     /// EWA Lanczos + deband only for sub-1080p sources (e.g. a 480p/720p stream sharpened toward
     /// 1080p); already-HD video stays on the cheap path. The lightest upscaling mode.
     case upscaleTo1080 = "upscaleTo1080"
-    /// EWA Lanczos + deband on every source, with the render target capped at roughly one resolution
-    /// tier above the source (e.g. 1080p -> 1440p) instead of full panel res — upscales everything
-    /// but renders a notch lighter than Auto. Render-target cap lives in the renderer.
+    /// EWA Lanczos + deband on every source, with the render target capped at roughly one resolution tier above the
+    /// source (e.g.
     case oneLevelAlways = "oneLevelAlways"
     /// EWA Lanczos + deband on every source, rendered at full native resolution. Sharpest, costliest
     /// (the former gpu-next "Sharp" scaler behavior).
@@ -374,9 +362,9 @@ enum MPVUpscalingMode: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .off:
-            return "No upscaling or debanding — video is scaled cheaply to fit the screen, exactly like the old renderer always did. Lowest heat and battery use."
+            return "No upscaling or debanding - video is scaled cheaply to fit the screen, exactly like the old renderer always did. Lowest heat and battery use."
         case .upscaleTo1080:
-            return "Applies Lanczos upscaling and debanding only to below-HD video (under 1080p) that actually benefits — e.g. a 720p stream is sharpened toward 1080p — and leaves already-HD video on the cheap path to save power."
+            return "Applies Lanczos upscaling and debanding only to below-HD video (under 1080p) that actually benefits - e.g. a 720p stream is sharpened toward 1080p - and leaves already-HD video on the cheap path to save power."
         case .oneLevelAlways:
             return "Applies Lanczos upscaling and debanding to every source and renders one resolution tier above it (e.g. 1080p toward 1440p), capped at the display. On phone screens HD video is already panel-limited, so this mainly helps below-HD sources and external/AirPlay displays."
         case .auto:
@@ -387,19 +375,16 @@ enum MPVUpscalingMode: String, CaseIterable, Identifiable {
     static let defaultMode: MPVUpscalingMode = .off
 }
 
-/// "Comfort"/anime-like audio presets applied through mpv audio filters (ffmpeg lavfi: dynamic
-/// range compression + loudness normalization + peak limiting). Live-action mixes swing from
-/// near-silent dialogue to loud impacts; these presets pull that range together so playback is
-/// easier on the ears — without truly turning a wide mix into a flat anime one. `original` (off)
-/// is the default. Applied to whichever mpv renderer is active (OpenGL / sample-buffer / GPU).
+/// "Comfort"/anime-like audio presets applied through mpv audio filters (ffmpeg lavfi: dynamic range compression +
+/// loudness.
 enum AudioComfortMode: String, CaseIterable, Identifiable {
-    /// No processing — the stream's audio is passed through untouched.
+    /// No processing - the stream's audio is passed through untouched.
     case original
     /// Gentle compression + steady loudness + soft peak limit. Good default for headphones.
     case comfort
     /// Voice-forward: low-rumble cut, stronger compression, mild presence boost around 2.5 kHz.
     case dialogue
-    /// Most aggressive: tighter compression, low-end reduction, presence lift, hard peak limit —
+    /// Most aggressive: tighter compression, low-end reduction, presence lift, hard peak limit -
     /// the closest to a flat, forward "anime-like" mix that won't stab your ears at night.
     case night
 
@@ -417,13 +402,13 @@ enum AudioComfortMode: String, CaseIterable, Identifiable {
     var settingsDescription: String {
         switch self {
         case .original:
-            return "No audio processing — plays the stream's original mix."
+            return "No audio processing - plays the stream's original mix."
         case .comfort:
             return "Gently compresses dynamic range and steadies loudness so quiet dialogue and loud impacts sit closer together, with a soft peak limiter."
         case .dialogue:
             return "Emphasizes voices: cuts low rumble, compresses harder, and lifts presence around 2.5 kHz so speech stays clear."
         case .night:
-            return "Strongest leveling — tight compression, reduced low-end boom, a presence lift, and a hard peak limiter so sudden sounds never stab your ears. The most \"anime-like\" mix."
+            return "Strongest leveling - tight compression, reduced low-end boom, a presence lift, and a hard peak limiter so sudden sounds never stab your ears. The most \"anime-like\" mix."
         }
     }
 
@@ -446,14 +431,11 @@ enum AudioComfortMode: String, CaseIterable, Identifiable {
     static let defaultMode: AudioComfortMode = .original
 }
 
-/// Content categories the `AudioComfortMode` processing can be scoped to. Each playing title is
-/// classified into exactly one of these; the comfort filter applies when the title's category is in
-/// the user's selected set. The scope is multi-select (e.g. {anime, westernAnimation} = all
-/// animation), and selecting every category is the "All" behavior (the default).
+/// Content categories the `AudioComfortMode` processing can be scoped to.
 enum AudioComfortContentCategory: String, CaseIterable, Identifiable {
     /// Japanese/Asian animation (anime markers: tracker context, AniList/Kitsu IDs, anime flag).
     case anime
-    /// Non-anime animation — western cartoons (TMDB Animation genre 16, not detected as anime).
+    /// Non-anime animation - western cartoons (TMDB Animation genre 16, not detected as anime).
     case westernAnimation
     /// Everything else (films, series, documentaries).
     case liveAction
@@ -507,7 +489,7 @@ enum MPVHDRMode: String, CaseIterable, Identifiable {
 
 struct MPVRenderBackendSupport {
     static let bundledMPVKitVersion = "0.41.0"
-    // Diagnostic only (logged as revision=… in the player banner). MPVKit is branch-tracked
+    // Diagnostic only. MPVKit is branch-tracked.
     // (eclipse-mpv-metal), so the resolved revision changes every kit Build-and-Release. Bump this
     // to the kit tip whenever you cut a new kit build, or it will under-report which binary is live.
     static let bundledMPVKitRevision = "e5198064b2629c868c1345113accadc18ebc4938"
@@ -972,12 +954,8 @@ final class ExperimentalMPVPreloadManager {
         pathMonitor.start(queue: pathQueue)
 #endif
         migrateLegacyCacheFileNamesIfNeeded()
-        // On launch, bound the leftover cache to the configured size limit (evicting the oldest
-        // starters) rather than wiping it wholesale. Eviction is now driven by the size limit
-        // continuously — writeStarterCache() trims after every warmup — so the cache self-manages
-        // at the limit during a session instead of only being cleared on relaunch. Stale starters
-        // are dropped on read via the 30-minute TTL, so keeping recent ones across a quick
-        // relaunch is harmless.
+        // On launch, bound the leftover cache to the configured size limit (evicting the oldest starters) rather than
+        // wiping it wholesale.
         if Self.autoClearEnabled {
             pruneCacheIfNeeded(limitBytes: currentCacheLimitBytes())
         }
@@ -1317,12 +1295,8 @@ final class ExperimentalMPVPreloadManager {
         var total = files.reduce(Int64(0)) { $0 + $1.size }
         guard total > limitBytes else { return }
 
-        // Don't evict starters that are mid-write (in-flight warmups) — the just-staged next
-        // episode, and any concurrent warmup — so trimming the cache to fit never deletes a
-        // partial file out from under an active staging operation. The active playback's own
-        // starter is only read during the first seconds of playback and is long-consumed by the
-        // time staging (≈85% through the episode) triggers a trim, so age-ordered eviction of the
-        // remaining (older, already-used) starters is safe.
+        // Don't evict starters that are mid-write (in-flight warmups), the just-staged next episode, and any concurrent
+        // warmup, so.
         lock.lock()
         let protectedKeys = activeKeys
         lock.unlock()
@@ -1703,16 +1677,13 @@ class Settings: ObservableObject {
     }
 
     /// Shows the on-screen MoltenVK/mpv performance HUD (CPU, thermal state, active quality profile).
-    /// Off by default; toggled from Player settings → MPV Rendering.
+    /// Off by default; toggled from Player settings to MPV Rendering.
     var mpvPerformanceOverlayEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvPerformanceOverlayEnabled") }
     }
 
-    /// The GPU gpu-next renderer (MoltenVK, zero-copy decode) is the default MoltenVK renderer. This
-    /// opt-out forces the legacy CPU software sample-buffer path instead — a manual safety escape
-    /// if a device hits a gpu-next issue. Off by default. gpu-next also auto-falls back to the
-    /// sample-buffer path when MoltenVK/gpu-next is unavailable, regardless of this setting.
+    /// The GPU gpu-next renderer (MoltenVK, zero-copy decode) is the default MoltenVK renderer.
     var mpvUseLegacyCPURenderer: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvUseLegacyCPURenderer") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvUseLegacyCPURenderer") }

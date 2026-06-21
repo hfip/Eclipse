@@ -1,8 +1,3 @@
-//
-//  NuvioPluginsView.swift
-//  Eclipse
-//
-
 import SwiftUI
 
 struct NuvioPluginsView: View {

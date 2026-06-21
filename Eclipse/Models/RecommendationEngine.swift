@@ -1,10 +1,5 @@
-//
-//  RecommendationEngine.swift
-//  Eclipse
-//
-//  Local recommendation engine that builds a genre taste profile
-//  from watch history and bookmarks, then scores catalog items.
-//
+// Local recommendation engine that builds a genre taste profile
+// from watch history and bookmarks, then scores catalog items.
 
 import Foundation
 
@@ -139,12 +134,12 @@ final class RecommendationEngine {
 
         let progressData = ProgressManager.shared.getProgressData()
 
-        // Collect recently watched movies (≥30% watched)
+        // Recently watched movies at 30% or more.
         let movieCandidates = progressData.movieProgress
             .filter { $0.progress >= 0.3 }
             .sorted { $0.lastUpdated > $1.lastUpdated }
 
-        // Collect recently watched shows (any episode ≥30% watched)
+        // Recently watched shows with any episode at 30% or more.
         var showLastWatched: [Int: Date] = [:]
         for ep in progressData.episodeProgress where ep.progress >= 0.3 {
             if let existing = showLastWatched[ep.showId] {
@@ -288,7 +283,7 @@ final class RecommendationEngine {
         var movieEntries: [(id: Int, date: Date)] = []
         var showEntries: [(id: Int, date: Date)] = []
 
-        // 1. Watch history — strongest signal
+        // 1. Watch history - strongest signal
         let progressData = ProgressManager.shared.getProgressData()
 
         for movie in progressData.movieProgress {
@@ -314,7 +309,7 @@ final class RecommendationEngine {
             showEntries.append((showId, date))
         }
 
-        // 2. Bookmarks — secondary signal
+        // 2. Bookmarks - secondary signal
         let collections = LibraryManager.shared.collections
         for collection in collections {
             for item in collection.items {
@@ -328,7 +323,7 @@ final class RecommendationEngine {
             }
         }
 
-        // 3. User star ratings — direct signal
+        // 3. User star ratings - direct signal
         for rating in UserRatingManager.shared.allRatings() {
             // Highly-rated items boost their genres; low-rated items dampen them.
             let ratingWeight: Double = (Double(rating.stars) - 5.5) / 2.25 // about -2 to +2

@@ -1,10 +1,3 @@
-//
-//  TrackerModels.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import Foundation
 
 enum TrackerService: String, Codable, CaseIterable {
@@ -77,7 +70,7 @@ struct TrackerState: Codable {
     // it only augments the failure path and never changes already-working scrobbles.
     var traktAnimeEpisodeMapping: Bool = true
     // Keep the local "Trakt Watchlist" collection mirrored with the Trakt watchlist
-    // (additive pull, two-way add/remove). Off by default — opt-in.
+    // (additive pull, two-way add/remove). Off by default - opt-in.
     var traktWatchlistSync: Bool = false
     var lastSyncDate: Date?
 

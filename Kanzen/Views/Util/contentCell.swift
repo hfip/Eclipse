@@ -1,9 +1,3 @@
-//
-//  contentCell.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 26/05/2025.
-//
 import SwiftUI
 import Foundation
 import Kingfisher
@@ -24,22 +18,6 @@ struct contentCell: View {
             if let url = URL(string: urlString) {
                 
                 KFImage(url)
-                    // Don't set processor here to ensure cached original image is used
-                    .onSuccess { result in
-                        switch result.cacheType {
-                        case .none:
-                            print("Image loaded from network.")
-                        case .memory:
-                            print("Image loaded from memory cache.")
-                        case .disk:
-                            print("Image loaded from disk cache.")
-                        @unknown default:
-                            print("Unknown cache type.")
-                        }
-                    }
-                    .onFailure { error in
-                        print("Image loading failed: \(error)")
-                    }
                     .placeholder {
                         ProgressView()
                     }
@@ -49,11 +27,6 @@ struct contentCell: View {
                     .scaleFactor(UIScreen.main.scale)
                     .interpolation(.low)
                     .aspectRatio(0.72, contentMode: .fill)
-                    .onAppear{
-                        print("Image appeared \(urlString)")
-                    }
-                    
-                // SwiftUI resizes smoothly
                     .frame(width: width, height: width * 1.5)
                     .clipped()
                  
@@ -63,7 +36,6 @@ struct contentCell: View {
             } else {
                 Rectangle().fill(Color.black).clipped().frame(width: width,height: width * 1.5)
             }
-            // Gradient fade at the bottom
             LinearGradient(
                 gradient: Gradient(colors: [Color.clear, Color.black.opacity(0.8)]),
                 startPoint: .top,

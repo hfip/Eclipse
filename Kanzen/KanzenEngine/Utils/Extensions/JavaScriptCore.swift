@@ -1,10 +1,3 @@
-//
-//  JavaScriptCore.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 13/05/2025.
-//
-
 import JavaScriptCore
 import Foundation
 
@@ -51,7 +44,7 @@ extension JSContext
         }
         let consolePrintFunction: @convention(block) (JSValue) -> Void = {
             message in
-            print(message)
+            ReaderLogger.shared.log(message.toString() ?? String(describing: message), type: "Debug")
         }
         
         consoleObject?.setObject(consoleLogFunction, forKeyedSubscript: "log" as NSString)

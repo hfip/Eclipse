@@ -1,10 +1,3 @@
-//
-//  JSController-Search.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import JavaScriptCore
 
 struct SearchItem: Identifiable {

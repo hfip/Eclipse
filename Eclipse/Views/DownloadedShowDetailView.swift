@@ -1,9 +1,4 @@
-//
-//  DownloadedShowDetailView.swift
-//  Eclipse
-//
-//  Full detail page for a downloaded show in the Library tab.
-//
+// Full detail page for a downloaded show in the Library tab.
 
 import SwiftUI
 import Kingfisher

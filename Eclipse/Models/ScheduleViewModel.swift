@@ -1,10 +1,3 @@
-//
-//  ScheduleViewModel.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import Foundation
 
 enum ScheduleMode: String, CaseIterable, Identifiable {

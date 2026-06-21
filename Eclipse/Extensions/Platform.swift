@@ -1,10 +1,3 @@
-//
-//  Platform.swift
-//  Eclipse
-//
-//  Created by Dominic on 02.11.25.
-//
-
 import Foundation
 import SwiftUI
 
@@ -26,7 +19,7 @@ var isIPad: Bool {
 }
 
 /// A multiplier used to proportionally scale hard-coded dimensions on iPad.
-/// iPhone ≈ 1.0, iPad ≈ 1.45.
+/// iPhone is about 1.0, iPad is about 1.45.
 var iPadScale: CGFloat {
     isIPad ? 1.45 : 1.0
 }

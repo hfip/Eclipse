@@ -1,9 +1,4 @@
-//
-//  NovelReaderView.swift
-//  Kanzen
-//
-//  Novel reader using WKWebView for HTML chapter content. I robbed this from Sora lmfao
-//
+// Novel reader using WKWebView for HTML chapter content. I robbed this from Sora lmfao
 
 import SwiftUI
 

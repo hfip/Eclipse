@@ -1,10 +1,3 @@
-//
-//  ProgressManager.swift
-//  Sora
-//
-//  Created by Francesco on 27/08/25.
-//
-
 import Foundation
 import AVFoundation
 import Combine
@@ -179,7 +172,7 @@ final class ProgressManager: ObservableObject {
         saveProgressData()
     }
 
-    /// Marks episodes 1…throughEpisode as watched locally without triggering tracker sync.
+    /// Marks episodes up to throughEpisode without tracker sync.
     /// Used during AniList import to avoid syncing back data we just imported.
     func bulkMarkEpisodesAsWatched(showId: Int, seasonNumber: Int, throughEpisode: Int) {
         guard throughEpisode >= 1 else { return }

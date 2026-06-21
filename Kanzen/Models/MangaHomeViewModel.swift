@@ -1,10 +1,3 @@
-//
-//  MangaHomeViewModel.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import Foundation
 import SwiftUI
 import AidokuRunner

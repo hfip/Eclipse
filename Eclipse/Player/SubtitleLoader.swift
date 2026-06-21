@@ -1,10 +1,3 @@
-//
-//  SubtitleLoader.swift
-//  Eclipse
-//
-//  Created by Francesco on 25/10/25.
-//
-
 import UIKit
 
 struct SubtitleEntry {

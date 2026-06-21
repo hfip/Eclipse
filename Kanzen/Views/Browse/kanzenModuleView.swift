@@ -1,9 +1,3 @@
-//
-//  ModuleView.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 15/05/2025.
-//
 import SwiftUI
 import Kingfisher
 
@@ -111,7 +105,7 @@ struct KanzenModuleView: View {
                              .padding(.top,10)
                              .padding(.bottom,10)
                              .listRowInsets(EdgeInsets())
-                             .compositingGroup()  // create a drawing group
+                             .compositingGroup()
                              
                              .frame(maxWidth: .infinity,alignment: .center)
                              .shadow(color: .black.opacity(selectedModule ? 0.4 : 0.2), radius: selectedModule ? 10 : 4)
@@ -184,9 +178,6 @@ struct KanzenModuleView: View {
                     .cancelOnDisappear(true)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .background {
-                        // Optional: placeholder background or error state
-                    }
             } else {
                 Circle().fill(Color.black)
             }
@@ -317,7 +308,6 @@ struct KanzenModuleView: View {
                                                   message: "The provided Module URL is invalid",
                                                   preferredStyle: .alert)
                     alert.addAction(UIAlertAction(title: "OK", style: .default))
-                    // Present it from the top view controller
                     if let topVC = getTopViewController() {
                         topVC.present(alert, animated: true)
                     }
@@ -328,7 +318,6 @@ struct KanzenModuleView: View {
         }
        
     }
-    //
     func validFetchedModule(_ urlString: String, completion: @escaping (ModuleData?) -> Void) {
         Task {
             do{
@@ -356,19 +345,17 @@ struct KanzenModuleView: View {
             }
         }))
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
-        // Present alert directly from this top View Controler
         if let topVC = getTopViewController() {
             topVC.present(alert, animated: true, completion: nil)
         }
     }
-    //display content from fetchedUrl
+
     func displayFetchedContent(url: String)
     {
         self.fetchModule(url:url)
 
     }
     
-    // returns visible viewController to display Alert
     func getTopViewController(base: UIViewController? = UIApplication.shared.connectedScenes
                                 .compactMap { $0 as? UIWindowScene }
                                 .first?.windows

@@ -1,10 +1,3 @@
-//
-//  AccentColorManager.swift
-//  Sora
-//
-//  Created by Francesco on 20/08/25.
-//
-
 import SwiftUI
 
 class AccentColorManager: ObservableObject {

@@ -1,10 +1,3 @@
-//
-//  CatalogsSettingsView.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import SwiftUI
 
 struct CatalogsSettingsView: View {

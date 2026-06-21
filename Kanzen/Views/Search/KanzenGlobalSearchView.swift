@@ -1,10 +1,3 @@
-//
-//  KanzenGlobalSearchView.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import SwiftUI
 import Kingfisher
 import AidokuRunner

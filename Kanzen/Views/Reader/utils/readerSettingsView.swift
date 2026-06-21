@@ -1,10 +1,3 @@
-//
-//  readerSettings.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 05/10/2025.
-//
-
 import SwiftUI
 
 struct readerManagerSettings: View {

@@ -1,10 +1,3 @@
-//
-//  StorageView.swift
-//  Eclipse
-//
-//  Created by Francesco on 04/11/25.
-//
-
 import SwiftUI
 
 private struct StorageBreakdownItem: Identifiable {

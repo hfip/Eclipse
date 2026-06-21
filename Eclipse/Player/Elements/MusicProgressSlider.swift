@@ -1,11 +1,6 @@
-//
-//  MusicProgressSlider.swift
-//  Custom Seekbar
-//
-//  Created by Pratik on 08/01/23.
-//
-//  Thanks to pratikg29 for this code inside his open source project "https://github.com/pratikg29/Custom-Slider-Control?ref=iosexample.com"
-//  I did edit some of the code for my liking (added a buffer indicator, etc.)
+// Custom Seekbar
+// Thanks to pratikg29 for this code inside his open source project "https://github.com/pratikg29/Custom-Slider-Control?ref=iosexample.com"
+// I did edit some of the code for my liking (added a buffer indicator, etc.)
 
 import SwiftUI
 
@@ -65,12 +60,8 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
                     .allowsHitTesting(false)
                 VStack(spacing: 8) {
                     ZStack(alignment: .leading) {
-                        // Background capsule. A static translucent fill rather than a
-                        // .ultraThinMaterial backdrop blur: the bar sits over live video, and a
-                        // material would force Core Animation to re-sample + gaussian-blur the moving
-                        // frame behind it every presented frame the whole time controls are visible —
-                        // a real per-frame cost on the gpu-next path (which has no interactive render
-                        // throttle). The flat fill looks nearly identical and costs nothing.
+                        // Background capsule. A static translucent fill rather than a .ultraThinMaterial backdrop blur: the bar sits over
+                        // live video,.
                         Capsule()
                             .fill(Color.white.opacity(0.2))
 

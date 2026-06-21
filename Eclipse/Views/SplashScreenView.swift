@@ -1,9 +1,4 @@
-//
-//  SplashScreenView.swift
-//  Eclipse
-//
-//  Animated moon splash screen that hides the cold boot loading.
-//
+// Animated moon splash screen that hides the cold boot loading.
 
 import SwiftUI
 

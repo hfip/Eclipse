@@ -1,10 +1,3 @@
-//
-//  MangaDetailView.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import SwiftUI
 import Kingfisher
 #if canImport(UIKit)
@@ -67,7 +60,7 @@ struct MangaDetailView: View {
     }
 
     /// Banner blend color from the cover's extracted dominant (falling back to
-    /// the backdrop tone for a dark/absent cover) — same behavior as a media hero.
+    /// the backdrop tone for a dark/absent cover) - same behavior as a media hero.
     private var readerHeroBlendColor: Color {
         theme.heroBlendColor(dominant: headerAmbientColor, isReaderMode: true)
     }
@@ -1100,7 +1093,7 @@ struct MangaDetailView: View {
                     return ch
                 }
             }
-            // No progress — start from first chapter
+            // No progress - start from first chapter
             if let unread = chronologicalChapters(chapters).first(where: {
                 !readKeys.contains(ChapterIdentityNormalizer.key(for: $0.chapterNumber))
             }) {

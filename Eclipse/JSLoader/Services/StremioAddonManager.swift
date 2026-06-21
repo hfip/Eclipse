@@ -1,10 +1,3 @@
-//
-//  StremioAddonManager.swift
-//  Eclipse
-//
-//  Created by Soupy on 2026.
-//
-
 import CryptoKit
 import Foundation
 
@@ -212,7 +205,7 @@ class StremioAddonManager: ObservableObject {
         onComplete: @escaping () -> Void
     ) async {
         let active = activeStreamAddons
-        Logger.shared.log("Stremio: fetchStreamsFromAddons — \(active.count) active stream addon(s), tmdbId=\(tmdbId) imdbId=\(imdbId ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
+        Logger.shared.log("Stremio: fetchStreamsFromAddons - \(active.count) active stream addon(s), tmdbId=\(tmdbId) imdbId=\(imdbId ?? "nil") type=\(type) s=\(season?.description ?? "nil") e=\(episode?.description ?? "nil")", type: "Stremio")
         guard !active.isEmpty else {
             Logger.shared.log("Stremio: No active stream addons, skipping", type: "Stremio")
             onComplete()

@@ -1,9 +1,4 @@
-//
-//  IntroDBService.swift
-//  Eclipse
-//
-//  Created on 28/02/26.
-//
+// Created on 28/02/26.
 
 import Foundation
 
@@ -268,12 +263,6 @@ final class IntroDBService {
     }
 
     /// Fetches skip-time segments from TheIntroDB using TMDB ID.
-    /// - Parameters:
-    ///   - tmdbId: The TMDB ID of the movie or TV show.
-    ///   - seasonNumber: Season number (nil for movies).
-    ///   - episodeNumber: Episode number (nil for movies).
-    ///   - episodeDuration: The total duration in seconds (used for clamping and null end times).
-    /// - Returns: Array of skip segments (intro, outro/credits, recap, preview).
     func fetchSkipTimes(tmdbId: Int, seasonNumber: Int?, episodeNumber: Int?, episodeDuration: Double) async throws -> [SkipSegment] {
         var urlString = "\(baseURL)/media?tmdb_id=\(tmdbId)"
         if let season = seasonNumber {
@@ -329,7 +318,7 @@ final class IntroDBService {
             }
         }
 
-        // Parse credits → map to .outro (functionally equivalent — "Skip Outro")
+        // Parse credits to map to .outro (functionally equivalent - "Skip Outro")
         if let credits = decoded.credits {
             for seg in credits {
                 if let parsed = parseSegment(seg, type: .outro, maxDuration: maxDuration) {

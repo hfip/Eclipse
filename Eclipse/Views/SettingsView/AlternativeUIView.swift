@@ -1,10 +1,4 @@
-//
-//  AlternativeUIView.swift
-//  Sora
-//
-//  Created by Francesco on 20/08/25.
-//  Reworked for the modern Eclipse appearance system.
-//
+// Reworked for the modern Eclipse appearance system.
 
 import SwiftUI
 
@@ -23,7 +17,7 @@ struct AlternativeUIView: View {
     @AppStorage(ExperimentalVisualTuning.heroHeightScaleKey) private var experimentalHeroHeightScale = ExperimentalVisualTuning.defaultHeroHeightScale
     @AppStorage(HomeAnimatedBackgroundSettings.enabledKey) private var homeAnimatedBackgroundEnabled = HomeAnimatedBackgroundSettings.defaultEnabled
 
-    // Interface (modern vs classic) — restart applied gate
+    // Interface (modern vs classic) - restart applied gate
     @AppStorage(ExperimentalFeatureState.enabledKey) private var modernInterfaceEnabled = true
     @State private var showRestartAlert = false
 
@@ -220,7 +214,7 @@ struct AlternativeUIView: View {
                     Text("Home Layout")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    Text("Size and orientation of home rows — globally or per catalog.")
+                    Text("Size and orientation of home rows - globally or per catalog.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.leading)

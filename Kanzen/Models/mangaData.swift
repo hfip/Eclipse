@@ -1,15 +1,3 @@
-//
-//  mangaData.swift
-//  Eclipse
-//
-//  Created by Dawud Osman on 17/11/2025.
-//
-//
-//  mangaData.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 12/10/2025.
-//
 import SwiftUI
 import CoreData
 

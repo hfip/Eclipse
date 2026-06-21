@@ -1,10 +1,3 @@
-//
-//  HomeViewModel.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import Foundation
 import SwiftUI
 
@@ -160,11 +153,7 @@ final class HomeViewModel: ObservableObject {
 
             let loadedCatalogCount = loadedCatalogs.values.filter { !$0.isEmpty }.count
 
-            // Run the remaining independent row sources concurrently instead of one
-            // after another. catalogResults/widgetData are only ever *merged* into
-            // below (never reassigned), so the concurrent main-actor writes are safe,
-            // and the home is revealed in a single pass once they all finish — no
-            // staggered pop-in as rows shift the layout.
+            // Run the remaining independent row sources concurrently instead of one after another.
             async let stremioCatalogs = self.loadStremioCatalogs(
                 enabledCatalogs: enabledCatalogSnapshot,
                 tmdbService: tmdbService,
@@ -457,7 +446,7 @@ final class HomeViewModel: ObservableObject {
         contentFilter: TMDBContentFilter
     ) async {
             guard !Task.isCancelled else { return }
-            // Ranked lists reuse existing catalog data — zero extra API calls
+            // Ranked lists reuse existing catalog data - zero extra API calls
             let rankedMappings: [(catalogId: String, sourceKey: String)] = [
                 ("bestTVShows", "topRatedTVShows"),
                 ("bestMovies", "topRatedMovies"),
@@ -474,7 +463,7 @@ final class HomeViewModel: ObservableObject {
                 }
             }
             
-            // Networks — parallel discover calls
+            // Networks - parallel discover calls
             if enabledCatalogs.contains(where: { $0.id == "networks" }) {
                 await withTaskGroup(of: (Int, [TMDBSearchResult]).self) { group in
                     for network in WidgetNetwork.curated {
@@ -495,7 +484,7 @@ final class HomeViewModel: ObservableObject {
                 }
             }
             
-            // Genres — parallel discover calls
+            // Genres - parallel discover calls
             if enabledCatalogs.contains(where: { $0.id == "genres" }) {
                 await withTaskGroup(of: (Int, [TMDBSearchResult]).self) { group in
                     for genre in WidgetGenre.curated {
@@ -516,7 +505,7 @@ final class HomeViewModel: ObservableObject {
                 }
             }
             
-            // Companies — parallel discover calls
+            // Companies - parallel discover calls
             if enabledCatalogs.contains(where: { $0.id == "companies" }) {
                 await withTaskGroup(of: (Int, [TMDBSearchResult]).self) { group in
                     for company in WidgetCompany.curated {
@@ -537,7 +526,7 @@ final class HomeViewModel: ObservableObject {
                 }
             }
             
-            // Featured — pick a random popular genre
+            // Featured - pick a random popular genre
             if enabledCatalogs.contains(where: { $0.id == "featured" }) {
                 guard !Task.isCancelled else { return }
                 let randomGenre = WidgetGenre.curated.randomElement() ?? WidgetGenre.curated[0]

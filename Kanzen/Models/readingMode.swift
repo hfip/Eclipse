@@ -1,15 +1,3 @@
-//
-//  readingMode.swift
-//  Eclipse
-//
-//  Created by Dawud Osman on 17/11/2025.
-//
-//
-//  readingMode.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 04/10/2025.
-//
 enum ReadingMode: Int,CaseIterable,Identifiable {
     case LTR = 0
     case RTL = 1

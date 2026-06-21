@@ -1,15 +1,4 @@
-//
-//  AutoModeStreamSelection.swift
-//  Eclipse
-//
-//  Shared, pure stream-quality scoring used by Auto Mode selection. The logic mirrors the
-//  scoring originally implemented privately in ServicesResultsSheet so that background
-//  features (e.g. next-episode warmup pre-resolution) pick the SAME stream the real playback
-//  flow would — which is what makes the warmup cache actually hit.
-//
-//  Keep this in sync with the equivalent scoring in ServicesResultsSheet. These functions are
-//  pure (no UI / no state) and safe to call from any thread.
-//
+// Shared, pure stream-quality scoring used by Auto Mode selection.
 
 import Foundation
 
@@ -147,10 +136,7 @@ enum AutoModeStreamSelection {
 
     // MARK: - Stremio
 
-    /// Mirrors `ServicesResultsSheet.bestStremioStream`. Returns nil unless Auto Quality is on and
-    /// at least one stream exposes a detectable resolution (matching the real flow, which otherwise
-    /// shows a manual picker). NOTE: unlike plugins, a single label-less Stremio stream is NOT
-    /// auto-selected — the real auto flow returns nil for that addon too, so warmup stays in sync.
+    /// Mirrors `ServicesResultsSheet.bestStremioStream`.
     static func bestStremioStream(from streams: [StremioStream]) -> StremioStream? {
         guard !streams.isEmpty else { return nil }
         guard AutoModeQualityPreference.current.usesAutomaticSelection else {

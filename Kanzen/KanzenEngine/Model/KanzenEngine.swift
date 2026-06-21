@@ -1,10 +1,3 @@
-//
-//  KanzenEngine.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 12/05/2025.
-//
-
 import SwiftUI
 
 class KanzenEngine: ObservableObject

@@ -1,10 +1,3 @@
-//
-//  SoraApp.swift
-//  Sora
-//
-//  Created by Francesco on 12/08/25.
-//
-
 import SwiftUI
 #if !os(tvOS)
 import Nuke
@@ -45,7 +38,6 @@ struct SoraApp: App {
 
 #if !os(tvOS)
     @AppStorage("showKanzen") private var showKanzen: Bool = false
-    let kanzen = KanzenEngine();
 #endif
 
     init() {
@@ -56,14 +48,11 @@ struct SoraApp: App {
         ReaderImagePipelineConfigurator.configureIfNeeded()
 #endif
 
-        // Check and auto-clear cache on app startup if threshold exceeded
         DispatchQueue.global(qos: .background).async {
             CacheManager.shared.checkAndAutoClearIfNeeded()
         }
-        // Initialize download manager early to reconnect background session
         _ = DownloadManager.shared
 #if !os(tvOS)
-        // Initialize Reader downloads early so interrupted Kanzen queues are recovered separately.
         Task { @MainActor in
             _ = ReaderDownloadManager.shared
         }
@@ -78,25 +67,14 @@ struct SoraApp: App {
                     .onAppear { scheduleStartupFallback() }
 #else
                 if showKanzen {
-                    if ExperimentalFeatureState.isEnabledAtLaunch {
-                        ExperimentalKanzenMenu(onStartupReady: markStartupReady)
-                            .environmentObject(settings)
-                            .environmentObject(theme)
-                            .environmentObject(moduleManager)
-                            .environmentObject(favouriteManager)
-                            .environment(\.managedObjectContext, favouriteManager.container.viewContext)
-                            .accentColor(settings.effectiveAccentColor)
-                            .onAppear { scheduleStartupFallback() }
-                    } else {
-                        KanzenMenu(onStartupReady: markStartupReady)
-                            .environmentObject(settings)
-                            .environmentObject(theme)
-                            .environmentObject(moduleManager)
-                            .environmentObject(favouriteManager)
-                            .environment(\.managedObjectContext, favouriteManager.container.viewContext)
-                            .accentColor(settings.effectiveAccentColor)
-                            .onAppear { scheduleStartupFallback() }
-                    }
+                    KanzenMenu(onStartupReady: markStartupReady)
+                        .environmentObject(settings)
+                        .environmentObject(theme)
+                        .environmentObject(moduleManager)
+                        .environmentObject(favouriteManager)
+                        .environment(\.managedObjectContext, favouriteManager.container.viewContext)
+                        .accentColor(settings.effectiveAccentColor)
+                        .onAppear { scheduleStartupFallback() }
                 } else {
                     if ExperimentalFeatureState.isEnabledAtLaunch {
                         ExperimentalContentView(onStartupReady: markStartupReady)

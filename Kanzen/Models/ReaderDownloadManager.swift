@@ -1,10 +1,5 @@
-//
-//  ReaderDownloadManager.swift
-//  Kanzen
-//
-//  Reader-only download queue and offline page store. This intentionally stays
-//  separate from media downloads so Kanzen state, logs, and storage do not mix.
-//
+// Reader-only download queue and offline page store. This intentionally stays
+// separate from media downloads so Kanzen state, logs, and storage do not mix.
 
 #if !os(tvOS)
 import AidokuRunner

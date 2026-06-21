@@ -1,10 +1,3 @@
-//
-//  JaroWinklerSimilarity.swift
-//  Sora
-//
-//  Created by Francesco on 20/08/25.
-//
-
 import Foundation
 
 class JaroWinklerSimilarity {

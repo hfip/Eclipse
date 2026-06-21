@@ -1,7 +1,3 @@
-//
-//  HomeView.swift
-//  Sora
-
 import SwiftUI
 import Kingfisher
 import AVKit
@@ -209,9 +205,7 @@ struct HomeView: View {
                 .ignoresSafeArea(.all)
             }
 
-            // Pinned to the viewport (behind the scroll content) so it follows the user. The
-            // top inset holds it below the hero banner + gradient while the hero is on screen,
-            // then it stays fixed once scrolled past. The opaque hero covers it at the top.
+            // Pinned to the viewport (behind the scroll content) so it follows the user.
             if homeAnimatedBackgroundEnabled {
                 EclipseAmbientMotionBackground(
                     topClearance: animatedBackgroundTopClearance,
@@ -1780,7 +1774,7 @@ struct ContinueWatchingCard: View {
             playbackContext?.hasAnimeMediaId == true
     }
 
-    /// Title to pass to the search sheet – uses the AniList season title for anime, matching MediaDetailView's logic
+    /// Title to pass to the search sheet - uses the AniList season title for anime, matching MediaDetailView's logic
     private var searchSheetTitle: String {
         if searchSheetIsAnime, !item.isMovie,
            let seasonTitle = animeSeasonTitle {
@@ -2146,7 +2140,7 @@ struct ContinueWatchingCard: View {
 
                         Logger.shared.log("ContinueWatchingCard: Resolved anime metadata for \(details.name), seasonTitle=\(matchedSeasonTitle ?? "nil")", type: "AniList")
                     } catch {
-                        // AniList fetch failed – still mark as anime but without season title
+                        // AniList fetch failed - still mark as anime but without season title
                         Logger.shared.log("ContinueWatchingCard: AniList fetch failed for \(details.name): \(error.localizedDescription)", type: "AniList")
                         await MainActor.run {
                             self.isAnimeContent = true
@@ -2172,7 +2166,7 @@ struct ContinueWatchingCard: View {
                         }
                     }
                 } else {
-                    // Not anime – metadata is ready
+                    // Not anime - metadata is ready
                     await MainActor.run {
                         self.isAnimeContent = false
                         self.animeSeasonRomajiTitle = nil

@@ -1,10 +1,3 @@
-//
-//  CacheManager.swift
-//  Eclipse
-//
-//  Created by Soupy-dev on 01/11/26.
-//
-
 import Foundation
 
 final class CacheManager {

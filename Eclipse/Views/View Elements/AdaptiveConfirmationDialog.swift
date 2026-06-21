@@ -1,10 +1,3 @@
-//
-//  Untitled.swift
-//  Eclipse
-//
-//  Created by Dominic on 30.12.25.
-//
-
 import SwiftUI
 
 struct AdaptiveConfirmationDialog<Actions: View, Message: View>: ViewModifier {

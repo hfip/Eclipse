@@ -1,9 +1,4 @@
-//
-//  PlayerViewController.swift
-//  test
-//
-//  Created by Francesco on 28/09/25.
-//
+// test
 
 import UIKit
 import SwiftUI
@@ -844,10 +839,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             case .serious:
                 return .lowHeat(reason: "auto thermal=serious; \(device.reason)")
             case .fair:
-                // A device that feels warm in the hand is typically only at .fair — iOS
-                // reserves .serious/.critical for when it is already actively throttling
-                // the SoC. Step down proactively here so we shed heat before it escalates,
-                // instead of staying on full 4K/Sharp until the device is already hot.
+                // A device that feels warm in the hand is typically only at .fair, iOS reserves .serious/.critical for when it is
+                // already.
                 return .balanced(reason: "auto thermal=fair; \(device.reason)")
             default:
                 let safeText = classification.safeReason ?? "no risky stream markers"
@@ -933,11 +926,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func evaluateMetalThermalQuality(reason: String) {
         guard Settings.shared.mpvMetalQualityProfile == .auto else { return }
 
-        // Re-resolve and apply on every tick so quality tracks the thermal state in both
-        // directions: it steps down further as things worsen (sharp -> balanced -> low heat)
-        // and climbs back up as the device cools. Routes to whichever MoltenVK renderer is active —
-        // the CPU sample-buffer path (resolution/fps caps) or the GPU gpu-next path (scaler tier
-        // + drawable downscale).
+        // Re-resolve and apply on every tick so quality tracks the thermal state in both directions: it steps down further
+        // as things.
         let resolvedProfile = metalSampleBufferQualityProfile()
         let changed: Bool
         if let metalMPVRenderer {
@@ -1081,10 +1071,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     var playerTitleOverride: String?
     // Optional override: when true, treat content as anime regardless of tracker mapping
     var isAnimeHint: Bool?
-    /// Optional broad-animation hint (TMDB genre 16 — anime *and* western cartoons), set by
-    /// callers that have the title's genres in scope. Lets `audioComfortCategory()` classify a
-    /// genre-16, non-anime title as `.westernAnimation` rather than `.liveAction`; nil falls back
-    /// to anime-only detection (so such a title would be treated as live action).
+    /// Optional broad-animation hint (TMDB genre 16, anime *and* western cartoons), set by callers that have the
+    /// title's genres in scope.
     var isAnimationContentHint: Bool?
     /// Original TMDB season/episode numbers for anime (before AniList restructuring).
     /// Used by TheIntroDB which requires TMDB numbering, not AniList-restructured S/E.
@@ -1093,7 +1081,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     var episodePlaybackContext: EpisodePlaybackContext?
 
     // MARK: - Skip Segments & Next Episode
-    /// Called when the user taps "Next Episode" — passes (seasonNumber, nextEpisodeNumber).
+    /// Called when the user taps "Next Episode" - passes (seasonNumber, nextEpisodeNumber).
     var onRequestNextEpisode: ((_ seasonNumber: Int, _ nextEpisodeNumber: Int) -> Void)?
 
     private var skipSegments: [SkipSegment] = []
@@ -1777,12 +1765,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     // MARK: - Renderer track cache
-    // Menu rebuilds (e.g. subtitle-appearance taps) read these snapshots instead of querying the
-    // renderer synchronously on every interaction. On the MoltenVK sample-buffer path each live track
-    // query blocks the main thread, so repeated per-tap reads were felt as menu lag. The snapshots
-    // are invalidated whenever tracks can actually change (new file load, explicit set/disable/
-    // load-external, the track-change delegate, and the post-load readiness pollers) and lazily
-    // refreshed on the next read — staying correct while removing the per-tap round-trips.
     private var cachedMenuSubtitleTrackDescriptors: [SubtitleTrackDescriptor] = []
     private var subtitleTrackCacheValid = false
     private var cachedMenuAudioDetailedTracks: [(Int, String, String)] = []
@@ -2154,15 +2136,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func disarmMPVPictureInPictureRestartAfterStop(reason: String) {
         let appState = UIApplication.shared.applicationState
         logPictureInPicture("MPV PiP restart disarmed after stop reason=\(reason) appState=\(applicationStateDescription(appState)) -> suppress-until-foreground")
-        // Drop automatic-from-inline AND suppress the custom app-exit auto-PiP until the app
-        // genuinely returns to the foreground. Previously the .active case only cancelled pending
-        // requests, which let the next transient scene-will-deactivate (the PiP window appearing, a
-        // sheet, Control Center) eagerly restart PiP through the pre-background path in
-        // scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation — an endless close/reopen
-        // loop on the GPU path. (Unlike the OpenGL path, the inline surface AVKit watches is the
-        // Metal layer, not the sample-buffer layer, so dropping the system flag alone doesn't gate
-        // the custom restart.) Suppression lifts on a real foreground return (scene-phase-active /
-        // restoreUI); manual PiP via the button bypasses the auto-exit path and is unaffected.
+        // Drop automatic-from-inline AND suppress the custom app-exit auto-PiP until the app genuinely returns to the
+        // foreground.
         suppressMPVAppExitPictureInPictureUntilForeground(reason: "\(reason)-\(applicationStateDescription(appState))")
     }
 
@@ -2202,14 +2177,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     /// Tracks the last proactive PiP warm so overlapping foreground signals don't re-warm in a loop.
     private var lastMPVPictureInPictureWarmAt: CFTimeInterval = 0
 
-    /// Proactively warms the separate PiP mpv instance during FOREGROUND playback so a later PiP
-    /// (button tap or auto-on-background) begins from a warm, pre-loaded instance instead of a cold
-    /// one. The cold instance can't create + load + decode a frame inside the ~0.35s backgrounding
-    /// window, which is why auto-PiP failed to trigger and button PiP took a beat. Reuses the fully
-    /// gated prime path (PiP enabled, foreground, playing, not suppressed/active) and only pre-loads
-    /// the instance (activateLayer: false) — it never starts PiP. Throttled so a burst of foreground
-    /// notifications doesn't spin up repeated loads. Cost: one extra paused mpv instance, gated
-    /// entirely on the user having PiP enabled.
+    /// Proactively warms the separate PiP mpv instance during FOREGROUND playback so a later PiP (button tap or
+    /// auto-on-background).
     private func warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: String, minInterval: CFTimeInterval = 3.0) {
         guard isMPVRenderer, !isVLCPlayer else { return }
         guard Settings.shared.mpvPictureInPictureEnabled else { return }
@@ -3583,12 +3552,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     // MARK: - MoltenVK/mpv performance overlay (HUD)
-    //
-    // A lightweight on-screen HUD for the single-instance MoltenVK sample-buffer renderer. It
-    // surfaces the three signals that matter for the auto-quality/heat system: process CPU
-    // load, the system thermal state, and the quality profile the renderer is actually
-    // running ("Sharp" / "Balanced" / "Low Heat"). It is gated behind a settings toggle and
-    // only ever shows while the MoltenVK renderer is the active backend.
 
     private func updateMetalPerformanceOverlayVisibility() {
         let active = isMetalPerformanceOverlayActive
@@ -3647,7 +3610,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             valueColor: metalPerformanceQualityColor()
         ))
 
-        // Stream/source quality — best-effort, from the resolved stream metadata. Reveals the
+        // Stream/source quality - best-effort, from the resolved stream metadata. Reveals the
         // advertised codec/bit-depth/HDR tags (e.g. "1080p x265 10bit HDR") that the renderer
         // itself doesn't surface, so a hot vs cool stream can be compared at a glance.
         if let streamName = playbackLaunchContext?.streamName?
@@ -3718,12 +3681,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func metalPerformanceQualityText() -> String {
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE
-        let active = metalMPVRenderer?.activeQualityProfileName ?? gpuMPVRenderer?.activeQualityProfileName ?? "—"
+        let active = metalMPVRenderer?.activeQualityProfileName ?? gpuMPVRenderer?.activeQualityProfileName ?? "-"
         // Annotate when the profile is being driven automatically by the thermal system, so a
         // drop to "Low Heat" is legible as the auto-protection kicking in rather than a manual pick.
         return Settings.shared.mpvMetalQualityProfile == .auto ? "\(active) · Auto" : active
 #else
-        return "—"
+        return "-"
 #endif
     }
 
@@ -3790,15 +3753,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
     }
 
-    /// Device GPU utilization (0–100) over the last sample interval, or nil if unavailable. iOS has
-    /// no public per-process GPU-usage API; this reads the private `IOReport` GPU performance-state
-    /// residencies (the source the Xcode GPU gauges use). During fullscreen playback the device's
-    /// GPU work is dominated by the video, so it's a good proxy for the player's GPU load.
+    /// Device GPU utilization (0,100) over the last sample interval, or nil if unavailable.
     private func gpuUsagePercent() -> Double? {
         gpuUsageSampler?.sample()
     }
 
-    /// Best-effort GPU sampler. `init?` fails (→ nil, overlay shows "n/a") when the private
+    /// Best-effort GPU sampler. `init?` fails (to nil, overlay shows "n/a") when the private
     /// `IOReport` symbols or the "GPU Stats" channel group are unavailable; every step is
     /// nil-guarded so a missing/renamed symbol degrades gracefully rather than crashing.
     final class GPUUsageSampler {
@@ -3846,7 +3806,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
             guard let channels = copyChannels("GPU Stats" as CFString, nil, 0, 0, 0)?.takeRetainedValue() else { return nil }
             var subbed: Unmanaged<CFMutableDictionary>?
-            // Subscription return value follows the CF Create rule (+1) → takeRetainedValue. The
+            // Subscription return value follows the CF Create rule (+1) to takeRetainedValue. The
             // `subbed` out-param's ownership is ambiguous, so take it unretained (ARC adds its own
             // retain on store): worst case a 1-object/session leak, never an over-release crash.
             guard let sub = createSub(nil, channels, &subbed, 0, nil)?.takeRetainedValue(),
@@ -4536,10 +4496,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateCurrentSubtitleAppearance() {
-        // Applying the style IS the overlay refresh — every renderer's refreshSubtitleOverlay()
-        // simply re-applies lastAppliedSubtitleStyle — so apply it exactly once. The previous
-        // trailing rendererRefreshSubtitleOverlay() re-applied the identical style, doubling the
-        // synchronous mpv `set` commands on every appearance tap (felt as lag on the MoltenVK path).
+        // Applying the style IS the overlay refresh, every renderer's refreshSubtitleOverlay() simply re-applies.
         rendererApplySubtitleStyle(currentSubtitleStyle())
 
         guard isVLCCustomSubtitleOverlayEnabled else { return }
@@ -4805,7 +4762,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             onResolvedPlaybackRequest: { [weak self] request in
                 self?.replacePlayback(with: request, reason: "\(reason)-resolved-source")
             },
-            // Same show as the one playing — propagate its animation classification.
+            // Same show as the one playing - propagate its animation classification.
             // (Must follow onResolvedPlaybackRequest: it is declared after it on the view.)
             isAnimationGenre16: isAnimationContentHint ?? false
         )
@@ -5153,7 +5110,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func updateAudioTracksMenuWhenReady(attempt: Int = 0) {
-        // Tracks may have just appeared/changed (async discovery after load) — re-read fresh.
+        // Tracks may have just appeared/changed (async discovery after load) - re-read fresh.
         audioTrackCacheValid = false
         // Stop retrying if user manually selected a track
         if userSelectedAudioTrack {
@@ -5181,7 +5138,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func updateSubtitleTracksMenuWhenReady(attempt: Int = 0) {
-        // Tracks may have just appeared/changed (async discovery after load) — re-read fresh.
+        // Tracks may have just appeared/changed (async discovery after load) - re-read fresh.
         subtitleTrackCacheValid = false
         if userSelectedSubtitleTrack {
             updateSubtitleTracksMenu()
@@ -5320,11 +5277,6 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     // MARK: - Comfort / anime-like audio processing
-    //
-    // Applies the user's AudioComfortMode (mpv `af` filter chain) to the active mpv renderer,
-    // scoped to a multi-select set of content categories (anime / western animation / live action).
-    // mpv keeps the `af` property across the session, so it's set once playback is ready and re-set
-    // whenever the mode/scope could change.
 
     /// The `af` chain to apply right now: empty (passthrough) when the mode is Original or the
     /// current title's category isn't in the selected scope set; otherwise the mode's filter chain.
@@ -5384,7 +5336,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             mediaType = "series"
         }
 
-        Logger.shared.log("SkipData: fetchSkipData called — tmdbId=\(tmdbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1) isAnime=\(isAnime)", type: "Skip")
+        Logger.shared.log("SkipData: fetchSkipData called - tmdbId=\(tmdbId) s=\(seasonNumber ?? -1) ep=\(episodeNumber ?? -1) isAnime=\(isAnime)", type: "Skip")
 
         skipDataFetched = true
 
@@ -5416,7 +5368,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 type: "Skip"
             )
 
-            // ── Anime content: try AniSkip first (better anime coverage) ──
+            // Prefer AniSkip for anime coverage.
             if !aniSkipEnabled {
                 Logger.shared.log("SkipData: AniSkip skipped: disabled in Settings", type: "Skip")
             } else if !isAnime {
@@ -5442,7 +5394,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 }
             }
 
-            // ── Fallback to TheIntroDB (or primary for non-anime) ──
+            // Fall back to TheIntroDB.
             // For anime, use original TMDB S/E (pre-AniList restructuring) since TheIntroDB uses TMDB numbering
             let introDBSeason = self.originalTMDBSeasonNumber ?? seasonNumber
             let introDBEpisode = self.originalTMDBEpisodeNumber ?? episodeNumber
@@ -5571,7 +5523,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if animeProviderId == nil {
             animeProviderId = trackerManager.cachedAniListSeasonId(tmdbId: tmdbId, seasonNumber: seasonNumber)
             if let id = animeProviderId {
-                Logger.shared.log("SkipData: AniSkip step 1 – cached season ID \(id)", type: "Skip")
+                Logger.shared.log("SkipData: AniSkip step 1 - cached season ID \(id)", type: "Skip")
             }
         }
 
@@ -5579,13 +5531,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if animeProviderId == nil {
             animeProviderId = trackerManager.cachedAniListId(for: tmdbId)
             if let id = animeProviderId {
-                Logger.shared.log("SkipData: AniSkip step 2 – cached show ID \(id)", type: "Skip")
+                Logger.shared.log("SkipData: AniSkip step 2 - cached show ID \(id)", type: "Skip")
             }
         }
 
         // Step 3: Full AniList resolution via sequel chain
         if animeProviderId == nil, !performanceModeEnabled, !skipAniListTraversal, let title = showTitle {
-            Logger.shared.log("SkipData: AniSkip step 3 – resolving via AniListService for '\(title)'", type: "Skip")
+            Logger.shared.log("SkipData: AniSkip step 3 - resolving via AniListService for '\(title)'", type: "Skip")
             do {
                 let animeData = try await AniListService.shared.fetchAnimeDetailsWithEpisodes(
                     title: title,
@@ -5602,13 +5554,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
         }
 
-        // Step 4: Last resort – simple title search
+        // Step 4: Last resort - simple title search
         if animeProviderId == nil, !performanceModeEnabled, !skipAniListTraversal {
             animeProviderId = await trackerManager.getAniListMediaId(tmdbId: tmdbId)
         }
 
         guard let finalId = animeProviderId else {
-            Logger.shared.log("SkipData: No anime provider ID found for tmdbId=\(tmdbId) — skipping AniSkip", type: "Skip")
+            Logger.shared.log("SkipData: No anime provider ID found for tmdbId=\(tmdbId) - skipping AniSkip", type: "Skip")
             return []
         }
 
@@ -6115,7 +6067,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         // Start staging a few percent BEFORE the user's "next episode" appearance threshold so
-        // the next stream has lead time to resolve + warm (e.g. appearance 90% → stage at 85%).
+        // the next stream has lead time to resolve + warm (e.g. appearance 90% to stage at 85%).
         // Clamped so it never fires implausibly early.
         let stageLead = 0.05
         let stageThreshold = max(0.50, threshold - stageLead)
@@ -6140,12 +6092,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         )
     }
 
-    /// Best-effort: resolve the NEXT episode's stream ahead of time and warm its byte cache so
-    /// the upcoming transition is fast. This is a pure side-channel — it only primes the warmup
-    /// cache via `prewarm` and never touches current playback; every failure path is a silent
-    /// no-op. It is intentionally conservative: it only commits when the next stream URL can be
-    /// resolved unambiguously, so the warmed URL is guaranteed to match the one the normal
-    /// next-episode flow will play (otherwise the warm would be wasted).
+    /// Best-effort: resolve the NEXT episode's stream ahead of time and warm its byte cache so the upcoming transition
+    /// is fast.
     private func prewarmNextEpisodeStreamIfPossible(
         showId: Int,
         currentSeasonNumber: Int,
@@ -6159,10 +6107,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        // Stay low-profile: never add resolution/network load (and never risk heating the
-        // device) while it is already under thermal pressure or in Low Power Mode. The byte
-        // warmup itself is also thermal-gated inside prewarm(), but we bail before doing any
-        // work so the JS/scraper resolution doesn't run either.
+        // Stay low-profile: never add resolution/network load (and never risk heating the device) while it is already
+        // under thermal.
         let processInfo = ProcessInfo.processInfo
         guard !processInfo.isLowPowerModeEnabled,
               processInfo.thermalState != .serious,
@@ -6186,10 +6132,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        // Resolve via the SAME ecosystem the current episode is playing from. The plugin/Stremio
-        // paths derive the TMDB lookup numbers via `nextEpisodeLookupNumbers`, which applies the
-        // anime AniList/Kitsu remapping carried in `episodePlaybackContext` — so anime works there
-        // too as long as that context exists (it bails otherwise).
+        // Resolve via the SAME ecosystem the current episode is playing from.
         switch playbackLaunchContext?.sourceKind ?? .service {
         case .service:
             prewarmNextEpisodeViaService(
@@ -6214,11 +6157,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     /// Resolved next-episode lookup, mirroring `ServicesResultsSheet.streamLookupSeasonNumber` /
-    /// `streamLookupEpisodeNumber` / `shouldSearchStremio`. Applies the anime AniList/Kitsu remap by
-    /// projecting the current `episodePlaybackContext` onto the next local episode number.
-    ///
-    /// Returns nil to signal "skip prewarm": either anime with no usable mapping context, or a
-    /// special episode the addon can't be queried for (no resolved TMDB season/episode).
+    /// `streamLookupEpisodeNumber` /.
     private func nextEpisodeLookupNumbers(
         currentSeasonNumber: Int,
         nextEpisodeNumber: Int
@@ -6251,10 +6190,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return (season, episode, nextContext)
     }
 
-    /// Captures a fully-resolved playback request for the next episode from a staging-time
-    /// resolution, so `nextEpisodeButtonTapped` can replay it instantly instead of re-resolving
-    /// the source on tap. Must run on the main thread (reads live episode state). Only kept while
-    /// we are still staging from the same episode it was resolved for.
+    /// Captures a fully-resolved playback request for the next episode from a staging-time resolution, so
+    /// `nextEpisodeButtonTapped`.
     private func stashStagedNextEpisodeRequest(
         streamURL: URL,
         headers: [String: String]?,
@@ -6283,7 +6220,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             mediaInfo: nextMediaInfo,
             imdbId: imdbId,
             isAnimeHint: isAnime,
-            // Next episode is the same show — carry the current animation classification forward.
+            // Next episode is the same show - carry the current animation classification forward.
             isAnimationContentHint: isAnimationContentHint,
             originalTMDBSeasonNumber: tmdbSeason,
             originalTMDBEpisodeNumber: tmdbEpisode,
@@ -6364,8 +6301,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        // Plugins resolve purely by TMDB season/episode; for anime these are the AniList→TMDB
-        // remapped numbers. nil means anime-without-context or an unmappable special → skip.
+        // Plugins resolve purely by TMDB season/episode; for anime these are the AniListtoTMDB
+        // remapped numbers. nil means anime-without-context or an unmappable special to skip.
         guard let lookup = nextEpisodeLookupNumbers(currentSeasonNumber: currentSeasonNumber, nextEpisodeNumber: nextEpisodeNumber) else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=plugin-no-episode-mapping show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
             return
@@ -6384,7 +6321,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let direct = streams.filter { $0.isDirectHTTP }
             let chosen: NuvioPluginStream?
             if direct.count == 1 {
-                chosen = direct.first            // single stream → the real flow plays it directly
+                chosen = direct.first            // single stream -> the real flow plays it directly
             } else if direct.count > 1 {
                 chosen = AutoModeStreamSelection.bestPluginStream(from: direct)
             } else {
@@ -6411,15 +6348,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
-    /// Stremio next episode: re-resolve via the SAME addon the current episode played from, using
-    /// the addon's direct content IDs (tmdb + imdb + anilist/kitsu + season/episode), pick the
-    /// stream the way the real auto flow would (`bestStremioStream`), and warm it. Low-priority task.
-    ///
-    /// Anime is supported: `nextEpisodeLookupNumbers` projects the carried `episodePlaybackContext`
-    /// (which holds the AniList/Kitsu mapping) onto the next episode and we forward both the AniList
-    /// id and the playback context to the addon, exactly like the live flow. The originating search's
-    /// title candidates are carried on the launch context, so the addon catalog-search fallback (used
-    /// when direct content IDs return nothing) is reproduced too.
+    /// Stremio next episode: re-resolve via the SAME addon the current episode played from, using the addon's direct
+    /// content IDs.
     private func prewarmNextEpisodeViaStremio(
         showId: Int,
         currentSeasonNumber: Int,
@@ -6512,11 +6442,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return nil
     }
 
-    /// Selects which stream URL to warm. A single option always matches the real flow.
-    /// Multiple options are only handled when Auto Quality is enabled (per the user setting);
-    /// it mirrors the resolution-dominant ranking of the real auto-selector and bails when no
-    /// option exposes a detectable resolution (the real flow shows a manual picker in that case).
-    /// A mismatch only wastes a bounded warmup fetch — it never affects playback.
+    /// Selects which stream URL to warm.
     private static func selectPrewarmStream(streams: [String]?, sources: [[String: Any]]?) -> (url: String, headers: [String: String]?)? {
         var candidates: [(url: String, headers: [String: String]?, label: String)] = []
         if let sources = sources, !sources.isEmpty {
@@ -6539,7 +6465,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         // Multiple options: only commit when Auto Quality is on (otherwise the real flow would
-        // prompt the user, so we can't predict the choice — skip to avoid a wrong warm). Uses the
+        // prompt the user, so we can't predict the choice - skip to avoid a wrong warm). Uses the
         // shared scorer so the pick matches the real service auto-selection exactly.
         let preference = AutoModeQualityPreference.current
         guard preference.usesAutomaticSelection,
@@ -7918,12 +7844,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
-        // UserDefaults.didChangeNotification posts once per defaults.set(). A single
-        // subtitle-appearance change writes ~6 keys (see SubtitleModel.saveSubtitleSettings),
-        // so this observer fires ~6x in a synchronous burst. Each run does heavy work:
-        // ~8 synchronous mpv property sets via rendererApplySubtitleStyle, a subtitle-menu
-        // rebuild and a PiP-automation reconfigure, which visibly lags the player menus.
-        // Coalesce the burst into a single rebuild on the next runloop hop.
+        // UserDefaults.didChangeNotification posts once per defaults.set().
         pendingUserDefaultsChangeWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -7953,7 +7874,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             applyVLCSubtitleModeSettingIfNeeded()
             applyVLCSubtitleOverlayPositionSetting()
         } else {
-            // Only cross into mpv when the subtitle style actually changed — this observer
+            // Only cross into mpv when the subtitle style actually changed - this observer
             // also fires for unrelated defaults, and a menu-driven change has usually
             // already applied this exact style.
             let style = currentSubtitleStyle()
@@ -8708,11 +8629,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func showControlsTemporarily() {
         controlsHideWorkItem?.cancel()
         controlsVisible = true
-        // Light live-tracking: showing the controls means the user is interacting and PiP is more
-        // likely soon, so nudge the warm PiP instance toward the live position. Throttled to once per
-        // 10s and gated to a warm/foreground/PiP-enabled instance, so the cost is at most one frame
-        // re-decode per 10s of interaction (zero when idle) — it keeps button-PiP from doing a large
-        // catch-up seek without continuously re-fetching video.
+        // Light live-tracking: showing the controls means the user is interacting and PiP is more likely soon, so nudge
+        // the warm PiP.
         warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: "controls-shown-track", minInterval: 10.0)
         updateBrightnessControlVisibility()
         updateVolumeControlVisibility()
@@ -10354,11 +10272,8 @@ extension PlayerViewController: MPVNativeRendererDelegate {
                 self.loadingIndicator.stopAnimating()
                 self.loadingIndicator.alpha = 0.0
                 self.centerPlayPauseButton.isHidden = false
-                // A play/pause GESTURE (center-tap / two-finger) sets suppressNextPlayPauseControlReveal
-                // and toggles state; the kit's async onStateChange then fires didChangeLoading(false)
-                // here. Honor the suppression flag (same as the didChangePause path above) so those
-                // gestures toggle playback WITHOUT waking the full controls overlay. Non-gesture loads
-                // leave the flag false and still reveal as before.
+                // A play/pause GESTURE (center-tap / two-finger) sets suppressNextPlayPauseControlReveal and toggles state; the
+                // kit's async.
                 self.updatePlayPauseButton(
                     isPaused: self.rendererIsPausedState(),
                     shouldShowControls: !self.suppressNextPlayPauseControlReveal
@@ -10878,10 +10793,8 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
             guard !pending else {
-                // Starting PiP from the foreground makes iOS fire a foreground event mid-
-                // handshake; tearing the renderer down here (stop + finish) races AVKit's
-                // didStart and leaves the PiP window black. Leave the in-flight start alone —
-                // didStart -> activate will show it, and failedToStart/timeout paths recover.
+                // Starting PiP from the foreground makes iOS fire a foreground event mid- handshake; tearing the renderer down
+                // here (stop +.
                 self.logPictureInPicture("will-enter-foreground keeping in-flight PiP start (no teardown) renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
                 return
             }

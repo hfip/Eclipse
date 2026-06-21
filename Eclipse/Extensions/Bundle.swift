@@ -1,10 +1,3 @@
-//
-//  Bundle.swift
-//  Eclipse
-//
-//  Created by Dominic on 04.11.25.
-//
-
 import Foundation
 
 extension Bundle {

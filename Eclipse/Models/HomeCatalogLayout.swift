@@ -1,12 +1,7 @@
-//
-//  HomeCatalogLayout.swift
-//  Sora
-//
-//  Per-catalog overrides for home shelf orientation and size.
-//  Global orientation/size continue to live in the existing
-//  `experimentalHomeCardShape` / `experimentalMediaCardScale` defaults; this
-//  store only holds the per-catalog deltas that override the global values.
-//
+// Per-catalog overrides for home shelf orientation and size.
+// Global orientation/size continue to live in the existing
+// `experimentalHomeCardShape` / `experimentalMediaCardScale` defaults; this
+// store only holds the per-catalog deltas that override the global values.
 
 import Foundation
 import Combine

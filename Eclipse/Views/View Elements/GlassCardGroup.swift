@@ -1,9 +1,4 @@
-//
-//  GlassCardGroup.swift
-//  Eclipse
-//
-//  Translucent glass card group container with thin separators
-//
+// Translucent glass card group container with thin separators
 
 import SwiftUI
 
@@ -252,7 +247,7 @@ struct GlassRowIcon: View {
 }
 
 /// A settings row with an optional icon, a title, an optional multi-line
-/// subtitle and arbitrary trailing content (toggle, menu, value text, …).
+/// subtitle and optional trailing content.
 struct GlassDetailRow<Trailing: View>: View {
     let icon: String?
     let iconColor: Color

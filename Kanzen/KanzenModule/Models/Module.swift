@@ -1,9 +1,3 @@
-//
-//  Module.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 13/05/2025.
-//
 import Foundation
 struct ModuleData: Codable, Equatable
 {

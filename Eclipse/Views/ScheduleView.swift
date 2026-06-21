@@ -1,10 +1,3 @@
-//
-//  ScheduleView.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import SwiftUI
 import Combine
 import Kingfisher

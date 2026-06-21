@@ -1,10 +1,3 @@
-//
-//  MediaDetailView.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import SwiftUI
 import Kingfisher
 import AVKit
@@ -705,11 +698,8 @@ struct MediaDetailView: View {
     @ViewBuilder
     private var heroImageSection: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            // Top-anchor the hero content over the lower image so that expanding
-            // the synopsis grows the section DOWNWARD (pushing the cast/episodes
-            // below it down) instead of shoving the title/buttons up. The image
-            // stays a fixed band pinned to the top; the content can extend past it
-            // onto the banner bleed.
+            // Top-anchor the hero content over the lower image so that expanding the synopsis grows the section DOWNWARD
+            // (pushing the.
             ZStack(alignment: .top) {
                 heroBackdrop
                     .frame(height: headerHeight)
@@ -784,7 +774,7 @@ struct MediaDetailView: View {
     @ViewBuilder
     private var gradientOverlay: some View {
         if ExperimentalFeatureState.isEnabledAtLaunch {
-            // Bottom fade only — the artwork stays clean to the top edge (the back
+            // Bottom fade only - the artwork stays clean to the top edge (the back
             // and top-right buttons carry their own backings), so there is no dark
             // "box" behind the status bar.
             LinearGradient(
@@ -1044,7 +1034,7 @@ struct MediaDetailView: View {
     private var experimentalHeroSynopsisSection: some View {
         if let overviewText = currentOverviewText {
             // The hero content is top-anchored (see heroImageSection), so expanding
-            // here grows the section downward — pushing the cast/episodes below it
+            // here grows the section downward - pushing the cast/episodes below it
             // down, never the title/buttons above it up.
             let canExpand = overviewText.count > 150
             Text(overviewText)
@@ -2682,14 +2672,14 @@ struct MediaDetailView: View {
                     }
 
                     
-                    // Detect anime/donghua for tracking/catalog — includes JP, CN, KR, TW animation
+                    // Detect anime/donghua for tracking/catalog - includes JP, CN, KR, TW animation
                     let asianAnimationCountries: Set<String> = ["JP", "CN", "KR", "TW"]
                     let isAsianAnimation = detail.originCountry?.contains(where: { asianAnimationCountries.contains($0) }) ?? false
                     let isAnimation = detail.genres.contains { $0.id == 16 }
                     let detectedAsAnime = isAsianAnimation && isAnimation
                     let performanceModeEnabled = PerformanceModeSettings.isEnabled
                     let skipAniListTraversal = PerformanceModeSettings.skipsAniListTraversalForAnimeDetails
-                    Logger.shared.log("MediaDetailView: \(detail.name) — isAsianAnimation=\(isAsianAnimation) isAnimation=\(isAnimation) detectedAsAnime=\(detectedAsAnime) originCountry=\(detail.originCountry ?? []) genres=\(detail.genres.map { $0.id })", type: "AniList")
+                    Logger.shared.log("MediaDetailView: \(detail.name) - isAsianAnimation=\(isAsianAnimation) isAnimation=\(isAnimation) detectedAsAnime=\(detectedAsAnime) originCountry=\(detail.originCountry ?? []) genres=\(detail.genres.map { $0.id })", type: "AniList")
                     
                     // Full anime structure stays available unless the user opts into the detail-only skip mode.
                     var animeData: AniListAnimeWithSeasons? = nil
@@ -2742,7 +2732,7 @@ struct MediaDetailView: View {
                         self.castMembers = credits?.cast ?? []
                         
                         if let animeData = animeData {
-                            Logger.shared.log("MediaDetailView: Using AniList structure — \(animeData.seasons.count) seasons", type: "AniList")
+                            Logger.shared.log("MediaDetailView: Using AniList structure - \(animeData.seasons.count) seasons", type: "AniList")
                             // Build AniList seasons list with TMDB-compatible fields
                             let aniSeasons: [TMDBSeason] = animeData.seasons.map { aniSeason in
                                 var posterPath: String?
@@ -2830,7 +2820,7 @@ struct MediaDetailView: View {
                             }
                         } else {
                             // Fallback to TMDB seasons
-                            Logger.shared.log("MediaDetailView: animeData is nil — falling back to pure TMDB seasons (\(detail.seasons.count) seasons)", type: "AniList")
+                            Logger.shared.log("MediaDetailView: animeData is nil - falling back to pure TMDB seasons (\(detail.seasons.count) seasons)", type: "AniList")
                             self.tvShowDetail = detail
                             self.anilistEpisodes = nil
                             self.animeSeasonTitles = nil

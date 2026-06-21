@@ -1,10 +1,3 @@
-//
-//  TMDBContentFilter.swift
-//  Sora
-//
-//  Created by Francesco on 11/09/25.
-//
-
 import Foundation
 
 class TMDBContentFilter: ObservableObject {

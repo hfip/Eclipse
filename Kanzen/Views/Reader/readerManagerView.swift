@@ -1,10 +1,5 @@
-//
-//  readerManagerView.swift
-//  Kanzen
-//
-//  UIKit-owned reader bridge. The lowercase type name is kept so every
-//  existing Detail/Library/History entry point can keep launching the reader.
-//
+// UIKit-owned reader bridge. The lowercase type name is kept so every
+// existing Detail/Library/History entry point can keep launching the reader.
 
 import SwiftUI
 import UIKit

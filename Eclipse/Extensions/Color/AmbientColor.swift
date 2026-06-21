@@ -1,14 +1,6 @@
-//
-//  AmbientColor.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import UIKit
 import SwiftUI
 
-// How does it work uh? On hopes and beliving on him? Why? Cuz i had to learn HSV, and how to work twith it yayy.
 extension Color {
     static func ambientColor(from image: UIImage?, prioritizeBottom: Bool = true) -> Color {
         guard let image = image else { return .black }

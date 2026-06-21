@@ -1,10 +1,3 @@
-//
-//  MangaLibraryItem.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2026.
-//
-
 import Foundation
 
 struct MangaLibraryItem: Codable, Identifiable, Equatable {

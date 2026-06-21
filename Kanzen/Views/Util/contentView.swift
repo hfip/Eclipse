@@ -1,10 +1,3 @@
-//
-//  contentView.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 27/05/2025.
-//
-
 import SwiftUI
 import Foundation
 import Kingfisher
@@ -60,7 +53,7 @@ struct contentView: View {
     }
 
     /// Banner blend color from the cover's extracted dominant (falling back to
-    /// the backdrop tone for a dark/absent cover) — same behavior as a media hero.
+    /// the backdrop tone for a dark/absent cover) - same behavior as a media hero.
     private var readerHeroBlendColor: Color {
         theme.heroBlendColor(dominant: headerAmbientColor, isReaderMode: true)
     }

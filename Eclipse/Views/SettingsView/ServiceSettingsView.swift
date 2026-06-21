@@ -1,10 +1,3 @@
-//
-//  ServiceSettingsView.swift
-//  Sora
-//
-//  Created by Francesco on 15/08/25.
-//
-
 import SwiftUI
 import Kingfisher
 

@@ -1,9 +1,4 @@
-//
-//  AniSkipService.swift
-//  Eclipse
-//
-//  Created on 27/02/26.
-//
+// Created on 27/02/26.
 
 import Foundation
 
@@ -75,11 +70,6 @@ final class AniSkipService {
     }
 
     /// Fetches skip-time segments for an anime episode using MyAnimeList ID.
-    /// - Parameters:
-    ///   - malId: The MyAnimeList media ID for the specific season / anime.
-    ///   - episodeNumber: The episode number within that season.
-    ///   - episodeDuration: The total duration in seconds (used for better matching).
-    /// - Returns: Array of skip segments (intro, outro, recap).
     func fetchSkipTimes(malId: Int, episodeNumber: Int, episodeDuration: Double) async throws -> [SkipSegment] {
         let durationIsUsable = episodeDuration.isFinite && episodeDuration > 0
         let episodeLength = durationIsUsable ? Int(episodeDuration) : 0

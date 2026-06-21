@@ -1,10 +1,3 @@
-//
-//  HybridSimilarity.swift
-//  Sora
-//
-//  Created by Francesco on 22/08/25.
-//
-
 import Foundation
 
 class HybridSimilarity {

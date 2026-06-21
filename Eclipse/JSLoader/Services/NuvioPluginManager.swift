@@ -1,8 +1,3 @@
-//
-//  NuvioPluginManager.swift
-//  Eclipse
-//
-
 import Combine
 import Foundation
 

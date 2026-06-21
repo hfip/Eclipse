@@ -1,8 +1,3 @@
-//
-//  AidokuMangaDetailView.swift
-//  Kanzen
-//
-
 #if !os(tvOS)
 import SwiftUI
 import Kingfisher
@@ -123,7 +118,7 @@ struct AidokuMangaDetailView: View {
     }
 
     /// Banner blend color from the cover's extracted dominant (falling back to
-    /// the backdrop tone for a dark/absent cover) — same behavior as a media hero.
+    /// the backdrop tone for a dark/absent cover) - same behavior as a media hero.
     private var readerHeroBlendColor: Color {
         theme.heroBlendColor(dominant: headerAmbientColor, isReaderMode: true)
     }

@@ -1,10 +1,3 @@
-//
-//  MangaCollectionDetailView.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2026.
-//
-
 import SwiftUI
 import Kingfisher
 

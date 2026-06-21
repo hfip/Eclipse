@@ -1,10 +1,3 @@
-//
-//  chapterList.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 09/10/2025.
-//
-
 import SwiftUI
 
 struct ChapterList: View {

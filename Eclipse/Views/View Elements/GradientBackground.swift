@@ -1,9 +1,4 @@
-//
-//  GradientBackground.swift
-//  Eclipse
-//
-//  Gradient background for Settings screens
-//
+// Gradient background for Settings screens
 
 import SwiftUI
 #if canImport(UIKit)
@@ -1277,11 +1272,6 @@ extension View {
 }
 
 // MARK: - Modern Atmosphere System
-//
-// Replaces the broken multi-layer ExperimentalGradientBackground / HeroBleed
-// stack with a single compositor (AtmosphereBackdrop) that renders the app
-// gradient and the scroll-driven banner bleed in one coordinate space sharing
-// one parallax offset, so they can never seam or produce bright spots.
 
 extension Color {
     /// Scales a color for the Background Intensity control. `intensity == 1`
@@ -1309,9 +1299,9 @@ extension Color {
 struct AtmospherePalette: Equatable {
     let id: String
     let displayName: String
-    /// 12 colors, row-major 3 columns × 4 rows, for the iOS 18 MeshGradient.
+    /// 12 colors, row-major 3 columns x 4 rows, for the iOS 18 MeshGradient.
     let mesh: [Color]
-    /// Vertical stops for the iOS 15–17 fallback (top → bottom).
+    /// Vertical stops for the iOS 15-17 fallback (top to bottom).
     let verticalStops: [Gradient.Stop]
     /// Soft top wash for the fallback's top-anchored radial.
     let topWash: Color
@@ -1721,7 +1711,7 @@ private struct AtmosphereBleedLayer: View {
     var body: some View {
         // The hero image is opaque and covers the top, so hold the bleed at
         // near-full strength through the hero, then fade it out over the tail
-        // below — that is the part that actually reads as "color bleeding down".
+        // below - that is the part that actually reads as "color bleeding down".
         let tail = max(containerSize.height * 0.55, 220)
         let h = max(heroHeight + tail, 1)
         let holdEnd = min(max(heroHeight / h, 0.05), 0.9)
@@ -1743,16 +1733,6 @@ private struct AtmosphereBleedLayer: View {
 }
 
 // MARK: - Scroll-attached hero banner bleed
-//
-// The banner's dominant color is rendered as a top-anchored background INSIDE
-// the scroll content (not the fixed backdrop), so it stays glued to the hero:
-// it holds near-opaque through the hero region — matching the hero image's own
-// bottom fade so the two meet with no seam — then fades to clear over a tail
-// below. Because it lives in the scroll content it scrolls up and off together
-// with the hero, revealing the fixed app gradient underneath. That reveal IS
-// the "overpowered by the app gradient" handoff, and because it rides the
-// native scroll it needs no scroll-offset plumbing, so it can never freeze
-// mid-fade the way a fixed, alpha-faded layer can.
 struct HeroBannerBleed: View {
     var color: Color
     var heroHeight: CGFloat
@@ -1767,7 +1747,7 @@ struct HeroBannerBleed: View {
             stops: [
                 .init(color: color.opacity(min(1, 1.00 * s)), location: 0.0),
                 // Hold full opacity through the hero so the boundary is pure color
-                // on both sides (the hero overlay also reaches full) — no seam.
+                // on both sides (the hero overlay also reaches full) - no seam.
                 .init(color: color.opacity(min(1, 1.00 * s)), location: hold),
                 .init(color: color.opacity(min(1, 0.60 * s)), location: hold + (1 - hold) * 0.28),
                 .init(color: color.opacity(min(1, 0.30 * s)), location: hold + (1 - hold) * 0.52),

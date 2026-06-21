@@ -1,11 +1,6 @@
-//
-//  HLSDownloader.swift
-//  Eclipse
-//
-//  Manual M3U8 parser + segment downloader.
-//  Parses master/variant playlists, downloads .ts segments, and concatenates
-//  them into a single .ts file that VLC/mpv can play natively.
-//
+// Manual M3U8 parser + segment downloader.
+// Parses master/variant playlists, downloads .ts segments, and concatenates
+// them into a single .ts file that VLC/mpv can play natively.
 
 import Foundation
 import CommonCrypto
@@ -408,10 +403,7 @@ final class HLSDownloader: @unchecked Sendable {
         var completed = false
         var preservePartial = false
 
-        // Resume only when we have a checkpoint AND the on-disk partial is at least as
-        // long as that checkpoint. The partial may be longer (checkpoint saves are
-        // throttled); we truncate the surplus so a torn final segment from a hard kill
-        // is discarded and we restart exactly on a segment boundary.
+        // Resume only when we have a checkpoint AND the on-disk partial is at least as long as that checkpoint.
         let partialSize = Self.fileSize(at: partialURL)
         let isResuming = resumeFromSegment > 0
             && resumeByteCount > 0
@@ -442,7 +434,7 @@ final class HLSDownloader: @unchecked Sendable {
 
         do {
             // Initialization segment (fMP4 #EXT-X-MAP) is written exactly once, on a
-            // fresh run — never re-appended on resume.
+            // fresh run - never re-appended on resume.
             if !isResuming, let initURL = initSegmentURL {
                 try checkSystemBackoff()
                 let initData = try await fetchData(url: initURL)

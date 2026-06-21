@@ -1,10 +1,3 @@
-//
-//  WebtoonView.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 01/09/2025.
-//
-
 import SwiftUI
 import UIKit
 import QuartzCore

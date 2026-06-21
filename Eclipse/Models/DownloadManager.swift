@@ -1,9 +1,4 @@
-//
-//  DownloadManager.swift
-//  Eclipse
-//
-//  Created on 27/02/26.
-//
+// Created on 27/02/26.
 
 import Foundation
 import Combine
@@ -1048,11 +1043,11 @@ extension DownloadManager: URLSessionDownloadDelegate {
             case "video/mpeg":                                       ext = "mpg"
             // HLS manifests
             case "application/x-mpegurl", "application/vnd.apple.mpegurl": ext = "m3u8"
-            // Generic binary — trust the URL extension if it's a known video format
+            // Generic binary - trust the URL extension if it's a known video format
             case "application/octet-stream":
                 ext = Self.knownVideoExtensions.contains(urlExt) ? urlExt : (urlExt.isEmpty ? "mp4" : urlExt)
             default:
-                // Unknown MIME — prefer URL extension if it's a known format
+                // Unknown MIME - prefer URL extension if it's a known format
                 ext = Self.knownVideoExtensions.contains(urlExt) ? urlExt : "mp4"
             }
         } else {

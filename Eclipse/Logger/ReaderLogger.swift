@@ -1,9 +1,4 @@
-//
-//  ReaderLogger.swift
-//  Eclipse
-//
-//  Separate Kanzen/Aidoku reader logger so media playback logs stay isolated.
-//
+// Separate Kanzen/Aidoku reader logger so media playback logs stay isolated.
 
 import Foundation
 #if canImport(UIKit)

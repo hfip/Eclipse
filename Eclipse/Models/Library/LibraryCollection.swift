@@ -1,10 +1,3 @@
-//
-//  LibraryCollection.swift
-//  Sora
-//
-//  Created by Francesco on 08/09/25.
-//
-
 import Foundation
 
 final class LibraryCollection: ObservableObject, Codable, Identifiable, Equatable {

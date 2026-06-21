@@ -1,10 +1,3 @@
-//
-//  StremioAddonStore.swift
-//  Eclipse
-//
-//  Created by Soupy on 2026.
-//
-
 import CoreData
 
 final class StremioAddonStore {

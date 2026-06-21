@@ -1,9 +1,4 @@
-//
-//  MPVHeaderProxy.swift
-//  Eclipse
-//
-//  Local loopback proxy to bridge MPV playback requests.
-//
+// Local loopback proxy to bridge MPV playback requests.
 
 import Foundation
 import Network

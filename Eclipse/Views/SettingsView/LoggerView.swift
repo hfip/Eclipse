@@ -1,10 +1,3 @@
-//
-//  LoggerView.swift
-//  Sora
-//
-//  Created by Francesco on 10/08/25.
-//
-
 import SwiftUI
 
 struct LogEntry: Identifiable {

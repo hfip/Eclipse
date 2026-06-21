@@ -1,10 +1,3 @@
-//
-//  CreateCollectionView.swift
-//  Sora
-//
-//  Created by Francesco on 08/09/25.
-//
-
 import SwiftUI
 
 struct CreateCollectionView: View {

@@ -1,10 +1,3 @@
-//
-//  KanzenHomeView.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import SwiftUI
 import Kingfisher
 

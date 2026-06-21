@@ -1,9 +1,4 @@
-//
-//  WidgetMetadata.swift
-//  Eclipse
-//
-//  Curated metadata for home screen discover widgets.
-//
+// Curated metadata for home screen discover widgets.
 
 import Foundation
 

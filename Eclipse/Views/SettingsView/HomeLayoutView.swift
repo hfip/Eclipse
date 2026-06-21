@@ -1,9 +1,4 @@
-//
-//  HomeLayoutView.swift
-//  Sora
-//
-//  Global + per-catalog control over home shelf orientation and size.
-//
+// Global + per-catalog control over home shelf orientation and size.
 
 import SwiftUI
 

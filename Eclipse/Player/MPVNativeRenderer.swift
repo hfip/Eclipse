@@ -1,11 +1,6 @@
-//
-//  MPVNativeRenderer.swift
-//  Eclipse
-//
-//  GPU-first libmpv renderers for iOS. OpenGL remains the stable fallback;
-//  the MPVKit fork can drive inline playback through MoltenVK/CAMetalLayer
-//  while AVSampleBufferDisplayLayer is reserved for PiP handoff.
-//
+// GPU-first libmpv renderers for iOS. OpenGL remains the stable fallback;
+// the MPVKit fork can drive inline playback through MoltenVK/CAMetalLayer
+// while AVSampleBufferDisplayLayer is reserved for PiP handoff.
 
 import UIKit
 import Libmpv
@@ -17,12 +12,8 @@ import Metal
 import MPVKitSampleBufferGPL
 #endif
 
-/// True when the user has opted to override embedded ASS subtitle styling on a MoltenVK
-/// (sample-buffer / gpu-next) renderer. This doubles as the subtitle *performance* switch: in
-/// this mode libass is told to discard the script's own styling and effects, which sharply
-/// lowers the per-frame rasterization cost of styled or animated embedded subtitles on the CPU
-/// software sample-buffer render path — the dominant controllable heat source during fast
-/// (e.g. 2x) playback, where hard-subbed streams pay nothing and embedded ASS pays per frame.
+/// True when the user has opted to override embedded ASS subtitle styling on a MoltenVK (sample-buffer / gpu-next)
+/// renderer.
 private func subtitlePerformanceModeActive(isMetalRenderer: Bool) -> Bool {
     guard isMetalRenderer, ExperimentalFeatureState.canUseExperimentalMPVPlayback else { return false }
     return UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvIgnoreSpecialSubtitleStylesKey)
@@ -33,18 +24,13 @@ private func experimentalSubtitleASSOverrideValue(isMetalRenderer: Bool) -> Stri
           ExperimentalFeatureState.canUseExperimentalMPVPlayback else {
         return "yes"
     }
-    // `force` (rather than `yes`) makes libass drop the embedded script's own styles/effects in
-    // favour of the app's flat subtitle style. This honours the "ignore special styles" intent
-    // and, on the software render path, avoids re-rasterizing heavy/animated ASS every frame.
-    // `no` keeps full embedded ASS fidelity (default).
+    // `force` (rather than `yes`) makes libass drop the embedded script's own styles/effects in favour of the app's
+    // flat subtitle style.
     return subtitlePerformanceModeActive(isMetalRenderer: isMetalRenderer) ? "force" : "no"
 }
 
-/// Raise (or restore) the shared AVAudioSession's preferred output channel count so multichannel
-/// (5.1/7.1) PCM can reach routes that support it — USB-C/HDMI/AirPlay report >2 channels, while
-/// built-in speakers report 2 and stay stereo. Paired with mpv's `audio-channels=auto`, which then
-/// receives the multichannel layout from the audio device. Honors the user's surround setting and
-/// is a quiet no-op while no player audio session is active.
+/// Raise (or restore) the shared AVAudioSession's preferred output channel count so multichannel (5.1/7.1) PCM can
+/// reach routes.
 private func eclipseApplyPreferredOutputChannels(log: (String) -> Void) {
     let session = AVAudioSession.sharedInstance()
     guard session.category == .playback else { return }
@@ -173,20 +159,13 @@ extension SubtitleStyle: Equatable {
 
 private func mpvSubtitlePosition(for verticalOffset: CGFloat, maxPosition: CGFloat = 150) -> String {
     let defaultOffset: CGFloat = -6.0
-    // sub-pos is a percentage where 100 == the bottom of the OSD canvas. Renderers
-    // whose OSD canvas is larger than the video (gpu-next / OpenGL render into the full
-    // view, including the letterbox bars) can use values up to 150 and still show
-    // subtitles inside the bars. The software sample-buffer path renders into a buffer
-    // sized exactly to the video frame, so anything above 100 lands below the frame and
-    // is clipped off-screen — those callers pass maxPosition: 100 to keep subs visible.
+    // sub-pos is a percentage where 100 == the bottom of the OSD canvas.
     let position = max(0, min(maxPosition, 100 + (verticalOffset - defaultOffset)))
     return String(format: "%.0f", position)
 }
 
-/// The software sample-buffer renderer applies `sub-font-size` verbatim and skips the
-/// viewport up-scaling the GPU paths apply (see `adjustedSubtitleFontSize`), so its
-/// subtitles render about two size tiers smaller than the other renderers. Shift the
-/// selected size up by two tiers on this path so it visually matches the menu intent.
+/// The software sample-buffer renderer applies `sub-font-size` verbatim and skips the viewport up-scaling the GPU
+/// paths apply.
 private func sampleBufferBumpedSubtitleFontSize(_ fontSize: CGFloat) -> CGFloat {
     // Mirrors the font-size ladder offered in the player UI / Settings.
     // The software sample-buffer path renders subtitles smaller than the GL/MoltenVK paths, so we
@@ -284,10 +263,7 @@ private final class MPVMoltenVKView: UIView {
         layer as! MPVMoltenVKLayer
     }
 
-    /// Multiplier (0.1...1.0) applied on top of the native screen scale when sizing the MoltenVK
-    /// drawable. Driven by the active quality profile so the inline MoltenVK surface can be
-    /// rendered below native resolution to cut GPU load / heat. The layer keeps its full
-    /// `contentsScale`, so a smaller drawable is simply upscaled to the view bounds.
+    /// Multiplier (0.1...1.0) applied on top of the native screen scale when sizing the MoltenVK drawable.
     var renderScale: CGFloat = 1.0 {
         didSet {
             guard abs(oldValue - renderScale) > 0.001 else { return }
@@ -2686,10 +2662,8 @@ private func performOnMainSync(_ block: () -> Void) {
     }
 }
 
-/// Lightweight per-stream facts surfaced by the performance overlay so heat can be *correlated*
-/// with what is actually being decoded and rendered — resolution, dynamic range, the high-bit
-/// (HDR) render path, and the active subtitle codec — instead of guessed. Plain data so it can
-/// cross the renderer feature-flag compile guards.
+/// Lightweight per-stream facts surfaced by the performance overlay so heat can be *correlated* with what is
+/// actually being.
 struct MetalPlaybackDiagnostics {
     let renderSize: CGSize
     let isHDR: Bool
@@ -2730,11 +2704,8 @@ final class MPVGPUInlineHostView: UIView {
     }
 }
 
-/// PlayerRenderer that renders inline playback on the GPU — mpv `vo=gpu-next` via MoltenVK into a
-/// `CAMetalLayer` with zero-copy `hwdec=videotoolbox` (no CPU frame readback) — and hands off to
-/// the shared `AVSampleBufferDisplayLayer` only for Picture in Picture. Backed by the kit's
-/// `MPVGPUPlayerRenderer`. This replaces the all-CPU software sample-buffer render that
-/// `MPVSampleBufferPiPBridge` uses for inline playback, which is the dominant heat source at speed.
+/// PlayerRenderer that renders inline playback on the GPU, mpv `vo=gpu-next` via MoltenVK into a `CAMetalLayer`
+/// with zero-copy.
 final class MPVGPUPlayerBridge: PlayerRenderer {
     static var isAvailable: Bool { MPVGPUPlayerRenderer.isSupported }
 
@@ -2757,11 +2728,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     private var lastPositionUpdateAt: CFTimeInterval = 0
     private let positionUpdateInterval: CFTimeInterval = 0.5
     private var lastLoggedState = ""
-    /// Drives the GPU heat-quality profile: the drawable downscale (`renderScale` →
-    /// `renderScaleMultiplier`) plus frame-size/HDR caps. Mirrors the sample-buffer path's profiles
-    /// so the same Auto/Sharp/Balanced/Low Heat heat controls work on the GPU. NOTE: scaler/deband
-    /// selection is NO LONGER tied to the profile — it comes from `Settings.mpvUpscalingMode` via
-    /// `resolvedUpscalingScalers()`.
+    /// Drives the GPU heat-quality profile: the drawable downscale (`renderScale` to `renderScaleMultiplier`) plus
+    /// frame-size/HDR caps.
     private var qualityProfile: MPVMetalSampleBufferQualityProfile
     /// Fraction of native drawable resolution the inline gpu-next surface is rendered at (from the
     /// active profile's `renderScale`). Lower = less fragment-shader work and heat; CAMetalLayer
@@ -2771,28 +2739,16 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     /// Last logged decode signature (hwdec-current|pixfmt) so the per-load decode-engagement log
     /// fires only when it changes. Reset on each new load.
     private var lastLoggedDecode = ""
-    /// Decoded source video height (from the kit diagnostics), used by the "Upscale by one level"
-    /// upscaling mode to decide whether a source is low-res enough to warrant EWA Lanczos + deband.
-    /// 0 until the first video-reconfigure resolves it; reset to 0 on each new load.
+    /// Decoded source video height (from the kit diagnostics), used by the "Upscale by one level" upscaling mode to
+    /// decide whether a.
     private var lastKnownSourceHeight: Int = 0
     /// Decoded source video width, paired with `lastKnownSourceHeight` so the "Upscale by one level"
     /// render cap can aspect-fit the source into the view (letterboxed video occupies less than the
     /// full view). 0 until resolved; reset on each new load.
     private var lastKnownSourceWidth: Int = 0
-    /// Fresh-load fence for the next-episode / in-place replace transition. The kit reuses a single
-    /// MPVGPUPlayerRenderer instance and does NOT reset its cached currentTime/duration on
-    /// stop/start/load (currentTime just returns the stored cachedPosition), so right after a switch
-    /// it briefly still reports the OUTGOING file's near-end position+duration. Persisting that
-    /// against the already-swapped incoming episode marks it watched (~100% progress) — the
-    /// next-episode-marked-watched bug. The fence holds position emits until the kit's reported
-    /// position DIFFERS from the value captured at load() (positionAtLoadStart): a stale read is
-    /// bit-identical to that capture, a fresh new-file sample is not. Race-free, no event-order
-    /// dependency. The GPU bridge previously lacked any such fence (the OpenGL/MoltenVK reference
-    /// renderers have a loadGeneration equivalent).
+    /// Fresh-load fence for the next-episode / in-place replace transition.
     private var hasConfirmedFreshPositionForCurrentLoad = false
-    /// The kit's (stale) cachedPosition captured at the START of load(), before the new file is
-    /// handed to mpv. While the kit still reports this exact value, emits are the OUTGOING file's
-    /// carry-over and are suppressed; the first reported value that differs belongs to the new file.
+    /// The kit's (stale) cachedPosition captured at the START of load(), before the new file is handed to mpv.
     private var positionAtLoadStart: Double = 0
     /// Last applied HDR decision signature (mode|gamma|primaries|passthrough) so repeated
     /// VIDEO_RECONFIG events don't redundantly reconfigure. Mirrors the MoltenVK reference path.
@@ -2802,11 +2758,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     var currentTime: Double { gpuRenderer.currentTime }
     var duration: Double { gpuRenderer.duration }
     var supportsBitmapSubtitleTracks: Bool { MPVRenderBackendSupport.metalBitmapSubtitlesAllowed }
-    /// True so the PiP sample-buffer renderer is activated (begun, producing frames into the shared
-    /// display layer) BEFORE AVPictureInPictureController.startPictureInPicture(), the same handshake
-    /// the OpenGL/MoltenVK path uses. The GPU path needs its separate PiP instance running before
-    /// AVKit attaches the layer; `activatePictureInPictureLayer()` guards against the watchdog
-    /// re-activating, so the extra activate is a safe no-op.
+    /// True so the PiP sample-buffer renderer is activated (begun, producing frames into the shared display layer)
+    /// BEFORE.
     var prefersPictureInPictureLayerActivationBeforeStart: Bool { true }
     /// Human-readable name of the active quality profile ("Sharp" / "Balanced" / "Low Heat").
     /// Read by the performance overlay HUD, mirroring the sample-buffer bridge.
@@ -2837,7 +2790,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         return scale > 0 ? scale : 2.0
     }
 
-    /// Native scale × the effective renderScale — the drawable resolution gpu-next renders at.
+    /// Native scale x the effective renderScale - the drawable resolution gpu-next renders at.
     private func effectiveContentsScale() -> CGFloat {
         max(0.5, currentBaseContentsScale() * effectiveRenderScaleMultiplier())
     }
@@ -2849,11 +2802,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         return height
     }
 
-    /// Render-scale multiplier actually used for the drawable. Starts from the heat profile's
-    /// renderScale and, for the "Upscale by one level" mode, caps the drawable at roughly one tier
-    /// above the source so EWA upscaling doesn't render at full panel res (a cost saver vs Auto,
-    /// mainly on high-DPI / external displays). Never exceeds the heat profile's value, so thermal
-    /// downscaling still wins, and falls back to it before the source resolution is known.
+    /// Render-scale multiplier actually used for the drawable.
     private func effectiveRenderScaleMultiplier() -> CGFloat {
         let base = renderScaleMultiplier
         guard Settings.shared.mpvUpscalingMode == .oneLevelAlways,
@@ -2870,10 +2819,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         let nativeVideoDrawableHeight = videoDisplayHeightPoints * currentBaseContentsScale()
         guard nativeVideoDrawableHeight > 1 else { return base }
         let targetHeight = CGFloat(oneTierAboveHeight(lastKnownSourceHeight))
-        // Cap so the video renders ~one tier above source; min() keeps the heat profile's downscale
-        // and never supersamples above what the view shows (which would just burn power). When the
-        // displayed video is already at/below one tier (e.g. small portrait video), cap >= base so
-        // this is a no-op and behaves like Auto.
+        // Cap so the video renders ~one tier above source; min() keeps the heat profile's downscale and never supersamples
+        // above what.
         return min(base, targetHeight / nativeVideoDrawableHeight)
     }
 
@@ -2892,21 +2839,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         )
     }
 
-    /// Parity init options the kit's gpu-next renderer doesn't set itself, mirroring the OpenGL and
-    /// sample-buffer renderers so the GPU path is robust as the default: surround/stereo downmix,
-    /// software-decode fallback, and network cache + demuxer buffering. (HDR, fps, and quality are
-    /// applied separately.) Applied at init time before mpv_initialize.
-    ///
-    /// The `vulkan-*` options mirror the reference gpu-next/MoltenVK player (NuvioMobile) on the
-    /// identical vo=gpu-next / gpu-api=vulkan / gpu-context=moltenvk config. MoltenVK has no real
-    /// multi-queue hardware, so mpv's default async compute/transfer queues get emulated on shared
-    /// MTLCommandQueues with extra per-frame MTLEvent/semaphore synchronization — pure CPU overhead
-    /// with no parallelism gained on Apple GPUs. Pinning a single queue + FIFO present and disabling
-    /// the async queues removes that per-frame cross-queue sync cost. Purely scheduling: no quality
-    /// or feature change. NOTE: we deliberately do NOT set `vulkan-disable-interop=yes` that the
-    /// reference also uses, because the kit enables `vd-lavc-dr=yes` (the reference does not), and
-    /// disabling interop there risks perturbing the zero-copy videotoolbox->Vulkan upload into a
-    /// per-frame CPU readback — the opposite of the goal.
+    /// Parity init options the kit's gpu-next renderer doesn't set itself, mirroring the OpenGL and sample-buffer
+    /// renderers so the.
     private static func makeAdditionalMPVOptions() -> [String: String] {
         [
             "audio-channels": Settings.shared.mpvSurroundSoundEnabled ? "auto" : "stereo",
@@ -2951,22 +2885,13 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
-    /// Resolves the gpu-next scaler/deband options from the user's Upscaling setting — independent
-    /// of the heat-quality profile (which only controls renderScale/frame size). `off` = cheap
-    /// bilinear, no deband; `upscaleTo1080` = EWA Lanczos + deband only for sub-1080p sources;
-    /// `oneLevelAlways` and `auto` = EWA Lanczos + deband for every source (they differ only in the
-    /// render-target resolution, handled in `effectiveRenderScaleMultiplier()`, not the scaler).
-    /// Before the source height resolves, the sub-1080p mode stays cheap to avoid a startup spike,
-    /// then re-applies on video-reconfigure.
+    /// Resolves the gpu-next scaler/deband options from the user's Upscaling setting, independent of the heat-quality
+    /// profile (which.
     private func resolvedUpscalingScalers() -> (scale: String, cscale: String, dscale: String, deband: String) {
         let cheap = (scale: "bilinear", cscale: "bilinear", dscale: "mitchell", deband: "no")
         let quality = (scale: "ewa_lanczossharp", cscale: "ewa_lanczossoft", dscale: "mitchell", deband: "yes")
-        // Thermal safety: when the heat profile has dropped to its lowest tier (Low Heat =
-        // serious/critical thermal, or the user manually picking it), force the cheap scaler
-        // regardless of the Upscaling setting so the GPU path still sheds heat hard. This preserves
-        // the old heat-quality behavior — opting into Auto upscaling can't defeat heat shedding —
-        // without coupling the user's normal-temperature scaler choice to the thermal system. Re-
-        // evaluated whenever the thermal monitor flips the profile (updateQualityProfile).
+        // Thermal safety: when the heat profile has dropped to its lowest tier (Low Heat = serious/critical thermal, or
+        // the user.
         if qualityProfile.name == "Low Heat" { return cheap }
         switch Settings.shared.mpvUpscalingMode {
         case .off:
@@ -2991,10 +2916,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         if h > 0 { lastKnownSourceHeight = h }
     }
 
-    /// Applies the active Upscaling mode's gpu-next scalers/deband at runtime. mpv keeps these until
-    /// changed, so they persist across loads on this handle. No-op before mpv is initialized
-    /// (command returns < 0 with no handle); `start()` re-applies once the handle exists, and
-    /// video-reconfigure re-applies once the source resolution is known (for `oneLevel`).
+    /// Applies the active Upscaling mode's gpu-next scalers/deband at runtime.
     private func applyGPUQualityScalers() {
         let s = resolvedUpscalingScalers()
         _ = gpuRenderer.command(["set", "scale", s.scale])
@@ -3017,10 +2939,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         qualityProfile = newProfile
         renderScaleMultiplier = max(0.1, newProfile.renderScale)
         if changed {
-            // Only push the four `set scale/cscale/dscale/deband` commands when the tier actually
-            // changed. The Auto thermal monitor calls this every 8s tick; mpv retains scalers until
-            // changed, so re-issuing identical ones each tick is wasted main-thread work. `start()`
-            // applies them once independently, so gating here loses no initial application.
+            // Only push the four `set scale/cscale/dscale/deband` commands when the tier actually changed.
             applyGPUQualityScalers()
             reapplyInlineLayout()
             Logger.shared.log("[MPVGPUPlayerBridge] live gpu-next profile update \(newProfile.logDescription)", type: "MPV")
@@ -3045,23 +2964,23 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         // (file loaded / VIDEO_RECONFIG). Fired on the main thread by the kit.
         gpuRenderer.onVideoReconfigure = { [weak self] in
             guard let self else { return }
-            // Source dimensions are now known/updated — refresh the cached size and re-apply
+            // Source dimensions are now known/updated - refresh the cached size and re-apply
             // scalers so the upscaling modes pick the right scaler for the real resolution.
             self.refreshSourceVideoDimensions()
             self.applyGPUQualityScalers()
             // The "Upscale by one level" render-target cap depends on the source height that just
-            // resolved — re-lay out the drawable so its resolution reflects the new cap.
+            // resolved - re-lay out the drawable so its resolution reflects the new cap.
             self.reapplyInlineLayout()
             self.applyHDRConfiguration(reason: "video-reconfigure")
             // Surface whether videotoolbox HW decode actually attached vs a silent software
-            // fallback for this file — the decisive signal for the steady-state CPU question.
+            // fallback for this file - the decisive signal for the steady-state CPU question.
             self.logDecodeEngagement()
         }
         // Activate the playback audio session (category/mode + preferred multichannel output) like
-        // the OpenGL/sample-buffer renderers do — the kit renderer doesn't own this.
+        // the OpenGL/sample-buffer renderers do - the kit renderer doesn't own this.
         ensureAudioSessionActive()
         try gpuRenderer.start()
-        // mpv handle now exists — apply the profile's scalers/deband and drawable scale (the
+        // mpv handle now exists - apply the profile's scalers/deband and drawable scale (the
         // init-time `set` calls were no-ops without a handle), then evaluate HDR for the layer.
         applyGPUQualityScalers()
         reapplyInlineLayout()
@@ -3094,10 +3013,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         isReadyToSeek = false
         isLoading = true
         isAwaitingReadyForCurrentLoad = true
-        // Arm the fresh-load fence: snapshot the kit's (still-stale) cached position so emits stay
-        // suppressed until the kit reports a value that DIFFERS from it (the new file's first
-        // sample). Without this, the outgoing episode's near-end position is saved against the new
-        // episode and marks it watched on the gpu-next renderer (the next-episode-marked-watched bug).
+        // Arm the fresh-load fence: snapshot the kit's (still-stale) cached position so emits stay suppressed until the
+        // kit reports a.
         hasConfirmedFreshPositionForCurrentLoad = false
         positionAtLoadStart = gpuRenderer.currentTime
         // New file: force HDR re-evaluation once its colorspace resolves, and forget the previous
@@ -3135,14 +3052,14 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     func performanceOverlaySnapshot() -> String {
         let d = gpuRenderer.diagnosticsSnapshot()
         // decode=videotoolbox means HW decode on the ASIC; decode=SW means mpv silently fell back to
-        // libavcodec software decode (CPU-bound) — the key signal for steady-state CPU.
+        // libavcodec software decode (CPU-bound) - the key signal for steady-state CPU.
         let decode = (d.hardwareDecoder.isEmpty || d.hardwareDecoder == "no") ? "SW" : d.hardwareDecoder
         return "MPV gpu-next \(isPaused ? "paused" : "playing")\(isLoading ? " loading" : "")\npos \(String(format: "%.1f", d.currentTime))/\(String(format: "%.1f", d.duration))\nmode \(d.presentationMode.rawValue) vo=\(d.inlineVideoOutput) api=\(d.inlineGPUAPI) ctx=\(d.inlineGPUContext)\ndecode=\(decode) pixfmt=\(d.videoPixelFormat.isEmpty ? "?" : d.videoPixelFormat)"
     }
 
     /// Logs whether videotoolbox hardware decode actually attached for the current file. With
     /// `vd-lavc-software-fallback=yes`, a failed VT attach silently drops to libavcodec software
-    /// decode (CPU-bound, scene-dependent) with no error — this surfaces it. Read-only diagnostic;
+    /// decode (CPU-bound, scene-dependent) with no error - this surfaces it. Read-only diagnostic;
     /// deduped so it logs once per (decoder, pixfmt) change.
     private func logDecodeEngagement() {
         let d = gpuRenderer.diagnosticsSnapshot()
@@ -3151,7 +3068,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         guard signature != lastLoggedDecode else { return }
         lastLoggedDecode = signature
         if hwdec == "no" {
-            Logger.shared.log("[MPVGPUPlayerBridge] software decode — hwdec-current=no pixfmt=\(d.videoPixelFormat) src=\(lastKnownSourceWidth)x\(lastKnownSourceHeight) (videotoolbox did not attach; CPU-bound, scene-dependent)", type: "MPV")
+            Logger.shared.log("[MPVGPUPlayerBridge] software decode - hwdec-current=no pixfmt=\(d.videoPixelFormat) src=\(lastKnownSourceWidth)x\(lastKnownSourceHeight) (videotoolbox did not attach; CPU-bound, scene-dependent)", type: "MPV")
         } else {
             Logger.shared.log("[MPVGPUPlayerBridge] hardware decode hwdec-current=\(hwdec) pixfmt=\(d.videoPixelFormat) src=\(lastKnownSourceWidth)x\(lastKnownSourceHeight)", type: "MPV")
         }
@@ -3272,15 +3189,11 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     func applyAudioFilterChain(_ chain: String) {
         Logger.shared.log("[MPVGPUPlayerBridge] applyAudioFilterChain \(chain.isEmpty ? "(cleared)" : chain)", type: "MPV")
         // Route through the kit so the chain is mirrored onto the PiP renderer (a separate mpv
-        // instance) — otherwise comfort audio would be lost while in Picture in Picture.
+        // instance) - otherwise comfort audio would be lost while in Picture in Picture.
         gpuRenderer.setAudioFilterChain(chain)
     }
 
-    /// Snapshot for the performance overlay. Reads the kit's gpu-next diagnostics (which query
-    /// mpv's `video-params/*` and `hwdec-current`), so dynamic range / HDR / bit depth are now
-    /// detected the same way as the sample-buffer path rather than guessed. Resolution prefers the
-    /// decoded video frame size; falls back to the GPU drawable size (which reflects the active
-    /// profile's renderScale downscale) before the first frame.
+    /// Snapshot for the performance overlay.
     func currentPlaybackDiagnostics() -> MetalPlaybackDiagnostics {
         let d = gpuRenderer.diagnosticsSnapshot()
         let transfer = d.videoTransferFunction.lowercased()
@@ -3313,7 +3226,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     //
     // PiP renders through the kit renderer's internal sample-buffer instance into the shared
     // AVSampleBufferDisplayLayer (the same layer the PiPController is bound to). prepare loads &
-    // primes that instance; activate performs the inline→PiP swap; finish/resume restores inline.
+    // primes that instance; activate performs the inlinetoPiP swap; finish/resume restores inline.
 
     func canStartSampleBufferPictureInPicture() -> Bool {
         true
@@ -3321,7 +3234,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
 
     func prepareForPictureInPictureStart() {
         // Recover the shared PiP display layer if it failed (e.g. while backgrounded) before the
-        // PiP renderer starts feeding it — a safe, idempotent point matching the sample-buffer path.
+        // PiP renderer starts feeding it - a safe, idempotent point matching the sample-buffer path.
         recoverDisplayLayerIfNeeded(reason: "prepare-pip")
         _ = gpuRenderer.prepareForPictureInPictureStart()
     }
@@ -3333,11 +3246,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         setInlineVideoHidden(false)
     }
 
-    /// Hides/shows the inline gpu-next CAMetalLayer while PiP is active. The kit pauses the inline
-    /// instance with `vid=no` during PiP, but the CAMetalLayer keeps presenting its last decoded
-    /// frame, so without this the frozen inline video stays visible behind/around the PiP window
-    /// (the legacy OpenGL path hides `glView` the same way). Hiding only the inline layer leaves the
-    /// host view's black backdrop, so the player area reads as intentional black, not a stale frame.
+    /// Hides/shows the inline gpu-next CAMetalLayer while PiP is active.
     private func setInlineVideoHidden(_ hidden: Bool) {
         let apply: () -> Void = { [weak self] in
             guard let self else { return }
@@ -3357,7 +3266,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
 
     func activatePictureInPictureLayer() {
         // Guard against re-activation: the start path activates before startPictureInPicture() and
-        // the watchdog may call again — beginPictureInPicture isn't re-entrant-safe (it re-seeks).
+        // the watchdog may call again - beginPictureInPicture isn't re-entrant-safe (it re-seeks).
         guard !isPictureInPictureActive else { return }
         recoverDisplayLayerIfNeeded(reason: "activate-pip")
         gpuRenderer.beginPictureInPicture()
@@ -3495,15 +3404,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
             applyPendingInitialSeekIfNeeded(reason: "duration-known")
             return
         }
-        // Fresh-load fence: the kit reuses one renderer instance and does NOT reset its cached
-        // currentTime/duration across stop/start/load (currentTime just returns the stored
-        // cachedPosition), so right after a staged next-episode switch it briefly still reports the
-        // OUTGOING file's near-end values. Emitting those would persist ~100% progress against the
-        // already-swapped incoming episode and mark it watched. Hold emits until the kit's reported
-        // position DIFFERS from the value captured at the start of load(): a stale carry-over read is
-        // bit-identical to that capture, and the first sample the new file publishes (via time-pos,
-        // or a resume/seek that sets cachedPosition) is not. Race-free — unlike a video-reconfigure
-        // signal, this cannot open the window while the position is still the stale value.
+        // Fresh-load fence: the kit reuses one renderer instance and does NOT reset its cached currentTime/duration
+        // across.
         if !hasConfirmedFreshPositionForCurrentLoad {
             if gpuRenderer.currentTime != positionAtLoadStart {
                 hasConfirmedFreshPositionForCurrentLoad = true
@@ -3948,10 +3850,8 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         _ = sampleRenderer.command(["set", "sub-ass-override", experimentalSubtitleASSOverrideValue(isMetalRenderer: true)])
         _ = sampleRenderer.command(["set", "sub-border-style", style.closedCaptionBackground ? "background-box" : "outline-and-shadow"])
         _ = sampleRenderer.command(["set", "sub-back-color", style.closedCaptionBackground ? "0.0/0.0/0.0/0.75" : "0.0/0.0/0.0/0.0"])
-        // Subtitle performance mode: also stop libass blur from scaling with the render
-        // resolution, so any inline blur/edges that survive the style override stay cheap on the
-        // CPU sample-buffer path. No-op visually for plain dialogue; reverts to mpv's default
-        // (resolution-scaled, VSFilter-compatible) blur when the mode is off.
+        // Subtitle performance mode: also stop libass blur from scaling with the render resolution, so any inline
+        // blur/edges that.
         _ = sampleRenderer.command(["set", "sub-ass-vsfilter-blur-compat", subtitlePerformanceModeActive(isMetalRenderer: true) ? "no" : "yes"])
     }
 
@@ -3961,7 +3861,7 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
     }
 
     /// Snapshot of what the sample-buffer renderer is currently decoding/rendering, for the
-    /// performance overlay. Derived entirely from the renderer's existing public diagnostics —
+    /// performance overlay. Derived entirely from the renderer's existing public diagnostics -
     /// no extra mpv work beyond one track-list read.
     func currentPlaybackDiagnostics() -> MetalPlaybackDiagnostics {
         let diag = sampleRenderer.diagnosticsSnapshot()
@@ -4036,11 +3936,8 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
         _ = reason
     }
 
-    /// Throttle the main-thread software render to a low frame rate while the player UI/menus are
-    /// visible, then restore the current quality profile's rate when dismissed. The render shares
-    /// the main thread with UIKit, so a full-rate 60fps render starves menu navigation; dropping
-    /// it frees the thread. fps-only option changes are cheap (no pixel-buffer-pool churn), and
-    /// the video sits dimmed behind the controls so the lower rate is barely visible.
+    /// Throttle the main-thread software render to a low frame rate while the player UI/menus are visible, then restore
+    /// the current.
     func setInteractiveRenderThrottle(_ throttled: Bool) {
         guard isInteractiveRenderThrottleActive != throttled else { return }
         isInteractiveRenderThrottleActive = throttled
@@ -4133,13 +4030,8 @@ final class MPVSampleBufferPiPBridge: PlayerRenderer {
 
     private func applyPendingInitialSeekIfNeeded(reason: String) {
         guard let initialSeek = pendingInitialSeek else { return }
-        // The sample-buffer renderer reports .ready/.playing as soon as the first frame
-        // is decodable — which can be *before* the demuxer has parsed the container and
-        // published a real duration. A resume seek issued in that window is clamped
-        // against an unknown (0) duration and silently dropped, so playback restarts at
-        // 0:00 instead of the saved position. Defer any non-zero resume seek until the
-        // duration is known; emitPositionUpdate() re-drives this from the position timer
-        // once duration becomes > 0.
+        // The sample-buffer renderer reports .ready/.playing as soon as the first frame is decodable, which can be
+        // *before* the demuxer.
         if initialSeek > 0, !(sampleRenderer.duration > 0) {
             Logger.shared.log("[MPVSampleBufferPiPBridge] deferring pending initial seek \(String(format: "%.2f", initialSeek))s reason=\(reason) durationUnknown", type: "MPV")
             return
@@ -5043,10 +4935,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         setOption(name: "framedrop", value: "vo")
         setOption(name: "interpolation", value: "no")
         setOption(name: "video-rotate", value: "no")
-        // Surround: ask mpv for the full source channel layout so it can feed multichannel
-        // PCM to the audio device when the active route exposes >2 channels (configured in
-        // ensureAudioSessionActive). On stereo-only routes the AO reports 2ch and mpv
-        // transparently downmixes. When the user disables surround, force a stereo downmix.
+        // Surround: ask mpv for the full source channel layout so it can feed multichannel PCM to the audio device when
+        // the active route.
         setOption(name: "audio-channels", value: Settings.shared.mpvSurroundSoundEnabled ? "auto" : "stereo")
         // HDR is applied per-file once the colorspace is known (applyHDRConfiguration); start
         // with passthrough off so SDR content and non-HDR displays are never affected.
@@ -5097,10 +4987,8 @@ final class MPVMoltenVKRenderer: PlayerRenderer, MPVNativeRendererDelegate {
         }
     }
 
-    /// Detects whether the loaded video is HDR and, honoring the user's HDR Output setting and the
-    /// display's EDR capability, switches the inline MoltenVK layer between HDR passthrough and SDR
-    /// tone-mapping. Safe for SDR sources (leaves the layer in its default SDR state) and a no-op
-    /// while the PiP sample-buffer bridge owns presentation or the OpenGL fallback is active.
+    /// Detects whether the loaded video is HDR and, honoring the user's HDR Output setting and the display's EDR
+    /// capability, switches.
     private func applyHDRConfiguration(reason: String) {
         guard let handle = mpv, isRunning, !isStopping, fallbackRenderer == nil, !isUsingPiPBridge else { return }
 

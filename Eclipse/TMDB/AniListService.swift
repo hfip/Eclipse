@@ -1145,7 +1145,7 @@ final class AniListService {
         }
         Logger.shared.log("AniListService: AniList returned \(candidates.count) candidates for '\(title)'", type: "AniList")
         guard !candidates.isEmpty else {
-            Logger.shared.log("AniListService: NO candidates from AniList for '\(title)' — throwing", type: "Error")
+            Logger.shared.log("AniListService: NO candidates from AniList for '\(title)' - throwing", type: "Error")
             throw NSError(domain: "AniListService", code: -1, userInfo: [NSLocalizedDescriptionKey: "AniList did not return any matches for \(title)"])
         }
 
@@ -1161,10 +1161,7 @@ final class AniListService {
 
         var anime = pickBestAniListMatch(from: candidates, tmdbShow: tvShowDetail)
 
-        // If the best match looks suspicious (e.g. OVA with 2 eps when TMDB has 86),
-        // check its relation edges for the parent/main TV series. OVAs/Specials always
-        // have a PARENT or SOURCE relation to the main show. This avoids an extra API call.
-        // (e.g. "Food Wars! Shokugeki no Soma" → AniList OVA → PARENT → main TV series)
+        // If the best match looks suspicious (e.g.
         if let tmdbEps = tvShowDetail?.numberOfEpisodes, tmdbEps > 12,
            let selectedEps = anime.episodes, selectedEps < tmdbEps / 4 {
             Logger.shared.log("AniListService: Match looks suspicious (\(selectedEps) eps vs TMDB \(tmdbEps)) \u{2014} checking relation edges for main series", type: "AniList")
@@ -1285,9 +1282,8 @@ final class AniListService {
             }
         }
 
-        // Fix B: If BFS found significantly fewer episodes than TMDB has, search AniList for orphaned entries
-        // Handles disconnected AniList graphs (e.g. SAO where S2→S3 relation edge is missing)
-        // Uses total episode count (not season count) to avoid false positives when TMDB splits seasons differently (e.g. Gintama)
+        // Fix B: If BFS found significantly fewer episodes than TMDB has, search AniList for orphaned entries Handles
+        // disconnected.
         if let tvShowDetail, !allAnimeToProcess.isEmpty, let tmdbTotalEps = tvShowDetail.numberOfEpisodes, tmdbTotalEps > 0 {
             let anilistTotalEps = allAnimeToProcess.reduce(0) { $0 + ($1.anime.episodes ?? 0) }
             if anilistTotalEps < Int(Double(tmdbTotalEps) * 0.75) {
@@ -1340,7 +1336,7 @@ final class AniListService {
                         let candidateRomaji = candidate.title.romaji?.lowercased() ?? ""
                         guard candidateTitle.contains(rootWords) || candidateRomaji.contains(rootWords) else { continue }
 
-                        // Skip spinoffs/alternatives — only want direct continuations
+                        // Skip spinoffs/alternatives - only want direct continuations
                         let checkTitle = candidateTitle + " " + candidateRomaji
                         if spinoffKeywords.contains(where: { checkTitle.contains($0) }) { continue }
 
@@ -1368,7 +1364,7 @@ final class AniListService {
                             orphanWithRelations = bestOrphan
                         }
 
-                        // BFS from orphan to discover its sequels (e.g. SAO Alicization → War of Underworld)
+                        // BFS from orphan to discover its sequels (e.g. SAO Alicization to War of Underworld)
                         var orphanQueue: [AniListAnime] = [orphanWithRelations]
                         while !orphanQueue.isEmpty {
                             let currentOrphanLevel = orphanQueue
@@ -1433,9 +1429,6 @@ final class AniListService {
         }
 
         // Fix C: Prune entries that belong to a separate TMDB show.
-        // E.g. "Naruto" and "Naruto Shippuden" are separate TMDB entries;
-        // when viewing one, we shouldn't merge episodes from the other.
-        // Only keep entries contiguous with the root match that fit within the TMDB episode budget.
         if let tvShowDetail, let tmdbTotalEps = tvShowDetail.numberOfEpisodes, tmdbTotalEps > 0 {
             let anilistTotalEps = allAnimeToProcess.reduce(0) { $0 + ($1.anime.episodes ?? 0) }
             if anilistTotalEps > Int(Double(tmdbTotalEps) * 1.25) {
@@ -1933,11 +1926,7 @@ final class AniListService {
     }
 
     private func pickBestAniListMatch(from candidates: [AniListAnime], tmdbShow: TMDBTVShowWithSeasons?) -> AniListAnime {
-        // Hard selection rules (no weighted scoring):
-        // 1) Prefer TV/TV_SHORT/OVA formats. If none, fall back to all candidates.
-        // 2) If TMDB year is known, prefer exact year matches (user clicked on specific version).
-        // 3) If TMDB episode count is known, pick the candidate with the smallest absolute diff.
-        // 4) Tie-breakers: higher episode count first, then lower AniList ID for determinism.
+        // Hard selection rules (no weighted scoring): 1) Prefer TV/TV_SHORT/OVA formats.
 
         let allowedFormats: Set<String> = ["TV", "TV_SHORT", "OVA", "ONA"]
         let formatFiltered = candidates.filter { anime in
@@ -2141,7 +2130,7 @@ final class AniListService {
 
                     if let bestMatch = bestMatch {
                         let aniTitle = AniListTitlePicker.title(from: anime.title, preferredLanguageCode: langCode)
-                        Logger.shared.log("AniListService: Matched '\(aniTitle)' â†’ TMDB '\(bestMatch.name)' (ID: \(bestMatch.id))", type: "AniList")
+                        Logger.shared.log("AniListService: Matched '\(aniTitle)' -> TMDB '\(bestMatch.name)' (ID: \(bestMatch.id))", type: "AniList")
                     }
                     return bestMatch?.asSearchResult
                 }
@@ -2225,7 +2214,7 @@ final class AniListService {
 
                     if let bestMatch = bestMatch {
                         let aniTitle = AniListTitlePicker.title(from: anime.title, preferredLanguageCode: langCode)
-                        Logger.shared.log("AniListService: Matched '\(aniTitle)' → TMDB '\(bestMatch.name)' (ID: \(bestMatch.id))", type: "AniList")
+                        Logger.shared.log("AniListService: Matched '\(aniTitle)' -> TMDB '\(bestMatch.name)' (ID: \(bestMatch.id))", type: "AniList")
                     }
                     return (anime.id, bestMatch?.asSearchResult)
                 }
@@ -2703,7 +2692,7 @@ final class AniListService {
                     return data
                 }
                 
-                // Rate limited — wait and retry
+                // Rate limited - wait and retry
                 if httpResponse.statusCode == 429 {
                     let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
                         .flatMap(Double.init) ?? Double(2 * (attempt + 1))
@@ -2992,7 +2981,7 @@ struct AniListSeasonWithPoster: Codable {
     let seasonNumber: Int
     let anilistId: Int             // AniList anime ID for this specific season
     let kitsuId: Int?              // Kitsu anime ID for Stremio anime catalogs, when AniList exposes it
-    let title: String              // Full AniList title for this season (e.g., "SPYÃ—FAMILY Season 2")
+    let title: String              // AniList title for this season.
     let englishTitle: String?
     let romajiTitle: String?
     let nativeTitle: String?

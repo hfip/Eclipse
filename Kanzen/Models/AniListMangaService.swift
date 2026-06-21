@@ -1,10 +1,3 @@
-//
-//  AniListMangaService.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import Foundation
 
 /// Rate limiter shared with the manga service to stay under AniList's 90 req/min limit.

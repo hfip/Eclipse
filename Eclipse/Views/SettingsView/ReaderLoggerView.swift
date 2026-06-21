@@ -1,8 +1,3 @@
-//
-//  ReaderLoggerView.swift
-//  Eclipse
-//
-
 import SwiftUI
 
 struct ReaderLoggerView: View {

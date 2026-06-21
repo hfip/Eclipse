@@ -1,10 +1,3 @@
-//
-//  ShowsDetails.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import SwiftUI
 import Kingfisher
 import AVKit
@@ -396,7 +389,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         .sheet(isPresented: $showingDownloadSheet, onDismiss: {
             if isDownloadingAll {
                 if downloadWasEnqueued || downloadWasSkipped {
-                    // Download enqueued or skipped — advance to next episode
+                    // Download enqueued or skipped - advance to next episode
                     downloadWasEnqueued = false
                     downloadWasSkipped = false
                     if !downloadAllQueue.isEmpty {
@@ -409,7 +402,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
                         downloadEpisodePlaybackContext = nil
                     }
                 } else {
-                    // "Done" was tapped without download/skip — cancel entire queue
+                    // "Done" was tapped without download/skip - cancel entire queue
                     downloadAllQueue.removeAll()
                     isDownloadingAll = false
                     downloadAllSpecialContext = nil

@@ -28,7 +28,6 @@
 		BEEF00232FE2000000BEEF23 /* NuvioPluginsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEF00132FE2000000BEEF13 /* NuvioPluginsView.swift */; };
 		BEEF00322FE2000000BEEF32 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = BEEF00312FE2000000BEEF31 /* SwiftSoup */; };
 		129CC90C2EBA920C00D2D84B /* Bundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129CC90B2EBA920A00D2D84B /* Bundle.swift */; };
-		12DA48B02EE2140D000ADDF0 /* DownloadProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DA48AF2EE21409000ADDF0 /* DownloadProgressView.swift */; };
 		12DF1FC22F040D6700E80375 /* AdaptiveConfirmationDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12DF1FC12F040D6500E80375 /* AdaptiveConfirmationDialog.swift */; };
 		12E7AF5E2EB7FDB7003B7664 /* FakeWebKit in Frameworks */ = {isa = PBXBuildFile; productRef = 12E7AF5D2EB7FDB7003B7664 /* FakeWebKit */; };
 		12E7AF602EB80775003B7664 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12E7AF5F2EB80771003B7664 /* Platform.swift */; };
@@ -93,14 +92,10 @@
 		13E1EDE62ED9E66000087629 /* kanzenSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC02ED9E65F00087629 /* kanzenSettings.swift */; };
 		13E1EDE72ED9E66000087629 /* kanzenGeneralSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC22ED9E65F00087629 /* kanzenGeneralSettings.swift */; };
 		13E1EDE82ED9E66000087629 /* MainMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC32ED9E65F00087629 /* MainMenu.swift */; };
-		13E1EDE92ED9E66000087629 /* customSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC52ED9E65F00087629 /* customSlider.swift */; };
-		13E1EDEA2ED9E66000087629 /* favouriteViewWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC62ED9E65F00087629 /* favouriteViewWrapper.swift */; };
 		13E1EDEB2ED9E66000087629 /* contentCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC72ED9E65F00087629 /* contentCell.swift */; };
 		13E1EDEC2ED9E66000087629 /* circularLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC82ED9E65F00087629 /* circularLoading.swift */; };
 		13E1EDED2ED9E66000087629 /* contentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDC92ED9E65F00087629 /* contentView.swift */; };
 		13E1EDEE2ED9E66000087629 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDCB2ED9E65F00087629 /* Library.swift */; };
-		13E1EDEF2ED9E66000087629 /* search.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDCD2ED9E65F00087629 /* search.swift */; };
-		13E1EDF02ED9E66000087629 /* browseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDCF2ED9E65F00087629 /* browseView.swift */; };
 		13E1EDF12ED9E66000087629 /* kanzenModuleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDD02ED9E65F00087629 /* kanzenModuleView.swift */; };
 		13E1EDF42ED9E67000087629 /* ContentModel.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = 13E1EDF22ED9E67000087629 /* ContentModel.xcdatamodeld */; };
 		13F0725F2E4B2D3300EF90EB /* SoraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F0725E2E4B2D3300EF90EB /* SoraApp.swift */; };
@@ -224,7 +219,6 @@
 		129CC9062EBA1D4600D2D84B /* Build.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Build.xcconfig; sourceTree = "<group>"; };
 		129CC9082EBA1F8400D2D84B /* Build.local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Build.local.xcconfig; sourceTree = "<group>"; };
 		129CC90B2EBA920A00D2D84B /* Bundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bundle.swift; sourceTree = "<group>"; };
-		12DA48AF2EE21409000ADDF0 /* DownloadProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadProgressView.swift; sourceTree = "<group>"; };
 		12DF1FC12F040D6500E80375 /* AdaptiveConfirmationDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptiveConfirmationDialog.swift; sourceTree = "<group>"; };
 		12E7AF5F2EB80771003B7664 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		1324E7B32E940BD70036B5F5 /* PlayerPreset.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlayerPreset.swift; sourceTree = "<group>"; };
@@ -272,14 +266,10 @@
 		13E1EDC02ED9E65F00087629 /* kanzenSettings.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = kanzenSettings.swift; sourceTree = "<group>"; };
 		13E1EDC22ED9E65F00087629 /* kanzenGeneralSettings.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = kanzenGeneralSettings.swift; sourceTree = "<group>"; };
 		13E1EDC32ED9E65F00087629 /* MainMenu.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MainMenu.swift; sourceTree = "<group>"; };
-		13E1EDC52ED9E65F00087629 /* customSlider.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = customSlider.swift; sourceTree = "<group>"; };
-		13E1EDC62ED9E65F00087629 /* favouriteViewWrapper.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = favouriteViewWrapper.swift; sourceTree = "<group>"; };
 		13E1EDC72ED9E65F00087629 /* contentCell.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = contentCell.swift; sourceTree = "<group>"; };
 		13E1EDC82ED9E65F00087629 /* circularLoading.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = circularLoading.swift; sourceTree = "<group>"; };
 		13E1EDC92ED9E65F00087629 /* contentView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = contentView.swift; sourceTree = "<group>"; };
 		13E1EDCB2ED9E65F00087629 /* Library.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
-		13E1EDCD2ED9E65F00087629 /* search.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = search.swift; sourceTree = "<group>"; };
-		13E1EDCF2ED9E65F00087629 /* browseView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = browseView.swift; sourceTree = "<group>"; };
 		13E1EDD02ED9E65F00087629 /* kanzenModuleView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = kanzenModuleView.swift; sourceTree = "<group>"; };
 		13E1EDF32ED9E67000087629 /* ContentModel.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = ContentModel.xcdatamodel; sourceTree = "<group>"; };
 		13F0725B2E4B2D3300EF90EB /* Eclipse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Eclipse.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -647,8 +637,6 @@
 		13E1EDC42ED9E65F00087629 /* Util */ = {
 			isa = PBXGroup;
 			children = (
-				13E1EDC52ED9E65F00087629 /* customSlider.swift */,
-				13E1EDC62ED9E65F00087629 /* favouriteViewWrapper.swift */,
 				13E1EDC72ED9E65F00087629 /* contentCell.swift */,
 				13E1EDC82ED9E65F00087629 /* circularLoading.swift */,
 				13E1EDC92ED9E65F00087629 /* contentView.swift */,
@@ -672,7 +660,6 @@
 		13E1EDCC2ED9E65F00087629 /* Search */ = {
 			isa = PBXGroup;
 			children = (
-				13E1EDCD2ED9E65F00087629 /* search.swift */,
 				FF6666602F30000000FF6660 /* KanzenGlobalSearchView.swift */,
 			);
 			path = Search;
@@ -681,7 +668,6 @@
 		13E1EDCE2ED9E65F00087629 /* Browse */ = {
 			isa = PBXGroup;
 			children = (
-				13E1EDCF2ED9E65F00087629 /* browseView.swift */,
 				13E1EDD02ED9E65F00087629 /* kanzenModuleView.swift */,
 			);
 			path = Browse;
@@ -1088,7 +1074,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ ! -f \"${PROJECT_DIR}/Build.local.xcconfig\" ]; then\n  echo \"⚠️  No Build.local.xcconfig found — using default build config\"\nfi\n";
+			shellScript = "if [ ! -f \"${PROJECT_DIR}/Build.local.xcconfig\" ]; then\n  echo \"No Build.local.xcconfig found - using default build config\"\nfi\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -1101,7 +1087,6 @@
 				12E7AF602EB80775003B7664 /* Platform.swift in Sources */,
 				129CC90C2EBA920C00D2D84B /* Bundle.swift in Sources */,
 				13DCC4F62E58B40F0028AE91 /* HybridSimilarity.swift in Sources */,
-				13E1EDE92ED9E66000087629 /* customSlider.swift in Sources */,
 				13E1EDE42ED9E66000087629 /* pagedViewController.swift in Sources */,
 				13F072A32E4B2D9200EF90EB /* SearchView.swift in Sources */,
 				13830AEC2E55BD9200B3CDE4 /* AlgorithmManager.swift in Sources */,
@@ -1153,14 +1138,11 @@
 				13E1EDEC2ED9E66000087629 /* circularLoading.swift in Sources */,
 				13E1EDEB2ED9E66000087629 /* contentCell.swift in Sources */,
 				13F072AE2E4B2D9200EF90EB /* EpisodeCell.swift in Sources */,
-				13E1EDEA2ED9E66000087629 /* favouriteViewWrapper.swift in Sources */,
 				13E1EDD62ED9E65F00087629 /* readerManager.swift in Sources */,
 				13E1EDDE2ED9E66000087629 /* KanzenModuleRunner.swift in Sources */,
 				13F518432EBCE42B00DEF778 /* StorageView.swift in Sources */,
 				1324E7C12E940BD70036B5F5 /* PiPController.swift in Sources */,
-				13E1EDEF2ED9E66000087629 /* search.swift in Sources */,
 				13F072AB2E4B2D9200EF90EB /* Movie-Details.swift in Sources */,
-				13E1EDF02ED9E66000087629 /* browseView.swift in Sources */,
 				1324E7BD2E940BD70036B5F5 /* PlayerViewController.swift in Sources */,
 				1324E7BE2E940BD70036B5F5 /* SampleBufferDisplayView.swift in Sources */,
 				13E1EDD32ED9E65F00087629 /* mangaModel.xcdatamodeld in Sources */,

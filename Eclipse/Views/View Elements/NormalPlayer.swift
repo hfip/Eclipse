@@ -1,10 +1,3 @@
-//
-//  NormalPlayer.swift
-//  Sora · Media Hub
-//
-//  Created by Francesco on 27/11/24.
-//
-
 import AVKit
 
 class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {

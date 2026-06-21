@@ -1,9 +1,4 @@
-//
-//  FloatingSettingsButton.swift
-//  Eclipse
-//
-//  Created on 27/02/26.
-//
+// Created on 27/02/26.
 
 import SwiftUI
 

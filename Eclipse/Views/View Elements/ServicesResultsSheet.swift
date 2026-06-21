@@ -1,10 +1,3 @@
-//
-//  ModulesSearchResultsSheet.swift
-//  Sora
-//
-//  Created by Francesco on 09/08/25.
-//
-
 import AVKit
 import SwiftUI
 import Kingfisher
@@ -2701,9 +2694,9 @@ struct ModulesSearchResultsSheet: View {
     // MARK: - Play / Download Stremio Stream
 
     private func playStremioStream(_ stream: StremioStream, addon: StremioAddon, autoModeLaunch: Bool = false, retryCount: Int = 0) {
-        // SAFETY: Double-check this is a direct HTTP(S) stream - NO torrents allowed
+        // Keep playback HTTP-only.
         guard let urlString = stream.url, stream.isDirectHTTP else {
-            Logger.shared.log("Stremio: SAFETY BLOCK - Rejected non-HTTP stream", type: "Error")
+            Logger.shared.log("Stremio: rejected non-HTTP stream", type: "Error")
             handleStremioPlaybackPreparationFailure(
                 addon,
                 message: "Stremio addon returned a non-HTTP stream.",
@@ -2745,9 +2738,9 @@ struct ModulesSearchResultsSheet: View {
                 return
             }
 
-            // SAFETY: Verify HTTP(S) scheme - NO torrents, magnet links, or other schemes ever
+            // Keep playback HTTP-only.
             guard streamURL.scheme == "http" || streamURL.scheme == "https" else {
-                Logger.shared.log("Stremio: SAFETY BLOCK - Non-HTTP scheme: \(streamURL.scheme ?? "nil")", type: "Error")
+                Logger.shared.log("Stremio: non-HTTP scheme: \(streamURL.scheme ?? "nil")", type: "Error")
                 handleStremioPlaybackPreparationFailure(addon, message: "Stremio addon returned a non-HTTP stream.", autoModeLaunch: autoModeLaunch)
                 return
             }
@@ -2923,10 +2916,10 @@ struct ModulesSearchResultsSheet: View {
     }
 
     private func downloadStremioStream(_ url: String, addon: StremioAddon, subtitle: String?, headers: [String: String]?, autoModeLaunch: Bool = false) {
-        // SAFETY: Verify HTTP(S) URL - NO torrents, magnet links, or other schemes ever
+        // Keep downloads HTTP-only.
         guard let parsed = URL(string: url),
               parsed.scheme == "http" || parsed.scheme == "https" else {
-            Logger.shared.log("Stremio: SAFETY BLOCK - Non-HTTP download URL rejected", type: "Error")
+            Logger.shared.log("Stremio: non-HTTP download URL rejected", type: "Error")
             handleStremioPlaybackPreparationFailure(
                 addon,
                 message: "Stremio addon returned a non-HTTP download stream.",
@@ -2991,7 +2984,7 @@ struct ModulesSearchResultsSheet: View {
 
     private func playPluginStream(_ stream: NuvioPluginStream, source: NuvioPluginSource, autoModeLaunch: Bool = false, retryCount: Int = 0) {
         guard stream.isDirectHTTP else {
-            Logger.shared.log("Nuvio plugin: SAFETY BLOCK - Rejected non-HTTP stream", type: "Error")
+            Logger.shared.log("Nuvio plugin: rejected non-HTTP stream", type: "Error")
             handlePluginPlaybackPreparationFailure(
                 source,
                 message: "Plugin returned a non-HTTP stream.",
@@ -3027,7 +3020,7 @@ struct ModulesSearchResultsSheet: View {
             }
 
             guard streamURL.scheme == "http" || streamURL.scheme == "https" else {
-                Logger.shared.log("Nuvio plugin: SAFETY BLOCK - Non-HTTP scheme: \(streamURL.scheme ?? "nil")", type: "Error")
+                Logger.shared.log("Nuvio plugin: non-HTTP scheme: \(streamURL.scheme ?? "nil")", type: "Error")
                 handlePluginPlaybackPreparationFailure(source, message: "Plugin returned a non-HTTP stream.", autoModeLaunch: autoModeLaunch)
                 return
             }
@@ -3163,7 +3156,7 @@ struct ModulesSearchResultsSheet: View {
     private func downloadPluginStream(_ url: String, source: NuvioPluginSource, headers: [String: String]?, autoModeLaunch: Bool = false) {
         guard let parsed = URL(string: url),
               parsed.scheme == "http" || parsed.scheme == "https" else {
-            Logger.shared.log("Nuvio plugin: SAFETY BLOCK - Non-HTTP download URL rejected", type: "Error")
+            Logger.shared.log("Nuvio plugin: non-HTTP download URL rejected", type: "Error")
             handlePluginPlaybackPreparationFailure(
                 source,
                 message: "Plugin returned a non-HTTP download stream.",
@@ -3834,11 +3827,8 @@ struct ModulesSearchResultsSheet: View {
             
             Logger.shared.log("Final headers: \(finalHeaders)", type: "Stream")
 
-            // Warm the resolved stream as early as possible — while the player is still being
-            // presented and MPV initializes — so the byte cache is primed before MPV requests
-            // the first range. This is self-gated inside prewarm() to the MoltenVK MPV + warmup
-            // path, so it is a no-op for other players/renderers/settings. Also covers the
-            // next-episode launch, which re-enters this same resolution path.
+            // Warm the resolved stream as early as possible, while the player is still being presented and MPV initializes, so
+            // the byte.
             ExperimentalMPVPreloadManager.shared.prewarm(
                 url: streamURL,
                 headers: finalHeaders,

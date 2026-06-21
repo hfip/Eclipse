@@ -1,10 +1,3 @@
-//
-//  kanzenSettings.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 16/05/2025.
-//
-
 import SwiftUI
 
 #if !os(tvOS)

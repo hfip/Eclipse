@@ -1,9 +1,4 @@
-//
-//  URLSession.swift
-//  Sora-JS
-//
-//  Created by Francesco on 05/01/25.
-//
+// Sora-JS
 
 import Foundation
 

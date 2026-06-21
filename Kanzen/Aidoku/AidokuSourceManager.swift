@@ -1,10 +1,5 @@
-//
-//  AidokuSourceManager.swift
-//  Kanzen
-//
-//  Kanzen-owned Aidoku source bridge. This intentionally avoids importing
-//  Aidoku's app/CoreData layer; only AidokuRunner source packages are used.
-//
+// Kanzen-owned Aidoku source bridge. This intentionally avoids importing
+// Aidoku's app/CoreData layer; only AidokuRunner source packages are used.
 
 #if !os(tvOS)
 import AidokuRunner

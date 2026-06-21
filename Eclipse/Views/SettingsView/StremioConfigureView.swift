@@ -1,10 +1,3 @@
-//
-//  StremioConfigureView.swift
-//  Eclipse
-//
-//  Created by Soupy on 2026.
-//
-
 import SwiftUI
 
 #if !os(tvOS)
@@ -20,7 +13,7 @@ struct StremioConfigureView: View {
     @State private var manualConfiguredURL = ""
 
     /// Derive the configure page URL, preserving the current config path.
-    /// e.g. "https://torrentio.strem.fun/sort=qualitysize|..." → ".../sort=qualitysize|.../configure"
+    /// e.g. "https://torrentio.strem.fun/sort=qualitysize|..." to ".../sort=qualitysize|.../configure"
     /// If the base has no config path, falls back to "{origin}/configure".
     private var configureURL: URL? {
         var base = addon.configuredURL

@@ -1,10 +1,5 @@
-//
-//  UserRatingManager.swift
-//  Eclipse
-//
-//  Persists user star ratings (0.5-10) and private notes for media items,
-//  then feeds ratings back into the RecommendationEngine for taste scoring.
-//
+// Persists user star ratings (0.5-10) and private notes for media items,
+// then feeds ratings back into the RecommendationEngine for taste scoring.
 
 import Foundation
 

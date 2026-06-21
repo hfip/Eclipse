@@ -1,9 +1,4 @@
-//
-//  HeroTransition.swift
-//  Eclipse
-//
-//  matchedGeometryEffect helpers for card-to-detail hero transitions
-//
+// matchedGeometryEffect helpers for card-to-detail hero transitions
 
 import SwiftUI
 

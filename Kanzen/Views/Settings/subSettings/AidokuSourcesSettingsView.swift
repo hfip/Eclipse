@@ -1,8 +1,3 @@
-//
-//  AidokuSourcesSettingsView.swift
-//  Kanzen
-//
-
 #if !os(tvOS)
 import SwiftUI
 import UIKit

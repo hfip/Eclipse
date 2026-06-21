@@ -1,10 +1,3 @@
-//
-//  MangaSourceFinder.swift
-//  Kanzen
-//
-//  Created by Eclipse on 2025.
-//
-
 import Foundation
 
 // MARK: - Source Match Result
@@ -14,7 +7,7 @@ struct SourceMatch: Identifiable {
     let id = UUID()
     let module: ModuleDataContainer
     let manga: Manga            // The module's search result
-    let titleScore: Double      // Jaro-Winkler similarity (0…1)
+    let titleScore: Double      // Jaro-Winkler similarity from 0 to 1.
     let chapterCount: Int?      // Number of chapters if we extracted them
     let confidence: SourceMatchConfidence
 
@@ -142,7 +135,7 @@ final class MangaSourceFinder: ObservableObject {
         }
 
         titleGroup.notify(queue: .global(qos: .userInitiated)) {
-            // Score each result against all title variants — take the best score
+            // Score each result against all title variants - take the best score
             let matches: [SourceMatch] = allResults.compactMap { result in
                 let bestScore = titles.map { candidate in
                     JaroWinklerSimilarity.calculateSimilarity(original: candidate, result: result.title)
@@ -217,7 +210,7 @@ final class MangaSourceFinder: ObservableObject {
                 // Re-score with chapter info
                 var newConfidence = candidate.confidence
                 if let aniCh = aniListChapters, let srcCh = chapterCount {
-                    // If source has ≥90% of AniList chapters, boost confidence
+                    // Boost confidence when chapter counts mostly match.
                     let ratio = Double(srcCh) / Double(max(aniCh, 1))
                     if ratio >= 0.9 && candidate.titleScore >= 0.75 {
                         newConfidence = .high
@@ -242,7 +235,7 @@ final class MangaSourceFinder: ObservableObject {
         group.notify(queue: .main) { [weak self] in
             guard let self else { return }
 
-            // Re-sort refined matches: confidence → chapter count → title score
+            // Re-sort refined matches: confidence to chapter count to title score
             let sorted = refined.sorted { a, b in
                 if a.confidence != b.confidence { return a.confidence > b.confidence }
                 let aC = a.chapterCount ?? 0

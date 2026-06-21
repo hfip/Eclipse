@@ -1,8 +1,3 @@
-//
-//  NuvioPluginRuntime.swift
-//  Eclipse
-//
-
 import CommonCrypto
 import CryptoKit
 import Foundation
@@ -12,10 +7,8 @@ import SwiftSoup
 @MainActor
 enum NuvioPluginRuntime {
     private static let timeoutSeconds: TimeInterval = 60
-    // Truncate by character count on an already-decoded string (matching the Nuvio
-    // reference runtime) instead of slicing raw bytes — slicing bytes could split a
-    // multi-byte UTF-8 sequence and, combined with a strict decode, collapse the whole
-    // body to "" so multi-step scrapers found nothing. Generous limit for large pages/JSON.
+    // Truncate by character count on an already-decoded string (matching the Nuvio reference runtime) instead of
+    // slicing raw bytes,.
     private static let maxFetchBodyChars = 1024 * 1024
     // Defensive cap on how many raw bytes we decode, so a plugin that accidentally
     // fetches a huge payload can't blow up memory while building the string.
@@ -139,10 +132,8 @@ enum NuvioPluginRuntime {
         }
         context.setObject(nativeFetch, forKeyedSubscript: "__native_fetch" as NSString)
 
-        // Back the setTimeout polyfill: JavaScriptCore has no timers, and several scrapers
-        // wrap fetch in a setTimeout-based timeout (Promise.race) — without this they die
-        // with "Can't find variable: setTimeout" and return nothing. Delay is clamped to the
-        // overall runtime budget, and callbacks are dropped once the plugin has completed.
+        // Back the setTimeout polyfill: JavaScriptCore has no timers, and several scrapers wrap fetch in a
+        // setTimeout-based timeout.
         let scheduleTimeout: @convention(block) (JSValue?, Double) -> Void = { callback, milliseconds in
             guard let callback, !callback.isUndefined, !callback.isNull else { return }
             let clamped = min(max(0, milliseconds), timeoutSeconds * 1000)
@@ -274,7 +265,7 @@ enum NuvioPluginRuntime {
         }
         // Mirror the reference runtime: only inject a default desktop User-Agent when the
         // plugin didn't provide one (request headers override the session's rotating UA),
-        // and don't force DNT/Sec-GPC — some hosts vary or block responses based on them.
+        // and don't force DNT/Sec-GPC - some hosts vary or block responses based on them.
         if request.value(forHTTPHeaderField: "User-Agent") == nil {
             request.setValue(defaultDesktopUserAgent, forHTTPHeaderField: "User-Agent")
         }
@@ -305,11 +296,7 @@ enum NuvioPluginRuntime {
         ]
     }
 
-    /// Decode a response body for plugin consumption. Uses lossy UTF-8 decoding over the
-    /// full payload so a multi-byte boundary or a non-UTF-8 byte never collapses the entire
-    /// body to an empty string (the previous strict `String(data:encoding:) ?? ""` silently
-    /// emptied any response > 256 KB, which made multi-step scrapers "find nothing"). The
-    /// raw decode is bounded for memory, then the result is truncated by character count.
+    /// Decode a response body for plugin consumption.
     private static func decodeResponseBody(_ data: Data) -> String {
         guard !data.isEmpty else { return "" }
         let limited = data.count > maxFetchBodyDecodeBytes ? Data(data.prefix(maxFetchBodyDecodeBytes)) : data
@@ -514,7 +501,7 @@ enum NuvioPluginRuntime {
         let tmdbLiteral = jsonLiteral(tmdbId) ?? "\"\(tmdbId)\""
         let mediaTypeLiteral = jsonLiteral(mediaType) ?? "\"\(mediaType)\""
         // Pass `undefined` (not `null`) for movies so plugins that rely on default
-        // parameter values — `getStreams(id, type, season = 1, ...)` — behave like they
+        // parameter values - `getStreams(id, type, season = 1, ...)` - behave like they
         // do under the reference runtime; defaults only apply for `undefined`.
         let seasonLiteral = season.map(String.init) ?? "undefined"
         let episodeLiteral = episode.map(String.init) ?? "undefined"
@@ -963,17 +950,17 @@ enum NuvioPluginRuntime {
             var root = __cheerio_load(String(html || ""));
             function cheerioFn(selector, context) {
                 if (selector == null) return createCheerioCollection([root]);
-                // `$(existingCollection)` — return it untouched, matching cheerio.
+                // `$(existingCollection)` - return it untouched, matching cheerio.
                 if (selector && typeof selector === "object" && typeof selector.toArray === "function") {
                     return selector;
                 }
-                // `$(selector, context)` — scope the search to the context collection.
+                // `$(selector, context)` - scope the search to the context collection.
                 if (context && typeof context === "object" && typeof context.find === "function") {
                     return context.find(String(selector));
                 }
                 return createCheerioCollection(__cheerio_select(root, String(selector)));
             }
-            // Static `$.html()` — serialize the whole document; `$.html(el)` serializes the
+            // Static `$.html()` - serialize the whole document; `$.html(el)` serializes the
             // outer HTML of a node/collection. Common scraper idiom; matches the reference runtime.
             cheerioFn.html = function(node) {
                 if (node && typeof node === "object" && typeof node.outerHtml === "function") {

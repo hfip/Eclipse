@@ -1,9 +1,4 @@
-//
-//  StarRatingView.swift
-//  Eclipse
-//
-//  Expandable 10-star rating and private notes control for media details.
-//
+// Expandable 10-star rating and private notes control for media details.
 
 import Foundation
 import SwiftUI

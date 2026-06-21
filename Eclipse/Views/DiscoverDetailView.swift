@@ -1,9 +1,4 @@
-//
-//  DiscoverDetailView.swift
-//  Eclipse
-//
-//  Full-page grid shown when tapping a widget card (network, genre, company, etc.)
-//
+// Full-page grid shown when tapping a widget card (network, genre, company, etc.)
 
 import SwiftUI
 import Kingfisher

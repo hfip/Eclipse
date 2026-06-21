@@ -1,10 +1,3 @@
-//
-//  TMDBModels.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import Foundation
 
 private struct LossyDecodableArray<Element: Decodable>: Decodable {

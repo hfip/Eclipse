@@ -1,9 +1,4 @@
-//
-//  PiPController.swift
-//  test
-//
-//  Created by Francesco on 30/09/25.
-//
+// test
 
 import AVKit
 import AVFoundation

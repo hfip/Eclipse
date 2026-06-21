@@ -1,9 +1,4 @@
-//
-//  PlayerLanguageSelectionView.swift
-//  Eclipse
-//
-//  Language selection for in-app subtitle and audio preferences
-//
+// Language selection for in-app subtitle and audio preferences
 
 import SwiftUI
 

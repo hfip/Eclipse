@@ -1,14 +1,7 @@
-//
-//  StremioClient.swift
-//  Eclipse
-//
-//  Created by Soupy on 2026.
-//
-
 import Foundation
 
 /// HTTP client for the Stremio addon protocol.
-/// SAFETY: Only returns streams with direct HTTP(S) URLs. Torrent-only streams are discarded.
+/// HTTP-only streams. Torrent-only streams are discarded.
 final class StremioClient {
     static let shared = StremioClient()
     static let openSubtitlesV3BaseURL = "https://opensubtitles-v3.strem.io"
@@ -42,14 +35,14 @@ final class StremioClient {
         }
 
         let manifest = try decoder.decode(StremioManifest.self, from: data)
-        Logger.shared.log("Stremio: Manifest OK — id=\(manifest.id) name=\(manifest.name) resources=\(manifest.resources?.count ?? 0) idPrefixes=\(manifest.idPrefixes ?? [])", type: "Stremio")
+        Logger.shared.log("Stremio: Manifest OK - id=\(manifest.id) name=\(manifest.name) resources=\(manifest.resources?.count ?? 0) idPrefixes=\(manifest.idPrefixes ?? [])", type: "Stremio")
         return manifest
     }
 
     // MARK: - Fetch Streams
 
     /// Fetches streams for a given addon and content ID.
-    /// **SAFETY**: Only returns streams with direct HTTP(S) URLs. Any torrent-only entry is stripped.
+    /// Only direct HTTP(S) streams are returned.
     func fetchStreams(baseURL: String, type: String, id: String) async throws -> [StremioStream] {
         let cleanBase = normalizedBaseURL(baseURL)
         let encodedId = encodePathSegment(id, preservingColon: true)
@@ -58,14 +51,14 @@ final class StremioClient {
             throw StremioError.invalidURL
         }
 
-        Logger.shared.log("Stremio: Fetching streams — type=\(type) id=\(id) url=\(urlString)", type: "Stremio")
+        Logger.shared.log("Stremio: Fetching streams - type=\(type) id=\(id) url=\(urlString)", type: "Stremio")
 
         let (data, response) = try await session.data(from: url)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         Logger.shared.log("Stremio: Stream response HTTP \(statusCode) from \(cleanBase)", type: "Stremio")
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
-            Logger.shared.log("Stremio: Stream fetch FAILED HTTP \(statusCode) — base=\(cleanBase) type=\(type) id=\(id)", type: "Stremio")
+            Logger.shared.log("Stremio: Stream fetch FAILED HTTP \(statusCode) - base=\(cleanBase) type=\(type) id=\(id)", type: "Stremio")
             throw StremioError.httpError(statusCode)
         }
 
@@ -75,17 +68,16 @@ final class StremioClient {
         } catch {
             // Log partial body so we can diagnose format mismatches
             let preview = String(data: data.prefix(512), encoding: .utf8) ?? "<binary>"
-            Logger.shared.log("Stremio: Decode FAILED for \(cleanBase) — \(error.localizedDescription) body=\(preview)", type: "Stremio")
+            Logger.shared.log("Stremio: Decode FAILED for \(cleanBase) - \(error.localizedDescription) body=\(preview)", type: "Stremio")
             throw error
         }
         let allStreams = streamResponse.streams ?? []
 
         if allStreams.isEmpty, let preview = String(data: data.prefix(512), encoding: .utf8) {
-            Logger.shared.log("Stremio: 0 streams decoded from \(cleanBase) — body=\(preview)", type: "Stremio")
+            Logger.shared.log("Stremio: 0 streams decoded from \(cleanBase) - body=\(preview)", type: "Stremio")
         }
 
-        // SAFETY: Filter out any stream that is NOT a direct HTTP(S) link.
-        // This ensures NO torrent (infoHash-only) streams ever reach the user.
+        // Keep torrent-only streams out of playback.
         let safeStreams = allStreams.filter { $0.isDirectHTTP }
 
         let dropped = allStreams.count - safeStreams.count
@@ -238,14 +230,6 @@ final class StremioClient {
     // MARK: - Build Stremio Content ID
 
     /// Builds the Stremio content ID string for a given item.
-    /// - Parameters:
-    ///   - tmdbId: The TMDB ID
-    ///   - imdbId: The IMDB ID (tt-prefixed string), if available
-    ///   - type: "movie" or "series"
-    ///   - season: Season number (for series only)
-    ///   - episode: Episode number (for series only)
-    ///   - addon: The addon to build the ID for (checks idPrefixes)
-    /// - Returns: The single best content ID to use for this addon
     func buildContentId(tmdbId: Int, imdbId: String?, type: String, season: Int?, episode: Int?, addon: StremioAddon) -> String? {
         return buildContentIds(
             tmdbId: tmdbId,

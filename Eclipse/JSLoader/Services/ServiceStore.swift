@@ -1,10 +1,3 @@
-//
-//  CloudStore.swift
-//  Eclipse
-//
-//  Created by Dominic on 07.11.25.
-//
-
 import CoreData
 
 public final class ServiceStore {

@@ -1,10 +1,3 @@
-//
-//  TrackerManager.swift
-//  Eclipse
-//
-//  Created by Soupy-dev
-//
-
 import Foundation
 import Combine
 #if !os(tvOS)
@@ -3538,11 +3531,7 @@ final class TrackerManager: NSObject, ObservableObject {
         let episodes: [TraktEpisode]?
     }
 
-    /// Anime / absolute-numbering fallback. Trakt frequently flattens an anime into a
-    /// single season with absolute episode numbering while TMDB splits it into seasons,
-    /// so the direct `/seasons/{s}/episodes/{e}` lookup 404s. Here we map the known
-    /// absolute episode number onto Trakt's own flattened, season-ordered episode list.
-    /// Mirrors NuvioMobile's episode-mapping service (global-index strategy).
+    /// Anime / absolute-numbering fallback.
     private func traktFlattenedEpisodeId(showTraktId: Int, absoluteEpisodeNumber: Int, account: TrackerAccount) async -> Int? {
         guard absoluteEpisodeNumber > 0 else { return nil }
         let cacheKey = "episode-abs|\(showTraktId)|\(absoluteEpisodeNumber)"
@@ -3579,10 +3568,7 @@ final class TrackerManager: NSObject, ObservableObject {
         }
     }
 
-    /// Resolve a Trakt episode id for scrobble/sync. Tries the direct TMDB
-    /// season/episode lookup first (unchanged behaviour); only when that yields nothing
-    /// AND the anime episode-mapping setting is on does it fall back to absolute-number
-    /// mapping. Returns nil (skip) for specials or when no reliable mapping exists.
+    /// Resolve a Trakt episode id for scrobble/sync.
     private func resolveTraktEpisodeIdForSync(
         showTraktId: Int,
         resolved: (season: Int, episode: Int)?,
@@ -5876,9 +5862,6 @@ final class TrackerManager: NSObject, ObservableObject {
     static let traktWatchlistCollectionName = "Trakt Watchlist"
 
     /// Mirror a local "Trakt Watchlist" collection change up to the Trakt watchlist.
-    /// Called from LibraryManager when the user adds/removes an item in that collection.
-    /// No-op unless watchlist sync is enabled and a Trakt account is connected; the
-    /// backup-restore + remote-apply guards prevent echo loops from import/pull writes.
     func pushTraktWatchlistChange(searchResult: TMDBSearchResult, added: Bool) {
         guard trackerState.syncEnabled,
               trackerState.traktWatchlistSync,

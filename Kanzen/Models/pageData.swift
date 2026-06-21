@@ -1,10 +1,3 @@
-//
-//  pageData.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 15/07/2025.
-//
-
 import SwiftUI
 import Foundation
 import Kingfisher

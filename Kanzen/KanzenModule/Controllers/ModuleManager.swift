@@ -1,9 +1,3 @@
-//
-//  ModuleManager.swift
-//  Kanzen
-//
-//  Created by Dawud Osman on 13/05/2025.
-//
 import Foundation
 class ModuleManager: ObservableObject {
     static let shared = ModuleManager()
@@ -15,7 +9,7 @@ class ModuleManager: ObservableObject {
 
     private static let autoUpdateKey = "kanzenAutoUpdateModules"
     private static let lastAutoUpdateKey = "kanzenLastModuleAutoUpdate"
-    private let autoUpdateInterval: TimeInterval = 3600 // 1 hour
+    private let autoUpdateInterval: TimeInterval = 3600
 
     static var isAutoUpdateEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: autoUpdateKey) }
@@ -29,7 +23,6 @@ class ModuleManager: ObservableObject {
 
     private init()
     {
-        // Register defaults so auto-update is on by default
         UserDefaults.standard.register(defaults: [
             ModuleManager.autoUpdateKey: true
         ])
@@ -43,7 +36,6 @@ class ModuleManager: ObservableObject {
                 }
             }
         }
-        print("Modules Called")
     }
     func saveModules()
     {
@@ -51,19 +43,15 @@ class ModuleManager: ObservableObject {
             let url = ModuleManager.shared.getModulesFilePath()
             guard let data = try? JSONEncoder().encode(self.modules) else {return}
             try? data.write(to: url)
-            print("modules saved")
         }
     }
     func addModules(_ moduleUrL:String, metaData: ModuleData) async throws -> Void
     {
-        // check if module exists already
         if modules.contains(where: {$0.moduleurl == moduleUrL})
         {
             throw  ModuleCreationError.moduleAlreadyExists("module already exists")
         }
-        // validate and extra ModuleData (metaData)
-        
-        
+
         let jsContent = try await validateJSfile(metaData.scriptURL)
         let fileName = "\(UUID().uuidString).js"
         let localUrl = getDocumentsDirectory().appendingPathComponent(fileName)
@@ -203,7 +191,6 @@ class ModuleManager: ObservableObject {
             do {
                 let metaData = try await validateModuleUrl(module.moduleurl)
 
-                // Skip update if version hasn't changed
                 if metaData.version == module.moduleData.version {
                     ReaderLogger.shared.log("ModuleManager: \(module.moduleData.sourceName) is already up to date (v\(metaData.version))", type: "Info")
                     continue
@@ -213,7 +200,6 @@ class ModuleManager: ObservableObject {
                 let localUrl = getDocumentsDirectory().appendingPathComponent(module.localPath)
                 try jsContent.write(to: localUrl, atomically: true, encoding: .utf8)
 
-                // Update metadata
                 if let index = modules.firstIndex(where: { $0.id == module.id }) {
                     let updated = ModuleDataContainer(
                         id: module.id,
@@ -236,7 +222,6 @@ class ModuleManager: ObservableObject {
         ReaderLogger.shared.log("ModuleManager: Auto-update complete", type: "Info")
     }
 
-    /// Auto-update modules if enabled and enough time has passed since the last update.
     func autoUpdateModulesIfNeeded() async {
         guard ModuleManager.isAutoUpdateEnabled, !modules.isEmpty else { return }
 

@@ -1,10 +1,3 @@
-﻿//
-//  TMDBService.swift
-//  Sora
-//
-//  Created by Francesco on 07/08/25.
-//
-
 import Foundation
 #if canImport(zlib)
 import zlib
@@ -35,7 +28,7 @@ class TMDBService: ObservableObject {
         return UserDefaults.standard.string(forKey: "tmdbLanguage") ?? "en-US"
     }
 
-    /// Throttled URL fetch — limits concurrent TMDB requests to avoid 429s
+    /// Throttled URL fetch - limits concurrent TMDB requests to avoid 429s
     private func throttledData(from url: URL) async throws -> (Data, URLResponse) {
         guard !apiKey.isEmpty else {
             throw TMDBError.missingAPIKey

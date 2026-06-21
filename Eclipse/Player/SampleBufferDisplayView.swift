@@ -1,9 +1,4 @@
-//
-//  SampleBufferDisplayView.swift
-//  test
-//
-//  Created by Francesco on 28/09/25.
-//
+// test
 
 import UIKit
 import AVFoundation

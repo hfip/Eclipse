@@ -1,8 +1,3 @@
-//
-//  CrashReportManager.swift
-//  Eclipse
-//
-
 import Foundation
 
 #if canImport(CrashReporter)
