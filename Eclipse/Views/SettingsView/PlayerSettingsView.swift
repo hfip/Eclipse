@@ -171,6 +171,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvMetalQualityProfile.rawValue, forKey: "mpvMetalQualityProfile") }
     }
 
+    @Published var mpvUpscalingMode: MPVUpscalingMode {
+        didSet { UserDefaults.standard.set(mpvUpscalingMode.rawValue, forKey: "mpvUpscalingMode") }
+    }
+
     @Published var mpvPerformanceOverlayEnabled: Bool {
         didSet { UserDefaults.standard.set(mpvPerformanceOverlayEnabled, forKey: "mpvPerformanceOverlayEnabled") }
     }
@@ -356,6 +360,8 @@ final class PlayerSettingsStore: ObservableObject {
         self.mpvRenderBackend = MPVRenderBackend(rawValue: backendRaw) ?? .defaultBackend
         let metalQualityRaw = UserDefaults.standard.string(forKey: "mpvMetalQualityProfile") ?? MPVMetalQualityProfile.defaultProfile.rawValue
         self.mpvMetalQualityProfile = MPVMetalQualityProfile(rawValue: metalQualityRaw) ?? .defaultProfile
+        let upscalingRaw = UserDefaults.standard.string(forKey: "mpvUpscalingMode") ?? MPVUpscalingMode.defaultMode.rawValue
+        self.mpvUpscalingMode = MPVUpscalingMode(rawValue: upscalingRaw) ?? .defaultMode
         self.mpvPerformanceOverlayEnabled = UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled")
         self.mpvUseLegacyCPURenderer = UserDefaults.standard.bool(forKey: "mpvUseLegacyCPURenderer")
         self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
@@ -721,6 +727,17 @@ struct PlayerSettingsView: View {
                     Picker("", selection: $store.mpvMetalQualityProfile) {
                         ForEach(MPVMetalQualityProfile.allCases) { profile in
                             Text(profile.displayName).tag(profile)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.white.opacity(0.7))
+                }
+
+                GlassDivider(leadingInset: 16)
+                GlassDetailRow(title: "Upscaling", subtitle: store.mpvUpscalingMode.settingsDescription + "\n\nApplies on the next playback. Affects the MoltenVK (default) renderer only — the legacy CPU and OpenGL renderers don't upscale.") {
+                    Picker("", selection: $store.mpvUpscalingMode) {
+                        ForEach(MPVUpscalingMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
                         }
                     }
                     .pickerStyle(.menu)

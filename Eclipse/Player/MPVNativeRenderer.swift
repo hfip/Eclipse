@@ -2757,15 +2757,37 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     private var lastPositionUpdateAt: CFTimeInterval = 0
     private let positionUpdateInterval: CFTimeInterval = 0.5
     private var lastLoggedState = ""
-    /// Drives the GPU quality profile: scaler/deband selection (via `gpuNextScalers`) and the
-    /// drawable downscale (`renderScale` → `renderScaleMultiplier`). Mirrors the sample-buffer
-    /// path's profiles so the same Auto/Sharp/Balanced/Low Heat controls work on the GPU.
+    /// Drives the GPU heat-quality profile: the drawable downscale (`renderScale` →
+    /// `renderScaleMultiplier`) plus frame-size/HDR caps. Mirrors the sample-buffer path's profiles
+    /// so the same Auto/Sharp/Balanced/Low Heat heat controls work on the GPU. NOTE: scaler/deband
+    /// selection is NO LONGER tied to the profile — it comes from `Settings.mpvUpscalingMode` via
+    /// `resolvedUpscalingScalers()`.
     private var qualityProfile: MPVMetalSampleBufferQualityProfile
     /// Fraction of native drawable resolution the inline gpu-next surface is rendered at (from the
     /// active profile's `renderScale`). Lower = less fragment-shader work and heat; CAMetalLayer
     /// upscales to the view bounds.
     private var renderScaleMultiplier: CGFloat = 1.0
     private var lastLoggedScalers = ""
+    /// Decoded source video height (from the kit diagnostics), used by the "Upscale by one level"
+    /// upscaling mode to decide whether a source is low-res enough to warrant EWA Lanczos + deband.
+    /// 0 until the first video-reconfigure resolves it; reset to 0 on each new load.
+    private var lastKnownSourceHeight: Int = 0
+    /// Decoded source video width, paired with `lastKnownSourceHeight` so the "Upscale by one level"
+    /// render cap can aspect-fit the source into the view (letterboxed video occupies less than the
+    /// full view). 0 until resolved; reset on each new load.
+    private var lastKnownSourceWidth: Int = 0
+    /// Fresh-load fence for the next-episode / in-place replace transition. The kit reuses a single
+    /// MPVGPUPlayerRenderer instance and does NOT reset its cached currentTime/duration on
+    /// stop/start/load, so right after a switch it briefly still reports the OUTGOING file's near-end
+    /// position+duration. Persisting that against the already-swapped incoming episode marks it
+    /// watched (~100% progress) — the next-episode-marked-watched bug. These hold position emits
+    /// until the kit reports a sample that clearly belongs to the new file. Mirrors the OpenGL/
+    /// MoltenVK reference renderers' `loadGeneration` fence, which the GPU bridge lacked.
+    private var hasConfirmedFreshPositionForCurrentLoad = false
+    private var hasReceivedVideoReconfigureForCurrentLoad = false
+    /// The kit's (stale) reported position captured at load() time, used to detect when the new
+    /// file's position has reset well below where the previous file left off.
+    private var positionAtLoadStart: Double = 0
     /// Last applied HDR decision signature (mode|gamma|primaries|passthrough) so repeated
     /// VIDEO_RECONFIG events don't redundantly reconfigure. Mirrors the MoltenVK reference path.
     private var lastHDRConfigurationSignature = ""
@@ -2809,9 +2831,44 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         return scale > 0 ? scale : 2.0
     }
 
-    /// Native scale × the active profile's renderScale — the drawable resolution gpu-next renders at.
+    /// Native scale × the effective renderScale — the drawable resolution gpu-next renders at.
     private func effectiveContentsScale() -> CGFloat {
-        max(0.5, currentBaseContentsScale() * renderScaleMultiplier)
+        max(0.5, currentBaseContentsScale() * effectiveRenderScaleMultiplier())
+    }
+
+    /// The next standard resolution tier strictly above `height` (480/720/1080/1440/2160); returns
+    /// `height` unchanged once it is already at/above the top tier.
+    private func oneTierAboveHeight(_ height: Int) -> Int {
+        for tier in [480, 720, 1080, 1440, 2160] where tier > height { return tier }
+        return height
+    }
+
+    /// Render-scale multiplier actually used for the drawable. Starts from the heat profile's
+    /// renderScale and, for the "Upscale by one level" mode, caps the drawable at roughly one tier
+    /// above the source so EWA upscaling doesn't render at full panel res (a cost saver vs Auto,
+    /// mainly on high-DPI / external displays). Never exceeds the heat profile's value, so thermal
+    /// downscaling still wins, and falls back to it before the source resolution is known.
+    private func effectiveRenderScaleMultiplier() -> CGFloat {
+        let base = renderScaleMultiplier
+        guard Settings.shared.mpvUpscalingMode == .oneLevelAlways,
+              lastKnownSourceWidth > 0, lastKnownSourceHeight > 0 else {
+            return base
+        }
+        let viewW = hostView.bounds.width
+        let viewH = hostView.bounds.height
+        guard viewW > 1, viewH > 1 else { return base }
+        // Aspect-fit the source into the view to get the video's DISPLAYED height (letterboxed video
+        // occupies less than the full view, so the view height alone would over-cap portrait video).
+        let srcAspect = CGFloat(lastKnownSourceWidth) / CGFloat(lastKnownSourceHeight)
+        let videoDisplayHeightPoints = (viewW / viewH > srcAspect) ? viewH : viewW / srcAspect
+        let nativeVideoDrawableHeight = videoDisplayHeightPoints * currentBaseContentsScale()
+        guard nativeVideoDrawableHeight > 1 else { return base }
+        let targetHeight = CGFloat(oneTierAboveHeight(lastKnownSourceHeight))
+        // Cap so the video renders ~one tier above source; min() keeps the heat profile's downscale
+        // and never supersamples above what the view shows (which would just burn power). When the
+        // displayed video is already at/below one tier (e.g. small portrait video), cap >= base so
+        // this is a no-op and behaves like Auto.
+        return min(base, targetHeight / nativeVideoDrawableHeight)
     }
 
     private static func makeOptions() -> MPVGPUPlayerRendererOptions {
@@ -2872,11 +2929,52 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
-    /// Applies the active profile's gpu-next scalers/deband at runtime. mpv keeps these until
+    /// Resolves the gpu-next scaler/deband options from the user's Upscaling setting — independent
+    /// of the heat-quality profile (which only controls renderScale/frame size). `off` = cheap
+    /// bilinear, no deband; `upscaleTo1080` = EWA Lanczos + deband only for sub-1080p sources;
+    /// `oneLevelAlways` and `auto` = EWA Lanczos + deband for every source (they differ only in the
+    /// render-target resolution, handled in `effectiveRenderScaleMultiplier()`, not the scaler).
+    /// Before the source height resolves, the sub-1080p mode stays cheap to avoid a startup spike,
+    /// then re-applies on video-reconfigure.
+    private func resolvedUpscalingScalers() -> (scale: String, cscale: String, dscale: String, deband: String) {
+        let cheap = (scale: "bilinear", cscale: "bilinear", dscale: "mitchell", deband: "no")
+        let quality = (scale: "ewa_lanczossharp", cscale: "ewa_lanczossoft", dscale: "mitchell", deband: "yes")
+        // Thermal safety: when the heat profile has dropped to its lowest tier (Low Heat =
+        // serious/critical thermal, or the user manually picking it), force the cheap scaler
+        // regardless of the Upscaling setting so the GPU path still sheds heat hard. This preserves
+        // the old heat-quality behavior — opting into Auto upscaling can't defeat heat shedding —
+        // without coupling the user's normal-temperature scaler choice to the thermal system. Re-
+        // evaluated whenever the thermal monitor flips the profile (updateQualityProfile).
+        if qualityProfile.name == "Low Heat" { return cheap }
+        switch Settings.shared.mpvUpscalingMode {
+        case .off:
+            return cheap
+        case .upscaleTo1080:
+            // Only sub-1080p sources benefit; leave already-HD on the cheap path.
+            return (lastKnownSourceHeight > 0 && lastKnownSourceHeight < 1080) ? quality : cheap
+        case .oneLevelAlways, .auto:
+            // Both apply the quality scaler to every source; they differ only in render target
+            // (effectiveRenderScaleMultiplier caps oneLevelAlways one tier above source), not here.
+            return quality
+        }
+    }
+
+    /// Caches the decoded source dimensions from the kit so the upscaling modes can gate on them.
+    /// Called on video-reconfigure (dimensions resolved or changed); load() resets them to 0 first.
+    private func refreshSourceVideoDimensions() {
+        let d = gpuRenderer.diagnosticsSnapshot()
+        let w = Int(d.videoWidth)
+        let h = Int(d.videoHeight)
+        if w > 0 { lastKnownSourceWidth = w }
+        if h > 0 { lastKnownSourceHeight = h }
+    }
+
+    /// Applies the active Upscaling mode's gpu-next scalers/deband at runtime. mpv keeps these until
     /// changed, so they persist across loads on this handle. No-op before mpv is initialized
-    /// (command returns < 0 with no handle); `start()` re-applies once the handle exists.
+    /// (command returns < 0 with no handle); `start()` re-applies once the handle exists, and
+    /// video-reconfigure re-applies once the source resolution is known (for `oneLevel`).
     private func applyGPUQualityScalers() {
-        let s = qualityProfile.gpuNextScalers
+        let s = resolvedUpscalingScalers()
         _ = gpuRenderer.command(["set", "scale", s.scale])
         _ = gpuRenderer.command(["set", "cscale", s.cscale])
         _ = gpuRenderer.command(["set", "dscale", s.dscale])
@@ -2884,7 +2982,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         let signature = "\(s.scale)/\(s.cscale)/\(s.dscale)/deband=\(s.deband)"
         if signature != lastLoggedScalers {
             lastLoggedScalers = signature
-            Logger.shared.log("[MPVGPUPlayerBridge] gpu-next quality=\(qualityProfile.name) scalers=\(signature) renderScale=\(String(format: "%.2f", renderScaleMultiplier))", type: "MPV")
+            Logger.shared.log("[MPVGPUPlayerBridge] gpu-next upscaling=\(Settings.shared.mpvUpscalingMode.rawValue) scalers=\(signature) srcH=\(lastKnownSourceHeight) renderScale=\(String(format: "%.2f", renderScaleMultiplier))", type: "MPV")
         }
     }
 
@@ -2896,8 +2994,12 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         let changed = !qualityProfile.hasSameRenderSettings(as: newProfile)
         qualityProfile = newProfile
         renderScaleMultiplier = max(0.1, newProfile.renderScale)
-        applyGPUQualityScalers()
         if changed {
+            // Only push the four `set scale/cscale/dscale/deband` commands when the tier actually
+            // changed. The Auto thermal monitor calls this every 8s tick; mpv retains scalers until
+            // changed, so re-issuing identical ones each tick is wasted main-thread work. `start()`
+            // applies them once independently, so gating here loses no initial application.
+            applyGPUQualityScalers()
             reapplyInlineLayout()
             Logger.shared.log("[MPVGPUPlayerBridge] live gpu-next profile update \(newProfile.logDescription)", type: "MPV")
         }
@@ -2920,7 +3022,18 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         // Re-evaluate HDR/colorspace whenever the decoded video parameters resolve or change
         // (file loaded / VIDEO_RECONFIG). Fired on the main thread by the kit.
         gpuRenderer.onVideoReconfigure = { [weak self] in
-            self?.applyHDRConfiguration(reason: "video-reconfigure")
+            guard let self else { return }
+            // The new file's video params have resolved — this load is genuinely fresh now, so let
+            // the position fence open (the kit's reported position/duration belong to the new file).
+            self.hasReceivedVideoReconfigureForCurrentLoad = true
+            // Source dimensions are now known/updated — refresh the cached size and re-apply
+            // scalers so the upscaling modes pick the right scaler for the real resolution.
+            self.refreshSourceVideoDimensions()
+            self.applyGPUQualityScalers()
+            // The "Upscale by one level" render-target cap depends on the source height that just
+            // resolved — re-lay out the drawable so its resolution reflects the new cap.
+            self.reapplyInlineLayout()
+            self.applyHDRConfiguration(reason: "video-reconfigure")
         }
         // Activate the playback audio session (category/mode + preferred multichannel output) like
         // the OpenGL/sample-buffer renderers do — the kit renderer doesn't own this.
@@ -2959,8 +3072,18 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         isReadyToSeek = false
         isLoading = true
         isAwaitingReadyForCurrentLoad = true
-        // New file: force HDR re-evaluation once its colorspace resolves.
+        // Arm the fresh-load fence: snapshot the kit's (still-stale) position so emits stay
+        // suppressed until the new file's position resets below it (or a video-reconfigure lands).
+        // Without this, the outgoing episode's near-end position is saved against the new episode
+        // and marks it watched on the gpu-next renderer (the next-episode-marked-watched bug).
+        hasConfirmedFreshPositionForCurrentLoad = false
+        hasReceivedVideoReconfigureForCurrentLoad = false
+        positionAtLoadStart = gpuRenderer.currentTime
+        // New file: force HDR re-evaluation once its colorspace resolves, and forget the previous
+        // source size so the upscaling modes re-decide on the next video-reconfigure.
         lastHDRConfigurationSignature = ""
+        lastKnownSourceHeight = 0
+        lastKnownSourceWidth = 0
         applyPreset(preset)
         delegate?.renderer(self, didChangeLoading: true)
         gpuRenderer.load(url, headers: headers)
@@ -3330,6 +3453,20 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
             applyPendingInitialSeekIfNeeded(reason: "duration-known")
             return
         }
+        // Fresh-load fence: the kit reuses one renderer instance and does NOT reset its cached
+        // currentTime/duration across stop/start/load, so right after a staged next-episode switch
+        // it briefly still reports the OUTGOING file's near-end values. Emitting those would persist
+        // ~100% progress against the already-swapped incoming episode and mark it watched. Hold
+        // emits until this load is confirmed fresh — a video-reconfigure for the new file has landed,
+        // or the reported position has reset well below where the previous file left off.
+        if !hasConfirmedFreshPositionForCurrentLoad {
+            if hasReceivedVideoReconfigureForCurrentLoad
+                || gpuRenderer.currentTime < max(1.0, positionAtLoadStart - 1.0) {
+                hasConfirmedFreshPositionForCurrentLoad = true
+            } else {
+                return
+            }
+        }
         let now = CACurrentMediaTime()
         guard force || now - lastPositionUpdateAt >= positionUpdateInterval else { return }
         lastPositionUpdateAt = now
@@ -3457,21 +3594,6 @@ struct MPVMetalSampleBufferQualityProfile: Equatable {
         )
     }
 
-    /// gpu-next scaler/deband options for the GPU inline renderer (set at runtime via mpv `set`).
-    /// Unlike the CPU sample-buffer path — where `MPV_RENDER_API_TYPE_SW` bypasses mpv's shader
-    /// pipeline so these are inert — gpu-next actually runs them, so they are a real heat/quality
-    /// knob here. Sharp = EWA Lanczos + deband (highest fragment cost); Balanced = spline36;
-    /// Low Heat = bilinear, no deband (cheapest). Combined with `renderScale` (drawable downscale).
-    var gpuNextScalers: (scale: String, cscale: String, dscale: String, deband: String) {
-        switch name {
-        case "Sharp":
-            return ("ewa_lanczossharp", "ewa_lanczossoft", "mitchell", "yes")
-        case "Low Heat":
-            return ("bilinear", "bilinear", "bilinear", "no")
-        default: // Balanced (and any future tier)
-            return ("spline36", "spline36", "mitchell", "no")
-        }
-    }
 }
 
 final class MPVSampleBufferPiPBridge: PlayerRenderer {

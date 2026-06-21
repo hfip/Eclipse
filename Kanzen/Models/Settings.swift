@@ -340,6 +340,53 @@ enum MPVMetalQualityProfile: String, CaseIterable, Identifiable {
     static let defaultProfile: MPVMetalQualityProfile = .auto
 }
 
+/// Controls the gpu-next (MoltenVK) upscaling + debanding shaders. This is INDEPENDENT of
+/// `MPVMetalQualityProfile`, which only governs render resolution / frame pacing / HDR (the "heat"
+/// knobs). These scalers run per frame on the GPU and are inert on the legacy CPU and OpenGL paths
+/// (their software/`vo=libmpv` outputs bypass mpv's shader graph), so this setting only affects the
+/// default MoltenVK renderer. Defaults to `.off` — the old OpenGL renderer never upscaled or
+/// debanded either, so this matches long-standing behavior at the lowest power cost.
+enum MPVUpscalingMode: String, CaseIterable, Identifiable {
+    /// No quality scaler, no deband — cheap bilinear scaling to fit the screen. The default.
+    case off = "off"
+    /// EWA Lanczos + deband only for sub-1080p sources (e.g. a 480p/720p stream sharpened toward
+    /// 1080p); already-HD video stays on the cheap path. The lightest upscaling mode.
+    case upscaleTo1080 = "upscaleTo1080"
+    /// EWA Lanczos + deband on every source, with the render target capped at roughly one resolution
+    /// tier above the source (e.g. 1080p -> 1440p) instead of full panel res — upscales everything
+    /// but renders a notch lighter than Auto. Render-target cap lives in the renderer.
+    case oneLevelAlways = "oneLevelAlways"
+    /// EWA Lanczos + deband on every source, rendered at full native resolution. Sharpest, costliest
+    /// (the former gpu-next "Sharp" scaler behavior).
+    case auto = "auto"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .off: return "Off"
+        case .upscaleTo1080: return "Upscale to 1080p"
+        case .oneLevelAlways: return "Upscale by one level"
+        case .auto: return "Auto (Lanczos + deband)"
+        }
+    }
+
+    var settingsDescription: String {
+        switch self {
+        case .off:
+            return "No upscaling or debanding — video is scaled cheaply to fit the screen, exactly like the old renderer always did. Lowest heat and battery use."
+        case .upscaleTo1080:
+            return "Applies Lanczos upscaling and debanding only to below-HD video (under 1080p) that actually benefits — e.g. a 720p stream is sharpened toward 1080p — and leaves already-HD video on the cheap path to save power."
+        case .oneLevelAlways:
+            return "Applies Lanczos upscaling and debanding to every source and renders one resolution tier above it (e.g. 1080p toward 1440p), capped at the display. On phone screens HD video is already panel-limited, so this mainly helps below-HD sources and external/AirPlay displays."
+        case .auto:
+            return "Always applies EWA Lanczos upscaling and debanding at full resolution for the sharpest image, even for video that's already high-resolution. Highest power cost."
+        }
+    }
+
+    static let defaultMode: MPVUpscalingMode = .off
+}
+
 /// "Comfort"/anime-like audio presets applied through mpv audio filters (ffmpeg lavfi: dynamic
 /// range compression + loudness normalization + peak limiting). Live-action mixes swing from
 /// near-silent dialogue to loud impacts; these presets pull that range together so playback is
@@ -1639,6 +1686,19 @@ class Settings: ObservableObject {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "mpvMetalQualityProfile")
+        }
+    }
+
+    /// gpu-next upscaling/deband shader mode (Off / Auto / Upscale by one level). Read by the
+    /// MoltenVK inline renderer; independent of `mpvMetalQualityProfile` (heat). Off by default.
+    var mpvUpscalingMode: MPVUpscalingMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "mpvUpscalingMode")
+                ?? MPVUpscalingMode.defaultMode.rawValue
+            return MPVUpscalingMode(rawValue: raw) ?? .defaultMode
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "mpvUpscalingMode")
         }
     }
 

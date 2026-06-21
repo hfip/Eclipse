@@ -10353,7 +10353,15 @@ extension PlayerViewController: MPVNativeRendererDelegate {
                 self.loadingIndicator.stopAnimating()
                 self.loadingIndicator.alpha = 0.0
                 self.centerPlayPauseButton.isHidden = false
-                self.updatePlayPauseButton(isPaused: self.rendererIsPausedState())
+                // A play/pause GESTURE (center-tap / two-finger) sets suppressNextPlayPauseControlReveal
+                // and toggles state; the kit's async onStateChange then fires didChangeLoading(false)
+                // here. Honor the suppression flag (same as the didChangePause path above) so those
+                // gestures toggle playback WITHOUT waking the full controls overlay. Non-gesture loads
+                // leave the flag false and still reveal as before.
+                self.updatePlayPauseButton(
+                    isPaused: self.rendererIsPausedState(),
+                    shouldShowControls: !self.suppressNextPlayPauseControlReveal
+                )
             }
         }
     }

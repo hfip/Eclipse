@@ -65,9 +65,14 @@ struct MusicProgressSlider<T: BinaryFloatingPoint>: View {
                     .allowsHitTesting(false)
                 VStack(spacing: 8) {
                     ZStack(alignment: .leading) {
-                        // Background capsule
+                        // Background capsule. A static translucent fill rather than a
+                        // .ultraThinMaterial backdrop blur: the bar sits over live video, and a
+                        // material would force Core Animation to re-sample + gaussian-blur the moving
+                        // frame behind it every presented frame the whole time controls are visible —
+                        // a real per-frame cost on the gpu-next path (which has no interactive render
+                        // throttle). The flat fill looks nearly identical and costs nothing.
                         Capsule()
-                            .fill(.ultraThinMaterial)
+                            .fill(Color.white.opacity(0.2))
 
                         // Yellow skip-segment overlays
                         ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
