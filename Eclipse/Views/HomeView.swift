@@ -1311,8 +1311,47 @@ struct ExperimentalMediaShelf: View {
     let metrics: ExperimentalMediaDesignMetrics
 
     private var gap: CGFloat { isIPad ? 22 : 20 }
+    private var resolvedStyle: ExperimentalMediaShelfStyle {
+        switch metrics.cardShape {
+        case .landscape:
+            return .landscape
+        case .poster:
+            return .poster
+        case .automatic:
+            if preferredStyle == .poster || automaticShelfPrefersPoster {
+                return .poster
+            }
+            return shelfHasCompleteBackdropArtwork ? .landscape : .poster
+        }
+    }
+
+    private var shelfHasCompleteBackdropArtwork: Bool {
+        !items.isEmpty && items.allSatisfy { $0.fullBackdropURL != nil }
+    }
+
+    private var automaticShelfPrefersPoster: Bool {
+        !items.isEmpty && items.allSatisfy(Self.prefersPosterArtworkInAutomatic)
+    }
+
+    private static func prefersPosterArtworkInAutomatic(_ result: TMDBSearchResult) -> Bool {
+        guard result.genreIds?.contains(16) == true else {
+            return false
+        }
+
+        let animeOriginCountries: Set<String> = ["JP", "CN", "KR", "TW"]
+        if result.originCountry?.contains(where: { animeOriginCountries.contains($0) }) == true {
+            return true
+        }
+
+        guard let originalLanguage = result.originalLanguage?.lowercased() else {
+            return false
+        }
+        return ["ja", "zh", "ko"].contains(originalLanguage)
+    }
 
     var body: some View {
+        let shelfStyle = resolvedStyle
+
         VStack(alignment: .leading, spacing: isIPad ? 18 : 16) {
             HStack(alignment: .center) {
                 Text(title)
@@ -1337,7 +1376,7 @@ struct ExperimentalMediaShelf: View {
                         ExperimentalMediaCard(
                             result: item,
                             heroID: "experimental-home-\(title)-\(index)-\(item.stableIdentity)",
-                            preferredStyle: preferredStyle,
+                            preferredStyle: shelfStyle,
                             metrics: metrics
                         )
                     }
@@ -1361,37 +1400,14 @@ struct ExperimentalMediaCard: View {
     @Environment(\.heroNamespace) private var heroNamespace
 
     private var resolvedStyle: ExperimentalMediaShelfStyle {
-        switch metrics.cardShape {
+        switch preferredStyle {
         case .landscape:
-            return result.fullBackdropURL == nil ? .poster : .landscape
+            return .landscape
         case .poster:
             return .poster
         case .automatic:
-            if prefersPosterArtworkInAutomatic {
-                return .poster
-            }
-            return result.fullBackdropURL == nil ? .poster : .landscape
+            return .landscape
         }
-    }
-
-    private var prefersPosterArtworkInAutomatic: Bool {
-        if preferredStyle == .poster {
-            return true
-        }
-
-        guard result.genreIds?.contains(16) == true else {
-            return false
-        }
-
-        let animeOriginCountries: Set<String> = ["JP", "CN", "KR", "TW"]
-        if result.originCountry?.contains(where: { animeOriginCountries.contains($0) }) == true {
-            return true
-        }
-
-        guard let originalLanguage = result.originalLanguage?.lowercased() else {
-            return false
-        }
-        return ["ja", "zh", "ko"].contains(originalLanguage)
     }
 
     private var cardSize: CGSize {
