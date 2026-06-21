@@ -2896,6 +2896,17 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     /// sample-buffer renderers so the GPU path is robust as the default: surround/stereo downmix,
     /// software-decode fallback, and network cache + demuxer buffering. (HDR, fps, and quality are
     /// applied separately.) Applied at init time before mpv_initialize.
+    ///
+    /// The `vulkan-*` options mirror the reference gpu-next/MoltenVK player (NuvioMobile) on the
+    /// identical vo=gpu-next / gpu-api=vulkan / gpu-context=moltenvk config. MoltenVK has no real
+    /// multi-queue hardware, so mpv's default async compute/transfer queues get emulated on shared
+    /// MTLCommandQueues with extra per-frame MTLEvent/semaphore synchronization — pure CPU overhead
+    /// with no parallelism gained on Apple GPUs. Pinning a single queue + FIFO present and disabling
+    /// the async queues removes that per-frame cross-queue sync cost. Purely scheduling: no quality
+    /// or feature change. NOTE: we deliberately do NOT set `vulkan-disable-interop=yes` that the
+    /// reference also uses, because the kit enables `vd-lavc-dr=yes` (the reference does not), and
+    /// disabling interop there risks perturbing the zero-copy videotoolbox->Vulkan upload into a
+    /// per-frame CPU readback — the opposite of the goal.
     private static func makeAdditionalMPVOptions() -> [String: String] {
         [
             "audio-channels": Settings.shared.mpvSurroundSoundEnabled ? "auto" : "stereo",
@@ -2904,7 +2915,12 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
             "cache": "yes",
             "cache-pause-wait": "5",
             "demuxer-max-bytes": "80M",
-            "demuxer-readahead-secs": "10"
+            "demuxer-readahead-secs": "10",
+            // MoltenVK queue-emulation CPU reduction (mirrors the NuvioMobile reference path).
+            "vulkan-async-compute": "no",
+            "vulkan-async-transfer": "no",
+            "vulkan-queue-count": "1",
+            "vulkan-swap-mode": "fifo"
         ]
     }
 

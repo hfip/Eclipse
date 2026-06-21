@@ -43,6 +43,7 @@ class NormalPlayer: AVPlayerViewController, AVPlayerViewControllerDelegate {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         player?.pause()
+        ProgressManager.shared.flushPendingSave()
         postPlayerDidCloseNotification()
         
         if let token = timeObserverToken {

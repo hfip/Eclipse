@@ -8962,6 +8962,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
             self.rendererStop()
             self.logSharedPlayerControl("renderer.stop called from closeTapped")
+            ProgressManager.shared.flushPendingSave()
             self.postPlayerDidCloseNotification()
         }
 

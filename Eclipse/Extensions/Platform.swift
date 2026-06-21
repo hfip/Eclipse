@@ -10,6 +10,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let playerDidClose = Notification.Name("playerDidClose")
+    static let progressDataDidChange = Notification.Name("progressDataDidChange")
     static let eclipseScenePhaseDidChange = Notification.Name("eclipseScenePhaseDidChange")
 }
 

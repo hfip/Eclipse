@@ -66,6 +66,7 @@ struct HomeView: View {
     @State private var upNextItems: [ContinueWatchingItem] = []
     @State private var traktContinueWatchingItems: [ContinueWatchingItem] = []
     @State private var continueWatchingRefreshID = UUID()
+    @State private var pendingContinueWatchingProgressRefreshTask: Task<Void, Never>?
     @State private var didReportStartupReady = false
     @State private var observedPerformanceMode = PerformanceModeSettings.isEnabled
     @State private var observedHomeCatalogSignature = ""
@@ -243,6 +244,8 @@ struct HomeView: View {
         .onDisappear {
             pendingHomeCatalogReloadTask?.cancel()
             pendingHomeCatalogReloadTask = nil
+            pendingContinueWatchingProgressRefreshTask?.cancel()
+            pendingContinueWatchingProgressRefreshTask = nil
         }
         .onChange(of: homeViewModel.hasCompletedInitialLoad) { hasCompletedInitialLoad in
             if hasCompletedInitialLoad {
@@ -256,6 +259,9 @@ struct HomeView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 refreshContinueWatchingItems()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .progressDataDidChange)) { _ in
+            scheduleContinueWatchingProgressRefresh()
         }
         .onChangeComp(of: trackerManager.trackerState.mergeTraktContinueWatching) { _, _ in
             refreshContinueWatchingItems()
@@ -1007,10 +1013,30 @@ struct HomeView: View {
     }
 
     private func refreshContinueWatchingItems() {
+        refreshLocalContinueWatchingItems()
+        refreshRemotePlaybackCatalogItems()
+    }
+
+    private func refreshLocalContinueWatchingItems() {
+        continueWatchingItems = ProgressManager.shared.getContinueWatchingItems()
+    }
+
+    private func scheduleContinueWatchingProgressRefresh() {
+        pendingContinueWatchingProgressRefreshTask?.cancel()
+        pendingContinueWatchingProgressRefreshTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            refreshLocalContinueWatchingItems()
+        }
+    }
+
+    private func refreshRemotePlaybackCatalogItems() {
         let refreshID = UUID()
         continueWatchingRefreshID = refreshID
-        let localItems = ProgressManager.shared.getContinueWatchingItems()
-        continueWatchingItems = localItems
         let enabledIds = Set(enabledCatalogs.map(\.id))
         let shouldLoadUpNext = enabledIds.contains(Catalog.upNextCatalogId)
         let shouldLoadTraktContinueWatching = enabledIds.contains(Catalog.traktContinueWatchingCatalogId)

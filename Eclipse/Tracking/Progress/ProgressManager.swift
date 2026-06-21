@@ -210,6 +210,7 @@ final class ProgressManager: ObservableObject {
             DispatchQueue.main.async {
                 self.movieProgressList = movies
                 self.episodeProgressList = episodes
+                NotificationCenter.default.post(name: .progressDataDidChange, object: self)
             }
         }
     }
@@ -254,13 +255,17 @@ final class ProgressManager: ObservableObject {
     private func saveProgressData() {
         accessQueue.async { [weak self] in
             guard let self = self else { return }
-            do {
-                let data = try JSONEncoder().encode(self.progressData)
-                try data.write(to: self.progressFileURL, options: .atomic)
-                Logger.shared.log("Progress data saved successfully", type: "Progress")
-            } catch {
-                Logger.shared.log("Failed to save progress data: \(error.localizedDescription)", type: "Error")
-            }
+            self.writeProgressData(self.progressData)
+        }
+    }
+
+    private func writeProgressData(_ snapshot: ProgressData) {
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            try data.write(to: progressFileURL, options: .atomic)
+            Logger.shared.log("Progress data saved successfully", type: "Progress")
+        } catch {
+            Logger.shared.log("Failed to save progress data: \(error.localizedDescription)", type: "Error")
         }
     }
 
@@ -272,6 +277,15 @@ final class ProgressManager: ObservableObject {
                 self.saveProgressData()
             }
         }
+    }
+
+    func flushPendingSave() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        let snapshot = accessQueue.sync {
+            progressData
+        }
+        writeProgressData(snapshot)
     }
 
     private func stableProgressTimes(
