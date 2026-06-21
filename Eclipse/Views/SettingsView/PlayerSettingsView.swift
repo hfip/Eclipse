@@ -183,6 +183,10 @@ final class PlayerSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(mpvAppExitPictureInPictureEnabled, forKey: "mpvAppExitPictureInPictureEnabled") }
     }
 
+    @Published var mpvPictureInPictureEnabled: Bool {
+        didSet { UserDefaults.standard.set(mpvPictureInPictureEnabled, forKey: "mpvPictureInPictureEnabled") }
+    }
+
     @Published var mpvHDRMode: MPVHDRMode {
         didSet { UserDefaults.standard.set(mpvHDRMode.rawValue, forKey: "mpvHDRMode") }
     }
@@ -355,6 +359,7 @@ final class PlayerSettingsStore: ObservableObject {
         self.mpvPerformanceOverlayEnabled = UserDefaults.standard.bool(forKey: "mpvPerformanceOverlayEnabled")
         self.mpvUseLegacyCPURenderer = UserDefaults.standard.bool(forKey: "mpvUseLegacyCPURenderer")
         self.mpvAppExitPictureInPictureEnabled = UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled")
+        self.mpvPictureInPictureEnabled = UserDefaults.standard.object(forKey: "mpvPictureInPictureEnabled") as? Bool ?? true
         let hdrModeRaw = UserDefaults.standard.string(forKey: "mpvHDRMode") ?? MPVHDRMode.defaultMode.rawValue
         self.mpvHDRMode = MPVHDRMode(rawValue: hdrModeRaw) ?? .defaultMode
         let audioComfortModeRaw = UserDefaults.standard.string(forKey: "audioComfortMode") ?? AudioComfortMode.defaultMode.rawValue
@@ -814,10 +819,18 @@ struct PlayerSettingsView: View {
 
             GlassDivider(leadingInset: 16)
             settingsToggleRow(
-                title: "PiP When Leaving App",
-                detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
-                binding: $store.mpvAppExitPictureInPictureEnabled
+                title: "Picture in Picture",
+                detail: "Show the PiP button and allow Picture in Picture. On the MoltenVK renderer (the default), inline video uses a direct gpu-next Metal layer that iOS PiP can't display, so PiP runs a second lightweight GPU sample-buffer player; it's warmed in the background during playback so PiP starts quickly. Turning this off hides the PiP button, disables auto-PiP, and skips that warm-up entirely.",
+                binding: $store.mpvPictureInPictureEnabled
             )
+            if store.mpvPictureInPictureEnabled {
+                GlassDivider(leadingInset: 16)
+                settingsToggleRow(
+                    title: "PiP When Leaving App",
+                    detail: "Automatically start Picture in Picture when MPV playback moves to the background.",
+                    binding: $store.mpvAppExitPictureInPictureEnabled
+                )
+            }
         }
     }
 

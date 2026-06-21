@@ -2947,6 +2947,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         isLoading = false
         isAwaitingReadyForCurrentLoad = true
         isPictureInPictureActive = false
+        setInlineVideoHidden(false)
         lastPositionUpdateAt = 0
         lastHDRConfigurationSignature = ""
     }
@@ -3164,6 +3165,23 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         recoverDisplayLayerIfNeeded(reason: "finish-pip")
         gpuRenderer.endPictureInPicture(restoringInlinePlayback: true)
         isPictureInPictureActive = false
+        setInlineVideoHidden(false)
+    }
+
+    /// Hides/shows the inline gpu-next CAMetalLayer while PiP is active. The kit pauses the inline
+    /// instance with `vid=no` during PiP, but the CAMetalLayer keeps presenting its last decoded
+    /// frame, so without this the frozen inline video stays visible behind/around the PiP window
+    /// (the legacy OpenGL path hides `glView` the same way). Hiding only the inline layer leaves the
+    /// host view's black backdrop, so the player area reads as intentional black, not a stale frame.
+    private func setInlineVideoHidden(_ hidden: Bool) {
+        let apply: () -> Void = { [weak self] in
+            guard let self else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.gpuRenderer.inlineLayer.isHidden = hidden
+            CATransaction.commit()
+        }
+        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
     func primePictureInPictureFrames(reason: String) {
@@ -3179,6 +3197,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         recoverDisplayLayerIfNeeded(reason: "activate-pip")
         gpuRenderer.beginPictureInPicture()
         isPictureInPictureActive = true
+        setInlineVideoHidden(true)
     }
 
     func isPictureInPicturePrimed() -> Bool {
@@ -3190,6 +3209,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         guard isPictureInPictureActive else { return }
         gpuRenderer.endPictureInPicture(restoringInlinePlayback: true)
         isPictureInPictureActive = false
+        setInlineVideoHidden(false)
     }
 
     /// Recovers the shared PiP `AVSampleBufferDisplayLayer` if it entered a failed state, mirroring

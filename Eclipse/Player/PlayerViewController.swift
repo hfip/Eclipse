@@ -2081,7 +2081,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         pipButton.setImage(UIImage(systemName: imageName, withConfiguration: cfg), for: .normal)
 
         let isAvailable = rendererIsPictureInPictureAvailable()
-        let shouldShow = isAvailable && !isVLCPlayer
+        let shouldShow = isAvailable && !isVLCPlayer && Settings.shared.mpvPictureInPictureEnabled
         pipButton.isHidden = !shouldShow
         pipButton.isEnabled = shouldShow
         if isVLCPlayer {
@@ -2117,7 +2117,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
         }
 
-        let enabled = Settings.shared.mpvAppExitPictureInPictureEnabled
+        let enabled = Settings.shared.mpvAppExitPictureInPictureEnabled && Settings.shared.mpvPictureInPictureEnabled
         pipController?.setCanStartPictureInPictureAutomaticallyFromInline(enabled)
         if !enabled {
             cancelPendingMPVAppExitPictureInPictureStart(reason: "\(reason)-disabled")
@@ -2168,6 +2168,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func primeMPVAppExitPictureInPictureIfNeeded(source: String) {
         guard isMPVRenderer, !isVLCPlayer else { return }
+        guard Settings.shared.mpvPictureInPictureEnabled else {
+            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): PiP disabled")
+            return
+        }
         guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
             logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): disabled")
             return
@@ -2193,6 +2197,27 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let primed = prepareMPVPictureInPictureRenderer(source: "\(source)-app-exit-prime", activateLayer: false)
         pip.updatePlaybackState()
         logPictureInPicture("MPV app-exit auto PiP primed source=\(source) primed=\(primed) possible=\(pip.isPictureInPicturePossible) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+    }
+
+    /// Tracks the last proactive PiP warm so overlapping foreground signals don't re-warm in a loop.
+    private var lastMPVPictureInPictureWarmAt: CFTimeInterval = 0
+
+    /// Proactively warms the separate PiP mpv instance during FOREGROUND playback so a later PiP
+    /// (button tap or auto-on-background) begins from a warm, pre-loaded instance instead of a cold
+    /// one. The cold instance can't create + load + decode a frame inside the ~0.35s backgrounding
+    /// window, which is why auto-PiP failed to trigger and button PiP took a beat. Reuses the fully
+    /// gated prime path (PiP enabled, foreground, playing, not suppressed/active) and only pre-loads
+    /// the instance (activateLayer: false) — it never starts PiP. Throttled so a burst of foreground
+    /// notifications doesn't spin up repeated loads. Cost: one extra paused mpv instance, gated
+    /// entirely on the user having PiP enabled.
+    private func warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: String, minInterval: CFTimeInterval = 3.0) {
+        guard isMPVRenderer, !isVLCPlayer else { return }
+        guard Settings.shared.mpvPictureInPictureEnabled else { return }
+        guard UIApplication.shared.applicationState == .active else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastMPVPictureInPictureWarmAt >= minInterval else { return }
+        lastMPVPictureInPictureWarmAt = now
+        primeMPVAppExitPictureInPictureIfNeeded(source: source)
     }
 
     private func updatePlayerTitle() {
@@ -3020,6 +3045,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if let context = playbackLaunchContext {
             SourceHealthStore.shared.recordPlaybackSuccess(sourceId: context.sourceId, sourceName: context.sourceName)
             Logger.shared.log("[PlayerVC.PlaybackStart] \(context.sourceName) started via \(reason)", type: "Stream")
+        }
+        // Warm the separate PiP instance a few seconds after playback stabilizes (lets the inline
+        // stream buffer first) so a later button/auto PiP starts from a warm instance instead of a
+        // cold one. Gated + throttled inside the helper; a no-op when PiP is disabled.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: "playback-stable-prewarm")
         }
     }
 
@@ -8677,6 +8708,12 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func showControlsTemporarily() {
         controlsHideWorkItem?.cancel()
         controlsVisible = true
+        // Light live-tracking: showing the controls means the user is interacting and PiP is more
+        // likely soon, so nudge the warm PiP instance toward the live position. Throttled to once per
+        // 10s and gated to a warm/foreground/PiP-enabled instance, so the cost is at most one frame
+        // re-decode per 10s of interaction (zero when idle) — it keeps button-PiP from doing a large
+        // catch-up seek without continuously re-fetching video.
+        warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: "controls-shown-track", minInterval: 10.0)
         updateBrightnessControlVisibility()
         updateVolumeControlVisibility()
 
@@ -10577,6 +10614,11 @@ extension PlayerViewController: PiPControllerDelegate {
             }
         case "active":
             restoreMPVForegroundIfNeeded(source: "scene-phase-active")
+            // The PiP instance is torn down when a session ends, so re-warm it after returning to
+            // the foreground. Delayed so the inline render path restores first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: "scene-phase-active-rewarm")
+            }
         default:
             break
         }
@@ -10636,6 +10678,10 @@ extension PlayerViewController: PiPControllerDelegate {
         }
         guard isMPVRenderer else {
             logPictureInPicture("app-exit auto PiP skipped source=\(source): MPV renderer missing")
+            return
+        }
+        guard Settings.shared.mpvPictureInPictureEnabled else {
+            logPictureInPicture("MPV app-exit auto PiP skipped source=\(source): PiP disabled")
             return
         }
         guard Settings.shared.mpvAppExitPictureInPictureEnabled else {

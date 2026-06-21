@@ -460,7 +460,10 @@ enum MPVHDRMode: String, CaseIterable, Identifiable {
 
 struct MPVRenderBackendSupport {
     static let bundledMPVKitVersion = "0.41.0"
-    static let bundledMPVKitRevision = "104faf8e40b94af93c624594c4dab66aad4e24e8"
+    // Diagnostic only (logged as revision=… in the player banner). MPVKit is branch-tracked
+    // (eclipse-mpv-metal), so the resolved revision changes every kit Build-and-Release. Bump this
+    // to the kit tip whenever you cut a new kit build, or it will under-report which binary is live.
+    static let bundledMPVKitRevision = "e5198064b2629c868c1345113accadc18ebc4938"
     static let bundledMPVKitSupportsMoltenVKInlineRendering = true
     static let metalRendererEnabled = true
 
@@ -1658,6 +1661,13 @@ class Settings: ObservableObject {
     var mpvAppExitPictureInPictureEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "mpvAppExitPictureInPictureEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "mpvAppExitPictureInPictureEnabled") }
+    }
+
+    /// Master Picture-in-Picture switch (default on). When off, the PiP button is hidden, the
+    /// background warm of the separate PiP player is skipped, and auto-PiP-on-background is disabled.
+    var mpvPictureInPictureEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "mpvPictureInPictureEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "mpvPictureInPictureEnabled") }
     }
 
     var mpvHDRMode: MPVHDRMode {
