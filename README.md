@@ -110,20 +110,3 @@ Eclipse ships as an app shell and media manager. It does not provide hosted medi
 Users are responsible for the services and addons they choose to add. The app and developer do not support piracy.
 
 To add a service/addon, click the top right settings icon in the homescreen and then click services. Then click the top right plus icon and choose whichever type of link you copied.
-
-
-## Build Configuration
-
-Secrets and API keys are loaded from ignored local configuration files instead of tracked source files.
-
-For iOS, copy `Build.local.xcconfig.example` to `Build.local.xcconfig` and fill in the values you need.
-
-Configured keys include:
-
-- `TMDB_API_KEY`
-- `ANILIST_CLIENT_ID`
-- `ANILIST_CLIENT_SECRET`
-- `TRAKT_CLIENT_ID`
-- `TRAKT_CLIENT_SECRET`
-- `MAL_CLIENT_ID`
-- `MAL_CLIENT_SECRET`
