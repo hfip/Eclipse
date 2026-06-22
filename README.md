@@ -30,11 +30,11 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/home-featured.jpeg" width="170" alt="Home screen"></td>
-    <td align="center"><img src="docs/screenshots/discover-tv.jpeg" width="170" alt="TV discovery screen"></td>
-    <td align="center"><img src="docs/screenshots/schedule.jpeg" width="170" alt="Schedule screen"></td>
-    <td align="center"><img src="docs/screenshots/library-collections.jpeg" width="170" alt="Library screen"></td>
-    <td align="center"><img src="docs/screenshots/settings.jpeg" width="170" alt="Settings screen"></td>
+    <td align="center"><img src="docs/screenshots/home-v2.jpeg" width="170" alt="Home screen"></td>
+    <td align="center"><img src="docs/screenshots/discover-v2.jpeg" width="170" alt="TV discovery screen"></td>
+    <td align="center"><img src="docs/screenshots/schedule-v2.jpeg" width="170" alt="Schedule screen"></td>
+    <td align="center"><img src="docs/screenshots/library-v2.jpeg" width="170" alt="Library screen"></td>
+    <td align="center"><img src="docs/screenshots/settings-v2.jpeg" width="170" alt="Settings screen"></td>
   </tr>
   <tr>
     <td align="center"><strong>Home</strong><br>Featured picks and continue watching</td>
