@@ -30,18 +30,18 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/home-v2.jpeg" width="170" alt="Home screen"></td>
-    <td align="center"><img src="docs/screenshots/discover-v2.jpeg" width="170" alt="TV discovery screen"></td>
-    <td align="center"><img src="docs/screenshots/schedule-v2.jpeg" width="170" alt="Schedule screen"></td>
-    <td align="center"><img src="docs/screenshots/library-v2.jpeg" width="170" alt="Library screen"></td>
-    <td align="center"><img src="docs/screenshots/settings-v2.jpeg" width="170" alt="Settings screen"></td>
+    <td align="center" width="20%"><img src="docs/screenshots/home-v2.jpeg" width="140" alt="Home screen"></td>
+    <td align="center" width="20%"><img src="docs/screenshots/discover-v2.jpeg" width="140" alt="TV discovery screen"></td>
+    <td align="center" width="20%"><img src="docs/screenshots/schedule-v2.jpeg" width="140" alt="Schedule screen"></td>
+    <td align="center" width="20%"><img src="docs/screenshots/library-v2.jpeg" width="140" alt="Library screen"></td>
+    <td align="center" width="20%"><img src="docs/screenshots/settings-v2.jpeg" width="140" alt="Settings screen"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Home</strong><br>Featured picks and continue watching</td>
-    <td align="center"><strong>Discover</strong><br>Catalog rows and rich posters</td>
-    <td align="center"><strong>Schedule</strong><br>Local and UTC anime air times</td>
-    <td align="center"><strong>Library</strong><br>Bookmarks and custom collections</td>
-    <td align="center"><strong>Settings</strong><br>Playback, services, trackers, and backups</td>
+    <td align="center" width="20%"><strong>Home</strong><br>Featured picks and continue watching</td>
+    <td align="center" width="20%"><strong>Discover</strong><br>Catalog rows and rich posters</td>
+    <td align="center" width="20%"><strong>Schedule</strong><br>Local and UTC anime air times</td>
+    <td align="center" width="20%"><strong>Library</strong><br>Bookmarks and custom collections</td>
+    <td align="center" width="20%"><strong>Settings</strong><br>Playback, services, trackers, and backups</td>
   </tr>
 </table>
 
