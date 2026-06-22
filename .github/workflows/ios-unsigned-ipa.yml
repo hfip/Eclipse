@@ -12,7 +12,7 @@ on:
         required: false
         default: ""
       release_version:
-        description: "GitHub updater release version stamped into the app. Empty uses MARKETING_VERSION."
+        description: "GitHub updater release version stamped into the app. Empty uses Build.xcconfig."
         required: false
         default: ""
 

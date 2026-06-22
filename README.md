@@ -64,6 +64,7 @@ Eclipse was designed to bridge Luna services (more well known as Sora modules) w
 - MPV playback with subtitle defaults, language defaults, next episode actions, AniSkip, IntroDB, and TheIntroDB support
 - A redesigned interface built around browsing, watching, reading, and managing progress
 - Customizable UI
+- Nuvio Plugins
 - And more!
 
 ## Install
@@ -97,6 +98,8 @@ The original Luna project is available at `https://github.com/cranci1/Luna`.
 Source code for builds distributed from this repository is available at `https://github.com/Soupy-dev/Eclipse`. If you redistribute an IPA or another binary, provide the corresponding source under GPLv3.
 
 Credits to https://github.com/Aidoku/Aidoku for powering Reader Mode.
+
+Credit to https://github.com/NuvioMedia/NuvioMobile for Nuvio Plugins.
 
 This program comes with no warranty, to the extent permitted by law.
 
