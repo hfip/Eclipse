@@ -542,6 +542,18 @@ struct FeaturedSpotlightWidget: View {
                 endPoint: .bottom
             )
 
+            // Soft scrim centered on the title for legibility. Symmetric fade to
+            // clear at both ends so it never renders a hard horizontal edge over
+            // the artwork (the previous bottom-anchored .background scrim was
+            // clipped to the VStack bounds, producing a visible dark band).
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.34), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: bannerHeight * 0.7)
+            .allowsHitTesting(false)
+
             VStack(alignment: .center, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "laurel.leading")
@@ -567,15 +579,6 @@ struct FeaturedSpotlightWidget: View {
             }
             .padding(22)
             .frame(maxWidth: .infinity)
-            .background(alignment: .bottom) {
-                LinearGradient(
-                    colors: [.clear, Color.black.opacity(0.36)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: bannerHeight * 0.46)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-            }
         }
         .frame(maxWidth: .infinity)
         .frame(height: bannerHeight)
