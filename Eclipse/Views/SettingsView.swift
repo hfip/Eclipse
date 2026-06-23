@@ -112,6 +112,31 @@ struct SettingsView: View {
         #else
         ScrollView {
             VStack(spacing: ExperimentalFeatureState.isEnabledAtLaunch ? 22 : 28) {
+                // MARK: - Support
+                GlassSection(header: "Support") {
+                    VStack(spacing: 0) {
+                        Link(destination: patreonURL) {
+                            GlassSettingsRow(icon: "heart.fill", iconColor: .pink, title: "Support on Patreon") {
+                                Text("Optional")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        GlassDivider()
+
+                        Link(destination: koFiURL) {
+                            GlassSettingsRow(icon: "cup.and.saucer.fill", iconColor: .cyan, title: "Support on Ko-fi") {
+                                Text("Optional")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 // MARK: - Basic
                 GlassSection(header: "Basic") {
                     VStack(spacing: 0) {
@@ -279,28 +304,6 @@ struct SettingsView: View {
                             GlassSettingsRow(icon: "scroll.fill", iconColor: .cyan, title: "Legal & Source")
                         }
                         .buttonStyle(.plain)
-
-                        GlassDivider()
-
-                        Link(destination: patreonURL) {
-                            GlassSettingsRow(icon: "heart.fill", iconColor: .pink, title: "Support on Patreon") {
-                                Text("Optional")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white.opacity(0.5))
-                            }
-                        }
-                        .buttonStyle(.plain)
-
-                        GlassDivider()
-
-                        Link(destination: koFiURL) {
-                            GlassSettingsRow(icon: "cup.and.saucer.fill", iconColor: .cyan, title: "Support on Ko-fi") {
-                                Text("Optional")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white.opacity(0.5))
-                            }
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
 
@@ -379,6 +382,13 @@ struct SettingsView: View {
     @ViewBuilder
     private var settingsListContent: some View {
         Section {
+            Link("Support on Patreon", destination: patreonURL)
+            Link("Support on Ko-fi", destination: koFiURL)
+        } header: {
+            Text("Support")
+        }
+
+        Section {
             NavigationLink(destination: LanguageSelectionView(selectedLanguage: $selectedLanguage, languages: languages)) {
                 HStack {
                     Text("Informations Language")
@@ -450,9 +460,6 @@ struct SettingsView: View {
             )) {
                 Text("Legal & Source")
             }
-
-            Link("Support on Patreon", destination: patreonURL)
-            Link("Support on Ko-fi", destination: koFiURL)
         } header: {
             Text("Others")
         }
