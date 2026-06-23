@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var isCheckingGitHubRelease = false
 
     private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
+    private let koFiURL = URL(string: "https://ko-fi.com/soupydev")!
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Eclipse")!
     private let originalProjectURL = URL(string: "https://github.com/cranci1/Luna")!
     private let licenseURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
@@ -289,6 +290,17 @@ struct SettingsView: View {
                             }
                         }
                         .buttonStyle(.plain)
+
+                        GlassDivider()
+
+                        Link(destination: koFiURL) {
+                            GlassSettingsRow(icon: "cup.and.saucer.fill", iconColor: .cyan, title: "Support on Ko-fi") {
+                                Text("Optional")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -440,6 +452,7 @@ struct SettingsView: View {
             }
 
             Link("Support on Patreon", destination: patreonURL)
+            Link("Support on Ko-fi", destination: koFiURL)
         } header: {
             Text("Others")
         }

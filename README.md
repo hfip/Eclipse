@@ -11,6 +11,9 @@
   <a href="https://www.patreon.com/soupy698">
     <img alt="Patreon" src="https://img.shields.io/badge/Patreon-Support%20Development-FF424D?style=for-the-badge&logo=patreon&logoColor=white">
   </a>
+  <a href="https://ko-fi.com/soupydev">
+    <img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support%20Development-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white">
+  </a>
 </p>
 
 <p align="center">
@@ -24,7 +27,7 @@
 
 ## Why Eclipse
 
-Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku and Nuvio Plugins as well. Star the repo or support on Patreon if you like my work!
+Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku and Nuvio Plugins as well. Star the repo or support on Patreon or Ko-fi if you like my work!
 
 ## Screenshots
 
@@ -85,7 +88,7 @@ https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/altsource.json
 - VLC is not supported anymore, but may come back if v4 is good.
 - Use GitHub Issues for feature requests and bug reports.
 - Development started in December 2025
-- Patreon is available if you want to support development: https://www.patreon.com/soupy698 but it will never unlock features or paywall anything. It's just a way to support development if you want to. And no, ads/telemetry will never be a thing in this app, so you don't have to worry about that either.
+- Patreon and Ko-fi are available if you want to support development: https://www.patreon.com/soupy698 or https://ko-fi.com/soupydev but they will never unlock features or paywall anything. They're just ways to support development if you want to. And no, ads/telemetry will never be a thing in this app, so you don't have to worry about that either.
 
 
 
