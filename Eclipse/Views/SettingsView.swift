@@ -115,6 +115,15 @@ struct SettingsView: View {
                 // MARK: - Support
                 GlassSection(header: "Support") {
                     VStack(spacing: 0) {
+                        Text("Help support the app. Any amount helps keep the app free for everyone. Thanks for using the app and supporting development!")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.62))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+
+                        GlassDivider(leadingInset: 14)
+
                         Link(destination: patreonURL) {
                             GlassSettingsRow(icon: "heart.fill", iconColor: .pink, title: "Support on Patreon") {
                                 Text("Optional")
@@ -382,6 +391,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var settingsListContent: some View {
         Section {
+            Text("Help support the app. Any amount helps keep the app free for everyone")
             Link("Support on Patreon", destination: patreonURL)
             Link("Support on Ko-fi", destination: koFiURL)
         } header: {
