@@ -62,6 +62,7 @@ struct PlaybackLaunchContext {
     let headers: [String: String]
     let subtitles: [String]
     let subtitleNames: [String]?
+    let subtitleHeadersByURL: [String: [String: String]]?
     let retryCount: Int
     /// Stremio catalog title candidates from the originating search. Only populated for Stremio
     /// launches; used by next-episode warmup to reproduce the addon catalog-search fallback.
@@ -77,6 +78,7 @@ struct PlaybackLaunchContext {
         headers: [String: String],
         subtitles: [String],
         subtitleNames: [String]?,
+        subtitleHeadersByURL: [String: [String: String]]? = nil,
         retryCount: Int,
         titleCandidates: [String] = []
     ) {
@@ -89,6 +91,7 @@ struct PlaybackLaunchContext {
         self.headers = headers
         self.subtitles = subtitles
         self.subtitleNames = subtitleNames
+        self.subtitleHeadersByURL = subtitleHeadersByURL
         self.retryCount = retryCount
         self.titleCandidates = titleCandidates
     }
@@ -1191,6 +1194,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var initialHeaders: [String: String]?
     private var initialSubtitles: [String]?
     private var initialSubtitleNames: [String]?
+    private var initialSubtitleHeadersByURL: [String: [String: String]]?
     var playbackLaunchContext: PlaybackLaunchContext?
     var onPlaybackStartupFailure: ((PlaybackFailureReport) -> Void)?
     private var playbackStartupWorkItem: DispatchWorkItem?
@@ -2842,13 +2846,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         NotificationCenter.default.removeObserver(self)
     }
     
-    convenience init(url: URL, preset: PlayerPreset, headers: [String: String]? = nil, subtitles: [String]? = nil, subtitleNames: [String]? = nil, mediaInfo: MediaInfo? = nil, imdbId: String? = nil) {
+    convenience init(url: URL, preset: PlayerPreset, headers: [String: String]? = nil, subtitles: [String]? = nil, subtitleNames: [String]? = nil, subtitleHeadersByURL: [String: [String: String]]? = nil, mediaInfo: MediaInfo? = nil, imdbId: String? = nil) {
         self.init(nibName: nil, bundle: nil)
         self.initialURL = url
         self.initialPreset = preset
         self.initialHeaders = headers
         self.initialSubtitles = subtitles
         self.initialSubtitleNames = subtitleNames
+        self.initialSubtitleHeadersByURL = subtitleHeadersByURL
         self.mediaInfo = mediaInfo
         self.imdbId = imdbId
         Logger.shared.log("[PlayerViewController.init] URL=\(url.absoluteString) preset=\(preset.id.rawValue) headers=\(headers?.count ?? 0) subtitles=\(subtitles?.count ?? 0) mediaInfo=\(mediaInfo != nil)", type: "Stream")
@@ -3143,6 +3148,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         vlcProxyFallbackTried = false
         initialSubtitles = context.subtitles.isEmpty ? nil : context.subtitles
         initialSubtitleNames = context.subtitleNames
+        initialSubtitleHeadersByURL = context.subtitleHeadersByURL
         load(url: url, preset: preset, headers: context.headers)
     }
 
@@ -4798,6 +4804,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             self.initialHeaders = request.headers
             self.initialSubtitles = request.subtitles
             self.initialSubtitleNames = request.subtitleNames
+            self.initialSubtitleHeadersByURL = request.subtitleHeadersByURL
             self.mediaInfo = request.mediaInfo
             self.imdbId = request.imdbId
             self.isAnimeHint = request.isAnimeHint
@@ -8090,7 +8097,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if isLocalProxyURL(url) {
             Logger.shared.log("Subtitle download using local proxy URL; preserving proxy headers", type: "Stream")
         } else {
-            if let headers = initialHeaders, !headers.isEmpty {
+            let subtitleSpecificHeaders = initialSubtitleHeadersByURL?[urlString]
+            let requestHeaders = subtitleSpecificHeaders?.isEmpty == false ? subtitleSpecificHeaders : initialHeaders
+            if let headers = requestHeaders, !headers.isEmpty {
                 for (key, value) in headers where !value.isEmpty {
                     request.setValue(value, forHTTPHeaderField: key)
                 }

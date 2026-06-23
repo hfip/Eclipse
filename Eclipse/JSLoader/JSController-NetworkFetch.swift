@@ -6,6 +6,60 @@
 
 import JavaScriptCore
 
+private enum ServiceWebViewCookieLoader {
+    static func load(_ request: URLRequest, in webView: WKWebView, for url: URL) {
+        if let host = url.host,
+           let userAgent = CloudflareBypassManager.shared.bypassUserAgent(for: host) {
+            webView.customUserAgent = userAgent
+        }
+
+        #if os(tvOS)
+        webView.load(request)
+        #else
+        guard let cookieHeader = request.value(forHTTPHeaderField: "Cookie"),
+              let host = url.host,
+              !cookieHeader.isEmpty else {
+            webView.load(request)
+            return
+        }
+
+        let cookies = cookies(from: cookieHeader, host: host)
+        guard !cookies.isEmpty else {
+            webView.load(request)
+            return
+        }
+
+        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+        Task { @MainActor in
+            for cookie in cookies {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    cookieStore.setCookie(cookie) {
+                        continuation.resume()
+                    }
+                }
+            }
+            webView.load(request)
+        }
+        #endif
+    }
+
+    #if !os(tvOS)
+    private static func cookies(from header: String, host: String) -> [HTTPCookie] {
+        header.split(separator: ";").compactMap { part in
+            let pieces = part.split(separator: "=", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard pieces.count == 2, !pieces[0].isEmpty else { return nil }
+            return HTTPCookie(properties: [
+                .name: pieces[0],
+                .value: pieces[1],
+                .domain: host,
+                .path: "/",
+                .secure: "TRUE"
+            ])
+        }
+    }
+    #endif
+}
+
 struct NetworkFetchOptions {
     let timeoutSeconds: Int
     let headers: [String: String]
@@ -88,6 +142,103 @@ extension JSContext {
         self.setObject(networkFetchNativeFunction, forKeyedSubscript: "networkFetchNative" as NSString)
 
         let networkFetchDefinition = """
+            function networkFetch(url, options = {}) {
+                if (typeof options === 'number') {
+                    const timeoutSeconds = options;
+                    const headers = arguments[2] || {};
+                    const cutoff = arguments[3] || null;
+                    options = { timeoutSeconds, headers, cutoff };
+                }
+
+                const finalOptions = {
+                    timeoutSeconds: options.timeoutSeconds || 10,
+                    headers: options.headers || {},
+                    cutoff: options.cutoff || null,
+                    returnHTML: options.returnHTML || false,
+                    returnCookies: options.returnCookies !== undefined ? options.returnCookies : true,
+                    clickSelectors: options.clickSelectors || [],
+                    waitForSelectors: options.waitForSelectors || [],
+                    maxWaitTime: options.maxWaitTime || 5,
+                    htmlContent: options.htmlContent || null
+                };
+
+                return new Promise(function(resolve, reject) {
+                    networkFetchNative(url || '', finalOptions, function(result) {
+                        const requests = result.requests || [];
+                        resolve({
+                            url: result.originalUrl,
+                            requests: requests,
+                            html: result.html || null,
+                            cookies: result.cookies || null,
+                            success: result.success,
+                            error: result.error || null,
+                            totalRequests: requests.length,
+                            cutoffTriggered: result.cutoffTriggered || false,
+                            cutoffUrl: result.cutoffUrl || null,
+                            htmlCaptured: result.htmlCaptured || false,
+                            cookiesCaptured: result.cookiesCaptured || false,
+                            elementsClicked: result.elementsClicked || [],
+                            waitResults: result.waitResults || {}
+                        });
+                    }, reject);
+                });
+            }
+
+            function networkFetchWithHTML(url, timeoutSeconds = 10) {
+                return networkFetch(url, {
+                    timeoutSeconds: timeoutSeconds,
+                    returnHTML: true,
+                    returnCookies: true
+                });
+            }
+
+            function networkFetchWithCutoff(url, cutoff, timeoutSeconds = 10) {
+                return networkFetch(url, {
+                    timeoutSeconds: timeoutSeconds,
+                    cutoff: cutoff,
+                    returnCookies: true
+                });
+            }
+
+            function networkFetchWithClicks(url, clickSelectors, options = {}) {
+                return networkFetch(url, {
+                    timeoutSeconds: options.timeoutSeconds || 10,
+                    headers: options.headers || {},
+                    cutoff: options.cutoff || null,
+                    returnHTML: options.returnHTML || false,
+                    returnCookies: options.returnCookies !== undefined ? options.returnCookies : true,
+                    clickSelectors: Array.isArray(clickSelectors) ? clickSelectors : [clickSelectors],
+                    waitForSelectors: options.waitForSelectors || [],
+                    maxWaitTime: options.maxWaitTime || 5
+                });
+            }
+
+            function networkFetchWithWaitAndClick(url, waitForSelectors, clickSelectors, options = {}) {
+                return networkFetch(url, {
+                    timeoutSeconds: options.timeoutSeconds || 10,
+                    headers: options.headers || {},
+                    cutoff: options.cutoff || null,
+                    returnHTML: options.returnHTML || false,
+                    returnCookies: options.returnCookies !== undefined ? options.returnCookies : true,
+                    clickSelectors: Array.isArray(clickSelectors) ? clickSelectors : [clickSelectors],
+                    waitForSelectors: Array.isArray(waitForSelectors) ? waitForSelectors : [waitForSelectors],
+                    maxWaitTime: options.maxWaitTime || 5
+                });
+            }
+
+            function networkFetchFromHTML(htmlContent, options = {}) {
+                return networkFetch('', {
+                    timeoutSeconds: options.timeoutSeconds || 10,
+                    headers: options.headers || {},
+                    cutoff: options.cutoff || null,
+                    returnHTML: options.returnHTML || false,
+                    returnCookies: options.returnCookies !== undefined ? options.returnCookies : true,
+                    clickSelectors: options.clickSelectors || [],
+                    waitForSelectors: options.waitForSelectors || [],
+                    maxWaitTime: options.maxWaitTime || 5,
+                    htmlContent: htmlContent
+                });
+            }
             """
 
         self.evaluateScript(networkFetchDefinition)
@@ -122,6 +273,37 @@ extension JSContext {
         }
         self.setObject(networkFetchSimpleNativeFunction, forKeyedSubscript: "networkFetchSimpleNative" as NSString)
         let networkFetchSimpleDefinition = """
+            function networkFetchSimple(url, options = {}) {
+                if (typeof options === 'number') {
+                    const timeoutSeconds = options;
+                    options = { timeoutSeconds };
+                }
+                const finalOptions = {
+                    timeoutSeconds: options.timeoutSeconds || 5,
+                    htmlContent: options.htmlContent || null,
+                    headers: options.headers || {}
+                };
+                return new Promise(function(resolve, reject) {
+                    networkFetchSimpleNative(url || '', finalOptions, function(result) {
+                        const requests = result.requests || [];
+                        resolve({
+                            url: result.originalUrl,
+                            requests: requests,
+                            success: result.success,
+                            error: result.error || null,
+                            totalRequests: requests.length
+                        });
+                    }, reject);
+                });
+            }
+
+            function networkFetchSimpleFromHTML(htmlContent, options = {}) {
+                return networkFetchSimple('', {
+                    timeoutSeconds: options.timeoutSeconds || 5,
+                    htmlContent: htmlContent,
+                    headers: options.headers || {}
+                });
+            }
             """
         self.evaluateScript(networkFetchSimpleDefinition)
     }
@@ -238,6 +420,7 @@ class NetworkFetchSimpleMonitor: NSObject, ObservableObject {
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
+        CloudflareBypassManager.shared.applyCachedBypass(to: &request, for: url)
         let randomReferers = [
             "https://www.google.com/",
             "https://www.youtube.com/",
@@ -249,7 +432,7 @@ class NetworkFetchSimpleMonitor: NSObject, ObservableObject {
         if request.value(forHTTPHeaderField: "Referer") == nil {
             request.setValue(randomReferer, forHTTPHeaderField: "Referer")
         }
-        webView.load(request)
+        ServiceWebViewCookieLoader.load(request, in: webView, for: url)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.simulateUserInteraction()
         }
@@ -267,6 +450,11 @@ class NetworkFetchSimpleMonitor: NSObject, ObservableObject {
         timer?.invalidate()
         timer = nil
 
+        if let webView {
+            Task { @MainActor in
+                CloudflareBypassManager.shared.captureSolvedCookies(from: webView, for: webView.url)
+            }
+        }
         webView?.stopLoading()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "networkLogger")
 
@@ -303,7 +491,11 @@ class NetworkFetchSimpleMonitor: NSObject, ObservableObject {
 extension NetworkFetchSimpleMonitor: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation) {}
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation) {}
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation) {
+        Task { @MainActor in
+            CloudflareBypassManager.shared.captureSolvedCookies(from: webView, for: webView.url)
+        }
+    }
     
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation, withError error: Error) {}
     
@@ -943,6 +1135,7 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
+        CloudflareBypassManager.shared.applyCachedBypass(to: &request, for: url)
         
         if request.value(forHTTPHeaderField: "Referer") == nil {
             let randomReferers = [
@@ -956,7 +1149,7 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
             request.setValue(defaultReferer, forHTTPHeaderField: "Referer")
         }
         
-        webView.load(request)
+        ServiceWebViewCookieLoader.load(request, in: webView, for: url)
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.performCustomInteractions()
@@ -1048,6 +1241,11 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
         timer?.invalidate()
         timer = nil
         
+        if let webView {
+            Task { @MainActor in
+                CloudflareBypassManager.shared.captureSolvedCookies(from: webView, for: webView.url)
+            }
+        }
         webView?.stopLoading()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "networkLogger")
         
@@ -1100,7 +1298,11 @@ class NetworkFetchMonitor: NSObject, ObservableObject {
 extension NetworkFetchMonitor: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation) {}
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation) {}
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation) {
+        Task { @MainActor in
+            CloudflareBypassManager.shared.captureSolvedCookies(from: webView, for: webView.url)
+        }
+    }
     
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation, withError error: Error) {}
     

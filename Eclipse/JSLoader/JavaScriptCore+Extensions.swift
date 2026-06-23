@@ -194,6 +194,7 @@ extension JSContext {
                     request.setValue(value, forHTTPHeaderField: key)
                 }
             }
+            CloudflareBypassManager.shared.applyCachedBypass(to: &request, for: url)
             
             let session = URLSession.fetchData(allowRedirects: redirect.boolValue)
             
@@ -222,27 +223,6 @@ extension JSContext {
                     return
                 }
                 
-                var safeHeaders: [String: String] = [:]
-                if let httpResponse = response as? HTTPURLResponse {
-                    for (key, value) in httpResponse.allHeaderFields {
-                        if let keyString = key as? String {
-                            let valueString: String
-                            if let str = value as? String {
-                                valueString = str
-                            } else {
-                                valueString = String(describing: value)
-                            }
-                            safeHeaders[keyString] = valueString
-                        }
-                    }
-                }
-                
-                var responseDict: [String: Any] = [
-                    "status": (response as? HTTPURLResponse)?.statusCode ?? 0,
-                    "headers": safeHeaders,
-                    "body": ""
-                ]
-                
                 do {
                     let data = try Data(contentsOf: tempFileURL)
                     
@@ -251,23 +231,62 @@ extension JSContext {
                         callResolve(["error": "Response exceeds maximum size"])
                         return
                     }
-                    
-                    if let text = String(data: data, encoding: textEncoding) {
-                        responseDict["body"] = text
-                        Logger.shared.log("Service fetchv2 completed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count)", type: "Service")
-                        callResolve(responseDict)
-                    } else {
-                        Logger.shared.log("Service fetchv2 decode warning service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) encoding=\(encoding ?? "utf-8") status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count); trying UTF-8 fallback", type: "Warning")
-                        if let fallbackText = String(data: data, encoding: .utf8) {
-                            responseDict["body"] = fallbackText
-                            Logger.shared.log("Service fetchv2 completed after UTF-8 fallback service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count)", type: "Service")
+
+                    func resolveResponse(data: Data, httpResponse: HTTPURLResponse?) {
+                        let status = httpResponse?.statusCode ?? 0
+                        var responseDict: [String: Any] = [
+                            "status": status,
+                            "ok": status >= 200 && status < 300,
+                            "url": httpResponse?.url?.absoluteString ?? urlString,
+                            "headers": CloudflareBypassManager.headersDictionary(from: httpResponse),
+                            "body": ""
+                        ]
+
+                        if let text = String(data: data, encoding: textEncoding) {
+                            responseDict["body"] = text
+                            Logger.shared.log("Service fetchv2 completed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\(status) bytes=\(data.count)", type: "Service")
                             callResolve(responseDict)
                         } else {
-                            let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
-                            Logger.shared.log("Service fetchv2 decode failed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\((response as? HTTPURLResponse)?.statusCode ?? 0) bytes=\(data.count) contentType=\(contentType)", type: "Error")
-                            callResolve(responseDict)
+                            Logger.shared.log("Service fetchv2 decode warning service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) encoding=\(encoding ?? "utf-8") status=\(status) bytes=\(data.count); trying UTF-8 fallback", type: "Warning")
+                            if let fallbackText = String(data: data, encoding: .utf8) {
+                                responseDict["body"] = fallbackText
+                                Logger.shared.log("Service fetchv2 completed after UTF-8 fallback service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\(status) bytes=\(data.count)", type: "Service")
+                                callResolve(responseDict)
+                            } else {
+                                let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+                                Logger.shared.log("Service fetchv2 decode failed service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) status=\(status) bytes=\(data.count) contentType=\(contentType)", type: "Error")
+                                callResolve(responseDict)
+                            }
                         }
                     }
+
+                    let httpResponse = response as? HTTPURLResponse
+                    let responseText = String(data: data, encoding: textEncoding) ?? String(data: data, encoding: .utf8) ?? ""
+                    if let httpResponse,
+                       CloudflareBypassManager.isChallengeResponse(
+                        status: httpResponse.statusCode,
+                        body: responseText,
+                        headers: CloudflareBypassManager.headersDictionary(from: httpResponse)
+                       ) {
+                        let challengeURL = httpResponse.url ?? url
+                        Logger.shared.log("Service fetchv2 hit Cloudflare challenge service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(challengeURL.absoluteString))", type: "Service")
+                        Task {
+                            if let recovered = await CloudflareBypassManager.shared.recoverChallengedRequest(
+                                for: challengeURL,
+                                method: request.httpMethod ?? httpMethod,
+                                body: request.httpBody,
+                                extraHeaders: request.allHTTPHeaderFields ?? [:],
+                                allowRedirects: redirect.boolValue
+                            ) {
+                                resolveResponse(data: recovered.data, httpResponse: recovered.response)
+                            } else {
+                                resolveResponse(data: data, httpResponse: httpResponse)
+                            }
+                        }
+                        return
+                    }
+
+                    resolveResponse(data: data, httpResponse: httpResponse)
                     
                 } catch {
                     Logger.shared.log("Service fetchv2 failed reading downloaded file service=\(operation.serviceName) operation=\(operation.operation) target=\(ServiceSandboxState.redactedURL(urlString)) error=\(error.localizedDescription)", type: "Error")
@@ -300,6 +319,9 @@ extension JSContext {
                         const responseObj = {
                             headers: rawText.headers,
                             status: rawText.status,
+                            ok: rawText.ok || (rawText.status >= 200 && rawText.status < 300),
+                            url: rawText.url || url,
+                            error: rawText.error || null,
                             _data: rawText.body,
                             text: function() {
                                 return Promise.resolve(this._data);
@@ -318,6 +340,115 @@ extension JSContext {
             }
             """
         self.evaluateScript(fetchv2Definition)
+    }
+
+    func setupFetchAliases() {
+        let fetchAliasDefinition = """
+            function soraFetch(url, options) {
+                var headers = {};
+                var method = "GET";
+                var body = null;
+                var redirect = true;
+                var encoding = undefined;
+
+                if (options) {
+                    if (
+                        options.headers !== undefined ||
+                        options.method !== undefined ||
+                        options.body !== undefined ||
+                        options.redirect !== undefined ||
+                        options.encoding !== undefined
+                    ) {
+                        headers = options.headers || {};
+                        method = options.method || "GET";
+                        body = options.body || null;
+                        redirect = options.redirect !== undefined ? options.redirect : true;
+                        encoding = options.encoding;
+                    } else if (typeof options === "object" && !Array.isArray(options)) {
+                        headers = options;
+                    }
+                }
+
+                return fetchv2(url, headers, method, body, redirect, encoding);
+            }
+
+            function fetch(url, options) {
+                return soraFetch(url, options);
+            }
+            """
+        self.evaluateScript(fetchAliasDefinition)
+    }
+
+    func setupSoraCompatibility() {
+        let validationToken = "eclipse-cranci-1"
+        let tokenFunction: @convention(block) () -> String = { validationToken }
+        self.setObject(tokenFunction, forKeyedSubscript: "_0xB4F2" as NSString)
+
+        let compatibilityDefinition = """
+            if (typeof sendLog === "undefined") {
+                function sendLog(message) {
+                    if (typeof console !== "undefined" && console.log) {
+                        console.log("[Module] " + message);
+                    }
+                }
+            }
+            """
+        self.evaluateScript(compatibilityDefinition)
+    }
+
+    func setupTimerFunctions() {
+        var timers: [Int: DispatchWorkItem] = [:]
+        var nextTimerId = 1
+
+        let setTimeoutFunction: @convention(block) (JSValue?, Double) -> Int = { callback, delay in
+            let id = nextTimerId
+            nextTimerId += 1
+            guard let callback, !callback.isUndefined, !callback.isNull else {
+                return id
+            }
+
+            let item = DispatchWorkItem {
+                timers.removeValue(forKey: id)
+                callback.call(withArguments: [])
+            }
+            timers[id] = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0) / 1000.0, execute: item)
+            return id
+        }
+
+        let clearTimerFunction: @convention(block) (Int) -> Void = { id in
+            timers[id]?.cancel()
+            timers.removeValue(forKey: id)
+        }
+
+        let setIntervalFunction: @convention(block) (JSValue?, Double) -> Int = { callback, delay in
+            let id = nextTimerId
+            nextTimerId += 1
+            guard let callback, !callback.isUndefined, !callback.isNull else {
+                return id
+            }
+
+            let interval = max(delay, 16) / 1000.0
+            func schedule() {
+                guard timers[id] != nil else { return }
+                let item = DispatchWorkItem {
+                    guard timers[id] != nil else { return }
+                    callback.call(withArguments: [])
+                    schedule()
+                }
+                timers[id] = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: item)
+            }
+
+            timers[id] = DispatchWorkItem {}
+            schedule()
+            return id
+        }
+
+        self.setObject(setTimeoutFunction, forKeyedSubscript: "setTimeout" as NSString)
+        self.setObject(clearTimerFunction, forKeyedSubscript: "clearTimeout" as NSString)
+        self.setObject(setIntervalFunction, forKeyedSubscript: "setInterval" as NSString)
+        self.setObject(clearTimerFunction, forKeyedSubscript: "clearInterval" as NSString)
     }
     
     func setupBase64Functions() {
@@ -400,6 +531,9 @@ extension JSContext {
         setupNetworkFetch(sandbox: sandbox)
         setupNetworkFetchSimple(sandbox: sandbox)
         setupFetchV2(sandbox: sandbox)
+        setupFetchAliases()
+        setupSoraCompatibility()
+        setupTimerFunctions()
         setupBase64Functions()
         setupScrapingUtilities()
     }

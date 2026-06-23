@@ -12,6 +12,13 @@ struct StreamOption: Identifiable {
     let url: String
     let headers: [String: String]?
     let subtitle: String?
+    let subtitleTracks: [ServiceSubtitleTrack]
+}
+
+struct ServiceSubtitleTrack: Hashable {
+    let title: String
+    let url: String
+    let headers: [String: String]?
 }
 
 struct PlayerResolvedPlaybackRequest {
@@ -20,6 +27,7 @@ struct PlayerResolvedPlaybackRequest {
     let headers: [String: String]?
     let subtitles: [String]?
     let subtitleNames: [String]?
+    var subtitleHeadersByURL: [String: [String: String]]? = nil
     let mediaInfo: MediaInfo?
     let imdbId: String?
     let isAnimeHint: Bool
@@ -87,6 +95,7 @@ final class ModulesSearchResultsViewModel: ObservableObject {
     var pendingStreamURL: String?
     var pendingStreamName: String?
     var pendingHeaders: [String: String]?
+    var pendingSubtitleHeadersByURL: [String: [String: String]]?
     var pendingServiceHref: String?
     var pendingPlaybackAutoMode = false
     var pendingPlaybackRetryCount = 0
@@ -112,6 +121,7 @@ final class ModulesSearchResultsViewModel: ObservableObject {
         pendingService = nil
         pendingServiceHref = nil
         pendingStreamName = nil
+        pendingSubtitleHeadersByURL = nil
         pendingPlaybackAutoMode = false
         pendingPlaybackRetryCount = 0
         selectedPluginStream = nil
@@ -805,6 +815,7 @@ struct ModulesSearchResultsSheet: View {
                         service: service,
                         streamURL: option.url,
                         headers: option.headers,
+                        structuredSubtitleTracks: option.subtitleTracks,
                         streamName: option.name,
                         serviceHref: viewModel.pendingServiceHref
                     )
@@ -869,7 +880,16 @@ struct ModulesSearchResultsSheet: View {
                 viewModel.showingSubtitlePicker = false
                 if let service = viewModel.pendingService,
                    let streamURL = viewModel.pendingStreamURL {
-                    dispatchStreamAction(streamURL, service: service, subtitle: option.url, headers: viewModel.pendingHeaders, streamName: viewModel.pendingStreamName, serviceHref: viewModel.pendingServiceHref)
+                    dispatchStreamAction(
+                        streamURL,
+                        service: service,
+                        subtitle: option.url,
+                        subtitleNames: [option.title],
+                        subtitleHeadersByURL: viewModel.pendingSubtitleHeadersByURL,
+                        headers: viewModel.pendingHeaders,
+                        streamName: viewModel.pendingStreamName,
+                        serviceHref: viewModel.pendingServiceHref
+                    )
                 }
             }
         }
@@ -3579,6 +3599,7 @@ struct ModulesSearchResultsSheet: View {
                         service: service,
                         streamURL: selectedStream.url,
                         headers: selectedStream.headers,
+                        structuredSubtitleTracks: selectedStream.subtitleTracks,
                         streamName: selectedStream.name,
                         serviceHref: viewModel.pendingServiceHref
                     )
@@ -3605,6 +3626,7 @@ struct ModulesSearchResultsSheet: View {
                 service: service,
                 streamURL: firstStream.url,
                 headers: firstStream.headers,
+                structuredSubtitleTracks: firstStream.subtitleTracks,
                 streamName: firstStream.name,
                 serviceHref: viewModel.pendingServiceHref
             )
@@ -3635,11 +3657,13 @@ struct ModulesSearchResultsSheet: View {
                     .first { !$0.isEmpty }
                 let headers = safeConvertToHeaders(source["headers"])
                 let subtitle = source["subtitle"] as? String
+                let subtitleTracks = parseStructuredSubtitleTracks(from: source)
                 let option = StreamOption(
                     name: title ?? "Stream \(idx + 1)",
                     url: rawUrl,
                     headers: headers,
-                    subtitle: subtitle
+                    subtitle: subtitle,
+                    subtitleTracks: subtitleTracks
                 )
                 availableStreams.append(option)
             }
@@ -3658,13 +3682,13 @@ struct ModulesSearchResultsSheet: View {
         while index < streams.count {
             let entry = streams[index]
             if isURL(entry) {
-                options.append(StreamOption(name: "Stream \(unnamedCount)", url: entry, headers: nil, subtitle: nil))
+                options.append(StreamOption(name: "Stream \(unnamedCount)", url: entry, headers: nil, subtitle: nil, subtitleTracks: []))
                 unnamedCount += 1
                 index += 1
             } else {
                 let nextIndex = index + 1
                 if nextIndex < streams.count, isURL(streams[nextIndex]) {
-                    options.append(StreamOption(name: entry, url: streams[nextIndex], headers: nil, subtitle: nil))
+                    options.append(StreamOption(name: entry, url: streams[nextIndex], headers: nil, subtitle: nil, subtitleTracks: []))
                     index += 2
                 } else {
                     index += 1
@@ -3697,9 +3721,53 @@ struct ModulesSearchResultsSheet: View {
         }
         return nil
     }
+
+    private func parseStructuredSubtitleTracks(from source: [String: Any]) -> [ServiceSubtitleTrack] {
+        var tracks: [ServiceSubtitleTrack] = []
+
+        let topLevelHeaders = safeConvertToHeaders(source["subtitleHeaders"])
+        if let subtitleURL = firstStringValue(in: source, keys: ["subtitle", "subtitles"]), isURL(subtitleURL) {
+            tracks.append(ServiceSubtitleTrack(title: "Subtitle", url: subtitleURL, headers: topLevelHeaders))
+        }
+
+        if let subtitleURLs = source["subtitles"] as? [String] {
+            tracks.append(contentsOf: parseSubtitleOptions(from: subtitleURLs).map {
+                ServiceSubtitleTrack(title: $0.title, url: $0.url, headers: topLevelHeaders)
+            })
+        }
+
+        let rawTracks = (source["allSubtitles"] as? [[String: Any]])
+            ?? (source["subtitleTracks"] as? [[String: Any]])
+            ?? []
+
+        for (index, item) in rawTracks.enumerated() {
+            guard let url = firstStringValue(in: item, keys: ["url", "file", "src"]),
+                  isURL(url) else { continue }
+            let title = firstStringValue(in: item, keys: ["title", "label", "lang", "language", "name"])
+                ?? "Subtitle \(index + 1)"
+            let headers = safeConvertToHeaders(item["headers"]) ?? topLevelHeaders
+            tracks.append(ServiceSubtitleTrack(title: title, url: url, headers: headers))
+        }
+
+        var seen = Set<String>()
+        return tracks.filter { seen.insert($0.url).inserted }
+    }
     
     @MainActor
-    private func resolveSubtitleSelection(subtitles: [String]?, defaultSubtitle: String?, service: Service, streamURL: String, headers: [String: String]?, streamName: String? = nil, serviceHref: String? = nil) {
+    private func resolveSubtitleSelection(subtitles: [String]?, defaultSubtitle: String?, service: Service, streamURL: String, headers: [String: String]?, structuredSubtitleTracks: [ServiceSubtitleTrack] = [], streamName: String? = nil, serviceHref: String? = nil) {
+        if !structuredSubtitleTracks.isEmpty {
+            dispatchStreamAction(
+                streamURL,
+                service: service,
+                subtitle: defaultSubtitle,
+                subtitleTracks: structuredSubtitleTracks,
+                headers: headers,
+                streamName: streamName,
+                serviceHref: serviceHref
+            )
+            return
+        }
+
         guard let subtitles = subtitles, !subtitles.isEmpty else {
             dispatchStreamAction(streamURL, service: service, subtitle: defaultSubtitle, headers: headers, streamName: streamName, serviceHref: serviceHref)
             return
@@ -3719,6 +3787,15 @@ struct ModulesSearchResultsSheet: View {
         viewModel.subtitleOptions = options
         viewModel.pendingStreamURL = streamURL
         viewModel.pendingHeaders = headers
+        viewModel.pendingSubtitleHeadersByURL = Dictionary(
+            uniqueKeysWithValues: options.compactMap { option in
+                guard let headers = structuredSubtitleTracks.first(where: { $0.url == option.url })?.headers,
+                      !headers.isEmpty else {
+                    return nil
+                }
+                return (option.url, headers)
+            }
+        )
         viewModel.pendingService = service
         viewModel.pendingServiceHref = serviceHref
         viewModel.pendingStreamName = streamName
@@ -3727,12 +3804,29 @@ struct ModulesSearchResultsSheet: View {
     }
     
     /// Routes to either play or download based on downloadMode
-    private func dispatchStreamAction(_ url: String, service: Service, subtitle: String?, headers: [String: String]?, streamName: String? = nil, serviceHref: String? = nil) {
+    private func dispatchStreamAction(_ url: String, service: Service, subtitle: String?, subtitleTracks: [ServiceSubtitleTrack] = [], subtitleNames: [String]? = nil, subtitleHeadersByURL: [String: [String: String]]? = nil, headers: [String: String]?, streamName: String? = nil, serviceHref: String? = nil) {
+        let structuredSubtitleURLs = subtitleTracks.map(\.url)
+        let structuredSubtitleNames = subtitleTracks.map(\.title)
+        let structuredSubtitleHeaders = subtitleHeadersByURL ?? subtitleHeadersDictionary(from: subtitleTracks)
+        let playbackSubtitles: [String]?
+        let playbackSubtitleNames: [String]?
+
+        if !structuredSubtitleURLs.isEmpty {
+            playbackSubtitles = structuredSubtitleURLs
+            playbackSubtitleNames = structuredSubtitleNames
+        } else if let subtitle {
+            playbackSubtitles = [subtitle]
+            playbackSubtitleNames = subtitleNames
+        } else {
+            playbackSubtitles = nil
+            playbackSubtitleNames = nil
+        }
+
         if downloadMode {
             downloadStreamURL(
                 url,
                 service: service,
-                subtitle: subtitle,
+                subtitle: playbackSubtitles?.first,
                 headers: headers,
                 autoModeLaunch: viewModel.pendingPlaybackAutoMode
             )
@@ -3740,7 +3834,9 @@ struct ModulesSearchResultsSheet: View {
             playStreamURL(
                 url,
                 service: service,
-                subtitle: subtitle,
+                subtitles: playbackSubtitles,
+                subtitleNames: playbackSubtitleNames,
+                subtitleHeadersByURL: structuredSubtitleHeaders,
                 headers: headers,
                 streamName: streamName,
                 serviceHref: serviceHref,
@@ -3748,6 +3844,15 @@ struct ModulesSearchResultsSheet: View {
                 retryCount: viewModel.pendingPlaybackRetryCount
             )
         }
+    }
+
+    private func subtitleHeadersDictionary(from tracks: [ServiceSubtitleTrack]) -> [String: [String: String]]? {
+        let pairs = tracks.compactMap { track -> (String, [String: String])? in
+            guard let headers = track.headers, !headers.isEmpty else { return nil }
+            return (track.url, headers)
+        }
+        guard !pairs.isEmpty else { return nil }
+        return Dictionary(uniqueKeysWithValues: pairs)
     }
     
     private func parseSubtitleOptions(from subtitles: [String]) -> [(title: String, url: String)] {
@@ -3775,7 +3880,7 @@ struct ModulesSearchResultsSheet: View {
         return options
     }
     
-    private func playStreamURL(_ url: String, service: Service, subtitle: String?, headers: [String: String]?, streamName: String? = nil, serviceHref: String? = nil, autoModeLaunch: Bool = false, retryCount: Int = 0) {
+    private func playStreamURL(_ url: String, service: Service, subtitles: [String]?, subtitleNames: [String]? = nil, subtitleHeadersByURL: [String: [String: String]]? = nil, headers: [String: String]?, streamName: String? = nil, serviceHref: String? = nil, autoModeLaunch: Bool = false, retryCount: Int = 0) {
         viewModel.resetStreamState()
         
         Task { @MainActor in
@@ -3836,7 +3941,7 @@ struct ModulesSearchResultsSheet: View {
             )
 
             let inAppPlayer = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
-            Logger.shared.log("Playback resolve diagnostics source=\(service.metadata.sourceName) kind=service player=\(inAppPlayer) host=\(streamURL.host ?? "nil") ext=\(streamURL.pathExtension.isEmpty ? "none" : streamURL.pathExtension) tail=\(streamURL.lastPathComponent.isEmpty ? "/" : streamURL.lastPathComponent) streamName=\(streamName ?? "nil") headerKeys=[\(finalHeaders.keys.sorted().joined(separator: ","))] subtitles=\(subtitle == nil ? 0 : 1) autoMode=\(autoModeLaunch) retry=\(retryCount)", type: "StreamDiagnostics")
+            Logger.shared.log("Playback resolve diagnostics source=\(service.metadata.sourceName) kind=service player=\(inAppPlayer) host=\(streamURL.host ?? "nil") ext=\(streamURL.pathExtension.isEmpty ? "none" : streamURL.pathExtension) tail=\(streamURL.lastPathComponent.isEmpty ? "/" : streamURL.lastPathComponent) streamName=\(streamName ?? "nil") headerKeys=[\(finalHeaders.keys.sorted().joined(separator: ","))] subtitles=\(subtitles?.count ?? 0) autoMode=\(autoModeLaunch) retry=\(retryCount)", type: "StreamDiagnostics")
             
             // Record service usage (async to avoid blocking player launch)
             Task {
@@ -3860,7 +3965,7 @@ struct ModulesSearchResultsSheet: View {
             } else if let episode = selectedEpisode {
                 resolvedPlayerMediaInfo = .episode(showId: tmdbId, seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber, showTitle: playerMediaTitle, showPosterURL: posterURL, isAnime: isAnimeContent)
             }
-            let resolvedSubtitleArray: [String]? = subtitle.map { [$0] }
+            let resolvedSubtitleArray = subtitles?.isEmpty == false ? subtitles : nil
             let resolvedPreset = PlayerPreset.presets.first ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: [])
             let resolvedLaunchContext = PlaybackLaunchContext(
                 sourceId: SourceHealth.serviceId(service),
@@ -3871,7 +3976,8 @@ struct ModulesSearchResultsSheet: View {
                 streamName: streamName,
                 headers: finalHeaders,
                 subtitles: resolvedSubtitleArray ?? [],
-                subtitleNames: nil,
+                subtitleNames: subtitleNames,
+                subtitleHeadersByURL: subtitleHeadersByURL,
                 retryCount: retryCount
             )
             let resolvedAnimeHint = hasAnimeLookupContext
@@ -3882,7 +3988,8 @@ struct ModulesSearchResultsSheet: View {
                     preset: resolvedPreset,
                     headers: finalHeaders,
                     subtitles: resolvedSubtitleArray,
-                    subtitleNames: nil,
+                    subtitleNames: subtitleNames,
+                    subtitleHeadersByURL: subtitleHeadersByURL,
                     mediaInfo: resolvedPlayerMediaInfo,
                     imdbId: imdbId,
                     isAnimeHint: resolvedAnimeHint,
@@ -3898,7 +4005,7 @@ struct ModulesSearchResultsSheet: View {
 
             if inAppPlayer == "mpv" {
                 let preset = PlayerPreset.presets.first
-                let subtitleArray: [String]? = subtitle.map { [$0] }
+                let subtitleArray = resolvedSubtitleArray
                 
                 // Prepare mediaInfo before creating player
                 var playerMediaInfo: MediaInfo? = nil
@@ -3914,6 +4021,8 @@ struct ModulesSearchResultsSheet: View {
                     preset: preset ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: []),
                     headers: finalHeaders,
                     subtitles: subtitleArray,
+                    subtitleNames: subtitleNames,
+                    subtitleHeadersByURL: subtitleHeadersByURL,
                     mediaInfo: playerMediaInfo,
                     imdbId: imdbId
                 )
@@ -3926,7 +4035,8 @@ struct ModulesSearchResultsSheet: View {
                     streamName: streamName,
                     headers: finalHeaders,
                     subtitles: subtitleArray ?? [],
-                    subtitleNames: nil,
+                    subtitleNames: subtitleNames,
+                    subtitleHeadersByURL: subtitleHeadersByURL,
                     retryCount: retryCount
                 )
                 configurePlaybackRecovery(pvc, context: launchContext)
@@ -3980,8 +4090,9 @@ struct ModulesSearchResultsSheet: View {
                     streamURL: url,
                     streamName: streamName,
                     headers: finalHeaders,
-                    subtitles: subtitle.map { [$0] } ?? [],
-                    subtitleNames: nil,
+                    subtitles: resolvedSubtitleArray ?? [],
+                    subtitleNames: subtitleNames,
+                    subtitleHeadersByURL: subtitleHeadersByURL,
                     retryCount: retryCount
                 )
                 configurePlaybackRecovery(playerVC, context: launchContext)

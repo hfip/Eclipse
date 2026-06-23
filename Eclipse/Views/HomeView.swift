@@ -2340,6 +2340,7 @@ struct ContinueWatchingCard: View {
                 headers: request.headers,
                 subtitles: request.subtitles,
                 subtitleNames: request.subtitleNames,
+                subtitleHeadersByURL: request.subtitleHeadersByURL,
                 mediaInfo: request.mediaInfo,
                 imdbId: request.imdbId
             )

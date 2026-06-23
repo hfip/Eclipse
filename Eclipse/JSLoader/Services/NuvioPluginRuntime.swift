@@ -189,6 +189,59 @@ enum NuvioPluginRuntime {
         }
         context.setObject(hexToUTF8, forKeyedSubscript: "__hex_to_utf8" as NSString)
 
+        // Byte-accurate crypto bridges backing the CryptoJS / WebCrypto / TextEncoder polyfills.
+        // Everything is hex-in / hex-out so binary data survives the JS<->Swift boundary intact.
+        let utf8ToHexCrypto: @convention(block) (String) -> String = { value in
+            hexFromData(Data(value.utf8))
+        }
+        context.setObject(utf8ToHexCrypto, forKeyedSubscript: "__crypto_utf8_to_hex" as NSString)
+
+        let hexToUTF8Crypto: @convention(block) (String) -> String = { value in
+            // Lenient UTF-8 decode (inserts U+FFFD for invalid bytes) instead of collapsing to "".
+            String(decoding: dataFromHex(value), as: UTF8.self)
+        }
+        context.setObject(hexToUTF8Crypto, forKeyedSubscript: "__crypto_hex_to_utf8" as NSString)
+
+        let digestRaw: @convention(block) (String, String) -> String = { name, dataHex in
+            digestHexRaw(hashName: name, dataHex: dataHex)
+        }
+        context.setObject(digestRaw, forKeyedSubscript: "__crypto_digest_hex_raw" as NSString)
+
+        let hmacRaw: @convention(block) (String, String, String) -> String = { name, keyHex, dataHex in
+            hmacHexRaw(hashName: name, keyHex: keyHex, dataHex: dataHex)
+        }
+        context.setObject(hmacRaw, forKeyedSubscript: "__crypto_hmac_hex_raw" as NSString)
+
+        let pbkdf2: @convention(block) (String, String, Int32, Int32, String) -> String = { passHex, saltHex, iterations, keyBits, name in
+            pbkdf2Hex(passHex: passHex, saltHex: saltHex, iterations: Int(iterations), keyBits: Int(keyBits), hashName: name)
+        }
+        context.setObject(pbkdf2, forKeyedSubscript: "__crypto_pbkdf2_hex" as NSString)
+
+        let aesEncrypt: @convention(block) (String, String, String, String) -> String = { mode, keyHex, ivHex, dataHex in
+            cipherHex(encrypt: true, algorithmMode: mode, keyHex: keyHex, ivHex: ivHex, dataHex: dataHex)
+        }
+        context.setObject(aesEncrypt, forKeyedSubscript: "__crypto_aes_encrypt_hex" as NSString)
+
+        let aesDecrypt: @convention(block) (String, String, String, String) -> String = { mode, keyHex, ivHex, dataHex in
+            cipherHex(encrypt: false, algorithmMode: mode, keyHex: keyHex, ivHex: ivHex, dataHex: dataHex)
+        }
+        context.setObject(aesDecrypt, forKeyedSubscript: "__crypto_aes_decrypt_hex" as NSString)
+
+        let des3Encrypt: @convention(block) (String, String, String, String) -> String = { mode, keyHex, ivHex, dataHex in
+            cipherHex(encrypt: true, algorithmMode: mode, keyHex: keyHex, ivHex: ivHex, dataHex: dataHex)
+        }
+        context.setObject(des3Encrypt, forKeyedSubscript: "__crypto_des3_encrypt_hex" as NSString)
+
+        let des3Decrypt: @convention(block) (String, String, String, String) -> String = { mode, keyHex, ivHex, dataHex in
+            cipherHex(encrypt: false, algorithmMode: mode, keyHex: keyHex, ivHex: ivHex, dataHex: dataHex)
+        }
+        context.setObject(des3Decrypt, forKeyedSubscript: "__crypto_des3_decrypt_hex" as NSString)
+
+        let randomValues: @convention(block) (Int32) -> String = { byteLength in
+            randomHex(byteLength: Int(byteLength))
+        }
+        context.setObject(randomValues, forKeyedSubscript: "__crypto_get_random_values_hex" as NSString)
+
         let parseURL: @convention(block) (String, String?) -> [String: Any] = { value, base in
             Self.parseURL(value, base: base)
         }
@@ -532,8 +585,38 @@ enum NuvioPluginRuntime {
         globalThis.SCRAPER_ID = \(scraperLiteral);
         globalThis.SCRAPER_SETTINGS = \(settingsJSON);
 
-        globalThis.atob = function(value) { return __base64_decode(String(value)); };
-        globalThis.btoa = function(value) { return __base64_encode(String(value)); };
+        // atob/btoa must operate on binary ("Latin1") strings - one character per byte (0-255) -
+        // NOT UTF-8. Decoding the base64 bytes as UTF-8 (the previous behaviour) returned "" for any
+        // payload that wasn't valid UTF-8, breaking every scraper that base64-decodes ciphertext,
+        // obfuscated config, or otherwise feeds the result through `charCodeAt`. Pure-JS,
+        // binary-correct implementations matching the reference runtime and browsers:
+        globalThis.atob = function(value) {
+            var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+            var str = String(value).replace(/=+$/, "");
+            if (str.length % 4 === 1) throw new Error("InvalidCharacterError");
+            var output = "";
+            var bc = 0, bs, buffer, idx = 0;
+            while ((buffer = str.charAt(idx++))) {
+                buffer = chars.indexOf(buffer);
+                if (buffer === -1) continue;
+                bs = bc % 4 ? bs * 64 + buffer : buffer;
+                if (bc++ % 4) output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)));
+            }
+            return output;
+        };
+        globalThis.btoa = function(value) {
+            var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+            var str = String(value);
+            var output = "";
+            for (var block, charCode, idx = 0, map = chars;
+                 str.charAt(idx | 0) || (map = "=", idx % 1);
+                 output += map.charAt(63 & (block >> (8 - (idx % 1) * 8)))) {
+                charCode = str.charCodeAt(idx += 3 / 4);
+                if (charCode > 0xFF) throw new Error("InvalidCharacterError");
+                block = (block << 8) | charCode;
+            }
+            return output;
+        };
 
         if (!Array.prototype.flat) {
             Array.prototype.flat = function(depth) {
@@ -792,86 +875,377 @@ enum NuvioPluginRuntime {
             globalThis.URLSearchParams.prototype[Symbol.iterator] = function() { return this.entries()[Symbol.iterator](); };
         }
 
-        function __hexToWords(hex) {
+        // ===== TextEncoder / TextDecoder =====
+        if (typeof TextEncoder === "undefined") {
+            globalThis.TextEncoder = function() {};
+            TextEncoder.prototype.encode = function(str) {
+                var hex = __crypto_utf8_to_hex(String(str == null ? "" : str));
+                var bytes = new Uint8Array(hex.length / 2);
+                for (var i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+                return bytes;
+            };
+        }
+        if (typeof TextDecoder === "undefined") {
+            globalThis.TextDecoder = function() {};
+            TextDecoder.prototype.decode = function(data) {
+                var bytes = data;
+                if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
+                else if (data && data.buffer instanceof ArrayBuffer && !(data instanceof Uint8Array)) bytes = new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength);
+                var hex = "";
+                for (var i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+                return __crypto_hex_to_utf8(hex);
+            };
+        }
+
+        // ===== CryptoJS (byte-accurate, native-backed) + TripleDES =====
+        var WordArray = {
+            init: function(words, sigBytes) {
+                this.words = words || [];
+                this.sigBytes = sigBytes != undefined ? sigBytes : this.words.length * 4;
+            },
+            toString: function(encoder) { return (encoder || CryptoJS.enc.Hex).stringify(this); },
+            concat: function(wordArray) {
+                var thisWords = this.words, thatWords = wordArray.words;
+                var thisSigBytes = this.sigBytes, thatSigBytes = wordArray.sigBytes;
+                this.clamp();
+                for (var i = 0; i < thatSigBytes; i++) {
+                    var thatByte = (thatWords[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+                    thisWords[(thisSigBytes + i) >>> 2] |= thatByte << (24 - ((thisSigBytes + i) % 4) * 8);
+                }
+                this.sigBytes += thatSigBytes;
+                return this;
+            },
+            clamp: function() {
+                var words = this.words, sigBytes = this.sigBytes;
+                if (sigBytes % 4) words[sigBytes >>> 2] &= 0xffffffff << (32 - (sigBytes % 4) * 8);
+                words.length = Math.ceil(sigBytes / 4);
+                return this;
+            },
+            clone: function() { return __wordArrayCreate(this.words.slice(0), this.sigBytes); }
+        };
+        function __wordArrayCreate(words, sigBytes) { var wa = Object.create(WordArray); wa.init(words, sigBytes); return wa; }
+        function __isWordArray(value) { return value && typeof value === "object" && Array.isArray(value.words) && typeof value.sigBytes === "number"; }
+        function __copyUint8Array(bytes) { bytes = __toUint8Array(bytes); var copy = new Uint8Array(bytes.length); copy.set(bytes); return copy; }
+        function __toUint8Array(data) {
+            if (!data) return new Uint8Array(0);
+            if (data instanceof Uint8Array) return data;
+            if (data instanceof ArrayBuffer) return new Uint8Array(data);
+            if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength);
+            if (Array.isArray(data)) return new Uint8Array(data);
+            if (typeof data.length === "number") return new Uint8Array(Array.prototype.slice.call(data));
+            return new Uint8Array(0);
+        }
+        function __bytesToArrayBuffer(bytes) { return __copyUint8Array(bytes).buffer; }
+        function __wordArrayToBytes(wordArray) {
+            if (!__isWordArray(wordArray)) return typeof wordArray === "string" ? new TextEncoder().encode(wordArray) : __toUint8Array(wordArray);
+            var bytes = new Uint8Array(wordArray.sigBytes);
+            for (var i = 0; i < wordArray.sigBytes; i++) bytes[i] = (wordArray.words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+            return bytes;
+        }
+        function __bytesToWordArray(bytes) {
+            bytes = __toUint8Array(bytes);
             var words = [];
-            for (var i = 0; i < hex.length; i += 8) {
-                var chunk = hex.substring(i, i + 8);
-                while (chunk.length < 8) chunk += "0";
-                words.push(parseInt(chunk, 16) | 0);
+            for (var i = 0; i < bytes.length; i++) words[i >>> 2] |= (bytes[i] & 0xff) << (24 - (i % 4) * 8);
+            return __wordArrayCreate(words, bytes.length);
+        }
+        function __normalizeWordArrayInput(value) {
+            if (__isWordArray(value)) return __wordArrayToBytes(value);
+            if (typeof value === "string") return new TextEncoder().encode(value);
+            return __toUint8Array(value);
+        }
+        function __bytesToHex(bytes) { bytes = __toUint8Array(bytes); var out = []; for (var i = 0; i < bytes.length; i++) { var hex = bytes[i].toString(16); out.push(hex.length < 2 ? "0" + hex : hex); } return out.join(""); }
+        function __hexToBytes(hex) {
+            hex = String(hex || "").replace(/[^0-9a-fA-F]/g, "");
+            if (hex.length % 2) hex = "0" + hex;
+            var bytes = new Uint8Array(hex.length / 2);
+            for (var i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substr(i, 2), 16) & 0xff;
+            return bytes;
+        }
+        function __concatBytes() {
+            var total = 0, parts = [];
+            for (var i = 0; i < arguments.length; i++) { var part = __toUint8Array(arguments[i]); parts.push(part); total += part.length; }
+            var out = new Uint8Array(total), offset = 0;
+            for (var j = 0; j < parts.length; j++) { out.set(parts[j], offset); offset += parts[j].length; }
+            return out;
+        }
+        function __normalizeHashName(hash) {
+            var name = hash && hash.name ? hash.name : hash;
+            name = String(name || "SHA-256").toUpperCase().replace(/[^A-Z0-9]/g, "");
+            if (name === "SHA1" || name === "SHA256" || name === "SHA384" || name === "SHA512" || name === "MD5") return name;
+            throw new Error("Unsupported hash algorithm: " + name);
+        }
+        function __normalizeAlgorithmName(algo) {
+            var name = algo && algo.name ? algo.name : algo;
+            name = String(name || "").toUpperCase();
+            if (name.indexOf("AES-GCM") >= 0) return "AES-GCM";
+            if (name.indexOf("AES-CBC") >= 0) return "AES-CBC";
+            if (name.indexOf("AES-ECB") >= 0 || name === "ECB") return "AES-ECB";
+            if (name.indexOf("PBKDF2") >= 0) return "PBKDF2";
+            if (name.indexOf("HMAC") >= 0) return "HMAC";
+            return name;
+        }
+        function __aesModeName(mode, padding) {
+            var normalized = __normalizeAlgorithmName(mode || "AES-CBC");
+            if (padding === CryptoJS.pad.NoPadding || padding === "NoPadding") normalized += "-NoPadding";
+            return normalized;
+        }
+        function __des3ModeName(mode, padding) {
+            var m = String((mode && mode.name) || mode || "CBC").toUpperCase();
+            var normalized = m.indexOf("ECB") >= 0 ? "DES3-ECB" : "DES3-CBC";
+            if (padding === CryptoJS.pad.NoPadding || padding === "NoPadding") normalized += "-NoPadding";
+            return normalized;
+        }
+        function __nativeDigestBytes(hash, dataBytes) {
+            if (typeof __crypto_digest_hex_raw === "undefined") throw new Error("Native digest bridge is unavailable");
+            return __hexToBytes(__crypto_digest_hex_raw(__normalizeHashName(hash), __bytesToHex(dataBytes)));
+        }
+        function __nativeHmacBytes(hash, keyBytes, dataBytes) {
+            if (typeof __crypto_hmac_hex_raw === "undefined") throw new Error("Native HMAC bridge is unavailable");
+            return __hexToBytes(__crypto_hmac_hex_raw(__normalizeHashName(hash), __bytesToHex(keyBytes), __bytesToHex(dataBytes)));
+        }
+        function __nativePbkdf2Bytes(passwordBytes, saltBytes, iterations, keySizeBits, hash) {
+            if (typeof __crypto_pbkdf2_hex === "undefined") throw new Error("Native PBKDF2 bridge is unavailable");
+            return __hexToBytes(__crypto_pbkdf2_hex(__bytesToHex(passwordBytes), __bytesToHex(saltBytes), iterations, keySizeBits, __normalizeHashName(hash)));
+        }
+        function __nativeAesBytes(encrypt, mode, keyBytes, ivBytes, dataBytes) {
+            var fn = encrypt ? __crypto_aes_encrypt_hex : __crypto_aes_decrypt_hex;
+            if (typeof fn === "undefined") throw new Error("Native AES bridge is unavailable");
+            return __hexToBytes(fn(mode, __bytesToHex(keyBytes), __bytesToHex(ivBytes), __bytesToHex(dataBytes)));
+        }
+        function __nativeDes3Bytes(encrypt, mode, keyBytes, ivBytes, dataBytes) {
+            var fn = encrypt ? __crypto_des3_encrypt_hex : __crypto_des3_decrypt_hex;
+            if (typeof fn === "undefined") throw new Error("Native TripleDES bridge is unavailable");
+            return __hexToBytes(fn(mode, __bytesToHex(keyBytes), __bytesToHex(ivBytes), __bytesToHex(dataBytes)));
+        }
+        function __evpKdf(passwordBytes, saltBytes, keySizeBytes, ivSizeBytes) {
+            var targetSize = keySizeBytes + ivSizeBytes;
+            var derived = new Uint8Array(targetSize);
+            var block = new Uint8Array(0), offset = 0;
+            while (offset < targetSize) {
+                block = __nativeDigestBytes("MD5", __concatBytes(block, passwordBytes, saltBytes || new Uint8Array(0)));
+                var take = Math.min(block.length, targetSize - offset);
+                derived.set(block.subarray(0, take), offset);
+                offset += take;
             }
-            return words;
+            return { key: derived.subarray(0, keySizeBytes), iv: derived.subarray(keySizeBytes, keySizeBytes + ivSizeBytes) };
         }
-
-        function __wordsToHex(words, sigBytes) {
-            var hex = "";
-            for (var i = 0; i < sigBytes; i++) {
-                var word = words[i >>> 2] || 0;
-                var byte = (word >>> (24 - (i % 4) * 8)) & 0xff;
-                var part = byte.toString(16);
-                if (part.length < 2) part = "0" + part;
-                hex += part;
-            }
-            return hex;
+        function __opensslSaltHeader() { return new Uint8Array([83, 97, 108, 116, 101, 100, 95, 95]); }
+        function __hasOpenSslSaltHeader(bytes) {
+            var header = __opensslSaltHeader();
+            if (!bytes || bytes.length < 16) return false;
+            for (var i = 0; i < header.length; i++) if (bytes[i] !== header[i]) return false;
+            return true;
         }
-
-        function __wordArrayToHex(value) {
-            if (!value) return "";
-            if (typeof value.__hex === "string") return value.__hex.toLowerCase();
-            if (Array.isArray(value.words) && typeof value.sigBytes === "number") return __wordsToHex(value.words, value.sigBytes);
-            return __utf8_to_hex(String(value));
-        }
-
-        function cryptoWord(hex, utf8Override) {
-            var normalizedHex = String(hex || "").toLowerCase();
-            if (normalizedHex.length % 2 !== 0) normalizedHex = "0" + normalizedHex;
+        function __makeCipherParams(ciphertext, key, iv, salt, mode) {
             return {
-                __hex: normalizedHex,
-                __utf8: utf8Override !== undefined ? utf8Override : __hex_to_utf8(normalizedHex),
-                sigBytes: normalizedHex.length / 2,
-                words: __hexToWords(normalizedHex),
-                toString: function(encoder) {
-                    if (!encoder || encoder === globalThis.CryptoJS.enc.Hex) return this.__hex;
-                    if (encoder === globalThis.CryptoJS.enc.Utf8) return this.__utf8;
-                    if (encoder === globalThis.CryptoJS.enc.Base64) return __base64_encode(this.__utf8);
-                    return this.__hex;
+                ciphertext: __bytesToWordArray(ciphertext),
+                key: key ? __bytesToWordArray(key) : undefined,
+                iv: iv ? __bytesToWordArray(iv) : undefined,
+                salt: salt ? __bytesToWordArray(salt) : undefined,
+                mode: mode,
+                toString: function(formatter) { return (formatter || CryptoJS.format.OpenSSL).stringify(this); }
+            };
+        }
+        function __makeCipherApi(nativeFn, modeNameFn, keySizeBytes, ivSizeBytes) {
+            return {
+                encrypt: function(message, key, options) {
+                    options = options || {};
+                    var data = __normalizeWordArrayInput(message);
+                    var kBytes, ivBytes, saltBytes;
+                    if (typeof key === "string") {
+                        saltBytes = options.salt ? __wordArrayToBytes(options.salt) : __wordArrayToBytes(CryptoJS.lib.WordArray.random(8));
+                        var derived = __evpKdf(new TextEncoder().encode(key), saltBytes, keySizeBytes, ivSizeBytes);
+                        kBytes = derived.key;
+                        ivBytes = options.iv ? __wordArrayToBytes(options.iv) : derived.iv;
+                    } else {
+                        kBytes = __wordArrayToBytes(key);
+                        ivBytes = options.iv ? __wordArrayToBytes(options.iv) : new Uint8Array(0);
+                    }
+                    var mode = modeNameFn(options.mode, options.padding);
+                    var resBytes = nativeFn(true, mode, kBytes, ivBytes, data);
+                    return __makeCipherParams(resBytes, kBytes, ivBytes, saltBytes, mode);
                 },
-                clamp: function() { return this; },
-                concat: function(other) {
-                    this.__hex += __wordArrayToHex(other);
-                    this.__utf8 = __hex_to_utf8(this.__hex);
-                    this.sigBytes = this.__hex.length / 2;
-                    this.words = __hexToWords(this.__hex);
-                    return this;
+                decrypt: function(cipher, key, options) {
+                    options = options || {};
+                    var cipherParams = typeof cipher === "string" ? CryptoJS.format.OpenSSL.parse(cipher) : cipher;
+                    var data = cipherParams.ciphertext ? __wordArrayToBytes(cipherParams.ciphertext) : __toUint8Array(cipherParams);
+                    var kBytes, ivBytes;
+                    if (typeof key === "string") {
+                        var saltBytes = options.salt ? __wordArrayToBytes(options.salt) : (cipherParams.salt ? __wordArrayToBytes(cipherParams.salt) : new Uint8Array(0));
+                        var derived = __evpKdf(new TextEncoder().encode(key), saltBytes, keySizeBytes, ivSizeBytes);
+                        kBytes = derived.key;
+                        ivBytes = options.iv ? __wordArrayToBytes(options.iv) : derived.iv;
+                    } else {
+                        kBytes = __wordArrayToBytes(key);
+                        ivBytes = options.iv ? __wordArrayToBytes(options.iv) : new Uint8Array(0);
+                    }
+                    var mode = modeNameFn(options.mode, options.padding);
+                    return __bytesToWordArray(nativeFn(false, mode, kBytes, ivBytes, data));
                 }
             };
         }
-        function cryptoUtf8Word(value) {
-            var text = String(value == null ? "" : value);
-            return cryptoWord(__utf8_to_hex(text), text);
-        }
-        function cryptoBase64Word(value) {
-            return cryptoUtf8Word(__base64_decode(String(value || "")));
-        }
-        function cryptoInput(value) {
-            if (value && typeof value === "object" && typeof value.__utf8 === "string") return value.__utf8;
-            if (value && typeof value === "object" && typeof value.__hex === "string") return __hex_to_utf8(value.__hex);
-            if (value && typeof value === "object" && Array.isArray(value.words) && typeof value.sigBytes === "number") return __hex_to_utf8(__wordsToHex(value.words, value.sigBytes));
-            return String(value == null ? "" : value);
-        }
-        globalThis.CryptoJS = {
-            MD5: function(value) { return cryptoWord(__crypto_hash("MD5", cryptoInput(value))); },
-            SHA1: function(value) { return cryptoWord(__crypto_hash("SHA1", cryptoInput(value))); },
-            SHA256: function(value) { return cryptoWord(__crypto_hash("SHA256", cryptoInput(value))); },
-            SHA512: function(value) { return cryptoWord(__crypto_hash("SHA512", cryptoInput(value))); },
-            HmacMD5: function(value, key) { return cryptoWord(__crypto_hmac("MD5", cryptoInput(value), cryptoInput(key))); },
-            HmacSHA1: function(value, key) { return cryptoWord(__crypto_hmac("SHA1", cryptoInput(value), cryptoInput(key))); },
-            HmacSHA256: function(value, key) { return cryptoWord(__crypto_hmac("SHA256", cryptoInput(value), cryptoInput(key))); },
-            HmacSHA512: function(value, key) { return cryptoWord(__crypto_hmac("SHA512", cryptoInput(value), cryptoInput(key))); },
+        var CryptoJS = {
             enc: {
-                Utf8: { parse: function(value) { return cryptoUtf8Word(value); }, stringify: function(value) { return cryptoInput(value); } },
-                Base64: { stringify: function(value) { return __base64_encode(cryptoInput(value)); }, parse: function(value) { return cryptoBase64Word(value); } },
-                Hex: { stringify: function(value) { return __wordArrayToHex(value); }, parse: function(value) { return cryptoWord(String(value || "")); } }
+                Hex: {
+                    stringify: function(wordArray) { return __bytesToHex(__wordArrayToBytes(wordArray)); },
+                    parse: function(hexStr) { return __bytesToWordArray(__hexToBytes(hexStr)); }
+                },
+                Utf8: {
+                    stringify: function(wordArray) { return new TextDecoder("utf-8").decode(__wordArrayToBytes(wordArray)); },
+                    parse: function(utf8Str) { return __bytesToWordArray(new TextEncoder().encode(String(utf8Str))); }
+                },
+                Latin1: {
+                    stringify: function(wordArray) { var bytes = __wordArrayToBytes(wordArray); var out = ""; for (var i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]); return out; },
+                    parse: function(str) { str = String(str || ""); var bytes = new Uint8Array(str.length); for (var i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xff; return __bytesToWordArray(bytes); }
+                },
+                Base64: {
+                    stringify: function(wordArray) { var bytes = __wordArrayToBytes(wordArray); var binaryStr = ""; for (var j = 0; j < bytes.length; j++) binaryStr += String.fromCharCode(bytes[j]); return btoa(binaryStr); },
+                    parse: function(base64Str) { var binaryStr = atob(String(base64Str || "")); var bytes = new Uint8Array(binaryStr.length); for (var i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i) & 0xff; return __bytesToWordArray(bytes); }
+                }
+            },
+            lib: {
+                WordArray: {
+                    create: function(words, sigBytes) {
+                        if (words == null) return __wordArrayCreate([], sigBytes || 0);
+                        if (__isWordArray(words)) return words.clone();
+                        if (typeof words === "string") return CryptoJS.enc.Utf8.parse(words);
+                        if (words instanceof ArrayBuffer || (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(words))) {
+                            var bytes = __toUint8Array(words);
+                            return __bytesToWordArray(sigBytes != undefined ? bytes.subarray(0, sigBytes) : bytes);
+                        }
+                        return __wordArrayCreate(words, sigBytes);
+                    },
+                    random: function(nBytes) {
+                        var bytes = new Uint8Array(nBytes || 0);
+                        globalThis.crypto.getRandomValues(bytes);
+                        return __bytesToWordArray(bytes);
+                    }
+                },
+                CipherParams: {
+                    create: function(params) {
+                        params = params || {};
+                        params.toString = params.toString || function(formatter) { return (formatter || CryptoJS.format.OpenSSL).stringify(this); };
+                        return params;
+                    }
+                }
+            },
+            format: {
+                OpenSSL: {
+                    stringify: function(cipherParams) {
+                        var cipherBytes = __wordArrayToBytes(cipherParams.ciphertext);
+                        var out = cipherParams.salt ? __concatBytes(__opensslSaltHeader(), __wordArrayToBytes(cipherParams.salt), cipherBytes) : cipherBytes;
+                        return CryptoJS.enc.Base64.stringify(__bytesToWordArray(out));
+                    },
+                    parse: function(str) {
+                        var bytes = __wordArrayToBytes(CryptoJS.enc.Base64.parse(str));
+                        if (__hasOpenSslSaltHeader(bytes)) return CryptoJS.lib.CipherParams.create({ salt: __bytesToWordArray(bytes.subarray(8, 16)), ciphertext: __bytesToWordArray(bytes.subarray(16)) });
+                        return CryptoJS.lib.CipherParams.create({ ciphertext: __bytesToWordArray(bytes) });
+                    }
+                }
+            },
+            mode: { CBC: "AES-CBC", GCM: "AES-GCM", ECB: "AES-ECB" },
+            pad: { Pkcs7: "Pkcs7", NoPadding: "NoPadding" },
+            algo: { MD5: "MD5", SHA1: "SHA1", SHA256: "SHA256", SHA384: "SHA384", SHA512: "SHA512", AES: "AES" },
+            MD5: function(m) { return __bytesToWordArray(__nativeDigestBytes("MD5", __normalizeWordArrayInput(m))); },
+            SHA1: function(m) { return __bytesToWordArray(__nativeDigestBytes("SHA1", __normalizeWordArrayInput(m))); },
+            SHA256: function(m) { return __bytesToWordArray(__nativeDigestBytes("SHA256", __normalizeWordArrayInput(m))); },
+            SHA384: function(m) { return __bytesToWordArray(__nativeDigestBytes("SHA384", __normalizeWordArrayInput(m))); },
+            SHA512: function(m) { return __bytesToWordArray(__nativeDigestBytes("SHA512", __normalizeWordArrayInput(m))); },
+            HmacMD5: function(m, k) { return __bytesToWordArray(__nativeHmacBytes("MD5", __normalizeWordArrayInput(k), __normalizeWordArrayInput(m))); },
+            HmacSHA1: function(m, k) { return __bytesToWordArray(__nativeHmacBytes("SHA1", __normalizeWordArrayInput(k), __normalizeWordArrayInput(m))); },
+            HmacSHA256: function(m, k) { return __bytesToWordArray(__nativeHmacBytes("SHA256", __normalizeWordArrayInput(k), __normalizeWordArrayInput(m))); },
+            HmacSHA384: function(m, k) { return __bytesToWordArray(__nativeHmacBytes("SHA384", __normalizeWordArrayInput(k), __normalizeWordArrayInput(m))); },
+            HmacSHA512: function(m, k) { return __bytesToWordArray(__nativeHmacBytes("SHA512", __normalizeWordArrayInput(k), __normalizeWordArrayInput(m))); },
+            PBKDF2: function(pass, salt, options) {
+                options = options || {};
+                var pBytes = __normalizeWordArrayInput(pass);
+                var sBytes = __normalizeWordArrayInput(salt);
+                var iter = options.iterations || 1000;
+                var kSize = options.keySize || 8;
+                var algo = options.hasher || "SHA1";
+                return __bytesToWordArray(__nativePbkdf2Bytes(pBytes, sBytes, iter, kSize * 32, algo));
             }
+        };
+        CryptoJS.AES = __makeCipherApi(__nativeAesBytes, __aesModeName, 32, 16);
+        CryptoJS.TripleDES = __makeCipherApi(__nativeDes3Bytes, __des3ModeName, 24, 8);
+        CryptoJS.DES3 = CryptoJS.TripleDES;
+        globalThis.CryptoJS = CryptoJS;
+
+        // ===== Web Crypto (subtle digest/hmac/aes + getRandomValues) =====
+        function __makeCryptoKey(type, algorithm, extractable, usages, rawBytes) {
+            return { type: type, extractable: !!extractable, algorithm: algorithm, usages: usages || [], _raw: __copyUint8Array(rawBytes) };
+        }
+        function __webCryptoAlgorithm(algo) {
+            var name = __normalizeAlgorithmName(algo);
+            var out = { name: name };
+            if (algo && typeof algo === "object" && algo.length) out.length = algo.length;
+            if (algo && typeof algo === "object" && algo.hash) out.hash = { name: __normalizeHashName(algo.hash) };
+            return out;
+        }
+        globalThis.crypto = {
+            subtle: {
+                digest: async function(algo, data) { return __bytesToArrayBuffer(__nativeDigestBytes(algo, __toUint8Array(data))); },
+                importKey: async function(fmt, data, algo, extractable, usages) {
+                    fmt = String(fmt || "raw").toLowerCase();
+                    if (fmt !== "raw") throw new Error("Unsupported key format: " + fmt);
+                    return __makeCryptoKey("secret", __webCryptoAlgorithm(algo || {}), extractable, usages || [], __toUint8Array(data));
+                },
+                exportKey: async function(fmt, key) { return __bytesToArrayBuffer(key._raw); },
+                deriveBits: async function(params, key, len) {
+                    if (__normalizeAlgorithmName(params) !== "PBKDF2") throw new Error("Only PBKDF2 deriveBits is supported");
+                    return __bytesToArrayBuffer(__nativePbkdf2Bytes(__toUint8Array(key._raw), __toUint8Array(params.salt), params.iterations || 1000, len, params.hash || "SHA-256"));
+                },
+                encrypt: async function(params, key, data) {
+                    var mode = __normalizeAlgorithmName(params);
+                    if (mode !== "AES-CBC" && mode !== "AES-GCM") throw new Error("Unsupported encrypt algorithm: " + mode);
+                    return __bytesToArrayBuffer(__nativeAesBytes(true, mode, __toUint8Array(key._raw), __toUint8Array(params.iv || new Uint8Array(0)), __toUint8Array(data)));
+                },
+                decrypt: async function(params, key, data) {
+                    var mode = __normalizeAlgorithmName(params);
+                    if (mode !== "AES-CBC" && mode !== "AES-GCM") throw new Error("Unsupported decrypt algorithm: " + mode);
+                    return __bytesToArrayBuffer(__nativeAesBytes(false, mode, __toUint8Array(key._raw), __toUint8Array(params.iv || new Uint8Array(0)), __toUint8Array(data)));
+                },
+                sign: async function(algo, key, data) {
+                    if (__normalizeAlgorithmName(algo || key.algorithm) === "HMAC" || (key.algorithm && key.algorithm.name === "HMAC")) {
+                        var hash = (algo && algo.hash) || (key.algorithm && key.algorithm.hash) || "SHA-256";
+                        return __bytesToArrayBuffer(__nativeHmacBytes(hash, __toUint8Array(key._raw), __toUint8Array(data)));
+                    }
+                    throw new Error("Unsupported sign algorithm");
+                },
+                verify: async function(algo, key, sig, data) {
+                    if (__normalizeAlgorithmName(algo || key.algorithm) === "HMAC" || (key.algorithm && key.algorithm.name === "HMAC")) {
+                        var expected = __nativeHmacBytes((algo && algo.hash) || (key.algorithm && key.algorithm.hash) || "SHA-256", __toUint8Array(key._raw), __toUint8Array(data));
+                        var actual = __toUint8Array(sig);
+                        if (expected.length !== actual.length) return false;
+                        var diff = 0;
+                        for (var i = 0; i < expected.length; i++) diff |= expected[i] ^ actual[i];
+                        return diff === 0;
+                    }
+                    throw new Error("Unsupported verify algorithm");
+                }
+            },
+            getRandomValues: function(arr) {
+                if (!arr) return arr;
+                var byteLength = arr.byteLength != undefined ? arr.byteLength : arr.length;
+                if (!byteLength) return arr;
+                if (typeof __crypto_get_random_values_hex === "undefined") throw new Error("Native random bridge is unavailable");
+                var random = __hexToBytes(__crypto_get_random_values_hex(byteLength));
+                if (arr.buffer && arr.byteLength != undefined) new Uint8Array(arr.buffer, arr.byteOffset || 0, arr.byteLength).set(random);
+                else for (var i = 0; i < arr.length; i++) arr[i] = random[i] || 0;
+                return arr;
+            },
+            randomUUID: function() {
+                var b = new Uint8Array(16);
+                globalThis.crypto.getRandomValues(b);
+                b[6] = (b[6] & 0x0f) | 0x40;
+                b[8] = (b[8] & 0x3f) | 0x80;
+                var h = __bytesToHex(b);
+                return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" + h.substr(16, 4) + "-" + h.substr(20);
+            }
+        };
+
+        globalThis.WebAssembly = globalThis.WebAssembly || {
+            instantiate: async function() { return { instance: { exports: {} }, module: {} }; }
         };
 
         function createCheerioCollection(ids) {
@@ -950,12 +1324,16 @@ enum NuvioPluginRuntime {
             var root = __cheerio_load(String(html || ""));
             function cheerioFn(selector, context) {
                 if (selector == null) return createCheerioCollection([root]);
-                // `$(existingCollection)` - return it untouched, matching cheerio.
-                if (selector && typeof selector === "object" && typeof selector.toArray === "function") {
+                // `$(existingNode)` / `$(existingCollection)` - return it untouched, matching cheerio.
+                // Collections are FUNCTIONS (so they can be invoked as `$(...)`), so `typeof` is
+                // "function", not "object". Accept both, otherwise the extremely common
+                // `.map((i, el) => $(el)...)` / `.each((i, el) => $(el)...)` idiom falls through to
+                // `String(selector)` (the function's source code) and produces a garbage selector.
+                if (selector && (typeof selector === "object" || typeof selector === "function") && typeof selector.toArray === "function") {
                     return selector;
                 }
-                // `$(selector, context)` - scope the search to the context collection.
-                if (context && typeof context === "object" && typeof context.find === "function") {
+                // `$(selector, context)` - scope the search to the context collection (also a function).
+                if (context && (typeof context === "object" || typeof context === "function") && typeof context.find === "function") {
                     return context.find(String(selector));
                 }
                 return createCheerioCollection(__cheerio_select(root, String(selector)));
@@ -1018,6 +1396,172 @@ enum NuvioPluginRuntime {
             "hash": components?.percentEncodedFragment.map { "#\($0)" } ?? "",
             "origin": "\(url.scheme ?? "")://\(host)"
         ]
+    }
+
+    // MARK: - Byte-accurate crypto bridges (hex in / hex out)
+
+    private static func hexFromData(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func dataFromHex(_ hex: String) -> Data {
+        let filtered = hex.lowercased().filter { ("0"..."9").contains($0) || ("a"..."f").contains($0) }
+        let normalized = filtered.count.isMultiple(of: 2) ? filtered : "0" + filtered
+        var data = Data(capacity: normalized.count / 2)
+        var index = normalized.startIndex
+        while index < normalized.endIndex {
+            let next = normalized.index(index, offsetBy: 2)
+            if let byte = UInt8(normalized[index..<next], radix: 16) {
+                data.append(byte)
+            }
+            index = next
+        }
+        return data
+    }
+
+    private static func digestHexRaw(hashName: String, dataHex: String) -> String {
+        let data = dataFromHex(dataHex)
+        switch hashName.uppercased() {
+        case "MD5": return hexFromData(Data(Insecure.MD5.hash(data: data)))
+        case "SHA1": return hexFromData(Data(Insecure.SHA1.hash(data: data)))
+        case "SHA384": return hexFromData(Data(SHA384.hash(data: data)))
+        case "SHA512": return hexFromData(Data(SHA512.hash(data: data)))
+        default: return hexFromData(Data(SHA256.hash(data: data)))
+        }
+    }
+
+    private static func hmacHexRaw(hashName: String, keyHex: String, dataHex: String) -> String {
+        let key = SymmetricKey(data: dataFromHex(keyHex))
+        let data = dataFromHex(dataHex)
+        switch hashName.uppercased() {
+        case "MD5": return hexFromData(Data(HMAC<Insecure.MD5>.authenticationCode(for: data, using: key)))
+        case "SHA1": return hexFromData(Data(HMAC<Insecure.SHA1>.authenticationCode(for: data, using: key)))
+        case "SHA384": return hexFromData(Data(HMAC<SHA384>.authenticationCode(for: data, using: key)))
+        case "SHA512": return hexFromData(Data(HMAC<SHA512>.authenticationCode(for: data, using: key)))
+        default: return hexFromData(Data(HMAC<SHA256>.authenticationCode(for: data, using: key)))
+        }
+    }
+
+    private static func pbkdf2Hex(passHex: String, saltHex: String, iterations: Int, keyBits: Int, hashName: String) -> String {
+        let password = dataFromHex(passHex)
+        let salt = dataFromHex(saltHex)
+        let keyLength = max(1, keyBits / 8)
+        let prf: CCPseudoRandomAlgorithm
+        switch hashName.uppercased() {
+        case "SHA1": prf = CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1)
+        case "SHA384": prf = CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA384)
+        case "SHA512": prf = CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA512)
+        case "MD5": prf = CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1) // CommonCrypto PBKDF2 has no MD5 PRF; SHA1 fallback
+        default: prf = CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256)
+        }
+        var derived = [UInt8](repeating: 0, count: keyLength)
+        let status = password.withUnsafeBytes { passwordBytes in
+            salt.withUnsafeBytes { saltBytes in
+                CCKeyDerivationPBKDF(
+                    CCPBKDFAlgorithm(kCCPBKDF2),
+                    passwordBytes.bindMemory(to: Int8.self).baseAddress, password.count,
+                    saltBytes.bindMemory(to: UInt8.self).baseAddress, salt.count,
+                    prf, UInt32(max(1, iterations)),
+                    &derived, keyLength
+                )
+            }
+        }
+        guard Int(status) == kCCSuccess else { return "" }
+        return hexFromData(Data(derived))
+    }
+
+    private static func randomHex(byteLength: Int) -> String {
+        let count = max(0, byteLength)
+        guard count > 0 else { return "" }
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) }
+        return hexFromData(Data(bytes))
+    }
+
+    /// Symmetric block cipher (AES or 3DES) for the CryptoJS / WebCrypto polyfills.
+    /// `algorithmMode` looks like "AES-CBC", "AES-ECB", "AES-GCM", "DES3-CBC", optionally
+    /// suffixed "-NoPadding" (default is PKCS7).
+    private static func cipherHex(encrypt: Bool, algorithmMode: String, keyHex: String, ivHex: String, dataHex: String) -> String {
+        let noPadding = algorithmMode.hasSuffix("-NoPadding")
+        let base = noPadding ? String(algorithmMode.dropLast("-NoPadding".count)) : algorithmMode
+        let parts = base.uppercased().split(separator: "-").map(String.init)
+        let algo = parts.first ?? "AES"
+        let mode = parts.count > 1 ? parts[parts.count - 1] : "CBC"
+
+        let key = dataFromHex(keyHex)
+        let iv = dataFromHex(ivHex)
+        let input = dataFromHex(dataHex)
+
+        if algo == "AES" && mode == "GCM" {
+            return aesGCMHex(encrypt: encrypt, key: key, iv: iv, input: input)
+        }
+
+        let algorithm = CCAlgorithm(algo == "DES3" || algo == "3DES" ? kCCAlgorithm3DES : kCCAlgorithmAES)
+        let blockSize = (algo == "DES3" || algo == "3DES") ? kCCBlockSize3DES : kCCBlockSizeAES128
+        var options: CCOptions = 0
+        if !noPadding { options |= CCOptions(kCCOptionPKCS7Padding) }
+        if mode == "ECB" { options |= CCOptions(kCCOptionECBMode) }
+
+        guard let output = ccCrypt(
+            operation: CCOperation(encrypt ? kCCEncrypt : kCCDecrypt),
+            algorithm: algorithm,
+            options: options,
+            key: key,
+            iv: mode == "ECB" ? Data() : iv,
+            input: input,
+            blockSize: blockSize
+        ) else {
+            return ""
+        }
+        return hexFromData(output)
+    }
+
+    private static func ccCrypt(operation: CCOperation, algorithm: CCAlgorithm, options: CCOptions, key: Data, iv: Data, input: Data, blockSize: Int) -> Data? {
+        // Capture lengths up front: reading these inside the `withUnsafe*Bytes` borrows
+        // (especially `output` under the mutable borrow) would be overlapping access.
+        let keyCount = key.count
+        let inputCount = input.count
+        let ivIsEmpty = iv.isEmpty
+        let outputCapacity = inputCount + blockSize
+        var outMoved = 0
+        var output = Data(count: outputCapacity)
+        let status = output.withUnsafeMutableBytes { outBytes -> CCCryptorStatus in
+            input.withUnsafeBytes { inBytes in
+                key.withUnsafeBytes { keyBytes in
+                    iv.withUnsafeBytes { ivBytes in
+                        CCCrypt(
+                            operation, algorithm, options,
+                            keyBytes.baseAddress, keyCount,
+                            ivIsEmpty ? nil : ivBytes.baseAddress,
+                            inBytes.baseAddress, inputCount,
+                            outBytes.baseAddress, outputCapacity,
+                            &outMoved
+                        )
+                    }
+                }
+            }
+        }
+        guard status == CCCryptorStatus(kCCSuccess) else { return nil }
+        return output.prefix(outMoved)
+    }
+
+    private static func aesGCMHex(encrypt: Bool, key: Data, iv: Data, input: Data) -> String {
+        do {
+            let symmetricKey = SymmetricKey(data: key)
+            let nonce = try AES.GCM.Nonce(data: iv)
+            if encrypt {
+                let sealed = try AES.GCM.seal(input, using: symmetricKey, nonce: nonce)
+                return hexFromData(sealed.ciphertext + sealed.tag)
+            } else {
+                guard input.count >= 16 else { return "" }
+                let tag = input.suffix(16)
+                let ciphertext = input.prefix(input.count - 16)
+                let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
+                return hexFromData(try AES.GCM.open(box, using: symmetricKey))
+            }
+        } catch {
+            return ""
+        }
     }
 
     private static func digestHex(algorithm: String, value: String) -> String {
