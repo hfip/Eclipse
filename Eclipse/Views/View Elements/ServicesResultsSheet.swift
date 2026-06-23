@@ -3722,6 +3722,15 @@ struct ModulesSearchResultsSheet: View {
         return nil
     }
 
+    private func firstStringValue(in dict: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = dict[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
     private func parseStructuredSubtitleTracks(from source: [String: Any]) -> [ServiceSubtitleTrack] {
         var tracks: [ServiceSubtitleTrack] = []
 

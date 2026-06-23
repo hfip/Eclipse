@@ -276,8 +276,13 @@ final class CloudflareBypassManager: ObservableObject {
         Task { @MainActor in
             guard let cookieHeader = await allCookiesHeader(for: host, in: webView),
                   cookieHeader.lowercased().contains("cf_clearance=") else { return }
-            let userAgent = webView.customUserAgent ?? await userAgent(for: webView)
-            store(cookieHeader: cookieHeader, userAgent: userAgent, for: host)
+            let resolvedUserAgent: String
+            if let customUserAgent = webView.customUserAgent, !customUserAgent.isEmpty {
+                resolvedUserAgent = customUserAgent
+            } else {
+                resolvedUserAgent = await userAgent(for: webView)
+            }
+            store(cookieHeader: cookieHeader, userAgent: resolvedUserAgent, for: host)
             bypassWebViews[host] = webView
         }
     }
@@ -395,7 +400,7 @@ private struct CloudflareBypassSheetView: View {
     @ObservedObject private var manager = CloudflareBypassManager.shared
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             Group {
                 if let webView = manager.activeBypassWebView {
                     CloudflareBypassWebView(webView: webView)
@@ -417,6 +422,7 @@ private struct CloudflareBypassSheetView: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
         .background(Color(UIColor.systemBackground))
     }
 }
