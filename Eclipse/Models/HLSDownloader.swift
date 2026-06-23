@@ -258,17 +258,27 @@ final class HLSDownloader: @unchecked Sendable {
     private func fetchData(url: URL) async throws -> Data {
         try checkCancelled()
 
+        let effectiveHeaders = CloudflareBypassManager.shared.headersByApplyingCachedBypass(headers, for: url)
         var request = URLRequest(url: url)
-        for (key, value) in headers {
+        for (key, value) in effectiveHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
         let (data, response) = try await session.data(for: request)
         try checkCancelled()
         
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200...299).contains(httpResponse.statusCode) {
-            throw HLSError.httpError(statusCode: httpResponse.statusCode)
+        if let httpResponse = response as? HTTPURLResponse {
+            let bodyPreview = String(data: data.prefix(1_000_000), encoding: .utf8) ?? ""
+            if CloudflareBypassManager.isChallengeResponse(
+                status: httpResponse.statusCode,
+                body: bodyPreview,
+                headers: CloudflareBypassManager.headersDictionary(from: httpResponse)
+            ) {
+                throw HLSError.cloudflareVerificationRequired
+            }
+            if !(200...299).contains(httpResponse.statusCode) {
+                throw HLSError.httpError(statusCode: httpResponse.statusCode)
+            }
         }
         
         return data
@@ -702,6 +712,7 @@ enum HLSError: LocalizedError {
     case invalidPlaylistData
     case httpError(statusCode: Int)
     case decryptionFailed(status: Int)
+    case cloudflareVerificationRequired
     case cancelled
     case backgroundTimeExpired
     case couldNotCreateOutput
@@ -720,6 +731,8 @@ enum HLSError: LocalizedError {
             return "HTTP error \(code) while downloading HLS content"
         case .decryptionFailed(let status):
             return "AES-128 decryption failed (status: \(status))"
+        case .cloudflareVerificationRequired:
+            return "Cloudflare verification required. Open the source once and try again."
         case .cancelled:
             return "Download was cancelled"
         case .backgroundTimeExpired:

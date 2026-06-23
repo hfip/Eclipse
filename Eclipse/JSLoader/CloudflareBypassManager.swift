@@ -50,13 +50,20 @@ final class CloudflareBypassManager: ObservableObject {
               let entry = cachedEntry(for: host) else { return }
 
         let existingCookie = request.value(forHTTPHeaderField: "Cookie") ?? ""
-        if !existingCookie.lowercased().contains("cf_clearance=") {
-            request.setValue(mergeCookieHeaders(existingCookie, entry.cookieHeader), forHTTPHeaderField: "Cookie")
-        }
+        request.setValue(mergeCookieHeaders(existingCookie, entry.cookieHeader), forHTTPHeaderField: "Cookie")
 
         if !entry.userAgent.isEmpty {
             request.setValue(entry.userAgent, forHTTPHeaderField: "User-Agent")
         }
+    }
+
+    func headersByApplyingCachedBypass(_ headers: [String: String], for url: URL) -> [String: String] {
+        var request = URLRequest(url: url)
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        applyCachedBypass(to: &request, for: url)
+        return request.allHTTPHeaderFields ?? headers
     }
 
     func fullCookieHeader(for host: String) -> String? {
@@ -387,7 +394,26 @@ final class CloudflareBypassManager: ObservableObject {
     private func mergeCookieHeaders(_ existing: String, _ bypass: String) -> String {
         if existing.isEmpty { return bypass }
         if bypass.isEmpty { return existing }
-        return "\(existing); \(bypass)"
+
+        var merged = cookiePairs(from: existing)
+        for bypassPair in cookiePairs(from: bypass) {
+            if let index = merged.firstIndex(where: { $0.name == bypassPair.name }) {
+                merged[index] = bypassPair
+            } else {
+                merged.append(bypassPair)
+            }
+        }
+        return merged.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+    }
+
+    private func cookiePairs(from header: String) -> [(name: String, value: String)] {
+        header.split(separator: ";").compactMap { part in
+            let pieces = part.split(separator: "=", maxSplits: 1).map {
+                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard pieces.count == 2, !pieces[0].isEmpty else { return nil }
+            return (name: pieces[0], value: pieces[1])
+        }
     }
 
     private func redactedHost(_ url: URL) -> String {

@@ -356,6 +356,13 @@ struct BackupData: Codable {
                     code: ""
                 )
             }
+            let scraperIDs = Set(plugins.scrapers.map(\.id))
+            plugins.scraperSettingsJSON = plugins.scraperSettingsJSON?.filter { scraperID, rawJSON in
+                scraperIDs.contains(scraperID) && !Self.containsCloudUnsafeSecret(rawJSON)
+            }
+            if plugins.scraperSettingsJSON?.isEmpty == true {
+                plugins.scraperSettingsJSON = nil
+            }
             snapshot.nuvioPlugins = plugins
         }
 

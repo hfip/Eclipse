@@ -4,8 +4,8 @@ import Foundation
 import JavaScriptCore
 import SwiftSoup
 
-@MainActor
 enum NuvioPluginRuntime {
+    private static let runtimeQueue = DispatchQueue(label: "app.eclipse.soupy.nuvio-plugin-runtime", qos: .userInitiated)
     private static let timeoutSeconds: TimeInterval = 60
     // Truncate by character count on an already-decoded string (matching the Nuvio reference runtime) instead of
     // slicing raw bytes,.
@@ -31,45 +31,47 @@ enum NuvioPluginRuntime {
         scraperSettings: [String: Any]
     ) async throws -> [NuvioPluginStream] {
         try await withCheckedThrowingContinuation { continuation in
-            let box = NuvioPluginRuntimeCompletion(continuation: continuation)
-            box.timeout = DispatchWorkItem {
-                box.fail(NuvioPluginError.runtimeTimeout)
-            }
-            if let timeout = box.timeout {
-                DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds, execute: timeout)
-            }
-
-            let context = JSContext()
-            box.context = context
-            let cheerio = NuvioCheerioBridge()
-
-            context?.exceptionHandler = { _, exception in
-                if let exception {
-                    Logger.shared.log("Nuvio plugin JS exception provider=\(scraper.name): \(exception)", type: "Plugin")
+            runtimeQueue.async {
+                let box = NuvioPluginRuntimeCompletion(continuation: continuation)
+                box.timeout = DispatchWorkItem {
+                    box.fail(NuvioPluginError.runtimeTimeout)
                 }
-            }
+                if let timeout = box.timeout {
+                    runtimeQueue.asyncAfter(deadline: .now() + timeoutSeconds, execute: timeout)
+                }
 
-            configure(context, box: box, cheerio: cheerio, scraper: scraper, source: source)
+                let context = JSContext()
+                box.context = context
+                let cheerio = NuvioCheerioBridge()
 
-            let settingsJSON = jsonLiteral(scraperSettings) ?? "{}"
-            context?.evaluateScript(polyfillCode(scraperId: scraper.id, settingsJSON: settingsJSON))
-            context?.evaluateScript(moduleWrapped(code))
+                context?.exceptionHandler = { _, exception in
+                    if let exception {
+                        Logger.shared.log("Nuvio plugin JS exception provider=\(scraper.name): \(exception)", type: "Plugin")
+                    }
+                }
 
-            if let exception = context?.exception {
-                box.fail(NuvioPluginError.runtimeFailed(exception.toString() ?? "Plugin failed to load."))
-                return
-            }
+                configure(context, box: box, cheerio: cheerio, scraper: scraper, source: source)
 
-            let invocation = invocationCode(
-                tmdbId: tmdbId,
-                mediaType: mediaType,
-                season: season,
-                episode: episode
-            )
-            context?.evaluateScript(invocation)
+                let settingsJSON = jsonLiteral(scraperSettings) ?? "{}"
+                context?.evaluateScript(polyfillCode(scraperId: scraper.id, settingsJSON: settingsJSON))
+                context?.evaluateScript(moduleWrapped(code))
 
-            if let exception = context?.exception {
-                box.fail(NuvioPluginError.runtimeFailed(exception.toString() ?? "Plugin failed to run."))
+                if let exception = context?.exception {
+                    box.fail(NuvioPluginError.runtimeFailed(exception.toString() ?? "Plugin failed to load."))
+                    return
+                }
+
+                let invocation = invocationCode(
+                    tmdbId: tmdbId,
+                    mediaType: mediaType,
+                    season: season,
+                    episode: episode
+                )
+                context?.evaluateScript(invocation)
+
+                if let exception = context?.exception {
+                    box.fail(NuvioPluginError.runtimeFailed(exception.toString() ?? "Plugin failed to run."))
+                }
             }
         }
     }
@@ -120,11 +122,13 @@ enum NuvioPluginRuntime {
                         followRedirects: followRedirects.boolValue,
                         scraperName: scraper.name
                     )
-                    DispatchQueue.main.async {
+                    runtimeQueue.async {
+                        guard !box.isFinished else { return }
                         resolve.call(withArguments: [response])
                     }
                 } catch {
-                    DispatchQueue.main.async {
+                    runtimeQueue.async {
+                        guard !box.isFinished else { return }
                         reject.call(withArguments: [error.localizedDescription])
                     }
                 }
@@ -137,7 +141,7 @@ enum NuvioPluginRuntime {
         let scheduleTimeout: @convention(block) (JSValue?, Double) -> Void = { callback, milliseconds in
             guard let callback, !callback.isUndefined, !callback.isNull else { return }
             let clamped = min(max(0, milliseconds), timeoutSeconds * 1000)
-            DispatchQueue.main.asyncAfter(deadline: .now() + clamped / 1000.0) {
+            runtimeQueue.asyncAfter(deadline: .now() + clamped / 1000.0) {
                 guard !box.isFinished else { return }
                 callback.call(withArguments: [])
             }
@@ -391,6 +395,7 @@ enum NuvioPluginRuntime {
 
             let title = cleanString(item["title"]) ?? cleanString(item["name"]) ?? "Stream"
             let headers = cleanHeaders(item["headers"])
+            let subtitles = parseSubtitles(from: item)
             return NuvioPluginStream(
                 id: NuvioPluginSupport.streamID(scraperId: scraper.id, sourceId: source.id, url: urlString, title: title, index: index),
                 scraperId: scraper.id,
@@ -408,7 +413,8 @@ enum NuvioPluginRuntime {
                 seeders: intValue(item["seeders"]),
                 peers: intValue(item["peers"]),
                 infoHash: cleanString(item["infoHash"]),
-                headers: headers
+                headers: headers,
+                subtitles: subtitles
             )
         }
     }
@@ -417,6 +423,93 @@ enum NuvioPluginRuntime {
         if let value = value as? String { return cleanString(value) }
         if let value = value as? [String: Any] { return cleanString(value["url"]) }
         return nil
+    }
+
+    private static func parseSubtitles(from item: [String: Any]) -> [NuvioPluginSubtitle]? {
+        let topLevelHeaders = cleanHeaders(item["subtitleHeaders"])
+            ?? cleanHeaders(item["subtitlesHeaders"])
+            ?? cleanHeaders(item["subtitle_headers"])
+        var subtitles: [NuvioPluginSubtitle] = []
+
+        if let subtitle = cleanString(item["subtitle"] ?? item["subtitleURL"] ?? item["subtitleUrl"]),
+           NuvioPluginSupport.isDirectHTTPURL(subtitle) {
+            subtitles.append(NuvioPluginSubtitle(
+                url: subtitle,
+                language: cleanString(item["subtitleLanguage"] ?? item["subtitleLang"] ?? item["lang"]) ?? "Unknown",
+                name: cleanString(item["subtitleName"] ?? item["subtitleTitle"]),
+                headers: topLevelHeaders
+            ))
+        }
+
+        for key in ["subtitles", "subtitleTracks", "allSubtitles"] {
+            guard let value = item[key] else { continue }
+            subtitles.append(contentsOf: parseSubtitleValue(value, inheritedHeaders: topLevelHeaders))
+        }
+
+        var seen = Set<String>()
+        let deduped = subtitles.filter { subtitle in
+            let normalized = subtitle.url.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, seen.insert(normalized).inserted else { return false }
+            return true
+        }
+        return deduped.isEmpty ? nil : deduped
+    }
+
+    private static func parseSubtitleValue(_ value: Any, inheritedHeaders: [String: String]?) -> [NuvioPluginSubtitle] {
+        if let dictionary = value as? [String: Any],
+           let subtitle = parseSubtitleObject(dictionary, inheritedHeaders: inheritedHeaders) {
+            return [subtitle]
+        }
+
+        if let dictionaries = value as? [[String: Any]] {
+            return dictionaries.compactMap { parseSubtitleObject($0, inheritedHeaders: inheritedHeaders) }
+        }
+
+        if let strings = value as? [String] {
+            return parseSubtitleStrings(strings, inheritedHeaders: inheritedHeaders)
+        }
+
+        if let urlString = cleanString(value),
+           NuvioPluginSupport.isDirectHTTPURL(urlString) {
+            return [NuvioPluginSubtitle(url: urlString, language: "Unknown", name: nil, headers: inheritedHeaders)]
+        }
+
+        return []
+    }
+
+    private static func parseSubtitleObject(_ object: [String: Any], inheritedHeaders: [String: String]?) -> NuvioPluginSubtitle? {
+        guard let url = cleanString(object["url"] ?? object["href"] ?? object["link"] ?? object["file"] ?? object["src"]),
+              NuvioPluginSupport.isDirectHTTPURL(url) else {
+            return nil
+        }
+
+        let language = cleanString(object["language"] ?? object["lang"] ?? object["locale"]) ?? "Unknown"
+        let name = cleanString(object["name"] ?? object["title"] ?? object["label"])
+        let headers = cleanHeaders(object["headers"] ?? object["requestHeaders"] ?? object["subtitleHeaders"]) ?? inheritedHeaders
+
+        return NuvioPluginSubtitle(url: url, language: language, name: name, headers: headers)
+    }
+
+    private static func parseSubtitleStrings(_ values: [String], inheritedHeaders: [String: String]?) -> [NuvioPluginSubtitle] {
+        var subtitles: [NuvioPluginSubtitle] = []
+        var pendingLabel: String?
+
+        for rawValue in values {
+            guard let value = cleanString(rawValue) else { continue }
+            if NuvioPluginSupport.isDirectHTTPURL(value) {
+                subtitles.append(NuvioPluginSubtitle(
+                    url: value,
+                    language: pendingLabel ?? "Unknown",
+                    name: pendingLabel,
+                    headers: inheritedHeaders
+                ))
+                pendingLabel = nil
+            } else {
+                pendingLabel = value
+            }
+        }
+
+        return subtitles
     }
 
     private static func cleanHeaders(_ value: Any?) -> [String: String]? {

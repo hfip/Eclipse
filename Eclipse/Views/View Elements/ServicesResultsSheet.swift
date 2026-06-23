@@ -3013,12 +3013,28 @@ struct ModulesSearchResultsSheet: View {
             return
         }
 
+        let subtitleURLs = stream.subtitleURLs
+        let subtitleNames = stream.subtitleNames
+        let subtitleHeadersByURL = stream.subtitleHeadersByURL
+        let firstSubtitleURL = subtitleURLs.first
+        let firstSubtitleHeaders = firstSubtitleURL.flatMap { subtitleHeadersByURL?[$0] }
+
         if downloadMode {
-            downloadPluginStream(stream.url, source: source, headers: stream.sanitizedHeaders, autoModeLaunch: autoModeLaunch)
+            downloadPluginStream(
+                stream.url,
+                source: source,
+                subtitle: firstSubtitleURL,
+                subtitleHeaders: firstSubtitleHeaders,
+                headers: stream.sanitizedHeaders,
+                autoModeLaunch: autoModeLaunch
+            )
         } else {
             playPluginStreamURL(
                 stream.url,
                 source: source,
+                subtitles: subtitleURLs.isEmpty ? nil : subtitleURLs,
+                subtitleNames: subtitleNames,
+                subtitleHeadersByURL: subtitleHeadersByURL,
                 headers: stream.sanitizedHeaders,
                 streamName: pluginStreamLabel(for: stream),
                 autoModeLaunch: autoModeLaunch,
@@ -3027,7 +3043,7 @@ struct ModulesSearchResultsSheet: View {
         }
     }
 
-    private func playPluginStreamURL(_ url: String, source: NuvioPluginSource, headers: [String: String]?, streamName: String? = nil, autoModeLaunch: Bool = false, retryCount: Int = 0) {
+    private func playPluginStreamURL(_ url: String, source: NuvioPluginSource, subtitles: [String]? = nil, subtitleNames: [String]? = nil, subtitleHeadersByURL: [String: [String: String]]? = nil, headers: [String: String]?, streamName: String? = nil, autoModeLaunch: Bool = false, retryCount: Int = 0) {
         viewModel.resetStreamState()
 
         Task { @MainActor in
@@ -3070,7 +3086,8 @@ struct ModulesSearchResultsSheet: View {
             }
 
             let inAppPlayer = Settings.normalizedInAppPlayer(UserDefaults.standard.string(forKey: "inAppPlayer"))
-            Logger.shared.log("Playback resolve diagnostics source=\(source.name) kind=plugin player=\(inAppPlayer) host=\(streamURL.host ?? "nil") ext=\(streamURL.pathExtension.isEmpty ? "none" : streamURL.pathExtension) tail=\(streamURL.lastPathComponent.isEmpty ? "/" : streamURL.lastPathComponent) streamName=\(streamName ?? "nil") headerKeys=[\(finalHeaders.keys.sorted().joined(separator: ","))] subtitles=0 autoMode=\(autoModeLaunch)", type: "StreamDiagnostics")
+            let resolvedSubtitleArray = subtitles?.isEmpty == false ? subtitles : nil
+            Logger.shared.log("Playback resolve diagnostics source=\(source.name) kind=plugin player=\(inAppPlayer) host=\(streamURL.host ?? "nil") ext=\(streamURL.pathExtension.isEmpty ? "none" : streamURL.pathExtension) tail=\(streamURL.lastPathComponent.isEmpty ? "/" : streamURL.lastPathComponent) streamName=\(streamName ?? "nil") headerKeys=[\(finalHeaders.keys.sorted().joined(separator: ","))] subtitles=\(resolvedSubtitleArray?.count ?? 0) autoMode=\(autoModeLaunch)", type: "StreamDiagnostics")
 
             var playerMediaInfo: MediaInfo? = nil
             let posterURL = resolvedPosterURL
@@ -3089,8 +3106,9 @@ struct ModulesSearchResultsSheet: View {
                 streamURL: url,
                 streamName: streamName,
                 headers: finalHeaders,
-                subtitles: [],
-                subtitleNames: nil,
+                subtitles: resolvedSubtitleArray ?? [],
+                subtitleNames: subtitleNames,
+                subtitleHeadersByURL: subtitleHeadersByURL,
                 retryCount: retryCount
             )
 
@@ -3099,8 +3117,9 @@ struct ModulesSearchResultsSheet: View {
                     url: streamURL,
                     preset: resolvedPreset,
                     headers: finalHeaders,
-                    subtitles: nil,
-                    subtitleNames: nil,
+                    subtitles: resolvedSubtitleArray,
+                    subtitleNames: subtitleNames,
+                    subtitleHeadersByURL: subtitleHeadersByURL,
                     mediaInfo: playerMediaInfo,
                     imdbId: imdbId,
                     isAnimeHint: hasAnimeLookupContext,
@@ -3119,8 +3138,9 @@ struct ModulesSearchResultsSheet: View {
                     url: streamURL,
                     preset: resolvedPreset,
                     headers: finalHeaders,
-                    subtitles: nil,
-                    subtitleNames: nil,
+                    subtitles: resolvedSubtitleArray,
+                    subtitleNames: subtitleNames,
+                    subtitleHeadersByURL: subtitleHeadersByURL,
                     mediaInfo: playerMediaInfo,
                     imdbId: imdbId
                 )
@@ -3173,7 +3193,7 @@ struct ModulesSearchResultsSheet: View {
         }
     }
 
-    private func downloadPluginStream(_ url: String, source: NuvioPluginSource, headers: [String: String]?, autoModeLaunch: Bool = false) {
+    private func downloadPluginStream(_ url: String, source: NuvioPluginSource, subtitle: String?, subtitleHeaders: [String: String]? = nil, headers: [String: String]?, autoModeLaunch: Bool = false) {
         guard let parsed = URL(string: url),
               parsed.scheme == "http" || parsed.scheme == "https" else {
             Logger.shared.log("Nuvio plugin: non-HTTP download URL rejected", type: "Error")
@@ -3223,7 +3243,8 @@ struct ModulesSearchResultsSheet: View {
             episodeName: selectedEpisode?.name,
             streamURL: url,
             headers: finalHeaders,
-            subtitleURL: nil,
+            subtitleURL: subtitle,
+            subtitleHeaders: subtitleHeaders,
             serviceBaseURL: source.repositoryUrl ?? source.id,
             isAnime: isAnimeContent,
             episodePlaybackContext: effectivePlaybackContext
@@ -3832,10 +3853,13 @@ struct ModulesSearchResultsSheet: View {
         }
 
         if downloadMode {
+            let downloadSubtitleURL = playbackSubtitles?.first
+            let downloadSubtitleHeaders = downloadSubtitleURL.flatMap { structuredSubtitleHeaders[$0] }
             downloadStreamURL(
                 url,
                 service: service,
-                subtitle: playbackSubtitles?.first,
+                subtitle: downloadSubtitleURL,
+                subtitleHeaders: downloadSubtitleHeaders,
                 headers: headers,
                 autoModeLaunch: viewModel.pendingPlaybackAutoMode
             )
@@ -4130,7 +4154,7 @@ struct ModulesSearchResultsSheet: View {
         }
     }
     
-    private func downloadStreamURL(_ url: String, service: Service, subtitle: String?, headers: [String: String]?, autoModeLaunch: Bool = false) {
+    private func downloadStreamURL(_ url: String, service: Service, subtitle: String?, subtitleHeaders: [String: String]? = nil, headers: [String: String]?, autoModeLaunch: Bool = false) {
         guard let parsed = URL(string: url),
               parsed.scheme == "http" || parsed.scheme == "https" else {
             Logger.shared.log("Invalid download stream URL: \(url)", type: "Error")
@@ -4189,6 +4213,7 @@ struct ModulesSearchResultsSheet: View {
             streamURL: url,
             headers: finalHeaders,
             subtitleURL: subtitle,
+            subtitleHeaders: subtitleHeaders,
             serviceBaseURL: serviceURL,
             isAnime: isAnimeContent,
             episodePlaybackContext: effectivePlaybackContext

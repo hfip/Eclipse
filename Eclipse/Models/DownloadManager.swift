@@ -29,6 +29,7 @@ struct DownloadItem: Codable, Identifiable {
     let streamURL: String
     let headers: [String: String]
     let subtitleURL: String?
+    let subtitleHeaders: [String: String]?
     let serviceBaseURL: String
     let episodePlaybackContext: EpisodePlaybackContext?
     var status: DownloadStatus
@@ -228,6 +229,7 @@ final class DownloadManager: NSObject, ObservableObject {
         streamURL: String,
         headers: [String: String],
         subtitleURL: String?,
+        subtitleHeaders: [String: String]? = nil,
         serviceBaseURL: String,
         isAnime: Bool,
         episodePlaybackContext: EpisodePlaybackContext? = nil
@@ -262,6 +264,7 @@ final class DownloadManager: NSObject, ObservableObject {
             streamURL: streamURL,
             headers: headers,
             subtitleURL: subtitleURL,
+            subtitleHeaders: subtitleHeaders,
             serviceBaseURL: serviceBaseURL,
             episodePlaybackContext: episodePlaybackContext,
             status: .queued,
@@ -550,6 +553,55 @@ final class DownloadManager: NSObject, ObservableObject {
         }
         return total
     }
+
+    private func effectiveHeaders(_ headers: [String: String], for url: URL) -> [String: String] {
+        CloudflareBypassManager.shared.headersByApplyingCachedBypass(headers, for: url)
+    }
+
+    private func headerValue(_ name: String, in headers: [String: String]) -> String? {
+        headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
+    private func cloudflareHeaderRefreshChanged(base: [String: String], effective: [String: String]) -> Bool {
+        headerValue("Cookie", in: base) != headerValue("Cookie", in: effective)
+            || headerValue("User-Agent", in: base) != headerValue("User-Agent", in: effective)
+    }
+
+    private func effectiveSubtitleHeaders(for item: DownloadItem, subtitleURL: URL, streamURL: URL) -> [String: String] {
+        let streamHost = streamURL.host?.lowercased()
+        let subtitleHost = subtitleURL.host?.lowercased()
+        let baseHeaders: [String: String]
+
+        if let subtitleHeaders = item.subtitleHeaders {
+            baseHeaders = subtitleHeaders
+        } else if streamHost != nil, streamHost == subtitleHost {
+            baseHeaders = item.headers
+        } else {
+            baseHeaders = [:]
+        }
+
+        return effectiveHeaders(baseHeaders, for: subtitleURL)
+    }
+
+    private func downloadBodyPreview(from location: URL, maxBytes: Int = 1_000_000) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: location) else { return "" }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maxBytes), !data.isEmpty else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func challengeFailureMessage(for response: HTTPURLResponse, body: String) -> String? {
+        let headers = CloudflareBypassManager.headersDictionary(from: response)
+        if CloudflareBypassManager.isChallengeResponse(status: response.statusCode, body: body, headers: headers) {
+            return "Cloudflare verification required. Open the source once and try again."
+        }
+
+        if !(200...299).contains(response.statusCode) {
+            return "HTTP \(response.statusCode) while downloading"
+        }
+
+        return nil
+    }
     
     // MARK: - Queue Processing
     
@@ -600,16 +652,22 @@ final class DownloadManager: NSObject, ObservableObject {
             return
         }
         
+        let effectiveHeaders = effectiveHeaders(item.headers, for: url)
+        let refreshedCloudflareHeaders = cloudflareHeaderRefreshChanged(base: item.headers, effective: effectiveHeaders)
+
         var request = URLRequest(url: url)
-        for (key, value) in item.headers {
+        for (key, value) in effectiveHeaders {
             request.setValue(value, forHTTPHeaderField: key)
         }
         
         let task: URLSessionDownloadTask
-        if let resumeData = resumeDataStore[item.id] {
+        if let resumeData = resumeDataStore[item.id], !refreshedCloudflareHeaders {
             task = backgroundSession.downloadTask(withResumeData: resumeData)
             resumeDataStore.removeValue(forKey: item.id)
         } else {
+            if resumeDataStore.removeValue(forKey: item.id) != nil, refreshedCloudflareHeaders {
+                Logger.shared.log("Restarting download with refreshed Cloudflare headers: \(item.displayTitle)", type: "Download")
+            }
             task = backgroundSession.downloadTask(with: request)
         }
         
@@ -619,6 +677,11 @@ final class DownloadManager: NSObject, ObservableObject {
         if let index = downloads.firstIndex(where: { $0.id == item.id }) {
             DispatchQueue.main.async {
                 self.downloads[index].status = .downloading
+                if refreshedCloudflareHeaders {
+                    self.downloads[index].progress = 0
+                    self.downloads[index].downloadedBytes = 0
+                    self.downloads[index].totalBytes = 0
+                }
                 self.saveDownloads()
             }
         }
@@ -627,7 +690,8 @@ final class DownloadManager: NSObject, ObservableObject {
         
         // Also download subtitle if available
         if let subtitleURLString = item.subtitleURL, let subtitleURL = URL(string: subtitleURLString) {
-            downloadSubtitle(for: item.id, from: subtitleURL)
+            let subtitleHeaders = effectiveSubtitleHeaders(for: item, subtitleURL: subtitleURL, streamURL: url)
+            downloadSubtitle(for: item.id, from: subtitleURL, headers: subtitleHeaders)
         }
         
         Logger.shared.log("Started download: \(item.displayTitle)", type: "Download")
@@ -650,10 +714,11 @@ final class DownloadManager: NSObject, ObservableObject {
         let resumeBytes = item.hlsResumeByteCount ?? 0
         let pinnedVariant = item.hlsVariantURL.flatMap { URL(string: $0) }
         let expectedTotal = item.hlsTotalSegments ?? 0
+        let refreshedHeaders = effectiveHeaders(item.headers, for: url)
 
         let downloader = HLSDownloader(
             streamURL: url,
-            headers: item.headers,
+            headers: refreshedHeaders,
             destinationURL: destURL,
             downloadId: item.id,
             resumeFromSegment: resumeSegment,
@@ -769,7 +834,8 @@ final class DownloadManager: NSObject, ObservableObject {
         
         // Also download subtitle if available
         if let subtitleURLString = item.subtitleURL, let subtitleURL = URL(string: subtitleURLString) {
-            downloadSubtitle(for: item.id, from: subtitleURL)
+            let subtitleHeaders = effectiveSubtitleHeaders(for: item, subtitleURL: subtitleURL, streamURL: url)
+            downloadSubtitle(for: item.id, from: subtitleURL, headers: subtitleHeaders)
         }
         
         Logger.shared.log("Started HLS download: \(item.displayTitle)", type: "Download")
@@ -850,9 +916,22 @@ final class DownloadManager: NSObject, ObservableObject {
         "srt", "vtt", "ass", "ssa", "sub", "idx", "sup", "smi", "mks", "dfxp", "ttml"
     ]
     
-    private func downloadSubtitle(for downloadId: String, from url: URL) {
-        let subtitleTask = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, response, error in
+    private func downloadSubtitle(for downloadId: String, from url: URL, headers: [String: String]) {
+        var request = URLRequest(url: url)
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let subtitleTask = URLSession.shared.downloadTask(with: request) { [weak self] tempURL, response, error in
             guard let self = self, let tempURL = tempURL, error == nil else { return }
+
+            if let httpResponse = response as? HTTPURLResponse {
+                let body = self.downloadBodyPreview(from: tempURL)
+                if let message = self.challengeFailureMessage(for: httpResponse, body: body) {
+                    Logger.shared.log("Subtitle download skipped for \(downloadId): \(message)", type: "Download")
+                    return
+                }
+            }
             
             // Determine subtitle extension from URL, Content-Type, or default to srt
             var ext = url.pathExtension.lowercased()
@@ -1023,6 +1102,14 @@ final class DownloadManager: NSObject, ObservableObject {
 extension DownloadManager: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         guard let downloadId = downloadTask.taskDescription else { return }
+
+        if let httpResponse = downloadTask.response as? HTTPURLResponse {
+            let body = downloadBodyPreview(from: location)
+            if let message = challengeFailureMessage(for: httpResponse, body: body) {
+                markFailed(id: downloadId, error: message)
+                return
+            }
+        }
         
         // Determine file extension from response MIME type or URL
         let ext: String
@@ -1134,20 +1221,22 @@ extension DownloadManager: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         // Re-attach custom headers that get stripped on redirect by background sessions
         guard let downloadId = task.taskDescription,
-              let item = downloads.first(where: { $0.id == downloadId }),
-              !item.headers.isEmpty else {
+              let item = downloads.first(where: { $0.id == downloadId }) else {
             completionHandler(request)
             return
         }
         
         var updatedRequest = request
-        for (key, value) in item.headers {
-            if updatedRequest.value(forHTTPHeaderField: key) == nil {
+        let targetURL = updatedRequest.url ?? URL(string: item.streamURL)
+        let refreshedHeaders = targetURL.map { effectiveHeaders(item.headers, for: $0) } ?? item.headers
+        for (key, value) in refreshedHeaders {
+            let lowerKey = key.lowercased()
+            if lowerKey == "cookie" || lowerKey == "user-agent" {
+                updatedRequest.setValue(value, forHTTPHeaderField: key)
+            } else if updatedRequest.value(forHTTPHeaderField: key) == nil {
                 updatedRequest.setValue(value, forHTTPHeaderField: key)
             }
         }
         completionHandler(updatedRequest)
     }
 }
-
-

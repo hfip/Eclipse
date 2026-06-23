@@ -251,7 +251,7 @@ final class NuvioPluginManager: ObservableObject {
             episode: episode,
             scraper: scraper,
             source: source,
-            scraperSettings: [:]
+            scraperSettings: Self.scraperSettings(from: state.scraperSettingsJSON?[scraper.id])
         )
         let safe = streams.filter(\.isDirectHTTP)
         let dropped = streams.count - safe.count
@@ -484,12 +484,27 @@ final class NuvioPluginManager: ObservableObject {
             !scraper.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !scraper.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        let scraperIDs = Set(scrapers.map(\.id))
+        let scraperSettings = restored.scraperSettingsJSON?
+            .filter { scraperIDs.contains($0.key) && !Self.scraperSettings(from: $0.value).isEmpty }
+
         return NuvioStoredPluginsState(
             pluginsEnabled: restored.pluginsEnabled,
             groupStreamsByRepository: restored.groupStreamsByRepository,
             repositories: repositories,
-            scrapers: scrapers
+            scrapers: scrapers,
+            scraperSettingsJSON: scraperSettings?.isEmpty == false ? scraperSettings : nil
         )
+    }
+
+    nonisolated private static func scraperSettings(from rawJSON: String?) -> [String: Any] {
+        guard let rawJSON,
+              let data = rawJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              JSONSerialization.isValidJSONObject(object) else {
+            return [:]
+        }
+        return object
     }
 }
 

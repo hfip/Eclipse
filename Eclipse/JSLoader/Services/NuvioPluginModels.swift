@@ -87,6 +87,37 @@ struct NuvioPluginScraper: Codable, Identifiable, Hashable {
     }
 }
 
+struct NuvioPluginSubtitle: Codable, Hashable {
+    let url: String
+    let language: String
+    let name: String?
+    let headers: [String: String]?
+
+    var displayName: String {
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedName, !trimmedName.isEmpty { return trimmedName }
+
+        let trimmedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedLanguage.isEmpty ? "Subtitle" : trimmedLanguage
+    }
+
+    var sanitizedHeaders: [String: String]? {
+        let cleaned = headers
+            .orEmpty
+            .compactMap { key, value -> (String, String)? in
+                let headerName = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                let headerValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !headerName.isEmpty,
+                      !headerValue.isEmpty,
+                      !headerName.caseInsensitiveCompare("Range").isSame else {
+                    return nil
+                }
+                return (headerName, String(headerValue.prefix(8 * 1024)))
+            }
+        return cleaned.isEmpty ? nil : Dictionary(uniqueKeysWithValues: cleaned)
+    }
+}
+
 struct NuvioPluginStream: Identifiable, Codable, Hashable {
     let id: String
     let scraperId: String
@@ -105,6 +136,7 @@ struct NuvioPluginStream: Identifiable, Codable, Hashable {
     let peers: Int?
     let infoHash: String?
     let headers: [String: String]?
+    let subtitles: [NuvioPluginSubtitle]?
 
     var displayName: String {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -146,6 +178,25 @@ struct NuvioPluginStream: Identifiable, Codable, Hashable {
         return cleaned.isEmpty ? nil : Dictionary(uniqueKeysWithValues: cleaned)
     }
 
+    var subtitleURLs: [String] {
+        (subtitles ?? [])
+            .map(\.url)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    var subtitleNames: [String]? {
+        let names = (subtitles ?? []).map(\.displayName)
+        return names.isEmpty ? nil : names
+    }
+
+    var subtitleHeadersByURL: [String: [String: String]]? {
+        let pairs = (subtitles ?? []).compactMap { subtitle -> (String, [String: String])? in
+            guard let headers = subtitle.sanitizedHeaders, !headers.isEmpty else { return nil }
+            return (subtitle.url, headers)
+        }
+        return pairs.isEmpty ? nil : Dictionary(uniqueKeysWithValues: pairs)
+    }
+
     var qualitySearchLabel: String {
         [displayName, metadataLabel, type ?? ""]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -169,6 +220,7 @@ struct NuvioStoredPluginsState: Codable, Hashable {
     var groupStreamsByRepository: Bool = false
     var repositories: [NuvioPluginRepositoryItem] = []
     var scrapers: [NuvioPluginScraper] = []
+    var scraperSettingsJSON: [String: String]? = nil
 }
 
 enum NuvioPluginError: LocalizedError {
