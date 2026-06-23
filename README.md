@@ -14,6 +14,9 @@
   <a href="https://ko-fi.com/soupydev">
     <img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support%20Development-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white">
   </a>
+  <a href="https://discord.gg/UjHgGaEbn">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white">
+  </a>
 </p>
 
 <p align="center">
@@ -21,13 +24,14 @@
   <a href="#screenshots">Screenshots</a> |
   <a href="#features">Features</a> |
   <a href="#install">Install</a> |
+  <a href="#support">Support</a> |
   <a href="#build-configuration">Build</a> |
   <a href="#license">License</a>
 </p>
 
 ## Why Eclipse
 
-Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku and Nuvio Plugins as well. Star the repo or support on Patreon or Ko-fi if you like my work!
+Eclipse was designed to bridge Luna services (more well known as Sora modules) with Stremio addons in one polished app. The goal is simple: search faster, pick the right result with better metadata, watch with stronger controls, keep progress synced, and continue across anime, movies, shows, manga, and novels. Now powered by Aidoku and Nuvio Plugins as well. Star the repo, join the Discord, or support on Patreon or Ko-fi if you like my work!
 
 ## Screenshots
 
@@ -82,13 +86,17 @@ AltStore and SideStore users can add this source:
 https://raw.githubusercontent.com/Soupy-dev/Eclipse/main/altsource.json
 ```
 
+## Support
+
+- Join the Discord server for help, updates, and community discussion: https://discord.gg/UjHgGaEbn
+- Patreon and Ko-fi are available if you want to support development: https://www.patreon.com/soupy698 or https://ko-fi.com/soupydev but they will never unlock features or paywall anything. They're just ways to support development if you want to. And no, ads/telemetry will never be a thing in this app, so you don't have to worry about that either.
+
 ## Notes
 
 - MPV is the advanced in-app player and is default
 - VLC is not supported anymore, but may come back if v4 is good.
 - Use GitHub Issues for feature requests and bug reports.
 - Development started in December 2025
-- Patreon and Ko-fi are available if you want to support development: https://www.patreon.com/soupy698 or https://ko-fi.com/soupydev but they will never unlock features or paywall anything. They're just ways to support development if you want to. And no, ads/telemetry will never be a thing in this app, so you don't have to worry about that either.
 
 
 

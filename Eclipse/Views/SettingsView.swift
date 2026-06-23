@@ -17,6 +17,7 @@ struct SettingsView: View {
 
     private let patreonURL = URL(string: "https://www.patreon.com/c/soupy698")!
     private let koFiURL = URL(string: "https://ko-fi.com/soupydev")!
+    private let discordURL = URL(string: "https://discord.gg/UjHgGaEbn")!
     private let sourceCodeURL = URL(string: "https://github.com/Soupy-dev/Eclipse")!
     private let originalProjectURL = URL(string: "https://github.com/cranci1/Luna")!
     private let licenseURL = URL(string: "https://www.gnu.org/licenses/gpl-3.0.html")!
@@ -138,6 +139,17 @@ struct SettingsView: View {
                         Link(destination: koFiURL) {
                             GlassSettingsRow(icon: "cup.and.saucer.fill", iconColor: .cyan, title: "Support on Ko-fi") {
                                 Text("Optional")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        GlassDivider()
+
+                        Link(destination: discordURL) {
+                            GlassSettingsRow(icon: "bubble.left.and.bubble.right.fill", iconColor: .indigo, title: "Join Discord") {
+                                Text("Community")
                                     .font(.subheadline)
                                     .foregroundColor(.white.opacity(0.5))
                             }
@@ -394,6 +406,7 @@ struct SettingsView: View {
             Text("Help support the app. Any amount helps keep the app free for everyone")
             Link("Support on Patreon", destination: patreonURL)
             Link("Support on Ko-fi", destination: koFiURL)
+            Link("Join Discord", destination: discordURL)
         } header: {
             Text("Support")
         }
