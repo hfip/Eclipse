@@ -3017,7 +3017,7 @@ struct ModulesSearchResultsSheet: View {
         let subtitleNames = stream.subtitleNames
         let subtitleHeadersByURL = stream.subtitleHeadersByURL
         let firstSubtitleURL = subtitleURLs.first
-        let firstSubtitleHeaders = firstSubtitleURL.flatMap { subtitleHeadersByURL?[$0] }
+        let firstSubtitleHeaders = subtitleHeaders(for: firstSubtitleURL, in: subtitleHeadersByURL)
 
         if downloadMode {
             downloadPluginStream(
@@ -3854,7 +3854,7 @@ struct ModulesSearchResultsSheet: View {
 
         if downloadMode {
             let downloadSubtitleURL = playbackSubtitles?.first
-            let downloadSubtitleHeaders = downloadSubtitleURL.flatMap { structuredSubtitleHeaders[$0] }
+            let downloadSubtitleHeaders = subtitleHeaders(for: downloadSubtitleURL, in: structuredSubtitleHeaders)
             downloadStreamURL(
                 url,
                 service: service,
@@ -3886,6 +3886,11 @@ struct ModulesSearchResultsSheet: View {
         }
         guard !pairs.isEmpty else { return nil }
         return Dictionary(uniqueKeysWithValues: pairs)
+    }
+
+    private func subtitleHeaders(for url: String?, in headersByURL: [String: [String: String]]?) -> [String: String]? {
+        guard let url else { return nil }
+        return headersByURL?[url]
     }
     
     private func parseSubtitleOptions(from subtitles: [String]) -> [(title: String, url: String)] {
