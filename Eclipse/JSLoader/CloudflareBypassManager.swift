@@ -440,16 +440,23 @@ final class CloudflareBypassManager: ObservableObject {
     private func browserRecoveredResponse(for url: URL, host: String) async -> (data: Data, response: HTTPURLResponse)? {
         guard let webView = bypassWebViews[host] else { return nil }
 
-        for attempt in 1...10 {
+        if !browserURL(webView.url, matchesRequestedURL: url, host: host) {
+            Logger.shared.log(
+                "CloudflareBypass: browser recovery navigating host=\(host) from=\(Self.redactedURL(webView.url?.absoluteString ?? "nil")) to=\(Self.redactedURL(url.absoluteString))",
+                type: "Service"
+            )
+            webView.load(URLRequest(url: url))
+        }
+
+        for attempt in 1...20 {
             let currentURL = webView.url
             let html = await documentHTML(for: webView)
             let readyState = await documentReadyState(for: webView)
             let bodyBytes = html.data(using: .utf8)?.count ?? 0
-            let currentHost = currentURL?.host?.lowercased()
-            let hostMatches = currentHost == nil || currentHost == host
+            let urlMatches = browserURL(currentURL, matchesRequestedURL: url, host: host)
             let isChallenge = Self.isChallengeResponse(status: 200, body: html)
 
-            if hostMatches,
+            if urlMatches,
                bodyBytes > 0,
                !isChallenge,
                let data = html.data(using: .utf8),
@@ -462,9 +469,9 @@ final class CloudflareBypassManager: ObservableObject {
                 return (data, response)
             }
 
-            if attempt == 1 || attempt == 10 {
+            if attempt == 1 || attempt == 10 || attempt == 20 {
                 Logger.shared.log(
-                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) bytes=\(bodyBytes) challenge=\(isChallenge)",
+                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) matchesRequest=\(urlMatches) bytes=\(bodyBytes) challenge=\(isChallenge)",
                     type: "Service"
                 )
             }
@@ -473,6 +480,20 @@ final class CloudflareBypassManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func browserURL(_ currentURL: URL?, matchesRequestedURL requestedURL: URL, host: String) -> Bool {
+        guard let currentURL else { return false }
+        let currentHost = currentURL.host?.lowercased()
+        let requestedHost = requestedURL.host?.lowercased()
+        guard currentHost == requestedHost || currentHost == host else { return false }
+
+        let currentPath = currentURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let requestedPath = requestedURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if requestedPath.isEmpty {
+            return currentPath.isEmpty
+        }
+        return currentPath == requestedPath
     }
 
     @MainActor
