@@ -267,7 +267,7 @@ final class CloudflareBypassManager: ObservableObject {
         defer { inProgressHosts.remove(host) }
 
         let webView = makeBypassWebView()
-        let rootURL = URL(string: "\(url.scheme ?? "https")://\(host)/") ?? url
+        let verificationURL = url
         Logger.shared.log("CloudflareBypass: verification web view opened host=\(host)", type: "Service")
 
         activeBypassWebView = webView
@@ -281,8 +281,8 @@ final class CloudflareBypassManager: ObservableObject {
             #endif
         }
 
-        webView.load(URLRequest(url: rootURL))
-        Logger.shared.log("CloudflareBypass: verification web view loading host=\(host) root=\(rootURL.scheme ?? "https")://\(host)/", type: "Service")
+        webView.load(URLRequest(url: verificationURL))
+        Logger.shared.log("CloudflareBypass: verification web view loading host=\(host) target=\(Self.redactedURL(verificationURL.absoluteString))", type: "Service")
 
         for _ in 0..<60 {
             try await Task.sleep(nanoseconds: 500_000_000)
@@ -291,10 +291,10 @@ final class CloudflareBypassManager: ObservableObject {
                 return
             }
             if let cookieHeader = await allCookiesHeader(for: host, in: webView),
-               cookieHeader.lowercased().contains("cf_clearance=") {
+               Self.isSolvedCookieHeader(cookieHeader) {
                 let userAgent = await userAgent(for: webView)
                 Logger.shared.log(
-                    "CloudflareBypass: clearance cookie observed host=\(host) cookies=\(cookiePairCount(in: cookieHeader)) userAgent=\(!userAgent.isEmpty)",
+                    "CloudflareBypass: solved cookie observed host=\(host) cookies=\(cookiePairCount(in: cookieHeader)) userAgent=\(!userAgent.isEmpty)",
                     type: "Service"
                 )
                 store(cookieHeader: cookieHeader, userAgent: userAgent, for: host)
@@ -323,12 +323,17 @@ final class CloudflareBypassManager: ObservableObject {
 
     static func isChallengeResponse(status: Int, body: String, headers: [String: String] = [:]) -> Bool {
         let lowerBody = body.lowercased()
+        let hasDDoSGuardChallenge = lowerBody.contains("ddos-guard")
+            || lowerBody.contains("check.ddos-guard.net")
+            || lowerBody.contains("/.well-known/ddos-guard/")
+
         if lowerBody.contains("challenges.cloudflare.com")
             || lowerBody.contains("__cf_chl_")
             || lowerBody.contains("cf-turnstile")
             || lowerBody.contains("challenge-platform")
             || lowerBody.contains("enable javascript and cookies")
             || lowerBody.contains("cloudflare ray id")
+            || (hasDDoSGuardChallenge && (lowerBody.contains("<html") || [403, 429, 503].contains(status)))
             || (lowerBody.contains("just a moment") && lowerBody.contains("cloudflare")) {
             return true
         }
@@ -338,7 +343,8 @@ final class CloudflareBypassManager: ObservableObject {
         }
         let server = lowerHeaders["server"] ?? ""
         let hasCloudflareHeader = server.contains("cloudflare") || lowerHeaders["cf-ray"] != nil
-        return hasCloudflareHeader && [403, 429, 503].contains(status) && lowerBody.contains("<html")
+        let hasDDoSGuardHeader = server.contains("ddos-guard")
+        return (hasCloudflareHeader || hasDDoSGuardHeader) && [403, 429, 503].contains(status) && lowerBody.contains("<html")
     }
 
     static func headersDictionary(from response: HTTPURLResponse?) -> [String: String] {
@@ -355,7 +361,7 @@ final class CloudflareBypassManager: ObservableObject {
         guard let url, let host = normalizedHost(from: url) else { return }
         Task { @MainActor in
             guard let cookieHeader = await allCookiesHeader(for: host, in: webView),
-                  cookieHeader.lowercased().contains("cf_clearance=") else { return }
+                  Self.isSolvedCookieHeader(cookieHeader) else { return }
             let resolvedUserAgent: String
             if let customUserAgent = webView.customUserAgent, !customUserAgent.isEmpty {
                 resolvedUserAgent = customUserAgent
@@ -473,6 +479,12 @@ final class CloudflareBypassManager: ObservableObject {
         host.lowercased()
     }
 
+    private static func redactedURL(_ urlString: String) -> String {
+        guard var components = URLComponents(string: urlString) else { return urlString }
+        components.query = components.query == nil ? nil : "<redacted>"
+        return components.string ?? urlString
+    }
+
     private func mergeCookieHeaders(_ existing: String, _ bypass: String) -> String {
         if existing.isEmpty { return bypass }
         if bypass.isEmpty { return existing }
@@ -500,6 +512,19 @@ final class CloudflareBypassManager: ObservableObject {
 
     private func cookiePairCount(in header: String) -> Int {
         cookiePairs(from: header).count
+    }
+
+    private static func isSolvedCookieHeader(_ header: String) -> Bool {
+        let lowerHeader = header.lowercased()
+        if lowerHeader.contains("cf_clearance=") {
+            return true
+        }
+        return header.split(separator: ";").contains { part in
+            let name = part.split(separator: "=", maxSplits: 1).first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? ""
+            return name.hasPrefix("__ddg")
+        }
     }
 
     private func redactedHost(_ url: URL) -> String {

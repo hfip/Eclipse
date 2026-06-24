@@ -3510,7 +3510,7 @@ struct ModulesSearchResultsSheet: View {
         }
 
         if let singleSeasonMatch = findSingleSeasonAnimeEpisodeHref(seasons: seasons, seasonIndex: seasonIndex, episodeNumber: episodeNumber) {
-            Logger.shared.log("Auto-resolved season-local anime episode \(episodeNumber) from single-season source list", type: "Stream")
+            Logger.shared.log("Auto-resolved anime episode \(episodeNumber) from single-season source list", type: "Stream")
             return singleSeasonMatch
         }
 
@@ -3535,6 +3535,14 @@ struct ModulesSearchResultsSheet: View {
     private func sourceEpisodeListStats(seasons: [[EpisodeLink]]) -> (count: Int, maxNumber: Int) {
         let numbers = seasons.flatMap { $0 }.map(\.number)
         return (numbers.count, numbers.max() ?? 0)
+    }
+
+    private func isStrictlyAscendingEpisodeSlice(_ episodes: [EpisodeLink]) -> Bool {
+        guard episodes.count > 1 else { return true }
+        for index in episodes.indices.dropFirst() where episodes[index].number <= episodes[episodes.index(before: index)].number {
+            return false
+        }
+        return true
     }
 
     private func shouldUseBundledEpisodeNumbers(seasons: [[EpisodeLink]]) -> Bool {
@@ -3566,6 +3574,17 @@ struct ModulesSearchResultsSheet: View {
         }
 
         let stats = sourceEpisodeListStats(seasons: seasons)
+        let season = seasons[0]
+        let minEpisodeNumber = season.map(\.number).min() ?? 0
+        if minEpisodeNumber > episodeNumber,
+           episodeNumber > 0,
+           season.indices.contains(episodeNumber - 1),
+           isStrictlyAscendingEpisodeSlice(season) {
+            let resolvedEpisode = season[episodeNumber - 1]
+            Logger.shared.log("Episode auto-selection single-season anime using positional absolute-numbered slice targetE\(episodeNumber) sourceEpisode=\(resolvedEpisode.number) minEpisode=\(minEpisodeNumber) count=\(season.count)", type: "Stream")
+            return resolvedEpisode.href
+        }
+
         if let seasonEpisodeCount = effectivePlaybackContext?.animeSeasonEpisodeCount,
            seasonEpisodeCount > 0 {
             guard stats.count <= seasonEpisodeCount,
