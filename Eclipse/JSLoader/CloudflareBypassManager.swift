@@ -227,6 +227,14 @@ final class CloudflareBypassManager: ObservableObject {
                 body: bodyText,
                 headers: Self.headersDictionary(from: httpResponse)
             ) {
+                if sessionInfo.source == "liveWebView",
+                   let recovered = await browserRecoveredResponse(for: url, host: host) {
+                    Logger.shared.log(
+                        "CloudflareBypass: recovered challenged request from live browser document host=\(host) status=\(recovered.response.statusCode) bytes=\(recovered.data.count)",
+                        type: "Service"
+                    )
+                    return recovered
+                }
                 removeCachedEntry(for: host)
                 Logger.shared.log(
                     "CloudflareBypass: solved session still challenged host=\(host) status=\(httpResponse.statusCode); cache cleared",
@@ -429,6 +437,45 @@ final class CloudflareBypassManager: ObservableObject {
     }
 
     @MainActor
+    private func browserRecoveredResponse(for url: URL, host: String) async -> (data: Data, response: HTTPURLResponse)? {
+        guard let webView = bypassWebViews[host] else { return nil }
+
+        for attempt in 1...10 {
+            let currentURL = webView.url
+            let html = await documentHTML(for: webView)
+            let readyState = await documentReadyState(for: webView)
+            let bodyBytes = html.data(using: .utf8)?.count ?? 0
+            let currentHost = currentURL?.host?.lowercased()
+            let hostMatches = currentHost == nil || currentHost == host
+            let isChallenge = Self.isChallengeResponse(status: 200, body: html)
+
+            if hostMatches,
+               bodyBytes > 0,
+               !isChallenge,
+               let data = html.data(using: .utf8),
+               let response = HTTPURLResponse(
+                url: currentURL ?? url,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "text/html; charset=utf-8"]
+               ) {
+                return (data, response)
+            }
+
+            if attempt == 1 || attempt == 10 {
+                Logger.shared.log(
+                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) bytes=\(bodyBytes) challenge=\(isChallenge)",
+                    type: "Service"
+                )
+            }
+
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        return nil
+    }
+
+    @MainActor
     private func makeBypassWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
         #if !os(tvOS)
@@ -466,6 +513,24 @@ final class CloudflareBypassManager: ObservableObject {
         }
         return await withCheckedContinuation { continuation in
             webView.evaluateJavaScript("navigator.userAgent") { result, _ in
+                continuation.resume(returning: (result as? String) ?? "")
+            }
+        }
+    }
+
+    @MainActor
+    private func documentHTML(for webView: WKWebView) async -> String {
+        await withCheckedContinuation { continuation in
+            webView.evaluateJavaScript("document.documentElement ? document.documentElement.outerHTML : ''") { result, _ in
+                continuation.resume(returning: (result as? String) ?? "")
+            }
+        }
+    }
+
+    @MainActor
+    private func documentReadyState(for webView: WKWebView) async -> String {
+        await withCheckedContinuation { continuation in
+            webView.evaluateJavaScript("document.readyState || ''") { result, _ in
                 continuation.resume(returning: (result as? String) ?? "")
             }
         }
