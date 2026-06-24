@@ -455,10 +455,12 @@ final class CloudflareBypassManager: ObservableObject {
             let bodyBytes = html.data(using: .utf8)?.count ?? 0
             let urlMatches = browserURL(currentURL, matchesRequestedURL: url, host: host)
             let isChallenge = Self.isChallengeResponse(status: 200, body: html)
+            let isUsefulDocument = browserDocumentLooksUseful(html, for: url)
 
             if urlMatches,
                bodyBytes > 0,
                !isChallenge,
+               isUsefulDocument,
                let data = html.data(using: .utf8),
                let response = HTTPURLResponse(
                 url: currentURL ?? url,
@@ -471,7 +473,7 @@ final class CloudflareBypassManager: ObservableObject {
 
             if attempt == 1 || attempt == 10 || attempt == 20 {
                 Logger.shared.log(
-                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) matchesRequest=\(urlMatches) bytes=\(bodyBytes) challenge=\(isChallenge)",
+                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) matchesRequest=\(urlMatches) bytes=\(bodyBytes) challenge=\(isChallenge) useful=\(isUsefulDocument) markers=\(browserDocumentMarkerSummary(html))",
                     type: "Service"
                 )
             }
@@ -480,6 +482,35 @@ final class CloudflareBypassManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func browserDocumentLooksUseful(_ html: String, for url: URL) -> Bool {
+        let path = url.path.lowercased()
+        guard path.contains("/play/") else { return true }
+
+        let lowerHTML = html.lowercased()
+        return lowerHTML.contains("kwik")
+            || lowerHTML.contains(".m3u8")
+            || lowerHTML.contains("<video")
+            || lowerHTML.contains("<source")
+            || lowerHTML.contains("<iframe")
+            || lowerHTML.contains("data-src")
+            || lowerHTML.contains("stream")
+    }
+
+    private func browserDocumentMarkerSummary(_ html: String) -> String {
+        let lowerHTML = html.lowercased()
+        var markers: [String] = []
+        if lowerHTML.contains("ddos-guard") { markers.append("ddos") }
+        if lowerHTML.contains("cloudflare") { markers.append("cloudflare") }
+        if lowerHTML.contains("kwik") { markers.append("kwik") }
+        if lowerHTML.contains(".m3u8") { markers.append("m3u8") }
+        if lowerHTML.contains("<video") { markers.append("video") }
+        if lowerHTML.contains("<source") { markers.append("source") }
+        if lowerHTML.contains("<iframe") { markers.append("iframe") }
+        if lowerHTML.contains("data-src") { markers.append("data-src") }
+        if lowerHTML.contains("stream") { markers.append("stream") }
+        return markers.isEmpty ? "none" : markers.joined(separator: ",")
     }
 
     private func browserURL(_ currentURL: URL?, matchesRequestedURL requestedURL: URL, host: String) -> Bool {
