@@ -28,6 +28,7 @@ struct SoraApp: App {
     @StateObject private var theme = EclipseTheme.shared
     @StateObject private var moduleManager = ModuleManager.shared
     @StateObject private var favouriteManager = FavouriteManager.shared
+    @StateObject private var localization = LocalizationManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var startupReady = false
@@ -41,6 +42,7 @@ struct SoraApp: App {
 #endif
 
     init() {
+        _ = LocalizationManager.shared
         CrashReportManager.shared.start()
         GitHubReleaseChecker.registerDefaults()
         ExperimentalFeatureState.configureLaunchState()
@@ -96,6 +98,9 @@ struct SoraApp: App {
                         .zIndex(1)
                 }
             }
+            .environment(\.locale, localization.locale)
+            .environment(\.layoutDirection, localization.layoutDirection)
+            .environmentObject(localization)
 #if os(iOS)
             .onAppear {
                 ExperimentalCloudSyncManager.shared.syncOnActivationIfNeeded(reason: "launch")
