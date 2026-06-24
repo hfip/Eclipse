@@ -2355,7 +2355,7 @@
         }
       }
     },
-    "Search...": {
+    "Search Placeholder": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -2916,7 +2916,7 @@
         }
       }
     },
-    "Type": {
+    "Trakt List Type": {
       "extractionState": "manual",
       "localizations": {
         "en": {

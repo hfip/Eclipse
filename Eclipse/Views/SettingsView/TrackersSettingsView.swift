@@ -461,7 +461,7 @@ struct TrackersSettingsView: View {
                     .textFieldStyle(.roundedBorder)
 
                 HStack {
-                    Picker("Type", selection: $traktListMediaType) {
+                    Picker(LocalizedStringKey("Trakt List Type"), selection: $traktListMediaType) {
                         Text("Shows").tag("shows")
                         Text("Movies").tag("movies")
                     }

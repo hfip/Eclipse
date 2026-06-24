@@ -353,7 +353,7 @@ struct SearchBarEclipse: View {
     
     var body: some View {
         HStack {
-            TextField("Search...", text: $text, onCommit: onSearchButtonClicked)
+            TextField(LocalizedStringKey("Search Placeholder"), text: $text, onCommit: onSearchButtonClicked)
                 
                 .padding(7)
                 .padding(.horizontal, 25)
