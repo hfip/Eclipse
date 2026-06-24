@@ -2093,6 +2093,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             return
         }
 
+        if isClosing {
+            pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
+            cancelPendingMPVAppExitPictureInPictureStart(reason: "\(reason)-closing")
+            mpvAppExitPiPStartRequested = false
+            logPictureInPicture("MPV app-exit auto PiP automation disabled while closing reason=\(reason)")
+            return
+        }
+
         if mpvAppExitPiPSuppressedUntilForeground {
             if UIApplication.shared.applicationState == .active {
                 clearMPVAppExitPictureInPictureSuppression(reason: "\(reason)-active")
@@ -8995,6 +9003,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     @objc private func closeTapped() {
         if isClosing { return }
         isClosing = true
+        suppressMPVAppExitPictureInPictureUntilForeground(reason: "close-tapped")
         refreshIdleTimerForPlayback(reason: "player-close")
         let isAnyPiPActive = rendererIsPictureInPictureActive()
         logSharedPlayerControl("closeTapped; pipActive=\(isAnyPiPActive); mediaInfo=\(String(describing: mediaInfo))")
@@ -10698,6 +10707,10 @@ extension PlayerViewController: PiPControllerDelegate {
 
     private func scheduleMPVAppExitPictureInPictureAfterBackgroundConfirmation(source: String, delay: TimeInterval = 0.35) {
         guard !isVLCPlayer, isMPVRenderer else { return }
+        guard !isClosing else {
+            logPictureInPicture("MPV app-exit auto PiP pending skipped source=\(source): closing")
+            return
+        }
         guard !mpvAppExitPiPSuppressedUntilForeground else {
             logPictureInPicture("MPV app-exit auto PiP pending skipped source=\(source): suppressed-until-foreground")
             return
