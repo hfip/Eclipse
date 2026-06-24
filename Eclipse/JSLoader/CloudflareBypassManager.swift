@@ -456,10 +456,11 @@ final class CloudflareBypassManager: ObservableObject {
             let urlMatches = browserURL(currentURL, matchesRequestedURL: url, host: host)
             let isChallenge = Self.isChallengeResponse(status: 200, body: html)
             let isUsefulDocument = browserDocumentLooksUseful(html, for: url)
+            let hasPlayableEmbed = browserDocumentHasPlayableEmbed(html, for: url)
 
             if urlMatches,
                bodyBytes > 0,
-               !isChallenge,
+               (!isChallenge || hasPlayableEmbed),
                isUsefulDocument,
                let data = html.data(using: .utf8),
                let response = HTTPURLResponse(
@@ -469,7 +470,7 @@ final class CloudflareBypassManager: ObservableObject {
                 headerFields: ["Content-Type": "text/html; charset=utf-8"]
                ) {
                 Logger.shared.log(
-                    "CloudflareBypass: browser document accepted host=\(host) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) bytes=\(bodyBytes) markers=\(browserDocumentMarkerSummary(html))",
+                    "CloudflareBypass: browser document accepted host=\(host) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) bytes=\(bodyBytes) challenge=\(isChallenge) playable=\(hasPlayableEmbed) markers=\(browserDocumentMarkerSummary(html))",
                     type: "Service"
                 )
                 return (data, response)
@@ -477,7 +478,7 @@ final class CloudflareBypassManager: ObservableObject {
 
             if attempt == 1 || attempt == 10 || attempt == 20 {
                 Logger.shared.log(
-                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) matchesRequest=\(urlMatches) bytes=\(bodyBytes) challenge=\(isChallenge) useful=\(isUsefulDocument) markers=\(browserDocumentMarkerSummary(html))",
+                    "CloudflareBypass: browser document not ready host=\(host) attempt=\(attempt) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) matchesRequest=\(urlMatches) bytes=\(bodyBytes) challenge=\(isChallenge) useful=\(isUsefulDocument) playable=\(hasPlayableEmbed) markers=\(browserDocumentMarkerSummary(html))",
                     type: "Service"
                 )
             }
@@ -499,6 +500,17 @@ final class CloudflareBypassManager: ObservableObject {
             || lowerHTML.contains("<source")
             || lowerHTML.contains("<iframe")
             || lowerHTML.contains("data-src")
+    }
+
+    private func browserDocumentHasPlayableEmbed(_ html: String, for url: URL) -> Bool {
+        let path = url.path.lowercased()
+        guard path.contains("/play/") else { return false }
+
+        let lowerHTML = html.lowercased()
+        return lowerHTML.contains(".m3u8")
+            || lowerHTML.contains("<video")
+            || lowerHTML.contains("<source")
+            || (lowerHTML.contains("kwik") && (lowerHTML.contains("<iframe") || lowerHTML.contains("data-src")))
     }
 
     private func browserDocumentMarkerSummary(_ html: String) -> String {
