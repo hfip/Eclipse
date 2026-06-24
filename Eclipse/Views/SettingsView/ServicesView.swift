@@ -724,10 +724,11 @@ struct PluginSourceRow: View {
             manager.repositories.first(where: { $0.manifestUrl == url })?.name
         }
         let providerText = "\(source.scrapers.count) provider\(source.scrapers.count == 1 ? "" : "s")"
+        var seenTypes = Set<String>()
         let types = source.scrapers
             .flatMap { $0.supportedTypes }
             .map(NuvioPluginSupport.normalizeType)
-            .removingDuplicates()
+            .filter { seenTypes.insert($0).inserted }
             .map { $0.uppercased() }
             .joined(separator: ", ")
         return [repositoryName, providerText, types.isEmpty ? nil : types]
