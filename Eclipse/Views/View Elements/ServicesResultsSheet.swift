@@ -1396,8 +1396,12 @@ struct ModulesSearchResultsSheet: View {
         viewModel.pendingPlaybackAutoMode || shouldForceAutoResolutionForDownload
     }
 
+    private var standaloneAutoSelectEpisodesEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "servicesAutoSelectEpisodesEnabled")
+    }
+
     private var shouldUseAutomaticEpisodeResolution: Bool {
-        shouldUseAutomaticResolution || UserDefaults.standard.bool(forKey: "servicesAutoSelectEpisodesEnabled")
+        shouldUseAutomaticResolution || standaloneAutoSelectEpisodesEnabled
     }
 
     @MainActor
@@ -3420,13 +3424,15 @@ struct ModulesSearchResultsSheet: View {
         let targetSeasonIndex = selectedEp.seasonNumber - 1
         let targetEpisodeNumber = selectedEp.episodeNumber
         let bundledEpisodeNumbers = bundledEpisodeNumberCandidates(for: selectedEp)
+        let allowAutomaticEpisodeResolution = shouldUseAutomaticEpisodeResolution
+        Logger.shared.log("Episode auto-selection input source=\(service.metadata.sourceName) title='\(result.title)' target=S\(selectedEp.seasonNumber)E\(selectedEp.episodeNumber) episodes=\(episodes.count) seasons=\(episodeSeasonSummary(seasons)) autoMode=\(viewModel.pendingPlaybackAutoMode) forcedDownload=\(shouldForceAutoResolutionForDownload) standalone=\(standaloneAutoSelectEpisodesEnabled) allowed=\(allowAutomaticEpisodeResolution) animeContext=\(hasAnimeLookupContext) special=\(effectivePlaybackContext?.isSpecial ?? false) seasonEpisodeCount=\(logValue(effectivePlaybackContext?.animeSeasonEpisodeCount)) absolute=\(logValue(effectivePlaybackContext?.animeAbsoluteEpisodeNumber)) bundledCandidates=\(logValues(bundledEpisodeNumbers))", type: "Stream")
         
         if let targetHref = findEpisodeHref(
             seasons: seasons,
             seasonIndex: targetSeasonIndex,
             episodeNumber: targetEpisodeNumber,
             bundledEpisodeNumbers: bundledEpisodeNumbers,
-            allowAutomaticEpisodeResolution: shouldUseAutomaticEpisodeResolution
+            allowAutomaticEpisodeResolution: allowAutomaticEpisodeResolution
         ) {
             viewModel.streamFetchProgress = "Found episode, fetching stream..."
             fetchFinalStream(href: targetHref, jsController: jsController, service: service)
@@ -3457,21 +3463,47 @@ struct ModulesSearchResultsSheet: View {
         
         return seasons
     }
+
+    private func logValue(_ value: Int?) -> String {
+        value.map { String($0) } ?? "nil"
+    }
+
+    private func logValues(_ values: [Int]) -> String {
+        values.isEmpty ? "none" : values.map { String($0) }.joined(separator: ",")
+    }
+
+    private func episodeSeasonSummary(_ seasons: [[EpisodeLink]]) -> String {
+        guard !seasons.isEmpty else { return "none" }
+        return seasons.enumerated().map { index, season in
+            let sample = season.prefix(5).map { String($0.number) }.joined(separator: ",")
+            let suffix = season.count > 5 ? ",..." : ""
+            return "S\(index + 1):count=\(season.count),nums=[\(sample)\(suffix)]"
+        }.joined(separator: ";")
+    }
     
     private func findEpisodeHref(seasons: [[EpisodeLink]], seasonIndex: Int, episodeNumber: Int, bundledEpisodeNumbers: [Int], allowAutomaticEpisodeResolution: Bool) -> String? {
+        Logger.shared.log("Episode auto-selection resolving target=S\(seasonIndex + 1)E\(episodeNumber) allow=\(allowAutomaticEpisodeResolution) autoMode=\(viewModel.pendingPlaybackAutoMode) forcedDownload=\(shouldForceAutoResolutionForDownload) standalone=\(standaloneAutoSelectEpisodesEnabled)", type: "Stream")
+
         if seasonIndex >= 0 && seasonIndex < seasons.count {
             if let episode = seasons[seasonIndex].first(where: { $0.number == episodeNumber }) {
                 Logger.shared.log("Found exact match: S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
                 return episode.href
             }
+        } else {
+            Logger.shared.log("Episode auto-selection exact check skipped for out-of-range seasonIndex=\(seasonIndex) seasons=\(seasons.count)", type: "Stream")
         }
 
         guard allowAutomaticEpisodeResolution else {
-            Logger.shared.log("Episode auto-resolution skipped because Auto-Select Episodes is disabled for S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
+            Logger.shared.log("Episode auto-resolution skipped because automatic episode resolution is disabled for S\(seasonIndex + 1)E\(episodeNumber) autoMode=\(viewModel.pendingPlaybackAutoMode) standalone=\(standaloneAutoSelectEpisodesEnabled)", type: "Stream")
             return nil
         }
 
-        if shouldUseBundledEpisodeNumbers(seasons: seasons),
+        let bundledEligible = shouldUseBundledEpisodeNumbers(seasons: seasons)
+        if hasAnimeLookupContext || !bundledEpisodeNumbers.isEmpty {
+            let stats = sourceEpisodeListStats(seasons: seasons)
+            Logger.shared.log("Episode auto-selection bundled check eligible=\(bundledEligible) candidates=\(logValues(bundledEpisodeNumbers)) episodes=\(stats.count) maxEpisode=\(stats.maxNumber) seasonEpisodeCount=\(logValue(effectivePlaybackContext?.animeSeasonEpisodeCount)) special=\(effectivePlaybackContext?.isSpecial ?? false)", type: "Stream")
+        }
+        if bundledEligible,
            let bundledMatch = findBundledEpisodeHref(seasons: seasons, episodeNumbers: bundledEpisodeNumbers) {
             Logger.shared.log("Auto-resolved bundled anime episode \(bundledMatch.number) from S\(seasonIndex + 1)E\(episodeNumber)", type: "Stream")
             return bundledMatch.href
@@ -3482,15 +3514,21 @@ struct ModulesSearchResultsSheet: View {
             return singleSeasonMatch
         }
 
-        if shouldUseCrossSeasonEpisodeFallback(seasonIndex: seasonIndex) {
+        let crossSeasonEligible = shouldUseCrossSeasonEpisodeFallback(seasonIndex: seasonIndex)
+        if hasAnimeLookupContext || effectivePlaybackContext?.isSpecial == true {
+            Logger.shared.log("Episode auto-selection cross-season check eligible=\(crossSeasonEligible) targetSeasonIndex=\(seasonIndex) animeContext=\(hasAnimeLookupContext) special=\(effectivePlaybackContext?.isSpecial ?? false)", type: "Stream")
+        }
+        if crossSeasonEligible {
             for season in seasons {
                 if let episode = season.first(where: { $0.number == episodeNumber }) {
                     Logger.shared.log("Found episode \(episodeNumber) in different season, auto-playing", type: "Stream")
                     return episode.href
                 }
             }
+            Logger.shared.log("Episode auto-selection cross-season fallback found no episode \(episodeNumber)", type: "Stream")
         }
 
+        Logger.shared.log("Episode auto-selection unresolved target=S\(seasonIndex + 1)E\(episodeNumber) seasons=\(episodeSeasonSummary(seasons))", type: "Stream")
         return nil
     }
 
@@ -3511,10 +3549,19 @@ struct ModulesSearchResultsSheet: View {
     }
 
     private func findSingleSeasonAnimeEpisodeHref(seasons: [[EpisodeLink]], seasonIndex: Int, episodeNumber: Int) -> String? {
-        guard effectivePlaybackContext?.isSpecial != true,
-              hasAnimeLookupContext,
-              seasons.count == 1,
-              seasonIndex > 0 else {
+        guard effectivePlaybackContext?.isSpecial != true else {
+            Logger.shared.log("Episode auto-selection single-season anime skipped because context is a special", type: "Stream")
+            return nil
+        }
+        guard hasAnimeLookupContext else {
+            return nil
+        }
+        guard seasons.count == 1 else {
+            Logger.shared.log("Episode auto-selection single-season anime skipped because source returned \(seasons.count) seasons", type: "Stream")
+            return nil
+        }
+        guard seasonIndex > 0 else {
+            Logger.shared.log("Episode auto-selection single-season anime skipped because target season index is \(seasonIndex)", type: "Stream")
             return nil
         }
 
@@ -3523,12 +3570,16 @@ struct ModulesSearchResultsSheet: View {
            seasonEpisodeCount > 0 {
             guard stats.count <= seasonEpisodeCount,
                   stats.maxNumber <= seasonEpisodeCount else {
+                Logger.shared.log("Episode auto-selection single-season anime skipped because source looks bundled episodes=\(stats.count) maxEpisode=\(stats.maxNumber) seasonEpisodeCount=\(seasonEpisodeCount)", type: "Stream")
                 return nil
             }
         }
 
         let matches = seasons.flatMap { $0 }.filter { $0.number == episodeNumber }
-        guard matches.count == 1 else { return nil }
+        guard matches.count == 1 else {
+            Logger.shared.log("Episode auto-selection single-season anime skipped because episode \(episodeNumber) matchCount=\(matches.count)", type: "Stream")
+            return nil
+        }
         return matches.first?.href
     }
 
