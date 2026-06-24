@@ -21,6 +21,8 @@ class TMDBService: ObservableObject {
 
     // MARK: - In-Memory Detail Cache (avoids duplicate fetches from ContinueWatchingCards etc.)
     private let detailCache = TMDBDetailCache()
+    private var fastAnimeAdultKeywordIDsCache: [Int]?
+    private var fastAnimeAdultKeywordIDsTask: Task<[Int], Never>?
 
     private init() {}
     
@@ -668,16 +670,22 @@ class TMDBService: ObservableObject {
 
     // MARK: - Fast Anime Catalogs (TMDB-native Performance Mode)
     func getFastAnimeCatalog(kind: FastAnimeCatalogKind, limit: Int = 20) async throws -> [TMDBSearchResult] {
+        let adultKeywordIDs = await fastAnimeAdultKeywordIDs()
         let results: [TMDBSearchResult]
         switch kind {
         case .trending:
-            results = try await getFastTrendingAnime(limit: limit)
+            results = try await getFastTrendingAnime(limit: limit, adultKeywordIDs: adultKeywordIDs)
         case .popular:
-            results = try await getFastAnimeDiscoverCatalog(sortBy: "popularity.desc", limit: limit)
+            results = try await getFastAnimeDiscoverCatalog(
+                sortBy: "popularity.desc",
+                limit: limit,
+                adultKeywordIDs: adultKeywordIDs
+            )
         case .topRated:
             results = try await getFastAnimeDiscoverCatalog(
                 sortBy: "vote_average.desc",
                 limit: limit,
+                adultKeywordIDs: adultKeywordIDs,
                 extraQueryItems: [URLQueryItem(name: "vote_count.gte", value: "100")]
             )
         case .airing:
@@ -687,6 +695,7 @@ class TMDBService: ObservableObject {
             results = try await getFastAnimeDiscoverCatalog(
                 sortBy: "popularity.desc",
                 limit: limit,
+                adultKeywordIDs: adultKeywordIDs,
                 extraQueryItems: [
                     URLQueryItem(name: "air_date.gte", value: start),
                     URLQueryItem(name: "air_date.lte", value: end),
@@ -702,6 +711,7 @@ class TMDBService: ObservableObject {
             results = try await getFastAnimeDiscoverCatalog(
                 sortBy: "popularity.desc",
                 limit: limit * 2,
+                adultKeywordIDs: adultKeywordIDs,
                 extraQueryItems: [URLQueryItem(name: "first_air_date.gte", value: tomorrow)]
             ).filter { result in
                 guard let firstAirDate = fastAnimeDate(from: result.firstAirDate),
@@ -715,20 +725,25 @@ class TMDBService: ObservableObject {
         return Array(deduplicatedFastAnimeResults(results).prefix(limit))
     }
 
-    private func getFastTrendingAnime(limit: Int) async throws -> [TMDBSearchResult] {
+    private func getFastTrendingAnime(limit: Int, adultKeywordIDs: [Int]) async throws -> [TMDBSearchResult] {
         let trending = try await getTrending(mediaType: "tv", timeWindow: "week")
             .filter { self.isFastAnimeSearchResult($0) }
         guard trending.count < min(limit, 10) else {
             return Array(deduplicatedFastAnimeResults(trending).prefix(limit))
         }
 
-        let fallback = try await getFastAnimeDiscoverCatalog(sortBy: "popularity.desc", limit: limit)
+        let fallback = try await getFastAnimeDiscoverCatalog(
+            sortBy: "popularity.desc",
+            limit: limit,
+            adultKeywordIDs: adultKeywordIDs
+        )
         return Array(deduplicatedFastAnimeResults(trending + fallback).prefix(limit))
     }
 
     private func getFastAnimeDiscoverCatalog(
         sortBy: String,
         limit: Int,
+        adultKeywordIDs: [Int],
         extraQueryItems: [URLQueryItem] = []
     ) async throws -> [TMDBSearchResult] {
         var combined: [TMDBSearchResult] = []
@@ -737,6 +752,7 @@ class TMDBService: ObservableObject {
                 originCountry: country,
                 sortBy: sortBy,
                 page: 1,
+                adultKeywordIDs: adultKeywordIDs,
                 extraQueryItems: extraQueryItems
             )
             combined.append(contentsOf: shows.filter { self.isFastAnimeTVShow($0) }.map(\.asSearchResult))
@@ -748,6 +764,7 @@ class TMDBService: ObservableObject {
         originCountry: String,
         sortBy: String,
         page: Int,
+        adultKeywordIDs: [Int],
         extraQueryItems: [URLQueryItem]
     ) async throws -> [TMDBTVShow] {
         var queryItems = [
@@ -757,6 +774,12 @@ class TMDBService: ObservableObject {
             URLQueryItem(name: "sort_by", value: sortBy),
             URLQueryItem(name: "include_adult", value: "false")
         ]
+        if !adultKeywordIDs.isEmpty {
+            queryItems.append(URLQueryItem(
+                name: "without_keywords",
+                value: adultKeywordIDs.map { String($0) }.joined(separator: "|")
+            ))
+        }
         queryItems.append(contentsOf: extraQueryItems)
         let url = try tmdbURL(path: "/discover/tv", queryItems: queryItems)
         let (data, _) = try await throttledData(from: url)
@@ -766,6 +789,15 @@ class TMDBService: ObservableObject {
 
     private static let fastAnimeOriginCountries = ["JP", "CN", "KR", "TW"]
     private static let fastAnimeOriginalLanguages: Set<String> = ["ja", "zh", "ko"]
+    private static let fastAnimeAdultKeywordNames = [
+        "adult animation",
+        "adult anime",
+        "ecchi",
+        "erotica",
+        "hentai",
+        "pornography",
+        "softcore"
+    ]
 
     private func isFastAnimeTVShow(_ show: TMDBTVShow) -> Bool {
         guard show.genreIds?.contains(16) == true else { return false }
@@ -798,6 +830,75 @@ class TMDBService: ObservableObject {
             guard !result.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
             return seen.insert(result.id).inserted
         }
+    }
+
+    private func fastAnimeAdultKeywordIDs() async -> [Int] {
+        if let fastAnimeAdultKeywordIDsCache {
+            return fastAnimeAdultKeywordIDsCache
+        }
+        if let fastAnimeAdultKeywordIDsTask {
+            return await fastAnimeAdultKeywordIDsTask.value
+        }
+
+        let task = Task { [weak self] () -> [Int] in
+            guard let self else { return [] }
+            return await self.fetchFastAnimeAdultKeywordIDs()
+        }
+        fastAnimeAdultKeywordIDsTask = task
+        let ids = await task.value
+        fastAnimeAdultKeywordIDsCache = ids
+        fastAnimeAdultKeywordIDsTask = nil
+        return ids
+    }
+
+    private func fetchFastAnimeAdultKeywordIDs() async -> [Int] {
+        await withTaskGroup(of: Int?.self) { group in
+            for keyword in Self.fastAnimeAdultKeywordNames {
+                group.addTask { [weak self] in
+                    await self?.fetchExactKeywordID(named: keyword)
+                }
+            }
+
+            var ids = Set<Int>()
+            for await id in group {
+                if let id {
+                    ids.insert(id)
+                }
+            }
+            return ids.sorted()
+        }
+    }
+
+    private func fetchExactKeywordID(named keyword: String) async -> Int? {
+        do {
+            let url = try tmdbURL(path: "/search/keyword", queryItems: [
+                URLQueryItem(name: "query", value: keyword),
+                URLQueryItem(name: "page", value: "1")
+            ])
+            let (data, _) = try await throttledData(from: url)
+            let response = try JSONDecoder().decode(TMDBKeywordSearchResponse.self, from: data)
+            let normalizedKeyword = Self.normalizedKeyword(keyword)
+            return response.results.first { result in
+                Self.normalizedKeyword(result.name) == normalizedKeyword
+            }?.id
+        } catch {
+            if case TMDBError.missingAPIKey = error {
+                return nil
+            }
+            Logger.shared.log(
+                "TMDBService: fast anime keyword lookup failed for \(keyword): \(error.localizedDescription)",
+                type: "TMDB"
+            )
+            return nil
+        }
+    }
+
+    private static func normalizedKeyword(_ keyword: String) -> String {
+        keyword
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func tmdbURL(path: String, queryItems: [URLQueryItem]) throws -> URL {
@@ -1072,6 +1173,15 @@ class TMDBService: ObservableObject {
         detailCache.set(key: cacheKey, value: response.results)
         return response.results
     }
+}
+
+private struct TMDBKeywordSearchResponse: Decodable {
+    let results: [TMDBKeyword]
+}
+
+private struct TMDBKeyword: Decodable {
+    let id: Int
+    let name: String
 }
 
 // MARK: - Error Handling

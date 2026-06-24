@@ -265,6 +265,30 @@ enum AutoModeSourceSelection {
         UserDefaults.standard.set(order, forKey: orderKey)
     }
 
+    static func syncPluginSources(activeSourceIds: [String], knownSourceIds: [String]) {
+        let active = Set(activeSourceIds)
+        let known = Set(knownSourceIds)
+        var ids = Set(UserDefaults.standard.stringArray(forKey: idsKey) ?? [])
+        var order = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
+
+        ids = ids.filter { sourceId in
+            guard isPluginSourceId(sourceId) else { return true }
+            return active.contains(sourceId)
+        }
+
+        order.removeAll { sourceId in
+            isPluginSourceId(sourceId) && !known.contains(sourceId)
+        }
+
+        for sourceId in activeSourceIds where !order.contains(sourceId) {
+            order.append(sourceId)
+        }
+        ids.formUnion(active)
+
+        UserDefaults.standard.set(Array(ids), forKey: idsKey)
+        UserDefaults.standard.set(order, forKey: orderKey)
+    }
+
     static func removeSource(_ sourceId: String) {
         var ids = Set(UserDefaults.standard.stringArray(forKey: idsKey) ?? [])
         var order = UserDefaults.standard.stringArray(forKey: orderKey) ?? []
@@ -274,6 +298,10 @@ enum AutoModeSourceSelection {
 
         UserDefaults.standard.set(Array(ids), forKey: idsKey)
         UserDefaults.standard.set(order, forKey: orderKey)
+    }
+
+    private static func isPluginSourceId(_ sourceId: String) -> Bool {
+        sourceId.hasPrefix("plugin:") || sourceId.hasPrefix("plugin-repo:")
     }
 }
 

@@ -30,7 +30,7 @@ struct ServicesView: View {
     var body: some View {
         ZStack {
             VStack {
-                if serviceManager.services.isEmpty && stremioManager.addons.isEmpty && pluginManager.activeSources.isEmpty {
+                if serviceManager.services.isEmpty && stremioManager.addons.isEmpty && pluginManager.installedSources.isEmpty {
                     emptyStateView
                 } else {
                     servicesList
@@ -101,6 +101,9 @@ struct ServicesView: View {
                 pluginManager.load()
                 reloadAutoModeSelectionFromDefaults()
             }
+            .onChangeComp(of: pluginManager.state) { _, _ in
+                reloadAutoModeSelectionFromDefaults()
+            }
         }
     }
     
@@ -122,11 +125,13 @@ struct ServicesView: View {
     private enum UnifiedItem: Identifiable {
         case service(Service)
         case stremio(StremioAddon)
+        case plugin(NuvioPluginSource)
 
-        var id: UUID {
+        var id: String {
             switch self {
-            case .service(let s): return s.id
-            case .stremio(let a): return a.id
+            case .service(let s): return "service:\(s.id.uuidString)"
+            case .stremio(let a): return "stremio:\(a.id.uuidString)"
+            case .plugin(let p): return p.id
             }
         }
 
@@ -134,6 +139,7 @@ struct ServicesView: View {
             switch self {
             case .service(let s): return s.sortIndex
             case .stremio(let a): return a.sortIndex
+            case .plugin: return Int64.max
             }
         }
 
@@ -141,6 +147,7 @@ struct ServicesView: View {
             switch self {
             case .service(let s): return s.isActive
             case .stremio(let a): return a.isActive
+            case .plugin: return true
             }
         }
 
@@ -150,6 +157,8 @@ struct ServicesView: View {
                 return true
             case .stremio(let a):
                 return a.manifest.supportsStreams
+            case .plugin(let source):
+                return !source.scrapers.isEmpty
             }
         }
 
@@ -157,6 +166,7 @@ struct ServicesView: View {
             switch self {
             case .service(let s): return s.metadata.sourceName
             case .stremio(let a): return a.manifest.name
+            case .plugin(let source): return source.name
             }
         }
 
@@ -164,6 +174,7 @@ struct ServicesView: View {
             switch self {
             case .service(let s): return "service:\(s.id.uuidString)"
             case .stremio(let a): return "stremio:\(a.id.uuidString)"
+            case .plugin(let source): return source.id
             }
         }
     }
@@ -171,7 +182,28 @@ struct ServicesView: View {
     private var unifiedItems: [UnifiedItem] {
         let services: [UnifiedItem] = serviceManager.services.map { .service($0) }
         let addons: [UnifiedItem] = stremioManager.addons.map { .stremio($0) }
-        return (services + addons).sorted { $0.sortIndex < $1.sortIndex }
+        let plugins: [UnifiedItem] = pluginManager.installedSources.map { .plugin($0) }
+        var orderRank: [String: Int] = [:]
+        for (index, sourceId) in autoModeSourceOrderIds.enumerated() where orderRank[sourceId] == nil {
+            orderRank[sourceId] = index
+        }
+        return (services + addons + plugins).sorted {
+            let lhsRank = orderRank[$0.autoModeSourceId]
+            let rhsRank = orderRank[$1.autoModeSourceId]
+            if let lhsRank, let rhsRank, lhsRank != rhsRank {
+                return lhsRank < rhsRank
+            }
+            if lhsRank != nil {
+                return true
+            }
+            if rhsRank != nil {
+                return false
+            }
+            if $0.sortIndex == $1.sortIndex {
+                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+            return $0.sortIndex < $1.sortIndex
+        }
     }
 
     private enum AutoModeSourceItem: Identifiable {
@@ -222,6 +254,7 @@ struct ServicesView: View {
             switch item {
             case .service(let service): return .service(service)
             case .stremio(let addon): return .stremio(addon)
+            case .plugin: return nil
             }
         }
         let pluginSources: [AutoModeSourceItem] = pluginManager.activeSources.map { .plugin($0) }
@@ -339,8 +372,8 @@ struct ServicesView: View {
             .eclipseExperimentalSettingsRows()
 
             Section(header: unifiedSectionHeader) {
-                if serviceManager.services.isEmpty && stremioManager.addons.isEmpty {
-                    Text("No services or addons installed")
+                if serviceManager.services.isEmpty && stremioManager.addons.isEmpty && pluginManager.installedSources.isEmpty {
+                    Text("No services, addons, or plugins installed")
                         .foregroundColor(.secondary)
                         .font(.subheadline)
                 } else {
@@ -350,6 +383,8 @@ struct ServicesView: View {
                             ServiceRow(service: service, serviceManager: serviceManager, healthStore: healthStore)
                         case .stremio(let addon):
                             StremioAddonRow(addon: addon, manager: stremioManager, healthStore: healthStore)
+                        case .plugin(let source):
+                            PluginSourceRow(source: source, manager: pluginManager, healthStore: healthStore)
                         }
                     }
                     .onDelete(perform: deleteUnifiedItems)
@@ -362,7 +397,7 @@ struct ServicesView: View {
 
     @ViewBuilder
     private var unifiedSectionHeader: some View {
-        Text("Services & Addons")
+        Text("Services, Addons & Plugins")
     }
 
     private func deleteUnifiedItems(offsets: IndexSet) {
@@ -373,6 +408,8 @@ struct ServicesView: View {
                 serviceManager.removeService(service)
             case .stremio(let addon):
                 stremioManager.removeAddon(addon)
+            case .plugin(let source):
+                pluginManager.setSourceEnabled(source, enabled: false)
             }
         }
         syncAutoModeSelectionWithInstalledSources()
@@ -396,6 +433,8 @@ struct ServicesView: View {
                 if let entity = stremioEntities.first(where: { $0.id == addon.id }) {
                     entity.sortIndex = Int64(index)
                 }
+            case .plugin:
+                continue
             }
         }
 
@@ -403,6 +442,7 @@ struct ServicesView: View {
         StremioAddonStore.shared.save()
         serviceManager.loadServicesFromCloud()
         stremioManager.loadAddons()
+        persistUnifiedOrder(items)
         syncAutoModeSelectionWithInstalledSources()
     }
     
@@ -444,6 +484,12 @@ struct ServicesView: View {
         UserDefaults.standard.set(Array(selectedAutoModeSourceIds), forKey: "servicesAutoModeSourceIds")
         autoModeSourceOrderIds = orderedActive
         UserDefaults.standard.set(orderedActive, forKey: "servicesAutoModeSourceOrderIds")
+    }
+
+    private func persistUnifiedOrder(_ items: [UnifiedItem]) {
+        let ids = items.map(\.autoModeSourceId)
+        autoModeSourceOrderIds = ids
+        UserDefaults.standard.set(ids, forKey: "servicesAutoModeSourceOrderIds")
     }
 
     private func reloadAutoModeSelectionFromDefaults() {
@@ -621,6 +667,137 @@ struct ServiceRow: View {
         .sheet(isPresented: $showingSettings) {
             ServiceSettingsView(service: service, serviceManager: serviceManager)
         }
+    }
+
+    @ViewBuilder
+    private var healthStatusLabel: some View {
+        switch healthState {
+        case .healthy:
+            Label("Reachable", systemImage: "checkmark.circle")
+                .font(.caption2)
+                .foregroundStyle(.green)
+        case .warning(let reason):
+            Label(reason, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+        case .playbackIssue(let reason):
+            Label(reason, systemImage: "play.slash")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+        case .stale:
+            Label("Health check pending", systemImage: "clock")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .unchecked:
+            EmptyView()
+        }
+    }
+}
+
+struct PluginSourceRow: View {
+    let source: NuvioPluginSource
+    @ObservedObject var manager: NuvioPluginManager
+    @ObservedObject var healthStore: SourceHealthStore
+
+    private var isSourceEnabled: Bool {
+        manager.isSourceEnabled(source)
+    }
+
+    private var canEnableSource: Bool {
+        manager.canEnableSource(source)
+    }
+
+    private var sourceId: String {
+        SourceHealth.pluginId(source)
+    }
+
+    private var healthState: SourceHealthDisplayState {
+        _ = healthStore.version
+        guard isSourceEnabled else { return .unchecked }
+        return healthStore.displayState(for: sourceId)
+    }
+
+    private var subtitle: String {
+        let repositoryName = source.repositoryUrl.flatMap { url in
+            manager.repositories.first(where: { $0.manifestUrl == url })?.name
+        }
+        let providerText = "\(source.scrapers.count) provider\(source.scrapers.count == 1 ? "" : "s")"
+        let types = source.scrapers
+            .flatMap { $0.supportedTypes }
+            .map(NuvioPluginSupport.normalizeType)
+            .removingDuplicates()
+            .map { $0.uppercased() }
+            .joined(separator: ", ")
+        return [repositoryName, providerText, types.isEmpty ? nil : types]
+            .compactMap { $0 }
+            .joined(separator: " - ")
+    }
+
+    var body: some View {
+        HStack {
+            pluginIcon
+                .padding(.trailing, 10)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(source.name)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.gray)
+                    .lineLimit(1)
+
+                healthStatusLabel
+            }
+
+            Spacer()
+
+            if isSourceEnabled {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 20, height: 20)
+            } else if !canEnableSource {
+                Image(systemName: "minus.circle")
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 20, height: 20)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard canEnableSource || isSourceEnabled else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                manager.setSourceEnabled(source, enabled: !isSourceEnabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pluginIcon: some View {
+        if let logo = source.logo, let logoURL = URL(string: logo) {
+            KFImage(logoURL)
+                .placeholder {
+                    placeholderIcon
+                }
+                .resizable()
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+        } else {
+            placeholderIcon
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+        }
+    }
+
+    private var placeholderIcon: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(Color.gray.opacity(0.2))
+            .overlay(
+                Image(systemName: "puzzlepiece.extension")
+                    .foregroundColor(.secondary)
+            )
     }
 
     @ViewBuilder

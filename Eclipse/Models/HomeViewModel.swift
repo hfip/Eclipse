@@ -314,7 +314,7 @@ final class HomeViewModel: ObservableObject {
             let items: [TMDBSearchResult] = await loadHomeCatalog("fastAnime:\(kind)") {
                 try await tmdbService.getFastAnimeCatalog(kind: fastKind, limit: 20)
             }
-            let filtered = contentFilter.filterSearchResults(items)
+            let filtered = contentFilter.filterFastAnimeSearchResults(items)
             if !filtered.isEmpty {
                 loaded[kind] = filtered
             }

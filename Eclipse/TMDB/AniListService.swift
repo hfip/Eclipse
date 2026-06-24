@@ -215,6 +215,143 @@ final class AnimeProviderHealthCenter {
     }
 }
 
+private enum AnimeTMDBMatchSource: String, Codable {
+    case anilist
+    case myAnimeList
+}
+
+private struct AnimeTMDBMatchCacheKey: Hashable {
+    let source: AnimeTMDBMatchSource
+    let id: Int
+    let language: String
+    let titleSignature: String
+    let expectedYear: Int?
+    let format: String?
+
+    init(
+        source: AnimeTMDBMatchSource,
+        id: Int,
+        language: String,
+        titleCandidates: [String],
+        expectedYear: Int?,
+        format: String?
+    ) {
+        self.source = source
+        self.id = id
+        self.language = language
+        self.titleSignature = Self.titleSignature(from: titleCandidates)
+        self.expectedYear = expectedYear
+        self.format = format?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    var storageKey: String {
+        [
+            source.rawValue,
+            String(id),
+            language.lowercased(),
+            expectedYear.map(String.init) ?? "-",
+            format ?? "-",
+            titleSignature
+        ].joined(separator: "|")
+    }
+
+    private static func titleSignature(from titleCandidates: [String]) -> String {
+        var seen = Set<String>()
+        let normalized = titleCandidates.compactMap { candidate -> String? in
+            let key = candidate
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .joined()
+            guard !key.isEmpty, seen.insert(key).inserted else { return nil }
+            return key
+        }
+        return normalized.sorted().joined(separator: ",")
+    }
+}
+
+private struct AnimeTMDBMatchCacheLookup {
+    let result: TMDBSearchResult?
+}
+
+private struct AnimeTMDBMatchCacheRecord {
+    let key: AnimeTMDBMatchCacheKey
+    let result: TMDBSearchResult?
+}
+
+private actor AnimeTMDBMatchCache {
+    static let shared = AnimeTMDBMatchCache()
+
+    private struct Entry: Codable {
+        let result: TMDBSearchResult?
+        let storedAt: TimeInterval
+    }
+
+    private let successMaxAge: TimeInterval = 60 * 60 * 24 * 30
+    private let missMaxAge: TimeInterval = 60 * 60 * 24
+    private let maxEntries = 800
+    private let fileURL: URL
+    private var entries: [String: Entry]
+
+    private init() {
+        let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        fileURL = cacheDirectory.appendingPathComponent("anime-tmdb-match-cache-v1.json")
+
+        if let data = try? Data(contentsOf: fileURL),
+           let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
+            entries = decoded
+        } else {
+            entries = [:]
+        }
+    }
+
+    func lookup(_ key: AnimeTMDBMatchCacheKey) -> AnimeTMDBMatchCacheLookup? {
+        let storageKey = key.storageKey
+        guard let entry = entries[storageKey] else { return nil }
+
+        let maxAge = entry.result == nil ? missMaxAge : successMaxAge
+        guard Date().timeIntervalSince1970 - entry.storedAt <= maxAge else {
+            entries.removeValue(forKey: storageKey)
+            return nil
+        }
+
+        return AnimeTMDBMatchCacheLookup(result: entry.result)
+    }
+
+    func store(_ records: [AnimeTMDBMatchCacheRecord]) {
+        guard !records.isEmpty else { return }
+        let now = Date().timeIntervalSince1970
+        for record in records {
+            entries[record.key.storageKey] = Entry(result: record.result, storedAt: now)
+        }
+        prune(now: now)
+        persist()
+    }
+
+    private func prune(now: TimeInterval) {
+        entries = entries.filter { _, entry in
+            let maxAge = entry.result == nil ? missMaxAge : successMaxAge
+            return now - entry.storedAt <= maxAge
+        }
+
+        guard entries.count > maxEntries else { return }
+        let keep = entries
+            .sorted { $0.value.storedAt > $1.value.storedAt }
+            .prefix(maxEntries)
+        entries = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+    }
+
+    private func persist() {
+        do {
+            let directory = fileURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(entries)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            Logger.shared.log("AnimeTMDBMatchCache: persist failed: \(error.localizedDescription)", type: "AniList")
+        }
+    }
+}
+
 actor AnimeIdentityCache {
     static let shared = AnimeIdentityCache()
 
@@ -534,6 +671,9 @@ final class AniListService {
         let raw = UserDefaults.standard.string(forKey: "tmdbLanguage") ?? "en-US"
         return raw.split(separator: "-").first.map(String.init) ?? "en"
     }
+    private var tmdbMatchCacheLanguage: String {
+        UserDefaults.standard.string(forKey: "tmdbLanguage") ?? "en-US"
+    }
 
     // MARK: - In-Memory Cache for anime details (avoids re-fetching on back-navigation)
     private let animeDetailsCache = NSCache<NSNumber, AniListAnimeWithSeasonsWrapper>()
@@ -738,7 +878,8 @@ final class AniListService {
         let data = try await executeGraphQLQuery(query, token: nil)
         let decoded = try JSONDecoder().decode(CatalogResponse.self, from: data)
         let animeList = decoded.data.Page.media
-        return await mapAniListCatalogToTMDB(animeList, tmdbService: tmdbService)
+        let tmdbMap = await batchMapAniListToTMDB(animeList, tmdbService: tmdbService)
+        return animeList.compactMap { tmdbMap[$0.id] }
     }
 
     // MARK: - Airing Schedule
@@ -2155,12 +2296,26 @@ final class AniListService {
         }
 
         let langCode = self.preferredLanguageCode
+        let cacheLanguage = self.tmdbMatchCacheLanguage
 
-        return await withTaskGroup(of: (Int, TMDBSearchResult?).self) { group in
+        return await withTaskGroup(of: (Int, TMDBSearchResult?, AnimeTMDBMatchCacheRecord?).self) { group in
             for anime in animeList {
                 group.addTask {
                     let titleCandidates = AniListTitlePicker.titleCandidates(from: anime.title)
                     let expectedYear = anime.seasonYear
+                    let cacheKey = AnimeTMDBMatchCacheKey(
+                        source: .anilist,
+                        id: anime.id,
+                        language: cacheLanguage,
+                        titleCandidates: titleCandidates,
+                        expectedYear: expectedYear,
+                        format: anime.format
+                    )
+
+                    if let cached = await AnimeTMDBMatchCache.shared.lookup(cacheKey) {
+                        return (anime.id, cached.result, nil)
+                    }
+
                     var bestMatch: TMDBTVShow?
 
                     for candidate in titleCandidates where !candidate.isEmpty {
@@ -2216,16 +2371,22 @@ final class AniListService {
                         let aniTitle = AniListTitlePicker.title(from: anime.title, preferredLanguageCode: langCode)
                         Logger.shared.log("AniListService: Matched '\(aniTitle)' -> TMDB '\(bestMatch.name)' (ID: \(bestMatch.id))", type: "AniList")
                     }
-                    return (anime.id, bestMatch?.asSearchResult)
+                    let result = bestMatch?.asSearchResult
+                    return (anime.id, result, AnimeTMDBMatchCacheRecord(key: cacheKey, result: result))
                 }
             }
 
             var dict: [Int: TMDBSearchResult] = [:]
-            for await (anilistId, match) in group {
+            var cacheRecords: [AnimeTMDBMatchCacheRecord] = []
+            for await (anilistId, match, cacheRecord) in group {
                 if let match = match {
                     dict[anilistId] = match
                 }
+                if let cacheRecord {
+                    cacheRecords.append(cacheRecord)
+                }
             }
+            await AnimeTMDBMatchCache.shared.store(cacheRecords)
             return dict
         }
     }
@@ -3380,6 +3541,10 @@ private final class MALMetadataService {
 
     private init() {}
 
+    private var tmdbMatchCacheLanguage: String {
+        UserDefaults.standard.string(forKey: "tmdbLanguage") ?? "en-US"
+    }
+
     private var clientID: String {
         let raw = Bundle.main.object(forInfoDictionaryKey: "MALClientID") as? String ?? ""
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3761,33 +3926,57 @@ private final class MALMetadataService {
     }
 
     private func mapMALAnimeToTMDB(_ animeList: [MALAnimeDetails], tmdbService: TMDBService) async -> [Int: TMDBSearchResult] {
-        await withTaskGroup(of: (Int, TMDBSearchResult?).self) { group in
+        let cacheLanguage = tmdbMatchCacheLanguage
+
+        return await withTaskGroup(of: (Int, TMDBSearchResult?, AnimeTMDBMatchCacheRecord?).self) { group in
             for anime in animeList {
                 group.addTask {
                     let isMovie = self.aniListFormat(from: anime.mediaType) == "MOVIE"
                     let candidates = self.titleCandidates(for: anime)
                     let expectedYear = anime.startSeason?.year ?? anime.startDate.flatMap { Int(String($0.prefix(4))) }
+                    let format = self.aniListFormat(from: anime.mediaType)
+                    let cacheKey = AnimeTMDBMatchCacheKey(
+                        source: .myAnimeList,
+                        id: anime.id,
+                        language: cacheLanguage,
+                        titleCandidates: candidates,
+                        expectedYear: expectedYear,
+                        format: format
+                    )
+
+                    if let cached = await AnimeTMDBMatchCache.shared.lookup(cacheKey) {
+                        return (anime.id, cached.result, nil)
+                    }
+
+                    var result: TMDBSearchResult?
                     for candidate in candidates {
                         if isMovie,
                            let movies = try? await tmdbService.searchMovies(query: candidate),
                            let best = self.bestMovieMatch(results: movies, candidate: candidate, expectedYear: expectedYear) {
-                            return (anime.id, best.asSearchResult)
+                            result = best.asSearchResult
+                            break
                         }
                         if let shows = try? await tmdbService.searchTVShows(query: candidate),
                            let best = self.bestTVMatch(results: shows, candidate: candidate, expectedYear: expectedYear) {
-                            return (anime.id, best.asSearchResult)
+                            result = best.asSearchResult
+                            break
                         }
                     }
-                    return (anime.id, nil)
+                    return (anime.id, result, AnimeTMDBMatchCacheRecord(key: cacheKey, result: result))
                 }
             }
 
             var result: [Int: TMDBSearchResult] = [:]
-            for await (id, match) in group {
+            var cacheRecords: [AnimeTMDBMatchCacheRecord] = []
+            for await (id, match, cacheRecord) in group {
                 if let match {
                     result[id] = match
                 }
+                if let cacheRecord {
+                    cacheRecords.append(cacheRecord)
+                }
             }
+            await AnimeTMDBMatchCache.shared.store(cacheRecords)
             return result
         }
     }

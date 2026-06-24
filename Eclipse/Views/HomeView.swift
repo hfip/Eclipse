@@ -70,6 +70,8 @@ struct HomeView: View {
     @State private var heroCarouselDirection: HeroCarouselDirection = .forward
     @State private var selectedHeroForDetail: TMDBSearchResult?
     @State private var showingHeroDetail = false
+    @State private var heroLogoURL: String?
+    @State private var heroLogoIdentity: String?
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var trackerManager = TrackerManager.shared
     @State private var scrollOffset: CGFloat = 0
@@ -116,6 +118,22 @@ struct HomeView: View {
     private var currentHeroImageURL: String? {
         guard let hero = homeViewModel.heroContent else { return nil }
         return heroImageURL(for: hero)
+    }
+    private var heroLogoLoadKey: String {
+        "\(selectedLanguage)|\(homeViewModel.heroContent?.stableIdentity ?? "empty")"
+    }
+    private var heroLogoMaxWidth: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch
+            ? (isIPad ? 520 : 334)
+            : (isIPad ? 400 : 280)
+    }
+    private var heroLogoMaxHeight: CGFloat {
+        ExperimentalFeatureState.isEnabledAtLaunch
+            ? (isIPad ? 178 : 132)
+            : (isIPad ? 140 : 100)
+    }
+    private var heroLogoDecodeSize: CGSize {
+        homeImageDecodeSize(width: heroLogoMaxWidth, height: heroLogoMaxHeight)
     }
     private var designMetrics: ExperimentalMediaDesignMetrics {
         // Reading experimentalMediaCardScale here (not just relying on .current) keeps the
@@ -236,6 +254,9 @@ struct HomeView: View {
             if !homeViewModel.hasLoadedContent {
                 homeViewModel.loadContent(tmdbService: tmdbService, catalogManager: catalogManager, contentFilter: contentFilter)
             }
+        }
+        .task(id: heroLogoLoadKey) {
+            await loadHeroLogo(for: homeViewModel.heroContent, language: selectedLanguage)
         }
         .onDisappear {
             pendingHomeCatalogReloadTask?.cancel()
@@ -569,8 +590,7 @@ struct HomeView: View {
     private func experimentalHeroContent(_ hero: TMDBSearchResult) -> some View {
         VStack(alignment: .center, spacing: isIPad ? 13 : 10) {
             if experimentalHeroShouldShowTitle(hero) {
-                heroTitleText(hero)
-                    .font(.system(size: isIPad ? 48 : 35, weight: .heavy))
+                heroTitleArtwork(hero)
                     .padding(.horizontal, isIPad ? 90 : 24)
             }
 
@@ -646,7 +666,7 @@ struct HomeView: View {
                 }
             }
 
-            heroTitleText(hero)
+            heroTitleArtwork(hero)
 
             if let overview = hero.overview, !overview.isEmpty {
                 Text(String(overview.prefix(100)) + (overview.count > 100 ? "..." : ""))
@@ -758,7 +778,7 @@ struct HomeView: View {
     }
 
     private func experimentalHeroShouldShowTitle(_ hero: TMDBSearchResult) -> Bool {
-        hero.fullPosterURL == nil
+        currentHeroLogoURL(for: hero) != nil || hero.fullPosterURL == nil
     }
 
     private func heroOverview(_ hero: TMDBSearchResult) -> String? {
@@ -864,6 +884,29 @@ struct HomeView: View {
         10768: "War Politics",
         10770: "TV Movie"
     ]
+
+    @ViewBuilder
+    private func heroTitleArtwork(_ hero: TMDBSearchResult) -> some View {
+        if let logoURL = currentHeroLogoURL(for: hero) {
+            KFImage(URL(string: logoURL))
+                .setProcessor(DownsamplingImageProcessor(size: heroLogoDecodeSize))
+                .placeholder {
+                    heroTitleText(hero)
+                }
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: heroLogoMaxWidth, maxHeight: heroLogoMaxHeight)
+                .shadow(color: .black.opacity(0.55), radius: 8, x: 0, y: 4)
+                .accessibilityLabel(Text(hero.displayTitle))
+        } else {
+            heroTitleText(hero)
+        }
+    }
+
+    private func currentHeroLogoURL(for hero: TMDBSearchResult) -> String? {
+        guard heroLogoIdentity == hero.stableIdentity else { return nil }
+        return heroLogoURL
+    }
 
     @ViewBuilder
     private func heroTitleText(_ hero: TMDBSearchResult) -> some View {
@@ -1015,6 +1058,48 @@ struct HomeView: View {
             contentFilter: contentFilter,
             showLoading: showLoading
         )
+    }
+
+    private func loadHeroLogo(for hero: TMDBSearchResult?, language: String) async {
+        guard let hero else {
+            await MainActor.run {
+                heroLogoIdentity = nil
+                heroLogoURL = nil
+            }
+            return
+        }
+
+        let identity = hero.stableIdentity
+        await MainActor.run {
+            heroLogoIdentity = identity
+            heroLogoURL = nil
+        }
+
+        do {
+            let images = hero.isMovie
+                ? try await tmdbService.getMovieImages(id: hero.id, preferredLanguage: language)
+                : try await tmdbService.getTVShowImages(id: hero.id, preferredLanguage: language)
+            guard !Task.isCancelled else { return }
+            let logoURL = tmdbService.getBestLogo(from: images, preferredLanguage: language)?.fullURL
+            await MainActor.run {
+                guard homeViewModel.heroContent?.stableIdentity == identity,
+                      selectedLanguage == language else {
+                    return
+                }
+                heroLogoIdentity = identity
+                heroLogoURL = logoURL
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard homeViewModel.heroContent?.stableIdentity == identity,
+                      selectedLanguage == language else {
+                    return
+                }
+                heroLogoIdentity = identity
+                heroLogoURL = nil
+            }
+        }
     }
 
     private func scheduleHomeCatalogReloadIfNeeded() {

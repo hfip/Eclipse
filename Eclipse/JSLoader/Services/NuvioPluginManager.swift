@@ -25,6 +25,10 @@ final class NuvioPluginManager: ObservableObject {
         activeSources(for: nil)
     }
 
+    var installedSources: [NuvioPluginSource] {
+        installedSources(for: nil)
+    }
+
     private init() {
         load()
     }
@@ -161,17 +165,47 @@ final class NuvioPluginManager: ObservableObject {
     func activeSources(for type: String?) -> [NuvioPluginSource] {
         ensureLoaded()
         guard state.pluginsEnabled else { return [] }
-        let activeScrapers = state.scrapers.filter { scraper in
+        return sources(for: type, includeDisabled: false)
+    }
+
+    func installedSources(for type: String?) -> [NuvioPluginSource] {
+        ensureLoaded()
+        return sources(for: type, includeDisabled: true)
+    }
+
+    func isSourceEnabled(_ source: NuvioPluginSource) -> Bool {
+        ensureLoaded()
+        guard state.pluginsEnabled else { return false }
+        let scraperIds = Set(source.scrapers.map(\.id))
+        return state.scrapers.contains { scraper in
+            scraperIds.contains(scraper.id) &&
             scraper.enabled &&
             scraper.manifestEnabled &&
-            !scraper.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            (type.map(scraper.supportsType) ?? true)
+            !scraper.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        return NuvioPluginSupport.sourceGroups(
-            scrapers: activeScrapers,
-            repositories: state.repositories,
-            groupByRepository: state.groupStreamsByRepository
-        )
+    }
+
+    func canEnableSource(_ source: NuvioPluginSource) -> Bool {
+        source.scrapers.contains {
+            $0.manifestEnabled &&
+            !$0.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    func setSourceEnabled(_ source: NuvioPluginSource, enabled: Bool) {
+        ensureLoaded()
+        let scraperIds = Set(source.scrapers.map(\.id))
+        if enabled {
+            state.pluginsEnabled = true
+        }
+        state.scrapers = state.scrapers.map { scraper in
+            guard scraperIds.contains(scraper.id) else { return scraper }
+            var copy = scraper
+            copy.enabled = scraper.manifestEnabled && enabled
+            return copy
+        }
+        persist()
+        syncAutoModeSources()
     }
 
     func testScraper(_ scraperId: String) async throws -> [NuvioPluginStream] {
@@ -423,10 +457,23 @@ final class NuvioPluginManager: ObservableObject {
     }
 
     private func syncAutoModeSources() {
-        guard state.pluginsEnabled else { return }
-        for source in activeSources {
-            AutoModeSourceSelection.appendSourceIfNeeded(source.id)
+        AutoModeSourceSelection.syncPluginSources(
+            activeSourceIds: activeSources.map(\.id),
+            knownSourceIds: installedSources.map(\.id)
+        )
+    }
+
+    private func sources(for type: String?, includeDisabled: Bool) -> [NuvioPluginSource] {
+        let scrapers = state.scrapers.filter { scraper in
+            !scraper.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            (includeDisabled || (scraper.enabled && scraper.manifestEnabled)) &&
+            (type.map(scraper.supportsType) ?? true)
         }
+        return NuvioPluginSupport.sourceGroups(
+            scrapers: scrapers,
+            repositories: state.repositories,
+            groupByRepository: state.groupStreamsByRepository
+        )
     }
 
     static func normalizeManifestURL(_ rawURL: String) throws -> String {

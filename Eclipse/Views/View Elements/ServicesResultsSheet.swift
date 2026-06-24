@@ -306,14 +306,16 @@ struct ModulesSearchResultsSheet: View {
         if let context = effectivePlaybackContext, context.isSpecial {
             return context.resolvedTMDBSeasonNumber
         }
-        return originalTMDBSeasonNumber ?? (specialTitleOnlySearch ? nil : selectedEpisode?.seasonNumber)
+        guard !specialTitleOnlySearch else { return nil }
+        return effectivePlaybackContext?.resolvedTMDBSeasonNumber ?? originalTMDBSeasonNumber ?? selectedEpisode?.seasonNumber
     }
 
     private var streamLookupEpisodeNumber: Int? {
         if let context = effectivePlaybackContext, context.isSpecial {
             return context.resolvedTMDBEpisodeNumber
         }
-        return originalTMDBEpisodeNumber ?? (specialTitleOnlySearch ? nil : selectedEpisode?.episodeNumber)
+        guard !specialTitleOnlySearch else { return nil }
+        return effectivePlaybackContext?.resolvedTMDBEpisodeNumber ?? originalTMDBEpisodeNumber ?? selectedEpisode?.episodeNumber
     }
 
     private var stremioLookupAniListId: Int? {
@@ -3475,7 +3477,7 @@ struct ModulesSearchResultsSheet: View {
             return bundledMatch.href
         }
 
-        if let singleSeasonMatch = findSingleSeasonAnimeEpisodeHref(seasons: seasons, episodeNumber: episodeNumber) {
+        if let singleSeasonMatch = findSingleSeasonAnimeEpisodeHref(seasons: seasons, seasonIndex: seasonIndex, episodeNumber: episodeNumber) {
             Logger.shared.log("Auto-resolved season-local anime episode \(episodeNumber) from single-season source list", type: "Stream")
             return singleSeasonMatch
         }
@@ -3508,18 +3510,21 @@ struct ModulesSearchResultsSheet: View {
         return stats.maxNumber > seasonEpisodeCount
     }
 
-    private func findSingleSeasonAnimeEpisodeHref(seasons: [[EpisodeLink]], episodeNumber: Int) -> String? {
+    private func findSingleSeasonAnimeEpisodeHref(seasons: [[EpisodeLink]], seasonIndex: Int, episodeNumber: Int) -> String? {
         guard effectivePlaybackContext?.isSpecial != true,
               hasAnimeLookupContext,
-              let seasonEpisodeCount = effectivePlaybackContext?.animeSeasonEpisodeCount,
-              seasonEpisodeCount > 0 else {
+              seasons.count == 1,
+              seasonIndex > 0 else {
             return nil
         }
 
         let stats = sourceEpisodeListStats(seasons: seasons)
-        guard stats.count <= seasonEpisodeCount,
-              stats.maxNumber <= seasonEpisodeCount else {
-            return nil
+        if let seasonEpisodeCount = effectivePlaybackContext?.animeSeasonEpisodeCount,
+           seasonEpisodeCount > 0 {
+            guard stats.count <= seasonEpisodeCount,
+                  stats.maxNumber <= seasonEpisodeCount else {
+                return nil
+            }
         }
 
         let matches = seasons.flatMap { $0 }.filter { $0.number == episodeNumber }

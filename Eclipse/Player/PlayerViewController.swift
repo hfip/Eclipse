@@ -1254,6 +1254,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var nextEpisodePreview: PlayerEpisodeBrowserItem?
     private var nextEpisodePreviewKey: String?
     private var experimentalStagedNextEpisodeKey: String?
+    private var nextEpisodeStagingRetryAfterByKey: [String: Date] = [:]
+    private let nextEpisodeStagingRetryDelay: TimeInterval = 8
     /// A fully-resolved playback request for the next episode, captured during staging so the
     /// "Next" tap can skip the redundant async source re-resolution and load straight from the
     /// warmed cache. Keyed by the same current-episode key as `experimentalStagedNextEpisodeKey`.
@@ -4863,6 +4865,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         nextEpisodePreview = nil
         nextEpisodePreviewKey = nil
         experimentalStagedNextEpisodeKey = nil
+        nextEpisodeStagingRetryAfterByKey.removeAll()
         stagedNextEpisodeRequest = nil
         stagedNextEpisodeRequestKey = nil
         nextEpisodePreviewUnavailableKeys.removeAll()
@@ -5675,6 +5678,21 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         return "\(showId):\(seasonNumber):\(episodeNumber)"
     }
 
+    private func hasStagedNextEpisodeRequest(for key: String) -> Bool {
+        stagedNextEpisodeRequestKey == key && stagedNextEpisodeRequest != nil
+    }
+
+    private func markNextEpisodeStagingAttemptSkipped(key: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard !self.hasStagedNextEpisodeRequest(for: key) else { return }
+            if self.experimentalStagedNextEpisodeKey == key {
+                self.experimentalStagedNextEpisodeKey = nil
+            }
+            self.nextEpisodeStagingRetryAfterByKey[key] = Date().addingTimeInterval(self.nextEpisodeStagingRetryDelay)
+        }
+    }
+
     private var shouldUsePosterNextEpisodeButton: Bool {
         UserDefaults.standard.bool(forKey: "showNextEpisodePosterButton")
     }
@@ -5705,7 +5723,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 self.nextEpisodePreview = nil
                 self.nextEpisodePreviewKey = nil
                 self.nextEpisodePreviewUnavailableKeys.insert(key)
-                self.hideNextEpisodeButton()
+                if self.hasStagedNextEpisodeRequest(for: key) {
+                    self.applyTextNextEpisodeButton()
+                } else {
+                    self.hideNextEpisodeButton()
+                }
             }
         }
     }
@@ -5934,7 +5956,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         )
         if progress >= threshold, !nextEpisodeButtonShown {
             resolveNextEpisodePreviewIfNeeded(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
-            if nextEpisodePreviewUnavailableKeys.contains(previewKey) {
+            if nextEpisodePreviewUnavailableKeys.contains(previewKey),
+               !hasStagedNextEpisodeRequest(for: previewKey) {
                 hideNextEpisodeButton()
                 return
             }
@@ -5944,7 +5967,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             hideNextEpisodeButton()
         } else if progress >= threshold, nextEpisodeButtonShown {
             resolveNextEpisodePreviewIfNeeded(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
-            if nextEpisodePreviewUnavailableKeys.contains(previewKey) {
+            if nextEpisodePreviewUnavailableKeys.contains(previewKey),
+               !hasStagedNextEpisodeRequest(for: previewKey) {
                 hideNextEpisodeButton()
             } else {
                 applyNextEpisodeButtonAppearance()
@@ -6081,6 +6105,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard progress >= stageThreshold else { return }
 
         let key = nextEpisodeKey(seasonNumber: seasonNumber, episodeNumber: episodeNumber)
+        if let retryAfter = nextEpisodeStagingRetryAfterByKey[key], retryAfter > Date() {
+            return
+        }
+        nextEpisodeStagingRetryAfterByKey[key] = nil
         guard experimentalStagedNextEpisodeKey != key else { return }
         experimentalStagedNextEpisodeKey = key
 
@@ -6095,7 +6123,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             showId: showId,
             currentSeasonNumber: seasonNumber,
             currentEpisodeNumber: episodeNumber,
-            nextEpisodeNumber: nextEpisodeNumber
+            nextEpisodeNumber: nextEpisodeNumber,
+            attemptKey: key
         )
     }
 
@@ -6105,12 +6134,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         showId: Int,
         currentSeasonNumber: Int,
         currentEpisodeNumber: Int,
-        nextEpisodeNumber: Int
+        nextEpisodeNumber: Int,
+        attemptKey: String
     ) {
         // Only when the MoltenVK MPV warmup path is actually usable and both toggles are on.
         guard ExperimentalFeatureState.mpvAdvancedPlaybackUnavailableReason == nil,
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvPreloadEnabledKey),
               UserDefaults.standard.bool(forKey: ExperimentalFeatureState.mpvSmoothTransitionEnabledKey) else {
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6121,6 +6152,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
               processInfo.thermalState != .serious,
               processInfo.thermalState != .critical else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=power-or-thermal show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6128,6 +6160,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // user's manual server/quality choice, so skip to avoid warming the wrong URL.
         guard UserDefaults.standard.bool(forKey: "servicesAutoModeEnabled") else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=auto-mode-off show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6136,6 +6169,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if case .episode(_, _, _, _, _, let isAnime)? = mediaInfo, isAnime,
            PerformanceModeSettings.skipsAniListTraversalForAnimeDetails {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=anilist-traversal-disabled show=\(showId)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6146,19 +6180,22 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 showId: showId,
                 currentSeasonNumber: currentSeasonNumber,
                 currentEpisodeNumber: currentEpisodeNumber,
-                nextEpisodeNumber: nextEpisodeNumber
+                nextEpisodeNumber: nextEpisodeNumber,
+                attemptKey: attemptKey
             )
         case .plugin:
             prewarmNextEpisodeViaPlugin(
                 showId: showId,
                 currentSeasonNumber: currentSeasonNumber,
-                nextEpisodeNumber: nextEpisodeNumber
+                nextEpisodeNumber: nextEpisodeNumber,
+                attemptKey: attemptKey
             )
         case .stremio:
             prewarmNextEpisodeViaStremio(
                 showId: showId,
                 currentSeasonNumber: currentSeasonNumber,
-                nextEpisodeNumber: nextEpisodeNumber
+                nextEpisodeNumber: nextEpisodeNumber,
+                attemptKey: attemptKey
             )
         }
     }
@@ -6209,6 +6246,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         guard case .episode(let showId, let currentSeason, let currentEpisode, let showTitle, let posterURL, let isAnime) = mediaInfo else { return }
         let key = nextEpisodeKey(seasonNumber: currentSeason, episodeNumber: currentEpisode)
         guard experimentalStagedNextEpisodeKey == key else { return }
+        nextEpisodeStagingRetryAfterByKey[key] = nil
         let preset = initialPreset ?? PlayerPreset.presets.first ?? PlayerPreset(id: .sdrRec709, title: "Default", summary: "", stream: nil, commands: [])
         let nextMediaInfo = MediaInfo.episode(
             showId: showId,
@@ -6244,7 +6282,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         showId: Int,
         currentSeasonNumber: Int,
         currentEpisodeNumber: Int,
-        nextEpisodeNumber: Int
+        nextEpisodeNumber: Int,
+        attemptKey: String
     ) {
         // Reuse the exact source + show page the CURRENT episode was played from.
         guard let entry = ProgressManager.shared.findEpisode(showId: showId, season: currentSeasonNumber, episode: currentEpisodeNumber),
@@ -6252,31 +6291,45 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
               let showHref = entry.lastHref, !showHref.isEmpty,
               let service = ServiceManager.shared.activeServices.first(where: { $0.id == serviceId }) else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=no-recorded-service show=\(showId) S\(currentSeasonNumber)E\(currentEpisodeNumber)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
         Logger.shared.log("[PlayerVC.MPV] next-episode prewarm resolving (service) show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber) source=\(service.metadata.sourceName)", type: "MPV")
 
+        let isAnime = isAnimeContent()
+        let lookup = nextEpisodeLookupNumbers(currentSeasonNumber: currentSeasonNumber, nextEpisodeNumber: nextEpisodeNumber)
+        let nextContext = lookup?.context ?? episodePlaybackContext?.forEpisodeNumber(nextEpisodeNumber)
+        let lookupSeason = lookup?.season ?? nextContext?.resolvedTMDBSeasonNumber ?? currentSeasonNumber
+        let lookupEpisode = lookup?.episode ?? nextContext?.resolvedTMDBEpisodeNumber ?? nextEpisodeNumber
         let jsController = JSController()
         jsController.loadScript(service.jsScript, service: service)
         jsController.fetchEpisodesJS(url: showHref, module: service) { episodes in
             guard let nextHref = PlayerViewController.nextEpisodeHref(
                 episodes: episodes,
                 seasonNumber: currentSeasonNumber,
-                episodeNumber: nextEpisodeNumber
+                episodeNumber: nextEpisodeNumber,
+                context: nextContext,
+                resolvedSeasonNumber: lookupSeason,
+                resolvedEpisodeNumber: lookupEpisode,
+                isAnime: isAnime
             ) else {
                 Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=next-href-not-found show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                self.markNextEpisodeStagingAttemptSkipped(key: attemptKey)
                 return
             }
 
             jsController.fetchStreamUrlJS(episodeUrl: nextHref, module: service) { result in
                 guard let resolved = PlayerViewController.selectPrewarmStream(streams: result.streams, sources: result.sources) else {
                     Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=ambiguous-or-no-stream show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                    self.markNextEpisodeStagingAttemptSkipped(key: attemptKey)
                     return
                 }
                 guard let streamURL = URL(string: resolved.url),
                       let scheme = streamURL.scheme?.lowercased(),
                       scheme == "http" || scheme == "https" else {
+                    Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=invalid-stream-url show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                    self.markNextEpisodeStagingAttemptSkipped(key: attemptKey)
                     return
                 }
 
@@ -6289,7 +6342,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    self.stashStagedNextEpisodeRequest(streamURL: streamURL, headers: finalHeaders, tmdbSeason: currentSeasonNumber, tmdbEpisode: nextEpisodeNumber, context: self.episodePlaybackContext?.forEpisodeNumber(nextEpisodeNumber))
+                    self.stashStagedNextEpisodeRequest(streamURL: streamURL, headers: finalHeaders, tmdbSeason: lookupSeason, tmdbEpisode: lookupEpisode, context: nextContext)
                 }
             }
         }
@@ -6300,11 +6353,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func prewarmNextEpisodeViaPlugin(
         showId: Int,
         currentSeasonNumber: Int,
-        nextEpisodeNumber: Int
+        nextEpisodeNumber: Int,
+        attemptKey: String
     ) {
         guard let sourceId = playbackLaunchContext?.sourceId,
               let source = NuvioPluginManager.shared.activeSources(for: "tv").first(where: { SourceHealth.pluginId($0) == sourceId }) else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=no-plugin-source show=\(showId)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6312,6 +6367,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         // remapped numbers. nil means anime-without-context or an unmappable special to skip.
         guard let lookup = nextEpisodeLookupNumbers(currentSeasonNumber: currentSeasonNumber, nextEpisodeNumber: nextEpisodeNumber) else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=plugin-no-episode-mapping show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6339,6 +6395,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                   let scheme = streamURL.scheme?.lowercased(),
                   scheme == "http" || scheme == "https" else {
                 Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=plugin-no-usable-stream show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                self.markNextEpisodeStagingAttemptSkipped(key: attemptKey)
                 return
             }
 
@@ -6360,16 +6417,19 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func prewarmNextEpisodeViaStremio(
         showId: Int,
         currentSeasonNumber: Int,
-        nextEpisodeNumber: Int
+        nextEpisodeNumber: Int,
+        attemptKey: String
     ) {
         guard let sourceId = playbackLaunchContext?.sourceId,
               let addon = StremioAddonManager.shared.activeStreamAddons.first(where: { SourceHealth.stremioId($0) == sourceId }) else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=no-stremio-addon show=\(showId)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
         guard let lookup = nextEpisodeLookupNumbers(currentSeasonNumber: currentSeasonNumber, nextEpisodeNumber: nextEpisodeNumber) else {
             Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=stremio-no-episode-mapping show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+            markNextEpisodeStagingAttemptSkipped(key: attemptKey)
             return
         }
 
@@ -6403,6 +6463,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                   let scheme = streamURL.scheme?.lowercased(),
                   scheme == "http" || scheme == "https" else {
                 Logger.shared.log("[PlayerVC.MPV] next-episode prewarm skipped reason=stremio-no-usable-stream show=\(showId) S\(currentSeasonNumber)E\(nextEpisodeNumber)", type: "MPV")
+                self.markNextEpisodeStagingAttemptSkipped(key: attemptKey)
                 return
             }
 
@@ -6419,10 +6480,17 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
     }
 
-    /// Finds the href for (seasonNumber, episodeNumber) within a flat episode list, mirroring
-    /// `ServicesResultsSheet.parseSeasons` + the exact-match branch of `findEpisodeHref` so the
-    /// resolved href matches the normal flow. Returns nil unless there is an exact match.
-    private static func nextEpisodeHref(episodes: [EpisodeLink], seasonNumber: Int, episodeNumber: Int) -> String? {
+    /// Finds the href for the next episode within a flat service episode list. This mirrors the
+    /// normal sheet's exact match first, then its anime absolute/bundled and single-season fallbacks.
+    private static func nextEpisodeHref(
+        episodes: [EpisodeLink],
+        seasonNumber: Int,
+        episodeNumber: Int,
+        context: EpisodePlaybackContext?,
+        resolvedSeasonNumber: Int?,
+        resolvedEpisodeNumber: Int?,
+        isAnime: Bool
+    ) -> String? {
         guard !episodes.isEmpty else { return nil }
 
         var seasons: [[EpisodeLink]] = []
@@ -6442,11 +6510,82 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
            let match = seasons[index].first(where: { $0.number == episodeNumber }) {
             return match.href
         }
-        // One-season sources expose a single flat list.
-        if seasons.count <= 1, let match = episodes.first(where: { $0.number == episodeNumber }) {
+        guard isAnime,
+              let context,
+              !context.isSpecial,
+              let seasonEpisodeCount = context.animeSeasonEpisodeCount,
+              seasonEpisodeCount > 0 else {
+            // Non-anime and anime-without-context sources can still use a simple flat list.
+            if seasons.count <= 1, let match = episodes.first(where: { $0.number == episodeNumber }) {
+                return match.href
+            }
+            return nil
+        }
+
+        let stats = sourceEpisodeListStats(episodes)
+        if stats.maxNumber > seasonEpisodeCount {
+            let candidates = nextEpisodeBundledNumberCandidates(
+                context: context,
+                resolvedSeasonNumber: resolvedSeasonNumber,
+                resolvedEpisodeNumber: resolvedEpisodeNumber,
+                localEpisodeNumber: episodeNumber
+            )
+            if let bundled = firstUniqueEpisodeHref(episodes: episodes, numbers: candidates) {
+                return bundled
+            }
+        }
+
+        if stats.count <= seasonEpisodeCount,
+           stats.maxNumber <= seasonEpisodeCount,
+           let singleSeason = uniqueEpisodeHref(episodes: episodes, number: episodeNumber) {
+            return singleSeason
+        }
+
+        if seasonNumber <= 1,
+           let match = episodes.first(where: { $0.number == episodeNumber }) {
             return match.href
         }
         return nil
+    }
+
+    private static func sourceEpisodeListStats(_ episodes: [EpisodeLink]) -> (count: Int, maxNumber: Int) {
+        let numbers = episodes.map(\.number)
+        return (numbers.count, numbers.max() ?? 0)
+    }
+
+    private static func nextEpisodeBundledNumberCandidates(
+        context: EpisodePlaybackContext,
+        resolvedSeasonNumber: Int?,
+        resolvedEpisodeNumber: Int?,
+        localEpisodeNumber: Int
+    ) -> [Int] {
+        var numbers: [Int] = []
+        if let absoluteEpisode = context.animeAbsoluteEpisodeNumber {
+            numbers.append(absoluteEpisode)
+        }
+        if resolvedSeasonNumber == 1, let resolvedEpisodeNumber {
+            numbers.append(resolvedEpisodeNumber)
+        }
+
+        var seen = Set<Int>()
+        return numbers
+            .filter { $0 > 0 && $0 != localEpisodeNumber }
+            .filter { seen.insert($0).inserted }
+    }
+
+    private static func firstUniqueEpisodeHref(episodes: [EpisodeLink], numbers: [Int]) -> String? {
+        for number in numbers {
+            if let href = uniqueEpisodeHref(episodes: episodes, number: number) {
+                return href
+            }
+        }
+        return nil
+    }
+
+    private static func uniqueEpisodeHref(episodes: [EpisodeLink], number: Int) -> String? {
+        let matches = episodes.filter { $0.number == number }
+        guard matches.count == 1 else { return nil }
+        return matches.first?.href
     }
 
     /// Selects which stream URL to warm.

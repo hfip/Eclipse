@@ -50,11 +50,17 @@ final class CloudflareBypassManager: ObservableObject {
               let entry = cachedEntry(for: host) else { return }
 
         let existingCookie = request.value(forHTTPHeaderField: "Cookie") ?? ""
-        request.setValue(mergeCookieHeaders(existingCookie, entry.cookieHeader), forHTTPHeaderField: "Cookie")
+        let mergedCookie = mergeCookieHeaders(existingCookie, entry.cookieHeader)
+        request.setValue(mergedCookie, forHTTPHeaderField: "Cookie")
 
         if !entry.userAgent.isEmpty {
             request.setValue(entry.userAgent, forHTTPHeaderField: "User-Agent")
         }
+
+        Logger.shared.log(
+            "CloudflareBypass: applied cached session host=\(host) cachedCookies=\(cookiePairCount(in: entry.cookieHeader)) mergedWithExisting=\(!existingCookie.isEmpty) userAgent=\(!entry.userAgent.isEmpty)",
+            type: "Service"
+        )
     }
 
     func headersByApplyingCachedBypass(_ headers: [String: String], for url: URL) -> [String: String] {
@@ -88,6 +94,10 @@ final class CloudflareBypassManager: ObservableObject {
         lock.unlock()
 
         persistCache()
+        Logger.shared.log(
+            "CloudflareBypass: stored solved session host=\(normalizedHost) cookies=\(cookiePairCount(in: cookieHeader)) userAgent=\(!userAgent.isEmpty) ttlSeconds=3600",
+            type: "Service"
+        )
         NotificationCenter.default.post(name: .cloudflareBypassSolved, object: normalizedHost)
     }
 
@@ -96,6 +106,10 @@ final class CloudflareBypassManager: ObservableObject {
         guard let host = normalizedHost(from: url) else { return }
         removeCachedEntry(for: host)
         pendingVerificationURL = url
+        Logger.shared.log(
+            "CloudflareBypass: pending manual verification host=\(host)",
+            type: "Service"
+        )
     }
 
     func recoverChallengedRequest(
@@ -105,6 +119,11 @@ final class CloudflareBypassManager: ObservableObject {
         extraHeaders: [String: String],
         allowRedirects: Bool
     ) async -> (data: Data, response: HTTPURLResponse)? {
+        Logger.shared.log(
+            "CloudflareBypass: recovery requested host=\(redactedHost(url)) method=\(method) bodyBytes=\(body?.count ?? 0) extraHeaders=\(extraHeaders.count) redirects=\(allowRedirects)",
+            type: "Service"
+        )
+
         if let recovered = await retryWithSolvedSession(
             for: url,
             method: method,
@@ -112,14 +131,22 @@ final class CloudflareBypassManager: ObservableObject {
             extraHeaders: extraHeaders,
             allowRedirects: allowRedirects
         ) {
+            Logger.shared.log(
+                "CloudflareBypass: recovered with existing solved session host=\(redactedHost(url)) status=\(recovered.response.statusCode) bytes=\(recovered.data.count)",
+                type: "Service"
+            )
             return recovered
         }
 
+        Logger.shared.log(
+            "CloudflareBypass: opening verification flow host=\(redactedHost(url))",
+            type: "Service"
+        )
         do {
             try await triggerBypass(for: url)
         } catch {
             await flagPendingVerification(for: url)
-            Logger.shared.log("Cloudflare verification failed for \(redactedHost(url)): \(error)", type: "Error")
+            Logger.shared.log("CloudflareBypass: verification failed host=\(redactedHost(url)) error=\(error)", type: "Error")
             return nil
         }
 
@@ -133,6 +160,15 @@ final class CloudflareBypassManager: ObservableObject {
 
         if recovered == nil {
             await flagPendingVerification(for: url)
+            Logger.shared.log(
+                "CloudflareBypass: recovery unavailable after verification host=\(redactedHost(url))",
+                type: "Service"
+            )
+        } else if let recovered {
+            Logger.shared.log(
+                "CloudflareBypass: recovered after verification host=\(redactedHost(url)) status=\(recovered.response.statusCode) bytes=\(recovered.data.count)",
+                type: "Service"
+            )
         }
         return recovered
     }
@@ -144,18 +180,29 @@ final class CloudflareBypassManager: ObservableObject {
         extraHeaders: [String: String],
         allowRedirects: Bool
     ) async -> (data: Data, response: HTTPURLResponse)? {
-        guard let host = normalizedHost(from: url) else { return nil }
+        guard let host = normalizedHost(from: url) else {
+            Logger.shared.log("CloudflareBypass: retry skipped because URL has no host", type: "Service")
+            return nil
+        }
 
-        let sessionInfo: (cookieHeader: String, userAgent: String)?
+        let sessionInfo: (cookieHeader: String, userAgent: String, source: String)?
         if let liveInfo = await liveBypassSessionInfo(for: host) {
-            sessionInfo = liveInfo
+            sessionInfo = (liveInfo.cookieHeader, liveInfo.userAgent, "liveWebView")
         } else if let entry = cachedEntry(for: host) {
-            sessionInfo = (entry.cookieHeader, entry.userAgent)
+            sessionInfo = (entry.cookieHeader, entry.userAgent, "cache")
         } else {
             sessionInfo = nil
         }
 
-        guard let sessionInfo, !sessionInfo.cookieHeader.isEmpty else { return nil }
+        guard let sessionInfo, !sessionInfo.cookieHeader.isEmpty else {
+            Logger.shared.log("CloudflareBypass: no solved session available host=\(host)", type: "Service")
+            return nil
+        }
+
+        Logger.shared.log(
+            "CloudflareBypass: retrying challenged request host=\(host) source=\(sessionInfo.source) method=\(method) bodyBytes=\(body?.count ?? 0) cookies=\(cookiePairCount(in: sessionInfo.cookieHeader)) redirects=\(allowRedirects)",
+            type: "Service"
+        )
 
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -181,12 +228,19 @@ final class CloudflareBypassManager: ObservableObject {
                 headers: Self.headersDictionary(from: httpResponse)
             ) {
                 removeCachedEntry(for: host)
+                Logger.shared.log(
+                    "CloudflareBypass: solved session still challenged host=\(host) status=\(httpResponse.statusCode); cache cleared",
+                    type: "Service"
+                )
                 return nil
             }
-            Logger.shared.log("Cloudflare session recovered \(redactedHost(url)) status=\(httpResponse.statusCode)", type: "Service")
+            Logger.shared.log(
+                "CloudflareBypass: session retry succeeded host=\(redactedHost(url)) source=\(sessionInfo.source) status=\(httpResponse.statusCode) bytes=\(data.count)",
+                type: "Service"
+            )
             return (data, httpResponse)
         } catch {
-            Logger.shared.log("Cloudflare session retry failed for \(redactedHost(url)): \(error.localizedDescription)", type: "Error")
+            Logger.shared.log("CloudflareBypass: session retry failed host=\(redactedHost(url)) error=\(error.localizedDescription)", type: "Error")
             return nil
         }
     }
@@ -194,13 +248,18 @@ final class CloudflareBypassManager: ObservableObject {
     @MainActor
     func triggerBypass(for url: URL) async throws {
         guard let host = normalizedHost(from: url) else { return }
-        if cachedEntry(for: host) != nil { return }
+        if cachedEntry(for: host) != nil {
+            Logger.shared.log("CloudflareBypass: verification skipped because cache exists host=\(host)", type: "Service")
+            return
+        }
 
         if inProgressHosts.contains(host) {
+            Logger.shared.log("CloudflareBypass: verification already in progress; waiting host=\(host)", type: "Service")
             for _ in 0..<120 {
                 try? await Task.sleep(nanoseconds: 250_000_000)
                 if !inProgressHosts.contains(host) { return }
             }
+            Logger.shared.log("CloudflareBypass: verification wait timed out host=\(host)", type: "Service")
             return
         }
 
@@ -209,7 +268,7 @@ final class CloudflareBypassManager: ObservableObject {
 
         let webView = makeBypassWebView()
         let rootURL = URL(string: "\(url.scheme ?? "https")://\(host)/") ?? url
-        Logger.shared.log("Cloudflare verification opened for \(host)", type: "Service")
+        Logger.shared.log("CloudflareBypass: verification web view opened host=\(host)", type: "Service")
 
         activeBypassWebView = webView
         #if os(iOS)
@@ -223,28 +282,42 @@ final class CloudflareBypassManager: ObservableObject {
         }
 
         webView.load(URLRequest(url: rootURL))
+        Logger.shared.log("CloudflareBypass: verification web view loading host=\(host) root=\(rootURL.scheme ?? "https")://\(host)/", type: "Service")
 
         for _ in 0..<60 {
             try await Task.sleep(nanoseconds: 500_000_000)
-            guard activeBypassWebView != nil else { return }
+            guard activeBypassWebView != nil else {
+                Logger.shared.log("CloudflareBypass: verification cancelled host=\(host)", type: "Service")
+                return
+            }
             if let cookieHeader = await allCookiesHeader(for: host, in: webView),
                cookieHeader.lowercased().contains("cf_clearance=") {
                 let userAgent = await userAgent(for: webView)
+                Logger.shared.log(
+                    "CloudflareBypass: clearance cookie observed host=\(host) cookies=\(cookiePairCount(in: cookieHeader)) userAgent=\(!userAgent.isEmpty)",
+                    type: "Service"
+                )
                 store(cookieHeader: cookieHeader, userAgent: userAgent, for: host)
                 bypassWebViews[host] = webView
                 if pendingVerificationURL?.host?.lowercased() == host {
                     pendingVerificationURL = nil
                 }
-                Logger.shared.log("Cloudflare verification solved for \(host)", type: "Service")
+                Logger.shared.log("CloudflareBypass: verification solved host=\(host)", type: "Service")
                 return
             }
         }
 
+        Logger.shared.log("CloudflareBypass: verification timed out host=\(host)", type: "Service")
         throw CloudflareBypassError.timeout
     }
 
     @MainActor
     func cancelActiveBypass() {
+        if let host = activeBypassWebView?.url?.host?.lowercased() ?? pendingVerificationURL?.host?.lowercased() {
+            Logger.shared.log("CloudflareBypass: user cancelled verification host=\(host)", type: "Service")
+        } else {
+            Logger.shared.log("CloudflareBypass: user cancelled verification", type: "Service")
+        }
         activeBypassWebView = nil
     }
 
@@ -291,6 +364,10 @@ final class CloudflareBypassManager: ObservableObject {
             }
             store(cookieHeader: cookieHeader, userAgent: resolvedUserAgent, for: host)
             bypassWebViews[host] = webView
+            Logger.shared.log(
+                "CloudflareBypass: captured solved cookies from web view host=\(host) cookies=\(cookiePairCount(in: cookieHeader)) userAgent=\(!resolvedUserAgent.isEmpty)",
+                type: "Service"
+            )
         }
     }
 
@@ -301,6 +378,7 @@ final class CloudflareBypassManager: ObservableObject {
             cache.removeValue(forKey: host)
             lock.unlock()
             persistCache()
+            Logger.shared.log("CloudflareBypass: cached session expired host=\(host)", type: "Service")
             return nil
         }
         lock.unlock()
@@ -311,7 +389,10 @@ final class CloudflareBypassManager: ObservableObject {
         lock.lock()
         let removed = cache.removeValue(forKey: host) != nil
         lock.unlock()
-        if removed { persistCache() }
+        if removed {
+            persistCache()
+            Logger.shared.log("CloudflareBypass: removed cached session host=\(host)", type: "Service")
+        }
     }
 
     private func persistCache() {
@@ -330,6 +411,7 @@ final class CloudflareBypassManager: ObservableObject {
         guard let data = UserDefaults.standard.data(forKey: Keys.persistedCache),
               let decoded = try? JSONDecoder().decode([String: CachedBypass].self, from: data) else { return }
         cache = decoded.filter { $0.value.expires > Date() }
+        Logger.shared.log("CloudflareBypass: loaded persisted sessions count=\(cache.count)", type: "Service")
     }
 
     @MainActor
@@ -414,6 +496,10 @@ final class CloudflareBypassManager: ObservableObject {
             guard pieces.count == 2, !pieces[0].isEmpty else { return nil }
             return (name: pieces[0], value: pieces[1])
         }
+    }
+
+    private func cookiePairCount(in header: String) -> Int {
+        cookiePairs(from: header).count
     }
 
     private func redactedHost(_ url: URL) -> String {

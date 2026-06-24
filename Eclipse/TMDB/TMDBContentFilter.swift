@@ -13,6 +13,22 @@ class TMDBContentFilter: ObservableObject {
     private let explicitCatalogTitleDenylist: Set<String> = [
         "overflow"
     ]
+    private let adultAnimeMetadataDenylist: Set<String> = [
+        "adult animation",
+        "adult anime",
+        "ecchi",
+        "erotica",
+        "erotic",
+        "explicit sexual",
+        "hentai",
+        "pornographic",
+        "pornography",
+        "r 18",
+        "r18",
+        "sexually explicit",
+        "softcore",
+        "uncensored"
+    ]
     
     private init() {
         self.filterHorror = UserDefaults.standard.bool(forKey: "filterHorror")
@@ -23,6 +39,12 @@ class TMDBContentFilter: ObservableObject {
     func filterSearchResults(_ results: [TMDBSearchResult]) -> [TMDBSearchResult] {
         return results.filter { result in
             shouldIncludeCatalogResult(result)
+        }
+    }
+
+    func filterFastAnimeSearchResults(_ results: [TMDBSearchResult]) -> [TMDBSearchResult] {
+        return results.filter { result in
+            shouldIncludeCatalogResult(result) && shouldIncludeFastAnimeResult(result)
         }
     }
     
@@ -48,13 +70,29 @@ class TMDBContentFilter: ObservableObject {
         return shouldIncludeContent(genreIds: result.genreIds)
     }
 
+    private func shouldIncludeFastAnimeResult(_ result: TMDBSearchResult) -> Bool {
+        let metadataText = [result.displayTitle, result.overview ?? ""].joined(separator: " ")
+        return !containsBlockedCatalogText(metadataText, blockedTerms: adultAnimeMetadataDenylist)
+    }
+
     private func shouldIncludeCatalogTitle(_ title: String) -> Bool {
-        let normalized = title
+        let normalized = normalizedCatalogText(title)
+        return !explicitCatalogTitleDenylist.contains(normalized)
+    }
+
+    private func containsBlockedCatalogText(_ text: String, blockedTerms: Set<String>) -> Bool {
+        let normalized = " \(normalizedCatalogText(text)) "
+        return blockedTerms.contains { term in
+            normalized.contains(" \(term) ")
+        }
+    }
+
+    private func normalizedCatalogText(_ text: String) -> String {
+        text
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        return !explicitCatalogTitleDenylist.contains(normalized)
     }
     
     private func shouldIncludeContent(genreIds: [Int]?) -> Bool {
