@@ -468,6 +468,10 @@ final class CloudflareBypassManager: ObservableObject {
                 httpVersion: nil,
                 headerFields: ["Content-Type": "text/html; charset=utf-8"]
                ) {
+                Logger.shared.log(
+                    "CloudflareBypass: browser document accepted host=\(host) readyState=\(readyState) url=\(Self.redactedURL(currentURL?.absoluteString ?? "nil")) bytes=\(bodyBytes) markers=\(browserDocumentMarkerSummary(html))",
+                    type: "Service"
+                )
                 return (data, response)
             }
 
@@ -495,7 +499,6 @@ final class CloudflareBypassManager: ObservableObject {
             || lowerHTML.contains("<source")
             || lowerHTML.contains("<iframe")
             || lowerHTML.contains("data-src")
-            || lowerHTML.contains("stream")
     }
 
     private func browserDocumentMarkerSummary(_ html: String) -> String {
