@@ -2150,9 +2150,15 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
     private func disarmMPVPictureInPictureRestartAfterStop(reason: String) {
         let appState = UIApplication.shared.applicationState
+        if appState == .active {
+            cancelMPVPictureInPictureStartRequests(reason: reason)
+            pipController?.setCanStartPictureInPictureAutomaticallyFromInline(false)
+            clearMPVAppExitPictureInPictureSuppression(reason: "\(reason)-active-stop")
+            logPictureInPicture("MPV PiP restart disarmed after stop reason=\(reason) appState=active -> app-exit-ready")
+            return
+        }
+
         logPictureInPicture("MPV PiP restart disarmed after stop reason=\(reason) appState=\(applicationStateDescription(appState)) -> suppress-until-foreground")
-        // Drop automatic-from-inline AND suppress the custom app-exit auto-PiP until the app genuinely returns to the
-        // foreground.
         suppressMPVAppExitPictureInPictureUntilForeground(reason: "\(reason)-\(applicationStateDescription(appState))")
     }
 
