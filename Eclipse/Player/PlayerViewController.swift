@@ -1327,6 +1327,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         } else {
             logMPV("rendererStop requested cached=\(secondsText(cachedPosition))/\(secondsText(cachedDuration)) pipActive=\(pipController?.isPictureInPictureActive == true)")
         }
+        cancelScheduledMPVPictureInPictureWarmups(reason: "renderer-stop")
         renderer.stop()
         isRunning = false
         refreshIdleTimerForPlayback(reason: "renderer-stop")
@@ -2155,52 +2156,101 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         suppressMPVAppExitPictureInPictureUntilForeground(reason: "\(reason)-\(applicationStateDescription(appState))")
     }
 
-    private func primeMPVAppExitPictureInPictureIfNeeded(source: String) {
-        guard isMPVRenderer, !isVLCPlayer else { return }
+    @discardableResult
+    private func primeMPVPictureInPictureForForegroundPlaybackIfNeeded(source: String, requiresAppExitEnabled: Bool) -> Bool {
+        guard isMPVRenderer, !isVLCPlayer else { return false }
         guard Settings.shared.mpvPictureInPictureEnabled else {
-            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): PiP disabled")
-            return
+            logPictureInPicture("MPV foreground PiP warm skipped source=\(source): PiP disabled")
+            return false
         }
-        guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
-            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): disabled")
-            return
-        }
-        guard !mpvAppExitPiPSuppressedUntilForeground else {
-            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): suppressed-until-foreground")
-            return
+        if requiresAppExitEnabled {
+            guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
+                logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): disabled")
+                return false
+            }
+            guard !mpvAppExitPiPSuppressedUntilForeground else {
+                logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): suppressed-until-foreground")
+                return false
+            }
         }
         guard let pip = pipController else {
-            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): controller missing")
-            return
+            logPictureInPicture("MPV foreground PiP warm skipped source=\(source): controller missing")
+            return false
         }
         let active = pip.isPictureInPictureActive
+        let pending = pip.isPictureInPictureStartPending
         let supported = pip.isPictureInPictureSupported
         let paused = rendererIsPausedState()
         let playbackReady = playbackDidStart || cachedPosition > 0.1
-        guard isRunning, !isClosing, !active, !paused, playbackReady, supported else {
-            logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source) running=\(isRunning) closing=\(isClosing) active=\(active) paused=\(paused) ready=\(playbackReady) supported=\(supported)")
-            return
+        guard isRunning, !isClosing, !active, !pending, !paused, playbackReady, supported else {
+            logPictureInPicture("MPV foreground PiP warm skipped source=\(source) running=\(isRunning) closing=\(isClosing) active=\(active) pending=\(pending) paused=\(paused) ready=\(playbackReady) supported=\(supported)")
+            return false
         }
 
-        configureMPVAppExitPictureInPictureAutomation(reason: "\(source)-prime")
-        let primed = prepareMPVPictureInPictureRenderer(source: "\(source)-app-exit-prime", activateLayer: false)
+        if requiresAppExitEnabled {
+            configureMPVAppExitPictureInPictureAutomation(reason: "\(source)-prime")
+        }
+        let warmSource = requiresAppExitEnabled ? "\(source)-app-exit-prime" : "\(source)-foreground-prewarm"
+        let primed = prepareMPVPictureInPictureRenderer(source: warmSource, activateLayer: false)
         pip.updatePlaybackState()
-        logPictureInPicture("MPV app-exit auto PiP primed source=\(source) primed=\(primed) possible=\(pip.isPictureInPicturePossible) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+        let mode = requiresAppExitEnabled ? "app-exit" : "foreground"
+        logPictureInPicture("MPV \(mode) PiP warmed source=\(source) primed=\(primed) possible=\(pip.isPictureInPicturePossible) renderer={\(rendererPictureInPictureDebugSnapshot())}")
+        return primed
+    }
+
+    private func primeMPVAppExitPictureInPictureIfNeeded(source: String) {
+        _ = primeMPVPictureInPictureForForegroundPlaybackIfNeeded(source: source, requiresAppExitEnabled: true)
     }
 
     /// Tracks the last proactive PiP warm so overlapping foreground signals don't re-warm in a loop.
     private var lastMPVPictureInPictureWarmAt: CFTimeInterval = 0
+    private var mpvPictureInPictureWarmupGeneration = 0
+
+    private func cancelScheduledMPVPictureInPictureWarmups(reason: String) {
+        mpvPictureInPictureWarmupGeneration += 1
+        lastMPVPictureInPictureWarmAt = 0
+        logPictureInPicture("MPV foreground PiP warmups canceled reason=\(reason) generation=\(mpvPictureInPictureWarmupGeneration)")
+    }
 
     /// Proactively warms the separate PiP mpv instance during FOREGROUND playback so a later PiP (button tap or
     /// auto-on-background).
-    private func warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: String, minInterval: CFTimeInterval = 3.0) {
+    @discardableResult
+    private func warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: String, minInterval: CFTimeInterval = 3.0, force: Bool = false) -> Bool {
+        guard isMPVRenderer, !isVLCPlayer else { return false }
+        guard Settings.shared.mpvPictureInPictureEnabled else { return false }
+        guard UIApplication.shared.applicationState == .active else { return false }
+        let now = CACurrentMediaTime()
+        guard force || now - lastMPVPictureInPictureWarmAt >= minInterval else { return false }
+        lastMPVPictureInPictureWarmAt = now
+        return primeMPVPictureInPictureForForegroundPlaybackIfNeeded(source: source, requiresAppExitEnabled: false)
+    }
+
+    private func scheduleMPVPictureInPictureForegroundWarmup(source: String, delays: [TimeInterval], forceFirst: Bool = false) {
         guard isMPVRenderer, !isVLCPlayer else { return }
         guard Settings.shared.mpvPictureInPictureEnabled else { return }
-        guard UIApplication.shared.applicationState == .active else { return }
-        let now = CACurrentMediaTime()
-        guard now - lastMPVPictureInPictureWarmAt >= minInterval else { return }
-        lastMPVPictureInPictureWarmAt = now
-        primeMPVAppExitPictureInPictureIfNeeded(source: source)
+        mpvPictureInPictureWarmupGeneration += 1
+        let generation = mpvPictureInPictureWarmupGeneration
+        let delaySummary = delays.map { String(format: "%.2f", $0) }.joined(separator: ",")
+        logPictureInPicture("MPV foreground PiP warmup scheduled source=\(source) delays=[\(delaySummary)] generation=\(generation)")
+
+        for (index, delay) in delays.enumerated() {
+            let warm: () -> Void = { [weak self] in
+                guard let self,
+                      generation == self.mpvPictureInPictureWarmupGeneration else {
+                    return
+                }
+                _ = self.warmMPVPictureInPictureForForegroundPlaybackIfNeeded(
+                    source: "\(source)-warm-\(index + 1)",
+                    minInterval: index == 0 ? 0 : 0.45,
+                    force: forceFirst && index == 0
+                )
+            }
+            if delay <= 0 {
+                DispatchQueue.main.async(execute: warm)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: warm)
+            }
+        }
     }
 
     private func updatePlayerTitle() {
@@ -2820,6 +2870,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
         playerNoticeDismissWorkItem?.cancel()
         playbackStartupWorkItem?.cancel()
+        cancelScheduledMPVPictureInPictureWarmups(reason: "deinit")
 #if !os(tvOS)
         outputVolumeObservation?.invalidate()
         outputVolumeObservation = nil
@@ -2940,6 +2991,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         lastDefaultSubtitleChoiceLogSignature = nil
         lastVLCPauseLogSignature = nil
         lastVLCPauseLogTime = 0
+        cancelScheduledMPVPictureInPictureWarmups(reason: "new-load")
         lastRequestedEmbeddedSubtitleTrackId = nil
         if !isLocalProxyURL(url) {
             vlcProxyFallbackTried = false
@@ -3030,12 +3082,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             SourceHealthStore.shared.recordPlaybackSuccess(sourceId: context.sourceId, sourceName: context.sourceName)
             Logger.shared.log("[PlayerVC.PlaybackStart] \(context.sourceName) started via \(reason)", type: "Stream")
         }
-        // Warm the separate PiP instance a few seconds after playback stabilizes (lets the inline
-        // stream buffer first) so a later button/auto PiP starts from a warm instance instead of a
-        // cold one. Gated + throttled inside the helper; a no-op when PiP is disabled.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-            self?.warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: "playback-stable-prewarm")
-        }
+        // Warm the separate PiP instance shortly after playback starts so the first manual or
+        // automatic PiP entry does not have to do the sample-buffer prepare work under pressure.
+        scheduleMPVPictureInPictureForegroundWarmup(
+            source: "playback-started-\(reason)",
+            delays: [0.35, 1.50],
+            forceFirst: true
+        )
     }
 
     private func runPlaybackStartupProbe(url: URL, headers: [String: String]) {
@@ -5006,6 +5059,23 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             overlayMenuDismissView.alpha = 0.0
             overlayMenuPanelView.alpha = 0.0
             finish()
+        }
+    }
+
+    private func refreshVisibleOverlayMenuIfNeeded(kind: String) {
+        guard usesOverlayPlayerMenus,
+              overlayMenuKind == kind,
+              !overlayMenuPanelView.isHidden else {
+            return
+        }
+
+        switch kind {
+        case "audio":
+            showMPVAudioMenu()
+        case "subtitles":
+            showMPVSubtitleMenu()
+        default:
+            break
         }
     }
 
@@ -7686,6 +7756,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     self.loadStremioSubtitle(result, userSelected: false)
                 } else {
                     self.updateSubtitleTracksMenu()
+                    self.refreshVisibleOverlayMenuIfNeeded(kind: "subtitles")
                 }
             }
         }
@@ -7725,6 +7796,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                     self.loadOpenSubtitle(subtitle, userSelected: false)
                 } else {
                     self.updateSubtitleTracksMenu()
+                    self.refreshVisibleOverlayMenuIfNeeded(kind: "subtitles")
                 }
             }
         }
@@ -9004,6 +9076,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         if isClosing { return }
         isClosing = true
         suppressMPVAppExitPictureInPictureUntilForeground(reason: "close-tapped")
+        cancelScheduledMPVPictureInPictureWarmups(reason: "close-tapped")
         refreshIdleTimerForPlayback(reason: "player-close")
         let isAnyPiPActive = rendererIsPictureInPictureActive()
         logSharedPlayerControl("closeTapped; pipActive=\(isAnyPiPActive); mediaInfo=\(String(describing: mediaInfo))")
@@ -9092,6 +9165,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 self.logPictureInPicture("MPV PiP stop timeout reached inactive state; restoring foreground")
                 self.rendererFinishPictureInPicture()
                 self.updatePiPButtonVisibility()
+                self.scheduleMPVPictureInPictureForegroundWarmup(
+                    source: "button-stop-timeout-rewarm",
+                    delays: [0.25, 1.10],
+                    forceFirst: true
+                )
             }
         } else {
             startMPVPictureInPictureWhenPossible(source: "button")
@@ -10485,6 +10563,8 @@ extension PlayerViewController: MPVNativeRendererDelegate {
             self.invalidateRendererTrackCaches()
             self.updateAudioTracksMenu()
             self.updateSubtitleTracksMenu()
+            self.refreshVisibleOverlayMenuIfNeeded(kind: "audio")
+            self.refreshVisibleOverlayMenuIfNeeded(kind: "subtitles")
         }
     }
     
@@ -10539,6 +10619,11 @@ extension PlayerViewController: PiPControllerDelegate {
             mpvPiPStartAttemptID += 1
             mpvAppExitPiPStartRequested = false
             rendererFinishPictureInPicture()
+            scheduleMPVPictureInPictureForegroundWarmup(
+                source: "delegate-didStart-failed-rewarm",
+                delays: [0.35, 1.20],
+                forceFirst: true
+            )
         }
         pipController?.updatePlaybackState()
         updatePiPButtonVisibility()
@@ -10562,6 +10647,11 @@ extension PlayerViewController: PiPControllerDelegate {
         disarmMPVPictureInPictureRestartAfterStop(reason: "delegate-didStop")
         rendererFinishPictureInPicture()
         updatePiPButtonVisibility()
+        scheduleMPVPictureInPictureForegroundWarmup(
+            source: "delegate-didStop-rewarm",
+            delays: [0.25, 1.10],
+            forceFirst: true
+        )
     }
     func pipController(_ controller: PiPController, restoreUserInterfaceForPictureInPictureStop completionHandler: @escaping (Bool) -> Void) {
         guard !isVLCPlayer else {
@@ -10576,6 +10666,11 @@ extension PlayerViewController: PiPControllerDelegate {
             if UIApplication.shared.applicationState == .active {
                 self?.clearMPVAppExitPictureInPictureSuppression(reason: "restore-ui-active")
             }
+            self?.scheduleMPVPictureInPictureForegroundWarmup(
+                source: "restore-ui-rewarm",
+                delays: [0.25, 1.10],
+                forceFirst: true
+            )
             self?.logPictureInPicture("delegate restoreUI complete renderer={\(self?.rendererPictureInPictureDebugSnapshot() ?? "nil")}")
             completionHandler(true)
         }
@@ -10695,11 +10790,11 @@ extension PlayerViewController: PiPControllerDelegate {
             }
         case "active":
             restoreMPVForegroundIfNeeded(source: "scene-phase-active")
-            // The PiP instance is torn down when a session ends, so re-warm it after returning to
-            // the foreground. Delayed so the inline render path restores first.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: "scene-phase-active-rewarm")
-            }
+            scheduleMPVPictureInPictureForegroundWarmup(
+                source: "scene-phase-active-rewarm",
+                delays: [0.30, 1.20],
+                forceFirst: true
+            )
         default:
             break
         }
@@ -10960,6 +11055,11 @@ extension PlayerViewController: PiPControllerDelegate {
                 return
             }
             self.rendererFinishPictureInPicture()
+            self.scheduleMPVPictureInPictureForegroundWarmup(
+                source: "will-enter-foreground-rewarm",
+                delays: [0.30, 1.20],
+                forceFirst: true
+            )
         }
     }
 
@@ -10986,6 +11086,11 @@ extension PlayerViewController: PiPControllerDelegate {
             }
             self.logMPV("\(source): PiP inactive; restoring MPV foreground render path renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
             self.rendererFinishPictureInPicture()
+            self.scheduleMPVPictureInPictureForegroundWarmup(
+                source: "\(source)-rewarm",
+                delays: [0.30, 1.20],
+                forceFirst: true
+            )
         }
     }
 
@@ -11015,6 +11120,11 @@ extension PlayerViewController: PiPControllerDelegate {
             guard self.vlcRenderer == nil else { return }
             self.logMPV("appDidBecomeActive foreground render recovery renderer={\(self.rendererPictureInPictureDebugSnapshot())}")
             self.rendererResumeForegroundRendering(reason: "app-did-become-active")
+            self.scheduleMPVPictureInPictureForegroundWarmup(
+                source: "did-become-active-rewarm",
+                delays: [0.20, 1.00],
+                forceFirst: true
+            )
         }
     }
 
@@ -11032,6 +11142,11 @@ extension PlayerViewController: PiPControllerDelegate {
             guard self.vlcRenderer == nil else { return }
             self.logMPV("sceneDidActivate foreground render recovery")
             self.rendererResumeForegroundRendering(reason: "scene-did-activate")
+            self.scheduleMPVPictureInPictureForegroundWarmup(
+                source: "scene-did-activate-rewarm",
+                delays: [0.20, 1.00],
+                forceFirst: true
+            )
         }
     }
 }

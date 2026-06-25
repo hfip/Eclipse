@@ -2753,6 +2753,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     /// Last applied HDR decision signature (mode|gamma|primaries|passthrough) so repeated
     /// VIDEO_RECONFIG events don't redundantly reconfigure. Mirrors the MoltenVK reference path.
     private var lastHDRConfigurationSignature = ""
+    private var lastTrackListSignature = ""
+    private var lastNotifiedSubtitleTrackId: Int?
 
     var isPausedState: Bool { isPaused }
     var currentTime: Double { gpuRenderer.currentTime }
@@ -2960,6 +2962,11 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
                 self.delegate?.renderer(self, didFailWithError: message)
             }
         }
+        gpuRenderer.onDiagnostics = { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.notifyTrackChangesIfNeeded(reason: "diagnostics")
+            }
+        }
         // Re-evaluate HDR/colorspace whenever the decoded video parameters resolve or change
         // (file loaded / VIDEO_RECONFIG). Fired on the main thread by the kit.
         gpuRenderer.onVideoReconfigure = { [weak self] in
@@ -2975,6 +2982,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
             // Surface whether videotoolbox HW decode actually attached vs a silent software
             // fallback for this file - the decisive signal for the steady-state CPU question.
             self.logDecodeEngagement()
+            self.notifyTrackChangesIfNeeded(reason: "video-reconfigure")
         }
         // Activate the playback audio session (category/mode + preferred multichannel output) like
         // the OpenGL/sample-buffer renderers do - the kit renderer doesn't own this.
@@ -3004,6 +3012,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         setInlineVideoHidden(false)
         lastPositionUpdateAt = 0
         lastHDRConfigurationSignature = ""
+        lastTrackListSignature = ""
+        lastNotifiedSubtitleTrackId = nil
     }
 
     func load(url: URL, with preset: PlayerPreset, headers: [String: String]?) {
@@ -3023,6 +3033,8 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         lastKnownSourceHeight = 0
         lastKnownSourceWidth = 0
         lastLoggedDecode = ""
+        lastTrackListSignature = ""
+        lastNotifiedSubtitleTrackId = nil
         applyPreset(preset)
         delegate?.renderer(self, didChangeLoading: true)
         gpuRenderer.load(url, headers: headers)
@@ -3139,7 +3151,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     }
 
     func getSubtitleTracksDetailed() -> [(Int, String, String, Bool)] {
-        gpuRenderer.subtitleTracks().map { ($0.id, $0.title, $0.language, $0.selected) }
+        gpuRenderer.subtitleTracks().map { ($0.id, $0.title, $0.codec, false) }
     }
 
     func getCurrentSubtitleTrackId() -> Int {
@@ -3148,6 +3160,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
 
     func setSubtitleTrack(id: Int) {
         gpuRenderer.setSubtitleTrack(id: id)
+        lastNotifiedSubtitleTrackId = id
         // Sync the subtitle button state + track menus (parity with the sample-buffer bridge).
         delegate?.renderer(self, subtitleTrackDidChange: id)
         delegate?.rendererDidChangeTracks(self)
@@ -3155,6 +3168,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
 
     func disableSubtitles() {
         gpuRenderer.disableSubtitles()
+        lastNotifiedSubtitleTrackId = -1
         delegate?.renderer(self, subtitleTrackDidChange: -1)
     }
 
@@ -3236,7 +3250,9 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         // Recover the shared PiP display layer if it failed (e.g. while backgrounded) before the
         // PiP renderer starts feeding it - a safe, idempotent point matching the sample-buffer path.
         recoverDisplayLayerIfNeeded(reason: "prepare-pip")
-        _ = gpuRenderer.prepareForPictureInPictureStart()
+        let prepared = gpuRenderer.prepareForPictureInPictureStart()
+        gpuRenderer.primePictureInPictureFrames(reason: "prepare-pip", count: 10)
+        Logger.shared.log("[MPVGPUPlayerBridge] PiP prepare requested prepared=\(prepared) primed=\(isPictureInPicturePrimed()) \(pictureInPictureDebugSnapshot())", type: "MPV")
     }
 
     func finishPictureInPicture() {
@@ -3261,7 +3277,7 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
     func primePictureInPictureFrames(reason: String) {
         // Incrementally accumulate buffered frames (does NOT re-prepare), matching the
         // sample-buffer path's multi-prime warmup before the AVKit hand-off.
-        gpuRenderer.primePictureInPictureFrames(reason: reason, count: 6)
+        gpuRenderer.primePictureInPictureFrames(reason: reason, count: 8)
     }
 
     func activatePictureInPictureLayer() {
@@ -3437,6 +3453,36 @@ final class MPVGPUPlayerBridge: PlayerRenderer {
         isAwaitingReadyForCurrentLoad = false
         applyPendingInitialSeekIfNeeded(reason: reason)
         delegate?.renderer(self, didBecomeReadyToSeek: true)
+        notifyTrackChangesIfNeeded(reason: "ready-\(reason)")
+    }
+
+    private func notifyTrackChangesIfNeeded(reason: String) {
+        let audioTracks = gpuRenderer.audioTracks()
+        let subtitleTracks = gpuRenderer.subtitleTracks()
+        let selectedAudio = audioTracks.first(where: { $0.selected })?.id ?? gpuRenderer.currentAudioTrackID()
+        let selectedSubtitle = subtitleTracks.first(where: { $0.selected })?.id ?? gpuRenderer.currentSubtitleTrackID()
+        let audioSignature = audioTracks
+            .map { "\($0.id):\($0.title):\($0.language):\($0.selected)" }
+            .joined(separator: "|")
+        let subtitleSignature = subtitleTracks
+            .map { "\($0.id):\($0.title):\($0.language):\($0.codec):\($0.selected)" }
+            .joined(separator: "|")
+        let signature = "audio=\(selectedAudio)[\(audioSignature)]|sub=\(selectedSubtitle)[\(subtitleSignature)]"
+
+        guard signature != lastTrackListSignature else { return }
+        lastTrackListSignature = signature
+
+        guard !audioTracks.isEmpty || !subtitleTracks.isEmpty else { return }
+        Logger.shared.log("[MPVGPUPlayerBridge] tracks changed reason=\(reason) audio=\(audioTracks.count) selectedAudio=\(selectedAudio) subs=\(subtitleTracks.count) selectedSub=\(selectedSubtitle)", type: "MPV")
+
+        let previousSubtitleTrackId = lastNotifiedSubtitleTrackId
+        if selectedSubtitle != previousSubtitleTrackId {
+            lastNotifiedSubtitleTrackId = selectedSubtitle
+            if selectedSubtitle >= 0 || previousSubtitleTrackId != nil {
+                delegate?.renderer(self, subtitleTrackDidChange: selectedSubtitle)
+            }
+        }
+        delegate?.rendererDidChangeTracks(self)
     }
 
     private func handleState(_ state: MPVGPUPlayerRendererState) {
