@@ -160,13 +160,8 @@ struct EpisodeCell: View {
             progressValue = progress
             loadEpisodeProgress()
         }
-        .onReceive(ProgressManager.shared.$episodeProgressList) { _ in
-            refreshProgressState()
-            progressValue = ProgressManager.shared.getEpisodeProgress(
-                showId: showId,
-                seasonNumber: episode.seasonNumber,
-                episodeNumber: episode.episodeNumber
-            )
+        .onReceive(ProgressManager.shared.$episodeProgressList) { entries in
+            handleEpisodeProgressListChange(entries)
         }
         .preferredColorScheme(.dark)
     }
@@ -291,13 +286,8 @@ struct EpisodeCell: View {
             progressValue = progress
             loadEpisodeProgress()
         }
-        .onReceive(ProgressManager.shared.$episodeProgressList) { _ in
-            refreshProgressState()
-            progressValue = ProgressManager.shared.getEpisodeProgress(
-                showId: showId,
-                seasonNumber: episode.seasonNumber,
-                episodeNumber: episode.episodeNumber
-            )
+        .onReceive(ProgressManager.shared.$episodeProgressList) { entries in
+            handleEpisodeProgressListChange(entries)
         }
         .preferredColorScheme(.dark)
     }
@@ -402,18 +392,34 @@ struct EpisodeCell: View {
     
     private func loadEpisodeProgress() {
         refreshProgressState()
-        progressValue = ProgressManager.shared.getEpisodeProgress(
+        let newProgress = ProgressManager.shared.getEpisodeProgress(
             showId: showId,
             seasonNumber: episode.seasonNumber,
             episodeNumber: episode.episodeNumber
         )
+        if abs(progressValue - newProgress) > 0.001 {
+            progressValue = newProgress
+        }
+    }
+
+    private func handleEpisodeProgressListChange(_ entries: [EpisodeProgressEntry]) {
+        let hasRelevantEntry = entries.contains {
+            $0.showId == showId &&
+            $0.seasonNumber == episode.seasonNumber &&
+            $0.episodeNumber == episode.episodeNumber
+        }
+        guard hasRelevantEntry || isWatched || progressValue > 0 else { return }
+        loadEpisodeProgress()
     }
 
     private func refreshProgressState() {
-        isWatched = ProgressManager.shared.isEpisodeWatched(
+        let newValue = ProgressManager.shared.isEpisodeWatched(
             showId: showId,
             seasonNumber: episode.seasonNumber,
             episodeNumber: episode.episodeNumber
         )
+        if isWatched != newValue {
+            isWatched = newValue
+        }
     }
 }

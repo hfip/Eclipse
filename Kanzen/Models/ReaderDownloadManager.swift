@@ -128,6 +128,7 @@ final class ReaderDownloadManager: ObservableObject {
     private var queuedContexts: [String: ReaderDownloadContext] = [:]
     private var pausedIds = Set<String>()
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private let progressPublishInterval: TimeInterval = 0.5
 
     private var maxConcurrentDownloads: Int {
         let raw = UserDefaults.standard.integer(forKey: "readerDownloadsParallelLimit")
@@ -530,6 +531,7 @@ final class ReaderDownloadManager: ObservableObject {
 
         var manifestPages: [ReaderDownloadedPageManifest] = []
         var downloadedBytes: Int64 = 0
+        var lastProgressPublish = Date.distantPast
         let session = makeDownloadSession()
         defer { session.invalidateAndCancel() }
 
@@ -539,12 +541,18 @@ final class ReaderDownloadManager: ObservableObject {
             downloadedBytes += saved.bytes
             manifestPages.append(saved.page)
 
-            await MainActor.run {
-                self.updateItem(itemId) {
-                    $0.completedPages = index + 1
-                    $0.totalPages = pages.count
-                    $0.progress = Double(index + 1) / Double(max(pages.count, 1))
-                    $0.downloadedBytes = downloadedBytes
+            let now = Date()
+            let isFirstPage = index == 0
+            let isLastPage = index == pages.count - 1
+            if isFirstPage || isLastPage || now.timeIntervalSince(lastProgressPublish) >= progressPublishInterval {
+                lastProgressPublish = now
+                await MainActor.run {
+                    self.updateItem(itemId) {
+                        $0.completedPages = index + 1
+                        $0.totalPages = pages.count
+                        $0.progress = Double(index + 1) / Double(max(pages.count, 1))
+                        $0.downloadedBytes = downloadedBytes
+                    }
                 }
             }
         }

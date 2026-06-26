@@ -247,6 +247,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var nextOverlayMenuHandlerID = 1
     private var overlayMenuKind: String?
     private lazy var usesOverlayPlayerMenusForSession = false
+    private var nativePlayerMenuRebuildSuppressionUntil: CFTimeInterval = 0
+    private var nativePlayerMenuRefreshWorkItem: DispatchWorkItem?
+    private var pendingNativePlayerMenuRefreshKinds = Set<String>()
+    private let nativePlayerMenuRebuildSuppressionInterval: TimeInterval = 1.0
 
     private let videoContainer: UIView = {
         let v = UIView()
@@ -2870,6 +2874,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         setIdleTimerDisabledForPlayback(false, reason: "deinit")
         audioMenuDebounceTimer?.invalidate()
         subtitleMenuDebounceTimer?.invalidate()
+        nativePlayerMenuRefreshWorkItem?.cancel()
         metalPerformanceOverlayTimer?.invalidate()
 #if ECLIPSE_MPVKIT_MOLTENVK_INLINE_RENDERER && ECLIPSE_MPVKIT_SAMPLE_BUFFER_PIP_BRIDGE && ECLIPSE_MPVKIT_METAL_LIVE_QUALITY_RECONFIGURE
         metalThermalQualityTimer?.invalidate()
@@ -4965,6 +4970,8 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         if usesOverlayPlayerMenus {
             Logger.shared.log("[PlayerVC.Menu] opening lightweight overlay reason=\(reason) renderer=\(mpvRendererName)", type: "MPV")
+        } else {
+            beginNativePlayerMenuPresentationGuard()
         }
         renderer.beginForegroundUIStallRecovery(reason: reason)
         let openedAt = CACurrentMediaTime()
@@ -4989,6 +4996,49 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         handler: @escaping () -> Void
     ) -> PlayerOverlayMenuAction {
         PlayerOverlayMenuAction(title: title, imageName: imageName, isSelected: isSelected, isEnabled: isEnabled, handler: handler)
+    }
+
+    private func beginNativePlayerMenuPresentationGuard() {
+        let deadline = CACurrentMediaTime() + nativePlayerMenuRebuildSuppressionInterval
+        nativePlayerMenuRebuildSuppressionUntil = max(nativePlayerMenuRebuildSuppressionUntil, deadline)
+        scheduleNativePlayerMenuRefreshFlush()
+    }
+
+    private func shouldDeferNativePlayerMenuRefresh(kind: String) -> Bool {
+        guard !usesOverlayPlayerMenus,
+              CACurrentMediaTime() < nativePlayerMenuRebuildSuppressionUntil else {
+            return false
+        }
+        pendingNativePlayerMenuRefreshKinds.insert(kind)
+        scheduleNativePlayerMenuRefreshFlush()
+        return true
+    }
+
+    private func scheduleNativePlayerMenuRefreshFlush() {
+        nativePlayerMenuRefreshWorkItem?.cancel()
+        let delay = max(0.05, nativePlayerMenuRebuildSuppressionUntil - CACurrentMediaTime())
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if CACurrentMediaTime() < self.nativePlayerMenuRebuildSuppressionUntil {
+                self.scheduleNativePlayerMenuRefreshFlush()
+                return
+            }
+
+            let pendingKinds = self.pendingNativePlayerMenuRefreshKinds
+            self.pendingNativePlayerMenuRefreshKinds.removeAll()
+            self.nativePlayerMenuRefreshWorkItem = nil
+            if pendingKinds.contains("speed") {
+                self.updateSpeedMenu()
+            }
+            if pendingKinds.contains("audio") {
+                self.updateAudioTracksMenu()
+            }
+            if pendingKinds.contains("subtitles") {
+                self.updateSubtitleTracksMenu()
+            }
+        }
+        nativePlayerMenuRefreshWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     private func showOverlayMenu(title: String, kind: String, sections: [PlayerOverlayMenuSection]) {
@@ -5164,6 +5214,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             speedButton.menu = nil
             return
         }
+        if shouldDeferNativePlayerMenuRefresh(kind: "speed") {
+            return
+        }
 
         let currentSpeed = rendererGetSpeed()
         let speeds: [(String, Double)] = [
@@ -5318,6 +5371,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         if usesOverlayPlayerMenus {
             audioButton.menu = nil
+            return
+        }
+        if shouldDeferNativePlayerMenuRefresh(kind: "audio") {
             return
         }
 
@@ -7322,6 +7378,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 
         if usesOverlayPlayerMenus {
             subtitleButton.menu = nil
+            return
+        }
+        if shouldDeferNativePlayerMenuRefresh(kind: "subtitles") {
             return
         }
         

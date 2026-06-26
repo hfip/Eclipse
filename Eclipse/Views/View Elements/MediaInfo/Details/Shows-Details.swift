@@ -122,7 +122,7 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
     @StateObject private var stremioManager = StremioAddonManager.shared
     @StateObject private var pluginManager = NuvioPluginManager.shared
     @StateObject private var accentManager = AccentColorManager.shared
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     @AppStorage("horizontalEpisodeList") private var horizontalEpisodeList: Bool = false
     @AppStorage("preferDownloadedMedia") private var preferDownloadedMedia: Bool = false
     private var isGroupedBySeasons: Bool {
@@ -1058,32 +1058,73 @@ struct TVShowSeasonsSection<InsertedContent: View>: View {
         guard let episodes = detail?.episodes, !episodes.isEmpty else {
             return
         }
-        isDownloadingAll = true
-        downloadAllQueue = Array(episodes.dropFirst())
-        downloadAllSpecialContext = specialEpisodeContext
-        if let first = episodes.first {
-            downloadEpisode = first
-            selectedEpisodeForSearch = first
-            let context = playbackContext(for: first)
-            selectedEpisodePlaybackContext = context
-            downloadEpisodePlaybackContext = context
-            showingDownloadSheet = true
-        }
-    }
-    
-    private func showNextDownloadSheet() {
-        guard !downloadAllQueue.isEmpty else {
+        let episodesToDownload = episodes.filter { !shouldSkipDownloadAllEpisode($0) }
+        guard let first = episodesToDownload.first else {
             isDownloadingAll = false
+            downloadAllQueue.removeAll()
             downloadAllSpecialContext = nil
             downloadEpisodePlaybackContext = nil
+            Logger.shared.log("Download All skipped: every episode is already downloaded or queued for \(activeSeasonTitle ?? "season")", type: "Download")
             return
         }
-        let next = downloadAllQueue.removeFirst()
-        downloadEpisode = next
-        selectedEpisodeForSearch = next
-        let context = downloadAllSpecialContext?.playbackContext(for: next) ?? playbackContext(for: next)
+
+        isDownloadingAll = true
+        downloadAllQueue = Array(episodesToDownload.dropFirst())
+        downloadAllSpecialContext = specialEpisodeContext
+        downloadEpisode = first
+        selectedEpisodeForSearch = first
+        let context = playbackContext(for: first)
         selectedEpisodePlaybackContext = context
         downloadEpisodePlaybackContext = context
         showingDownloadSheet = true
+    }
+
+    private func showNextDownloadSheet() {
+        while !downloadAllQueue.isEmpty {
+            let next = downloadAllQueue.removeFirst()
+            guard !shouldSkipDownloadAllEpisode(next) else {
+                continue
+            }
+
+            downloadEpisode = next
+            selectedEpisodeForSearch = next
+            let context = downloadAllSpecialContext?.playbackContext(for: next) ?? playbackContext(for: next)
+            selectedEpisodePlaybackContext = context
+            downloadEpisodePlaybackContext = context
+            showingDownloadSheet = true
+            return
+        }
+
+        isDownloadingAll = false
+        downloadAllSpecialContext = nil
+        downloadEpisodePlaybackContext = nil
+    }
+
+    private func shouldSkipDownloadAllEpisode(_ episode: TMDBEpisode) -> Bool {
+        guard let tvShow else { return false }
+        if downloadManager.completedDownloadItem(
+            tmdbId: tvShow.id,
+            isMovie: false,
+            seasonNumber: episode.seasonNumber,
+            episodeNumber: episode.episodeNumber
+        ) != nil {
+            return true
+        }
+
+        guard let item = downloadManager.downloadItem(
+            tmdbId: tvShow.id,
+            isMovie: false,
+            seasonNumber: episode.seasonNumber,
+            episodeNumber: episode.episodeNumber
+        ) else {
+            return false
+        }
+
+        switch item.status {
+        case .queued, .downloading, .paused:
+            return true
+        case .completed, .failed:
+            return false
+        }
     }
 }

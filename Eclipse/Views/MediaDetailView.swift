@@ -130,7 +130,7 @@ struct MediaDetailView: View {
     @StateObject private var serviceManager = ServiceManager.shared
     @StateObject private var stremioManager = StremioAddonManager.shared
     @StateObject private var pluginManager = NuvioPluginManager.shared
-    @ObservedObject private var downloadManager = DownloadManager.shared
+    private let downloadManager = DownloadManager.shared
     @ObservedObject private var libraryManager = LibraryManager.shared
     @ObservedObject private var theme = EclipseTheme.shared
     @StateObject private var accentManager = AccentColorManager.shared
