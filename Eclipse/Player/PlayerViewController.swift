@@ -1174,6 +1174,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var lastSkippedCloseTraktSyncReason: String?
     private var lastRendererPauseScrobbleAction: TraktScrobbleAction?
     private var lastRendererPauseScrobbleAt: CFTimeInterval = 0
+    private let traktPlaybackSpeedChangeTolerance: Double = 0.01
 
     private var isRendererLoading: Bool = false
     private var isClosing = false
@@ -1458,6 +1459,16 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         sendTraktScrobble(action, reason: reason)
     }
 
+    private func sendPlaybackSpeedTraktScrobbleIfNeeded(previousSpeed: Double, newSpeed: Double) {
+        guard !rendererIsPausedState(),
+              previousSpeed.isFinite,
+              newSpeed.isFinite,
+              abs(previousSpeed - newSpeed) > traktPlaybackSpeedChangeTolerance else {
+            return
+        }
+        sendTraktScrobble(.start, reason: "playback-speed-\(String(format: "%.2f", newSpeed))x", force: true)
+    }
+
     private func updateTraktScrobbleFromProgress(position: Double, duration: Double) {
         guard !rendererIsPausedState(),
               playbackDidStart,
@@ -1506,12 +1517,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
     
     private func rendererSetSpeed(_ speed: Double) {
+        let previousSpeed = rendererGetSpeed()
         if vlcRenderer != nil {
             logVLCUI("rendererSetSpeed \(String(format: "%.2f", speed))", type: "Player")
         } else {
             logMPV("rendererSetSpeed \(String(format: "%.2f", speed))")
         }
         renderer.setSpeed(speed)
+        sendPlaybackSpeedTraktScrobbleIfNeeded(previousSpeed: previousSpeed, newSpeed: rendererGetSpeed())
     }
     
     private func rendererGetSpeed() -> Double {

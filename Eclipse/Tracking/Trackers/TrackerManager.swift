@@ -178,6 +178,7 @@ final class TrackerManager: NSObject, ObservableObject {
     private var traktScrobbleFailureStampByKey: [String: (action: TraktScrobbleAction, progress: Double, failedAt: Date)] = [:]
     private let traktScrobbleQueue = DispatchQueue(label: "app.eclipse.soupy.traktScrobbleDedupe")
     private let traktScrobbleMinimumInterval: TimeInterval = 8
+    private let traktScrobbleStartRefreshMinimumInterval: TimeInterval = 20
     private let traktScrobbleFailureCooldown: TimeInterval = 60
     private let traktScrobbleProgressWindow: Double = 1.5
 
@@ -3131,7 +3132,12 @@ final class TrackerManager: NSObject, ObservableObject {
                 }
 
                 if action == .start, traktScrobbleLastActionByKey[key] == .start {
-                    return false
+                    guard let stamp = traktScrobbleLastStampByKey[key] else {
+                        return false
+                    }
+                    if now.timeIntervalSince(stamp.sentAt) < traktScrobbleStartRefreshMinimumInterval {
+                        return false
+                    }
                 }
 
                 if let pending = traktScrobblePendingByKey[key] {
