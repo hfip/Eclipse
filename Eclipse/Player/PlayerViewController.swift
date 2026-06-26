@@ -2173,6 +2173,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             logPictureInPicture("MPV foreground PiP warm skipped source=\(source): PiP disabled")
             return false
         }
+        guard isMetalMPVRenderer else {
+            let mode = requiresAppExitEnabled ? "app-exit" : "foreground"
+            logPictureInPicture("MPV \(mode) PiP warm skipped source=\(source): renderer=\(mpvRendererName) uses the foreground OpenGL renderer for PiP handoff")
+            return false
+        }
         if requiresAppExitEnabled {
             guard Settings.shared.mpvAppExitPictureInPictureEnabled else {
                 logPictureInPicture("MPV app-exit auto PiP prime skipped source=\(source): disabled")
@@ -2223,11 +2228,13 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     /// Proactively warms the separate PiP mpv instance during FOREGROUND playback so a later PiP (button tap or
-    /// auto-on-background).
+    /// auto-on-background) does not have to do the sample-buffer prepare work under pressure. OpenGL uses the
+    /// foreground renderer for handoff, so it prepares only when PiP actually starts.
     @discardableResult
     private func warmMPVPictureInPictureForForegroundPlaybackIfNeeded(source: String, minInterval: CFTimeInterval = 3.0, force: Bool = false) -> Bool {
         guard isMPVRenderer, !isVLCPlayer else { return false }
         guard Settings.shared.mpvPictureInPictureEnabled else { return false }
+        guard isMetalMPVRenderer else { return false }
         guard UIApplication.shared.applicationState == .active else { return false }
         let now = CACurrentMediaTime()
         guard force || now - lastMPVPictureInPictureWarmAt >= minInterval else { return false }
@@ -2238,6 +2245,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private func scheduleMPVPictureInPictureForegroundWarmup(source: String, delays: [TimeInterval], forceFirst: Bool = false) {
         guard isMPVRenderer, !isVLCPlayer else { return }
         guard Settings.shared.mpvPictureInPictureEnabled else { return }
+        guard isMetalMPVRenderer else {
+            logPictureInPicture("MPV foreground PiP warmup skipped source=\(source): renderer=\(mpvRendererName) has no separate foreground prewarm path")
+            return
+        }
         mpvPictureInPictureWarmupGeneration += 1
         let generation = mpvPictureInPictureWarmupGeneration
         let delaySummary = delays.map { String(format: "%.2f", $0) }.joined(separator: ",")
