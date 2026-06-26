@@ -251,6 +251,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var nativePlayerMenuRefreshWorkItem: DispatchWorkItem?
     private var pendingNativePlayerMenuRefreshKinds = Set<String>()
     private let nativePlayerMenuRebuildSuppressionInterval: TimeInterval = 1.0
+    private let moltenVKNativePlayerMenuRebuildSuppressionInterval: TimeInterval = 2.5
+    private var nativeSpeedMenuContentSignature: String?
+    private var nativeAudioMenuContentSignature: String?
+    private var nativeSubtitleMenuContentSignature: String?
 
     private let videoContainer: UIView = {
         let v = UIView()
@@ -1175,6 +1179,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     private var lastRendererPauseScrobbleAction: TraktScrobbleAction?
     private var lastRendererPauseScrobbleAt: CFTimeInterval = 0
     private let traktPlaybackSpeedChangeTolerance: Double = 0.01
+    private var didSendFinalTraktScrobble = false
 
     private var isRendererLoading: Bool = false
     private var isClosing = false
@@ -1440,11 +1445,46 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             }
             return
         }
+        if TrackerManager.shared.trackerState.liveTraktScrobbling {
+            if sendFinalTraktStopScrobbleIfNeeded(for: mediaInfo, reason: reason) {
+                return
+            }
+        }
         ProgressManager.shared.syncTraktProgressOnPlaybackClose(
             for: mediaInfo,
             playbackContext: episodePlaybackContext,
             played: true
         )
+    }
+
+    private func finalTraktProgressFraction() -> Double? {
+        guard playbackDidStart || cachedPosition > 0.5,
+              cachedPosition.isFinite,
+              cachedDuration.isFinite,
+              cachedDuration >= 5,
+              cachedPosition > 0.5,
+              cachedPosition <= cachedDuration + 2 else {
+            return nil
+        }
+        return min(max(cachedPosition / cachedDuration, 0), 1)
+    }
+
+    @discardableResult
+    private func sendFinalTraktStopScrobbleIfNeeded(for mediaInfo: MediaInfo, reason: String) -> Bool {
+        guard !didSendFinalTraktScrobble,
+              let progress = finalTraktProgressFraction() else {
+            return false
+        }
+        didSendFinalTraktScrobble = true
+        Logger.shared.log("PlayerViewController: Trakt final stop queued reason=\(reason) progress=\(Int((progress * 100).rounded()))%", type: "Tracker")
+        TrackerManager.shared.scrobbleTraktPlayback(
+            .stop,
+            for: mediaInfo,
+            progress: progress,
+            playbackContext: playbackContextForTraktScrobble(mediaInfo),
+            force: true
+        )
+        return true
     }
 
     private func sendRendererPauseTraktScrobble(_ action: TraktScrobbleAction, reason: String) {
@@ -2789,6 +2829,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
 #endif
         
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillTerminate), name: UIApplication.willTerminateNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
@@ -2922,6 +2963,9 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             vlc.delegate = nil
         }
         logSharedPlayerControl("deinit; stopping renderer and restoring state")
+        if let mediaInfo {
+            syncTraktProgressOnPlaybackCloseIfNeeded(for: mediaInfo, reason: "deinit")
+        }
         pipController?.delegate = nil
         if pipController?.isPictureInPictureActive == true {
             cancelMPVPictureInPictureStartRequests(reason: "player-deinit")
@@ -2978,8 +3022,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         onlineSubtitleLoadedRendererTrackIds.removeAll()
         lastSkippedMPVBitmapSubtitleSummary = ""
         vlcExternalSubtitlePriorityDeadline = nil
+        nativePlayerMenuRebuildSuppressionUntil = 0
+        pendingNativePlayerMenuRefreshKinds.removeAll()
+        nativePlayerMenuRefreshWorkItem?.cancel()
+        nativePlayerMenuRefreshWorkItem = nil
+        resetNativePlayerMenuContentSignatures()
         lastRendererPauseScrobbleAction = nil
         lastRendererPauseScrobbleAt = 0
+        didSendFinalTraktScrobble = false
         defaultPlaybackSpeedApplied = false
         cachedPosition = 0
         cachedDuration = 0
@@ -4006,6 +4056,11 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             speedButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .touchDown)
             audioButton.addTarget(self, action: #selector(audioButtonTapped), for: .touchUpInside)
             audioButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .touchDown)
+            if #available(iOS 14.0, tvOS 14.0, *) {
+                subtitleButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .menuActionTriggered)
+                speedButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .menuActionTriggered)
+                audioButton.addTarget(self, action: #selector(playerMenuButtonTouchDown(_:)), for: .menuActionTriggered)
+            }
         }
         
         // Ensure shared player buttons stay interactive above renderer views.
@@ -4468,6 +4523,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         let appearanceMenu = createAppearanceMenu()
         
         let mainMenu = UIMenu(title: "Subtitles", children: [trackMenu, appearanceMenu])
+        nativeSubtitleMenuContentSignature = nil
         subtitleButton.menu = mainMenu
     }
     
@@ -5023,9 +5079,51 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     }
 
     private func beginNativePlayerMenuPresentationGuard() {
-        let deadline = CACurrentMediaTime() + nativePlayerMenuRebuildSuppressionInterval
+        let interval = isMetalMPVRenderer && !rendererIsPausedState()
+            ? moltenVKNativePlayerMenuRebuildSuppressionInterval
+            : nativePlayerMenuRebuildSuppressionInterval
+        let deadline = CACurrentMediaTime() + interval
         nativePlayerMenuRebuildSuppressionUntil = max(nativePlayerMenuRebuildSuppressionUntil, deadline)
         scheduleNativePlayerMenuRefreshFlush()
+    }
+
+    private func resetNativePlayerMenuContentSignatures() {
+        nativeSpeedMenuContentSignature = nil
+        nativeAudioMenuContentSignature = nil
+        nativeSubtitleMenuContentSignature = nil
+    }
+
+    private func colorMenuSignature(_ color: UIColor) -> String {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        if color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            return String(format: "%.3f,%.3f,%.3f,%.3f", red, green, blue, alpha)
+        }
+        return color.description
+    }
+
+    private func subtitleStyleMenuSignature() -> String {
+        [
+            colorMenuSignature(subtitleModel.foregroundColor),
+            colorMenuSignature(subtitleModel.strokeColor),
+            String(format: "%.2f", subtitleModel.strokeWidth),
+            String(format: "%.2f", subtitleModel.fontSize),
+            String(format: "%.2f", subtitleModel.verticalOffset),
+            subtitleModel.closedCaptionBackground ? "cc-bg" : "cc-clear"
+        ].joined(separator: "|")
+    }
+
+    private func subtitleSelectionMenuSignature() -> String {
+        switch vlcSubtitleSelection {
+        case .none:
+            return "none"
+        case .embedded(let trackId):
+            return "embedded:\(trackId)"
+        case .external(let index):
+            return "external:\(index)"
+        }
     }
 
     private func shouldDeferNativePlayerMenuRefresh(kind: String) -> Bool {
@@ -5235,10 +5333,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
     
     private func updateSpeedMenu() {
         if usesOverlayPlayerMenus {
-            speedButton.menu = nil
-            return
-        }
-        if shouldDeferNativePlayerMenuRefresh(kind: "speed") {
+            if nativeSpeedMenuContentSignature != "overlay" {
+                speedButton.menu = nil
+                nativeSpeedMenuContentSignature = "overlay"
+            }
             return
         }
 
@@ -5253,6 +5351,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             ("1.75x", 1.75),
             ("2.0x", 2.0)
         ]
+
+        let menuSignature = "native|\(String(format: "%.2f", currentSpeed))|\(speeds.map { "\($0.0):\(String(format: "%.2f", $0.1))" }.joined(separator: "|"))"
+        if menuSignature == nativeSpeedMenuContentSignature {
+            return
+        }
+        if shouldDeferNativePlayerMenuRefresh(kind: "speed") {
+            return
+        }
         
         let speedActions = speeds.map { (name, speed) in
             UIAction(
@@ -5278,6 +5384,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         let speedMenu = UIMenu(title: "Playback Speed", image: UIImage(systemName: "hare.fill"), children: speedActions)
         speedButton.menu = speedMenu
+        nativeSpeedMenuContentSignature = menuSignature
     }
     
     private func updateAudioTracksMenuWhenReady(attempt: Int = 0) {
@@ -5367,7 +5474,10 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
                 attemptedAudioAutoSelectSignature = autoSelectSignature
             } else {
                 if usesOverlayPlayerMenus {
-                    audioButton.menu = nil
+                    if nativeAudioMenuContentSignature != "overlay" {
+                        audioButton.menu = nil
+                        nativeAudioMenuContentSignature = "overlay"
+                    }
                     return
                 }
             }
@@ -5394,7 +5504,14 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         if usesOverlayPlayerMenus {
-            audioButton.menu = nil
+            if nativeAudioMenuContentSignature != "overlay" {
+                audioButton.menu = nil
+                nativeAudioMenuContentSignature = "overlay"
+            }
+            return
+        }
+        let menuSignature = "native|current=\(currentAudioTrackId)|tracks=\(trackSignature)"
+        if menuSignature == nativeAudioMenuContentSignature {
             return
         }
         if shouldDeferNativePlayerMenuRefresh(kind: "audio") {
@@ -5405,6 +5522,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
             let noTracksAction = UIAction(title: "No audio tracks available", state: .off) { _ in }
             let audioMenu = UIMenu(title: "Audio Tracks", image: UIImage(systemName: "speaker.wave.2"), children: [noTracksAction])
             audioButton.menu = audioMenu
+            nativeAudioMenuContentSignature = menuSignature
             return
         }
 
@@ -5427,6 +5545,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         
         let audioMenu = UIMenu(title: "Audio Tracks", image: UIImage(systemName: "speaker.wave.2"), children: trackActions)
         audioButton.menu = audioMenu
+        nativeAudioMenuContentSignature = menuSignature
     }
 
     private func isAnimeContent() -> Bool {
@@ -7401,7 +7520,45 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
 
         if usesOverlayPlayerMenus {
-            subtitleButton.menu = nil
+            if nativeSubtitleMenuContentSignature != "overlay" {
+                subtitleButton.menu = nil
+                nativeSubtitleMenuContentSignature = "overlay"
+            }
+            return
+        }
+        let externalTrackSignature = externalTracks.map { "\($0.0):\($0.1)" }.joined(separator: "|")
+        let nativeTrackMenuSignature = nativeSubtitleTracks.map {
+            "\($0.id):\($0.name):\($0.codec):\($0.isExternalNativeTrack):\(canAutoSelectNativeSubtitleTrack($0))"
+        }.joined(separator: "|")
+        let stremioMenuSignature = [
+            "enabled=\(hasStremioSubtitleAddons)",
+            "fetching=\(stremioSubtitleFetchInProgress)",
+            "searched=\(stremioSubtitleSearchAttempted)",
+            stremioSubtitleResults.prefix(20).map {
+                "\($0.addon.id):\(stremioSubtitleDisplayName($0)):\($0.subtitle.id ?? ""):\($0.subtitle.url ?? ""):\(isOnlineSubtitleSelected($0.subtitle.url))"
+            }.joined(separator: "|")
+        ].joined(separator: ";")
+        let openSubtitlesMenuSignature = [
+            "enabled=\(isVLCOpenSubtitlesEnabled)",
+            "fetching=\(openSubtitlesFetchInProgress)",
+            "searched=\(openSubtitlesSearchAttempted)",
+            openSubtitlesResults.prefix(20).map {
+                "\($0.id ?? ""):\(openSubtitleDisplayName($0)):\($0.url ?? "")"
+            }.joined(separator: "|")
+        ].joined(separator: ";")
+        let appearanceEnabled = !isVLCPlayer && Settings.shared.playerSubtitleAppearanceEnabled
+        let menuSignature = [
+            "native",
+            "visible=\(subtitleModel.isVisible)",
+            "selection=\(subtitleSelectionMenuSignature())",
+            "external=\(externalTrackSignature)",
+            "nativeTracks=\(nativeTrackMenuSignature)",
+            "stremio=\(stremioMenuSignature)",
+            "openSubtitles=\(openSubtitlesMenuSignature)",
+            "appearance=\(appearanceEnabled)",
+            appearanceEnabled ? subtitleStyleMenuSignature() : ""
+        ].joined(separator: "||")
+        if menuSignature == nativeSubtitleMenuContentSignature {
             return
         }
         if shouldDeferNativePlayerMenuRefresh(kind: "subtitles") {
@@ -7519,6 +7676,7 @@ final class PlayerViewController: UIViewController, UIGestureRecognizerDelegate 
         }
         let subtitleMenu = UIMenu(title: "Subtitles", image: UIImage(systemName: "captions.bubble"), children: menuChildren)
         subtitleButton.menu = subtitleMenu
+        nativeSubtitleMenuContentSignature = menuSignature
     }
 
     private func restoreRequestedEmbeddedSubtitleTrackIfNeeded(from embeddedTracks: [(Int, String)]) -> Bool {
@@ -11106,6 +11264,13 @@ extension PlayerViewController: PiPControllerDelegate {
             self.primeMPVAppExitPictureInPictureIfNeeded(source: "did-enter-background")
             self.attemptMPVAppExitPictureInPictureStart(source: "did-enter-background")
             self.scheduleMPVBackgroundAudioFallback(source: "did-enter-background")
+        }
+    }
+
+    @objc private func appWillTerminate() {
+        logSharedPlayerControl("lifecycle notification received source=will-terminate")
+        if let mediaInfo {
+            syncTraktProgressOnPlaybackCloseIfNeeded(for: mediaInfo, reason: "will-terminate")
         }
     }
     
