@@ -949,6 +949,7 @@ final class AniListService {
                         episode
                         media {
                             id
+                            isAdult
                             title { romaji english native }
                             coverImage { large medium }
                             format
@@ -975,6 +976,7 @@ final class AniListService {
         let end = upperDay
 
         return allSchedules
+            .filter { $0.media.isAdult != true }
             .map { schedule in
                 let title = AniListTitlePicker.title(from: schedule.media.title, preferredLanguageCode: preferredLanguageCode)
                 let cover = schedule.media.coverImage?.large ?? schedule.media.coverImage?.medium
@@ -3303,6 +3305,7 @@ struct AniListAnime: Codable {
     let idMal: Int?
     let externalLinks: [AniListExternalLink]?
     let averageScore: Int?
+    let isAdult: Bool?
     let title: AniListTitle
     let episodes: Int?
     let status: String?
@@ -3349,6 +3352,7 @@ struct AniListAnime: Codable {
         let idMal: Int?
         let externalLinks: [AniListExternalLink]?
         let averageScore: Int?
+        let isAdult: Bool?
         let title: AniListTitle
         let episodes: Int?
         let status: String?
@@ -3366,6 +3370,7 @@ struct AniListAnime: Codable {
                 idMal: idMal,
                 externalLinks: externalLinks,
                 averageScore: averageScore,
+                isAdult: isAdult,
                 title: title,
                 episodes: episodes,
                 status: status,
@@ -3575,7 +3580,9 @@ private final class MALMetadataService {
         let next = nextSeason(after: current)
         let currentAnime = (try? await fetchSeasonAnime(year: current.year, season: current.season, limit: perPage)) ?? []
         let nextAnime = (try? await fetchSeasonAnime(year: next.year, season: next.season, limit: perPage)) ?? []
-        let all = Array((currentAnime + nextAnime).prefix(perPage * 2))
+        let all = Array((currentAnime + nextAnime)
+            .filter { !isAdultScheduleAnime($0) }
+            .prefix(perPage * 2))
 
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: Date())
@@ -4114,6 +4121,15 @@ private final class MALMetadataService {
         return ["special", "ova", "oad", "ona", "side story", "movie"].contains { text.contains($0) }
     }
 
+    private func isAdultScheduleAnime(_ detail: MALAnimeDetails) -> Bool {
+        if detail.rating?.lowercased() == "rx" {
+            return true
+        }
+
+        let genreText = detail.genres?.compactMap(\.name).joined(separator: " ").lowercased() ?? ""
+        return ["hentai", "erotica"].contains { genreText.contains($0) }
+    }
+
     private func titleCandidates(for detail: MALAnimeDetails) -> [String] {
         var seen = Set<String>()
         let ordered = [
@@ -4275,10 +4291,12 @@ private final class MALMetadataService {
         let numEpisodes: Int?
         let startSeason: MALStartSeason?
         let broadcast: MALBroadcast?
+        let rating: String?
+        let genres: [MALGenre]?
         let relatedAnime: [MALRelatedAnime]?
 
         enum CodingKeys: String, CodingKey {
-            case id, title, mean, status, broadcast
+            case id, title, mean, status, broadcast, rating, genres
             case mainPicture = "main_picture"
             case alternativeTitles = "alternative_titles"
             case startDate = "start_date"
@@ -4313,6 +4331,10 @@ private final class MALMetadataService {
             case dayOfTheWeek = "day_of_the_week"
             case startTime = "start_time"
         }
+    }
+
+    private struct MALGenre: Decodable {
+        let name: String?
     }
 
     private struct MALRelatedAnime: Decodable {
